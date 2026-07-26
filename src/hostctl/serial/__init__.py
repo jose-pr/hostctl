@@ -108,12 +108,19 @@ class PromptConsoleProfile:
         read_size: int = 4096,
         wakeup: bytes = b"\r",
         echo: bool = True,
+        paging_prompt: bytes | str | None = None,
+        paging_continue: bytes | str = b" ",
+        paging_disable: bytes | str | None = None,
+        max_paging_pages: int = 32,
+        terminal_setup: typing.Callable[[SerialProcess, int, int], None] | None = None,
+        status_parser: typing.Callable[[re.Match[bytes]], int] | None = None,
     ) -> None:
         self._prompt = self._compile(prompt)
         self.login = tuple(
             step if isinstance(step, LoginStep) else LoginStep(step[0], step[1])
             for step in login
         )
+        self._login_patterns = tuple(self._compile(step.expect) for step in self.login)
         self.line_terminator = (
             line_terminator.encode()
             if isinstance(line_terminator, str)
@@ -131,6 +138,22 @@ class PromptConsoleProfile:
         self.read_size = max(1, int(read_size))
         self.wakeup = bytes(wakeup)
         self.echo = bool(echo)
+        self._paging_prompt = self._compile(paging_prompt) if paging_prompt else None
+        self.paging_continue = (
+            paging_continue.encode()
+            if isinstance(paging_continue, str)
+            else bytes(paging_continue)
+        )
+        self.paging_disable = (
+            paging_disable.encode()
+            if isinstance(paging_disable, str)
+            else (bytes(paging_disable) if paging_disable is not None else None)
+        )
+        if max_paging_pages < 0:
+            raise ValueError("max_paging_pages must not be negative")
+        self.max_paging_pages = int(max_paging_pages)
+        self.terminal_setup = terminal_setup
+        self.status_parser = status_parser
         self.encoding = "utf-8"
 
     @staticmethod
@@ -150,10 +173,23 @@ class PromptConsoleProfile:
         *,
         timeout: float | None,
         initial: bytes = b"",
+        paging_process: SerialProcess | None = None,
     ) -> bytes:
         started = time.monotonic()
         buffer = bytearray(initial)
+        pages = 0
         while True:
+            if paging_process is not None and self._paging_prompt is not None:
+                paging = self._paging_prompt.search(buffer)
+                if paging is not None:
+                    if pages >= self.max_paging_pages:
+                        raise ConsoleProtocolError(
+                            "serial console paging limit exceeded"
+                        )
+                    pages += 1
+                    del buffer[: paging.end()]
+                    paging_process.write(self.paging_continue)
+                    continue
             match = expression.search(buffer)
             if match:
                 return bytes(buffer)
@@ -173,6 +209,12 @@ class PromptConsoleProfile:
 
     def negotiate(self, process: SerialProcess) -> None:
         transcript = b""
+        reset = getattr(process, "reset_input_buffer", None)
+        if callable(reset):
+            try:
+                reset()
+            except NotImplementedError:
+                pass
         if self.wakeup:
             process.write(self.wakeup)
         for step in self.login:
@@ -181,6 +223,15 @@ class PromptConsoleProfile:
             )
             process.write(step.send + self.line_terminator)
         self._read_until(process, self._prompt, timeout=10, initial=transcript)
+        if self.paging_disable is not None:
+            process.write(self.paging_disable + self.line_terminator)
+
+    def resize(self, process: SerialProcess, columns: int, rows: int) -> None:
+        if self.terminal_setup is None:
+            raise NotImplementedError("console profile does not support terminal setup")
+        if columns <= 0 or rows <= 0:
+            raise ValueError("terminal columns and rows must be positive")
+        self.terminal_setup(process, columns, rows)
 
     def send(self, process: SerialProcess, command: str | bytes) -> None:
         data = (
@@ -194,7 +245,11 @@ class PromptConsoleProfile:
         if not self.can_run:
             raise NotImplementedError("console profile does not provide reliable run()")
         self.send(process, command)
-        transcript = self._read_until(process, self._prompt, timeout=timeout)
+        transcript = self._read_until(
+            process, self._prompt, timeout=timeout, paging_process=process
+        )
+        if any(pattern.search(transcript) for pattern in self._login_patterns):
+            raise ConsoleProtocolError("serial console requested login again")
         marker = self.status_marker.search(transcript) if self.status_marker else None
         if marker is None:
             raise ConsoleProtocolError("command completion marker missing")
@@ -210,8 +265,14 @@ class PromptConsoleProfile:
             if body.startswith(encoded):
                 body = body[len(encoded) :].lstrip(b"\r\n")
         status = (
-            1 if any(pattern.search(body) for pattern in self.error_patterns) else 0
+            self.status_parser(marker)
+            if self.status_parser
+            else (
+                1 if any(pattern.search(body) for pattern in self.error_patterns) else 0
+            )
         )
+        if not isinstance(status, int) or status < 0:
+            raise ConsoleProtocolError("console status parser returned an invalid code")
         return body, status
 
 

@@ -11,6 +11,7 @@ from hostctl.executor.serial import (
     SerialExecutor,
     SerialSettings,
     normalize_serial_error,
+    SerialTransport,
 )
 from hostctl.process import Process
 from hostctl.process.serial import SerialProcess
@@ -26,6 +27,7 @@ class _Serial:
         self.flushes = 0
         self.closed = False
         self.breaks = []
+        self.resets = 0
 
     def close(self):
         self.closed = True
@@ -47,6 +49,9 @@ class _Serial:
 
     def send_break(self, duration=0.25):
         self.breaks.append(duration)
+
+    def reset_input_buffer(self):
+        self.resets += 1
 
 
 def test_serial_settings_validate_and_forward_every_setting():
@@ -187,3 +192,35 @@ def test_factory_error_retains_cause():
     with pytest.raises(ConnectionError) as raised:
         executor.connect()
     assert raised.value.__cause__ is serial_error
+
+
+def test_serial_transport_deadlines_reset_and_line_controls():
+    serial_port = _Serial()
+    transport = SerialTransport(serial_port)
+    transport.write(b"abc", timeout=1)
+    assert transport.read(0, timeout=0) == b""
+    transport.reset_input_buffer()
+    transport.dtr = True
+    transport.rts = True
+    assert serial_port.resets == 1
+    assert transport.dtr and transport.rts
+
+
+def test_serial_transport_rejects_negative_deadlines():
+    transport = SerialTransport(_Serial())
+    with pytest.raises(ValueError, match="timeout"):
+        transport.read(timeout=-1)
+    with pytest.raises(ValueError, match="timeout"):
+        transport.write(b"x", timeout=-1)
+
+
+def test_loopback_pyserial_round_trip():
+    pytest.importorskip("serial")
+    executor = SerialExecutor(SerialSettings("loop://", read_timeout=0.2))
+    process = executor.open()
+    try:
+        process.write(b"loopback")
+        assert process.read(8) == b"loopback"
+    finally:
+        process.close()
+        executor.close()

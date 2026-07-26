@@ -100,3 +100,42 @@ def test_raw_run_is_explicitly_unsupported():
     host = SerialHost(SerialConfig("loop://", serial_port=_Console()))
     with pytest.raises(NotImplementedError, match="reliable run"):
         host.run("show")
+
+
+def test_prompt_profile_paging_and_terminal_setup_hooks():
+    setup = []
+    console = _Console(reads=[b"> "])
+    profile = PromptConsoleProfile(
+        rb"> ",
+        paging_prompt=rb"--More--",
+        paging_continue=b" ",
+        paging_disable=b"terminal length 0",
+        terminal_setup=lambda process, columns, rows: setup.append((columns, rows)),
+    )
+    host = SerialHost(SerialConfig("loop://", protocol=profile, serial_port=console))
+    host.connect()
+    raw = host._executor.open()
+    try:
+        profile.resize(raw, 120, 40)
+    finally:
+        raw.close()
+    assert setup == [(120, 40)]
+    assert b"terminal length 0\r\n" in console.writes
+
+
+def test_prompt_profile_uses_status_parser():
+    def respond(console, data):
+        if data.endswith(b"\r\n") and data != b"\r\n":
+            console.reads.extend([b"cmd\r\nresult\nS=7\n> "])
+
+    console = _Console(reads=[b"> "], on_write=respond)
+    profile = PromptConsoleProfile(
+        rb"> ",
+        status_marker=rb"S=(\d+)",
+        reliable_status=True,
+        status_parser=lambda match: int(match.group(1)),
+    )
+    host = SerialHost(SerialConfig("loop://", protocol=profile, serial_port=console))
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        host.run("cmd")
+    assert raised.value.returncode == 7

@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import errno
 import threading
+import time
 import types
 import typing
 
@@ -47,13 +48,24 @@ class SerialTransport:
     def connected(self) -> bool:
         return bool(self.serial.is_open)
 
-    def read(self, size: int = 4096) -> bytes:
+    def read(
+        self, size: int = 4096, *, timeout: typing.Optional[float] = None
+    ) -> bytes:
         if size < 0:
             raise ValueError("read size must not be negative")
+        deadline = None if timeout is None else time.monotonic() + timeout
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must not be negative")
         with self.lock:
-            return self.serial.read(size)
+            while True:
+                value = self.serial.read(size)
+                if value or deadline is None or time.monotonic() >= deadline:
+                    return value
 
-    def write(self, data: bytes) -> None:
+    def write(self, data: bytes, *, timeout: typing.Optional[float] = None) -> None:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must not be negative")
         offset = 0
         with self.lock:
             while offset < len(data):
@@ -61,6 +73,12 @@ class SerialTransport:
                 if written <= 0:
                     raise TimeoutError("serial write made no progress")
                 offset += written
+                if (
+                    deadline is not None
+                    and time.monotonic() >= deadline
+                    and offset < len(data)
+                ):
+                    raise TimeoutError("serial write timed out")
             self.serial.flush()
 
     def reset_input_buffer(self) -> None:
@@ -68,6 +86,24 @@ class SerialTransport:
         if callable(reset):
             with self.lock:
                 reset()
+
+    @property
+    def dtr(self) -> bool:
+        return bool(self.serial.dtr)
+
+    @dtr.setter
+    def dtr(self, value: bool) -> None:
+        with self.lock:
+            self.serial.dtr = bool(value)
+
+    @property
+    def rts(self) -> bool:
+        return bool(self.serial.rts)
+
+    @rts.setter
+    def rts(self, value: bool) -> None:
+        with self.lock:
+            self.serial.rts = bool(value)
 
     def send_break(self, duration: float = 0.25) -> None:
         with self.lock:
@@ -182,6 +218,12 @@ class SerialExecutor:
     @property
     def connected(self) -> bool:
         return self._serial is not None and self._serial.is_open
+
+    @property
+    def transport(self) -> SerialTransport:
+        """Return the locked transport for protocol/profile integrations."""
+        serial_port = self.connect()
+        return SerialTransport(serial_port, lock=self._io_lock)
 
     def connect(self) -> SerialLike:
         with self._connect_lock:

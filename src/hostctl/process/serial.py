@@ -106,6 +106,18 @@ class SerialProcess(Process):
                 raise
             raise normalized from exc
 
+    def reset_input_buffer(self) -> None:
+        """Discard stale bytes before a protocol negotiation or command."""
+        self._require_open()
+        reset = getattr(self._serial, "reset_input_buffer", None)
+        if not callable(reset):
+            raise NotImplementedError("serial backend cannot reset its input buffer")
+        try:
+            with self._io_lock:
+                reset()
+        except Exception as exc:
+            raise_normalized(exc, normalize_serial_error)
+
     @property
     def dtr(self) -> bool:
         self._require_open()

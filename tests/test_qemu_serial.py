@@ -57,3 +57,12 @@ def test_qemu_serial_optional_text_and_explicit_unsupported_operations():
         process.terminate()
     with pytest.raises(NotImplementedError, match="kill"):
         process.kill()
+
+
+def test_qemu_serial_incremental_decoder_preserves_split_utf8():
+    stream = _Stream()
+    stream.reads = [b"\xc3", b"\xa9"]
+    process = QemuSerialProcess(stream, release=lambda: None, encoding="utf-8")
+    assert process.read() == ""
+    assert process.read() == "é"
+    process.close()

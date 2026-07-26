@@ -19,7 +19,8 @@ from ..executor import (
     SerialSettings,
     capture_streams,
 )
-from ..process import Process, SerialConsoleProcess
+from ..executor._common import write_output
+from ..process import Process, SerialConsoleProcess, terminal_options
 from ..serial import PromptConsoleProfile, RawConsoleProfile, SerialConsoleProtocol
 from ._common import (
     Command,
@@ -283,10 +284,21 @@ class SerialHost(Host):
             raise NotImplementedError(
                 "serial sessions do not support executable/cwd/env"
             )
-        if terminal not in (None, False):
+        selected_terminal = terminal_options(terminal)
+        if selected_terminal is not None and not callable(
+            getattr(self.config.protocol, "terminal_setup", None)
+        ):
             raise NotImplementedError("serial connections cannot allocate a PTY")
         self.connect()
         raw = self._executor.open()
+        if selected_terminal is not None:
+            try:
+                self.config.protocol.resize(
+                    raw, selected_terminal.columns, selected_terminal.rows
+                )
+            except Exception:
+                raw.close()
+                raise
         return SerialConsoleProcess(
             raw,
             self.config.protocol,
@@ -354,10 +366,13 @@ class SerialHost(Host):
         else:
             output_value = output
         captured = output_value if output_stream == subprocess.PIPE else None
-        if output_stream not in (None, subprocess.PIPE, subprocess.DEVNULL) and hasattr(
-            output_stream, "write"
-        ):
-            output_stream.write(output_value)
+        if output_stream not in (None, subprocess.PIPE, subprocess.DEVNULL):
+            write_output(
+                output_stream,
+                output_value,
+                encoding=encoding,
+                errors=errors,
+            )
         result = subprocess.CompletedProcess(command, returncode, captured, None)
         if check and returncode:
             raise subprocess.CalledProcessError(

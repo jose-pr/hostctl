@@ -60,6 +60,26 @@ class _Socket:
         self.closed = True
 
 
+class _SplitSocket(_Socket):
+    def recv(self, size):
+        return super().recv(1)
+
+
+class _IdlessErrorSocket(_Socket):
+    def sendall(self, data):
+        self.sent.append(data)
+        request = json.loads(data.lstrip(b"\xff"))
+        if request["execute"] == "guest-sync-delimited":
+            token = request["arguments"]["id"]
+            self.received.extend(
+                b"\xff" + _frame({"return": token, "id": request["id"]})
+            )
+        else:
+            self.received.extend(
+                _frame({"error": {"class": "ParseError", "desc": "bad"}})
+            )
+
+
 def _frame(value):
     return json.dumps(value, separators=(",", ":")).encode() + b"\n"
 
@@ -74,6 +94,23 @@ def test_unix_qga_synchronizes_and_correlates_requests():
     assert stream.connected == "/run/qga.sock"
     assert stream.sent[0].startswith(b"\xff")
     assert b"guest-sync-delimited" in stream.sent[0]
+
+
+def test_unix_qga_handles_one_byte_split_frames():
+    stream = _SplitSocket()
+    transport = UnixSocketGuestAgentTransport(
+        "/run/qga.sock", socket_factory=lambda *args: stream
+    )
+    assert transport.execute({"execute": "example"}) == {"value": 7}
+
+
+def test_unix_qga_idless_parse_error_is_immediate():
+    stream = _IdlessErrorSocket()
+    transport = UnixSocketGuestAgentTransport(
+        "/run/qga.sock", socket_factory=lambda *args: stream
+    )
+    with pytest.raises(QgaCommandError, match="bad"):
+        transport.execute({"execute": "example"})
 
 
 def test_unix_qga_timeout_closes_and_resynchronizes_next_connection():
@@ -189,4 +226,34 @@ def test_libvirt_transport_rejects_inactive_and_command_error():
         command_factory=command,
     )
     with pytest.raises(QgaCommandError, match="offline"):
+        transport.execute({"execute": "guest-ping"})
+
+
+def test_libvirt_lookup_failure_closes_connection_and_keyboard_interrupt_passes():
+    connection = _Connection()
+
+    def failed_lookup(name):
+        raise RuntimeError("lookup failed")
+
+    connection.lookupByName = failed_lookup
+    transport = LibvirtGuestAgentTransport(
+        "guest",
+        connect_factory=lambda uri: connection,
+        command_factory=lambda *args: "{}",
+    )
+    with pytest.raises(ConnectionError):
+        transport.connect()
+    assert connection.closed
+
+    connection = _Connection()
+
+    def interrupted(*args):
+        raise KeyboardInterrupt()
+
+    transport = LibvirtGuestAgentTransport(
+        "guest",
+        connect_factory=lambda uri: connection,
+        command_factory=interrupted,
+    )
+    with pytest.raises(KeyboardInterrupt):
         transport.execute({"execute": "guest-ping"})
