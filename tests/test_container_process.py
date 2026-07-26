@@ -37,6 +37,29 @@ class _Socket:
         self.closed = True
 
 
+class _NonBlockingSocket(_Socket):
+    def __init__(self, *values):
+        super().__init__(*values)
+        self.timeout = None
+
+    def recv(self, size):
+        if not self.values:
+            raise BlockingIOError
+        value = self.values.popleft()
+        if isinstance(value, BaseException):
+            raise value
+        self.values.appendleft(value[size:])
+        if not self.values[0]:
+            self.values.popleft()
+        return value[:size]
+
+    def settimeout(self, value):
+        self.timeout = value
+
+    def gettimeout(self):
+        return self.timeout
+
+
 class _Api:
     def __init__(self, states):
         self.states = collections.deque(states)
@@ -114,3 +137,32 @@ def test_container_process_read_returns_available_data_and_rejects_truncated_fra
     )
     with pytest.raises(ConnectionError, match="mid-frame"):
         broken.read()
+
+
+def test_container_wait_preserves_partial_nonblocking_frames():
+    frame = _frame(1, b"complete")
+    stream = _NonBlockingSocket(
+        frame[:3],
+        BlockingIOError(),
+        frame[3:10],
+        BlockingIOError(),
+        frame[10:],
+        b"",
+    )
+    api = _Api(
+        [
+            {"Running": True, "ExitCode": None},
+            {"Running": True, "ExitCode": None},
+            {"Running": False, "ExitCode": 0},
+        ]
+    )
+    process = ContainerProcess(
+        api,
+        "exec",
+        stream,
+        tty=False,
+        command=["cat"],
+    )
+
+    assert process.wait(timeout=1) == 0
+    assert process.read() == b"complete"

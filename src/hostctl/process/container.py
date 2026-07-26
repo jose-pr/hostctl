@@ -57,6 +57,7 @@ class ContainerProcess(Process):
         self._eof = False
         self._closed = False
         self._returncode: typing.Optional[int] = None
+        self._wire_buffer = bytearray()
         self._decoders = {
             1: (
                 codecs.getincrementaldecoder(encoding)(self._errors)
@@ -116,28 +117,33 @@ class ContainerProcess(Process):
             else:
                 self._eof = True
             return
-        header = self._read_exact(8)
-        if not header:
-            self._eof = True
-            return
-        if len(header) != 8:
-            raise ConnectionError("connection dropped mid-frame")
-        stream = header[0]
-        length = int.from_bytes(header[4:8], "big")
-        payload = self._read_exact(length)
-        if len(payload) != length:
-            raise ConnectionError("connection dropped mid-frame")
-        if stream in self._buffers and payload:
-            self._buffers[stream].append(payload)
-
-    def _read_exact(self, size: int) -> bytes:
-        value = bytearray()
-        while len(value) < size:
-            chunk = self._socket.recv(size - len(value))
+        while not self._consume_frames():
+            chunk = self._socket.recv(64 * 1024)
             if not chunk:
+                self._finish_wire()
+                return
+            self._wire_buffer.extend(chunk)
+
+    def _consume_frames(self) -> bool:
+        """Consume every complete Docker multiplex frame already buffered."""
+        consumed = False
+        while len(self._wire_buffer) >= 8:
+            length = int.from_bytes(self._wire_buffer[4:8], "big")
+            frame_size = 8 + length
+            if len(self._wire_buffer) < frame_size:
                 break
-            value.extend(chunk)
-        return bytes(value)
+            stream = self._wire_buffer[0]
+            payload = bytes(self._wire_buffer[8:frame_size])
+            del self._wire_buffer[:frame_size]
+            if stream in self._buffers and payload:
+                self._buffers[stream].append(payload)
+            consumed = True
+        return consumed
+
+    def _finish_wire(self) -> None:
+        self._eof = True
+        if self._wire_buffer:
+            raise ConnectionError("connection dropped mid-frame")
 
     def _read_stream(self, stream: int, size: int) -> ProcessData:
         if self._tty and stream == 2:
@@ -210,18 +216,28 @@ class ContainerProcess(Process):
         settimeout = getattr(self._socket, "settimeout", None)
         gettimeout = getattr(self._socket, "gettimeout", None)
         if settimeout is None:
-            try:
-                self._receive()
-            except (socket.timeout, BlockingIOError):
-                pass
+            # There is no portable way to prove that recv() will not block.
+            # wait() must keep polling process state rather than deadlock.
             return
         previous = gettimeout() if gettimeout is not None else None
         try:
             settimeout(0.0)
-            try:
-                self._receive()
-            except (socket.timeout, BlockingIOError):
-                pass
+            while not self._eof:
+                try:
+                    value = self._socket.recv(64 * 1024)
+                except (socket.timeout, BlockingIOError):
+                    break
+                if not value:
+                    if self._tty:
+                        self._eof = True
+                    else:
+                        self._finish_wire()
+                    break
+                if self._tty:
+                    self._buffers[1].append(value)
+                else:
+                    self._wire_buffer.extend(value)
+                    self._consume_frames()
         finally:
             settimeout(previous)
 
