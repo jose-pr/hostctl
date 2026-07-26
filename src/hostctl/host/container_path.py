@@ -150,6 +150,7 @@ class ContainerPathBackend:
         # Docker returns a compact stat mapping alongside get_archive().  Use
         # it without consuming the potentially huge tar stream whenever it is
         # available; this is also the only portable way to follow symlinks.
+        stream = None
         try:
             stream, metadata = self.container.get_archive(path)
             if metadata:
@@ -170,6 +171,13 @@ class ContainerPathBackend:
                 raise FileNotFoundError(path) from exc
             if status == 403:
                 raise PermissionError(path) from exc
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
         archive, members = self._archive(path)
         try:
             member = self._root_member(members)

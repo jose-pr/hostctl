@@ -68,6 +68,26 @@ class _Container:
         return True
 
 
+def test_container_stat_closes_unused_archive_stream():
+    class Stream:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    stream = Stream()
+    container = _Container()
+    container.get_archive = lambda path: (
+        stream,
+        {"name": "data", "size": 4, "mode": 0o100644, "mtime": "0"},
+    )
+
+    result = ContainerPathBackend(container).stat("/data")
+
+    assert result.st_size == 4
+    assert stream.closed
+
+
 def test_container_open_read_is_lazy_and_bounded():
     container = _Container()
     payload = _tar((("data.bin", b"x" * (1024 * 1024)),))
