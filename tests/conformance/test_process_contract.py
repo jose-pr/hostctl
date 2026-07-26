@@ -88,7 +88,17 @@ def test_process_eof_and_context_are_idempotent(provider):
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_provider_process_uses_transport_spawn_when_available(provider):
     if "spawn" not in provider.capabilities:
-        pytest.skip(f"{provider.name} has no spawn capability")
+        # ``spawn`` needs a bidirectional streaming channel (AsyncSSH
+        # ``create_process``, a Docker exec socket, a PSRP runspace).  The
+        # deterministic fakes dispatch through buffered ``subprocess.run``
+        # and cannot present one, so the fake registry withholds the
+        # capability rather than pretending to honour the session contract.
+        # Real SSH spawn rendering is covered by tests/test_process.py; the
+        # other transports rely on the environment-gated live legs.
+        pytest.skip(
+            f"{provider.name} fake has no streaming channel to back spawn "
+            "(buffered subprocess fake cannot provide a persistent session)"
+        )
     with provider_context(provider) as host:
         process = host.spawn("echo process")
         try:

@@ -35,27 +35,49 @@ def test_direct_argv_and_capture(provider):
 
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
-def test_text_env_cwd_and_nonzero_check(provider, tmp_path):
+def test_text_env_and_nonzero_check(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
-    code = "import os, pathlib; print(os.environ['HOSTCTL_CONFORMANCE']); print(pathlib.Path.cwd())"
+    if "env" not in provider.capabilities:
+        pytest.skip(f"{provider.name} does not support environment overrides")
+    code = "import os; print(os.environ['HOSTCTL_CONFORMANCE'])"
+    environment = {"HOSTCTL_CONFORMANCE": 42}
+    if os.name == "nt":
+        # subprocess ``env`` is a replacement mapping. CPython 3.9 needs
+        # SystemRoot to initialize its Windows entropy provider.
+        environment["SystemRoot"] = os.environ["SystemRoot"]
     with provider_context(provider) as host:
         result = host.run(
             Path(sys.executable),
             "-c",
             code,
-            cwd=tmp_path,
-            env={"HOSTCTL_CONFORMANCE": 42},
+            env=environment,
             text=True,
         )
         assert result.stdout.splitlines()[0] == "42"
-        assert Path(result.stdout.splitlines()[1]) == tmp_path
         failed = host.run(
             Path(sys.executable), "-c", "raise SystemExit(3)", check=False
         )
         assert failed.returncode == 3
         with pytest.raises(subprocess.CalledProcessError):
             host.run(Path(sys.executable), "-c", "raise SystemExit(4)")
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_cwd_is_applied_only_when_supported(provider, tmp_path):
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
+    if "cwd" not in provider.capabilities:
+        pytest.skip(f"{provider.name} does not support cwd")
+    with provider_context(provider) as host:
+        result = host.run(
+            Path(sys.executable),
+            "-c",
+            "import pathlib; print(pathlib.Path.cwd())",
+            cwd=tmp_path,
+            text=True,
+        )
+    assert Path(result.stdout.strip()) == tmp_path
 
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
@@ -90,8 +112,10 @@ def test_shell_command_shapes_and_operators_remain_explicit(provider):
 def test_timeout_and_input_are_subprocess_compatible(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
-    if provider.name != "local":
-        pytest.skip(f"{provider.name} does not advertise buffered input/timeout")
+    required = {"input", "timeout"}
+    missing = required - provider.capabilities
+    if missing:
+        pytest.skip(f"{provider.name} does not support {', '.join(sorted(missing))}")
     with provider_context(provider) as host:
         result = host.run(
             Path(sys.executable),
