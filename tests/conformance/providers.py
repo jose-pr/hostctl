@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -25,6 +26,26 @@ from .path_fakes import (
     QGA_FILE_COMMANDS,
     WinRMFilesystemRunner,
 )
+
+_POWERSHELL_LITERAL = re.compile(r"'(?:''|[^'])*'")
+
+
+def _direct_powershell_argv(command: str):
+    """Decode the simple structured invocation emitted by PowerShellFlavour."""
+
+    marker = " -Command "
+    if marker not in command:
+        return None
+    script = command.rsplit(marker, 1)[1].strip()
+    if len(script) >= 2 and script[0] == script[-1] == '"':
+        script = script[1:-1]
+    if not script.startswith("& ") or not script.endswith("; exit $LASTEXITCODE"):
+        return None
+    values = [
+        match.group(0)[1:-1].replace("''", "'")
+        for match in _POWERSHELL_LITERAL.finditer(script)
+    ]
+    return values or None
 
 
 class _FakeTransport:
@@ -61,53 +82,27 @@ class FakeSshSession(_FakeTransport):
     async def run(self, command, **options):
         self.connect()
         if os.name == "nt":
-            import re
-
-            script = command.rsplit("-Command", 1)[-1].strip().strip('"')
-            direct = re.match(
-                r"'([^']+)';-c;(.*);([^;]+); exit \$LASTEXITCODE$", script
+            # AsyncSSH gives the target one finalized command line. Passing
+            # that line directly to CreateProcess emulates the same single
+            # PowerShell layer; wrapping it in another PowerShell process
+            # would expand $env variables before the target script sees them.
+            invocation = command
+        else:
+            invocation = command
+        encoding = options.get("encoding")
+        stdin = options.get("stdin")
+        input_value = stdin.read() if hasattr(stdin, "read") else None
+        if os.name == "nt" and (
+            bool(input_value) or options.get("timeout") is not None
+        ):
+            direct = _direct_powershell_argv(command)
+            if direct is not None:
+                invocation = direct
+        if encoding is not None and isinstance(input_value, bytes):
+            input_value = input_value.decode(
+                encoding,
+                options.get("errors") or "strict",
             )
-            if direct:
-                result = subprocess.run(
-                    [direct.group(1), "-c", direct.group(2), direct.group(3)],
-                    capture_output=True,
-                    check=False,
-                    env=options.get("env"),
-                    timeout=options.get("timeout"),
-                )
-                return type(
-                    "Result",
-                    (),
-                    {
-                        "returncode": result.returncode,
-                        "stdout": result.stdout,
-                        "stderr": result.stderr,
-                    },
-                )()
-            parts = [item.strip() for item in script.split(";")]
-            executable = parts[0].strip("'\"") if parts else ""
-            if executable and os.path.isfile(executable):
-                result = subprocess.run(
-                    [executable, *parts[1:]],
-                    capture_output=True,
-                    check=False,
-                    env=options.get("env"),
-                    timeout=options.get("timeout"),
-                )
-                return type(
-                    "Result",
-                    (),
-                    {
-                        "returncode": result.returncode,
-                        "stdout": result.stdout,
-                        "stderr": result.stderr,
-                    },
-                )()
-        invocation = (
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command]
-            if os.name == "nt"
-            else command
-        )
         result = subprocess.run(
             invocation,
             shell=os.name != "nt",
@@ -115,6 +110,10 @@ class FakeSshSession(_FakeTransport):
             check=False,
             env=options.get("env"),
             timeout=options.get("timeout"),
+            encoding=encoding,
+            errors=options.get("errors"),
+            text=encoding is not None,
+            input=input_value,
         )
         return type(
             "Result",
@@ -132,8 +131,14 @@ class FakeWinRMSession(_FakeTransport):
         executable = "powershell.exe" if os.name == "nt" else shutil.which("pwsh")
         if not executable:
             raise NotImplementedError("PowerShell is unavailable for fake WinRM")
+        invocation = (
+            script
+            if os.name == "nt"
+            and script.casefold().startswith(("powershell.exe ", "pwsh "))
+            else [executable, "-NoProfile", "-NonInteractive", "-Command", script]
+        )
         result = subprocess.run(
-            [executable, "-NoProfile", "-NonInteractive", "-Command", script],
+            invocation,
             capture_output=True,
             check=False,
         )
@@ -255,7 +260,12 @@ class FakeWinRMHost:
             _WinRMTransport,
         )
 
-        config = WinRMConfig("fake", username="fake", password="fake")
+        config = WinRMConfig(
+            "fake",
+            username="fake",
+            password="fake",
+            provider="pywinrm",
+        )
         transport = _WinRMTransport(config)
         transport._session = FakeWinRMSession("winrm", LocalExecutor())
         runner = WinRMFilesystemRunner()
@@ -338,15 +348,31 @@ def fake_providers() -> tuple[Provider, ...]:
     """
 
     return (
-        Provider("local", _local, frozenset(("run", "path", "args", "cwd", "env"))),
-        Provider("ssh", lambda: _fake(FakeSshHost), frozenset(("run", "path"))),
-        Provider("winrm", lambda: _fake(FakeWinRMHost), frozenset(("run", "path"))),
+        Provider(
+            "local",
+            _local,
+            frozenset(("run", "path", "args", "cwd", "env", "input", "timeout")),
+        ),
+        Provider(
+            "ssh",
+            lambda: _fake(FakeSshHost),
+            frozenset(("run", "path", "args", "cwd", "env", "input", "timeout")),
+        ),
+        Provider(
+            "winrm",
+            lambda: _fake(FakeWinRMHost),
+            frozenset(("run", "path", "args", "cwd", "env")),
+        ),
         Provider(
             "container",
             lambda: _fake(FakeContainerHost),
             frozenset(("run", "path", "args", "cwd", "env")),
         ),
-        Provider("qemu", lambda: _fake(FakeQemuHost), frozenset(("run", "path"))),
+        Provider(
+            "qemu",
+            lambda: _fake(FakeQemuHost),
+            frozenset(("run", "path", "args", "env", "input", "timeout")),
+        ),
         Provider("serial", lambda: _fake(FakeSerialHost), frozenset(("session",))),
     )
 
