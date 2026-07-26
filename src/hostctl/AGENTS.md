@@ -4,8 +4,9 @@ Protocol-independent host execution and filesystem paths. Core requires
 `pathlib_next`; transport integrations are optional extras.
 
 Host implementations are grouped under `hostctl.host`: shared contracts are
-re-exported from the package, with concrete implementations in
-`hostctl.host.local`, `.ssh`, `.winrm`, and `.container`. The same
+re-exported from the package, with concrete implementations in private
+modules (`hostctl.host._local`, `._ssh`, `._winrm`, and `._winrm_path`) plus
+the other provider modules. The same
 public classes are also re-exported from top-level `hostctl`.
 Shell construction is transport-independent under `hostctl.shell`:
 `_common.py` owns shared contracts, while `posix.py` and `powershell.py` own

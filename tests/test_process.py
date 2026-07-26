@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hostctl.host.ssh import SshConfig, SshHost
+from hostctl import SshConfig, SshHost
 from hostctl.process import Process, SshProcess, TerminalOptions
 
 

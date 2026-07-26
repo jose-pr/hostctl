@@ -42,7 +42,7 @@ from ._common import (
     uri_host,
 )
 from .qemu_path import PosixQemuPath, QgaPathBackend, WindowsQemuPath
-from .ssh import SshConfig, SshHost
+from ._ssh import SshConfig, SshHost
 
 QemuTransport = typing.Literal["libvirt", "unix", "ssh"]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]

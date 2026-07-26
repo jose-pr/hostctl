@@ -6,7 +6,7 @@ from ._common import (
     HostInfo as HostInfo,
     HostPath as HostPath,
 )
-from .local import LocalConfig as LocalConfig, LocalHost as LocalHost
+from ._local import LocalConfig as LocalConfig, LocalHost as LocalHost
 from .container import (
     ContainerConfig as ContainerConfig,
     ContainerHost as ContainerHost,
@@ -22,12 +22,12 @@ from .qemu_path import (
     QgaPathBackend as QgaPathBackend,
     WindowsQemuPath as WindowsQemuPath,
 )
-from .ssh import (
+from ._ssh import (
     PathnameConstructor as PathnameConstructor,
     SshConfig as SshConfig,
     SshHost as SshHost,
 )
-from .winrm import (
+from ._winrm import (
     WinRMConfig as WinRMConfig,
     WinRMHost as WinRMHost,
     WinRMProvider as WinRMProvider,
@@ -43,7 +43,7 @@ from .system import (
     WindowsHost as WindowsHost,
 )
 from .serial import SerialConfig as SerialConfig, SerialHost as SerialHost
-from .winrm_path import (
+from ._winrm_path import (
     WinRMPath as WinRMPath,
     WinRMPathBackend as WinRMPathBackend,
 )

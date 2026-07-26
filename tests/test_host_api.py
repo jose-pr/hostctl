@@ -261,7 +261,7 @@ def test_base_unsupported_operations_fail_immediately():
 
 
 def test_local_info_uses_reported_values_without_guessing(monkeypatch):
-    import hostctl.host.local as local_module
+    import hostctl.host._local as local_module
 
     monkeypatch.setattr(local_module._platform, "node", lambda: "")
     monkeypatch.setattr(local_module._platform, "system", lambda: "")

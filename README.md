@@ -145,12 +145,12 @@ Application-specific adapters can follow the SFTP/RPC/download pattern in
 | Module | Purpose |
 | --- | --- |
 | `hostctl.host` | Shared contracts and built-in host providers |
-| `hostctl.host.container` | `ContainerConfig`, `ContainerHost` |
-| `hostctl.host.qemu` | `QemuConfig`, `QemuHost` |
-| `hostctl.host.local` | `LocalConfig`, `LocalHost` |
-| `hostctl.host.ssh` | `SshConfig`, `SshHost` |
-| `hostctl.host.winrm` | `WinRMConfig`, `WinRMHost` |
-| `hostctl.host.serial` | `SerialConfig`, `SerialHost` |
+| `hostctl` | `ContainerConfig`, `ContainerHost` |
+| `hostctl` | `QemuConfig`, `QemuHost` |
+| `hostctl` | `LocalConfig`, `LocalHost` |
+| `hostctl` | `SshConfig`, `SshHost` |
+| `hostctl` | `WinRMConfig`, `WinRMHost` |
+| `hostctl` | `SerialConfig`, `SerialHost` |
 
 ## Development
 

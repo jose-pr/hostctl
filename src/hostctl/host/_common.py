@@ -250,11 +250,11 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
             if HostConfig._uri_registry_cache is None:
                 from . import (
                     container as _container,
-                    local as _local,
+                    _local,
                     qemu as _qemu,
                     serial as _serial,
-                    ssh as _ssh,
-                    winrm as _winrm,
+                    _ssh,
+                    _winrm,
                 )
 
                 del _container, _local, _qemu, _serial, _ssh, _winrm

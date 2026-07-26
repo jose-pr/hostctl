@@ -8,7 +8,7 @@ from pathlib_next import Path
 from pathlib_next.utils.stat import FileStat
 
 from hostctl import WinRMPath
-from hostctl.host.winrm_path import WinRMPathBackend
+from hostctl.host._winrm_path import WinRMPathBackend
 
 
 class _MemoryBackend:

@@ -34,9 +34,8 @@ from ._common import (
     strict_uri_query,
     uri_host,
 )
-from ._facade import TransportHostFacade
 from ..shell import POWERSHELL, ShellFlavour
-from .winrm_path import WinRMPath, WinRMPathBackend
+from ._winrm_path import WinRMPath, WinRMPathBackend
 
 WinRMTransport = typing.Literal[
     "basic",
@@ -161,7 +160,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
         return WinRMHost(self)
 
 
-class WinRMHost(TransportHostFacade, Host):
+class WinRMHost(Host):
     """A Windows host reached through PowerShell over WinRM."""
 
     def __init__(self, config: WinRMConfig) -> None:
@@ -179,8 +178,6 @@ class WinRMHost(TransportHostFacade, Host):
             lambda: float(self.config.read_timeout_sec),
         )
         self._path_backend = WinRMPathBackend(self.run)
-
-    _facade_executor_capabilities = WinRMExecutor.executor_capabilities
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:
