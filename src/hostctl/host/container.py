@@ -16,6 +16,12 @@ from ..executor.container import (
     normalize_container_error,
 )
 from ..executor import normalize_environment
+from ..provider import (
+    ContainerArchivePathProvider,
+    ContainerExecutorProvider,
+    OperationNotStarted,
+    ProviderSelector,
+)
 from ..process import (
     ContainerProcess,
     Process,
@@ -167,9 +173,23 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
 
 
 class ContainerHost(Host):
-    """A running container reached through the Docker Engine API."""
+    """A running container reached through the Docker Engine API.
 
-    def __init__(self, config: ContainerConfig) -> None:
+    Commands and paths are assembled from ordered providers
+    (:class:`ContainerExecutorProvider` and
+    :class:`ContainerArchivePathProvider`) without changing the public API.
+    The archive provider declares only the operations the Docker archive API
+    can perform, so an unsupported mutation is rejected outright instead of
+    falling through to another provider.
+    """
+
+    def __init__(
+        self,
+        config: ContainerConfig,
+        *,
+        executor_providers: typing.Iterable[object] = (),
+        path_providers: typing.Iterable[object] = (),
+    ) -> None:
         self.config = config
         self._client: typing.Optional[object] = None
         self._container: typing.Optional[ContainerLike] = None
@@ -179,10 +199,44 @@ class ContainerHost(Host):
             user=config.user,
             workdir=config.workdir,
         )
+        self._executor_provider_selector = ProviderSelector(
+            tuple(executor_providers)
+            or (
+                ContainerExecutorProvider(
+                    self._executor,
+                    connect=lambda: self.container,
+                    close=self._close_client,
+                ),
+            )
+        )
+        self._path_provider_selector = ProviderSelector(
+            tuple(path_providers) or (ContainerArchivePathProvider(self._archive_path),)
+        )
+
+    @property
+    def executor_providers(self) -> typing.Tuple[object, ...]:
+        """The ordered command providers backing :meth:`run`."""
+        return self._executor_provider_selector.providers
+
+    @property
+    def path_providers(self) -> typing.Tuple[object, ...]:
+        """The ordered filesystem providers backing :meth:`path`."""
+        return self._path_provider_selector.providers
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:
-        return frozenset(("path", "run", "spawn", "tty"))
+        values = set()
+        if any(
+            self._executor_provider_selector.probe(provider).usable
+            for provider in self._executor_provider_selector.providers
+        ):
+            values.update(("run", "spawn", "tty"))
+        if any(
+            self._path_provider_selector.probe(provider).usable
+            for provider in self._path_provider_selector.providers
+        ):
+            values.add("path")
+        return frozenset(values)
 
     @property
     def client(self) -> object:
@@ -256,12 +310,12 @@ class ContainerHost(Host):
 
     @property
     def executor(self) -> ContainerExecutor:
-        return self._executor
+        return self._executor_provider_selector.select().provider.executor
 
     def connect(self) -> None:
         _ = self.container
 
-    def close(self) -> None:
+    def _close_client(self) -> None:
         self._container = None
         self._attrs = None
         if self._client is not None:
@@ -269,6 +323,30 @@ class ContainerHost(Host):
             close = getattr(client, "close", None)
             if close is not None:
                 close()
+
+    def close(self) -> None:
+        first_error: typing.Optional[BaseException] = None
+        closed: typing.List[int] = []
+        for provider in (
+            *self._executor_provider_selector.providers,
+            *self._path_provider_selector.providers,
+        ):
+            if id(provider) in closed:
+                continue
+            closed.append(id(provider))
+            close = getattr(provider, "close", None)
+            if close is None:
+                continue
+            try:
+                close()
+            except BaseException as exc:  # pragma: no cover - defensive
+                if first_error is None:
+                    first_error = exc
+        self._close_client()
+        self._executor_provider_selector.invalidate()
+        self._path_provider_selector.invalidate()
+        if first_error is not None:  # pragma: no cover - defensive
+            raise first_error
 
     def info(self) -> HostInfo:
         result = self.run(self.shell_flavour.info_script, check=False, encoding="utf-8")
@@ -286,8 +364,23 @@ class ContainerHost(Host):
     def path(
         self, *segments: PathLike, backend: typing.Optional[str] = None
     ) -> HostPath:
-        if backend not in (None, "archive", "docker"):
+        names = {provider.name for provider in self._path_provider_selector.providers}
+        if backend is not None and backend not in (names | {"docker"}):
             raise ValueError(f"unsupported container path backend: {backend!r}")
+        if backend in (None, "docker"):
+            provider = self._path_provider_selector.select().provider
+        else:
+            provider = next(
+                item
+                for item in self._path_provider_selector.providers
+                if item.name == backend
+            )
+            if not provider.probe().usable:
+                raise OperationNotStarted(f"path provider {backend!r} is unavailable")
+        return provider.path(*segments)
+
+    def _archive_path(self, *segments: PathLike) -> HostPath:
+        """Build a Docker-archive-backed path with the configured flavour."""
         selection = self.config.path_flavor
         windows = (
             self.inspected_os == "windows"
@@ -324,6 +417,56 @@ class ContainerHost(Host):
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
+        excluded: typing.List[str] = []
+        while True:
+            provider = self._executor_provider_selector.select(
+                exclude=excluded
+            ).provider
+            try:
+                return self._run_with_provider(
+                    provider,
+                    cmds,
+                    bufsize=bufsize,
+                    executable=executable,
+                    stdin=stdin,
+                    stdout=stdout,
+                    stderr=stderr,
+                    cwd=cwd,
+                    env=env,
+                    capture_output=capture_output,
+                    check=check,
+                    encoding=encoding,
+                    errors=errors,
+                    input=input,
+                    timeout=timeout,
+                    text=text,
+                )
+            except OperationNotStarted as exc:
+                # Only a proven pre-dispatch refusal may reach another
+                # provider; a dispatched exec is never replayed.
+                self._executor_provider_selector.decline(provider.name, str(exc))
+                excluded.append(provider.name)
+
+    def _run_with_provider(
+        self,
+        provider,
+        cmds: typing.Sequence[Command],
+        *,
+        bufsize: int,
+        executable: typing.Optional[str],
+        stdin,
+        stdout,
+        stderr,
+        cwd,
+        env,
+        capture_output,
+        check,
+        encoding,
+        errors,
+        input,
+        timeout,
+        text,
+    ) -> subprocess.CompletedProcess:
         direct = starts_direct_command(cmds)
         if direct is not None:
             command, args = direct
@@ -331,7 +474,7 @@ class ContainerHost(Host):
                 raise NotImplementedError(
                     "executable cannot be combined with a direct command"
                 )
-            return self.executor(
+            return provider.execute(
                 command,
                 *args,
                 bufsize=bufsize,
@@ -352,7 +495,7 @@ class ContainerHost(Host):
         invocation = self.shell_flavour.invocation(
             script, executable=executable or self.config.executable
         )
-        return self.executor(
+        return provider.execute(
             invocation[0],
             *invocation[1:],
             bufsize=bufsize,
