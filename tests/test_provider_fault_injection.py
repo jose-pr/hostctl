@@ -16,11 +16,21 @@ import pytest
 from pathlib_next.mempath import MemPath, MemPathBackend
 
 from hostctl import (
+    ContainerConfig,
+    ContainerHost,
     ExecutorProvider,
+    LocalHost,
     OperationNotStarted,
     PathProvider,
     PosixHost,
     ProviderProbe,
+)
+from hostctl.provider import (
+    ARCHIVE_PATH_OPERATIONS,
+    ContainerArchivePathProvider,
+    DownloadPathProvider,
+    LocalExecutorProvider,
+    LocalPathProvider,
 )
 
 
@@ -286,3 +296,238 @@ def test_dispatched_failure_after_a_declined_provider_is_still_terminal():
         host.run("systemctl restart nginx", check=False)
 
     assert injector.calls == ["first", "second"]
+
+
+# --- (c) the local assembly obeys the same rule ------------------------------
+
+
+def test_local_host_is_assembled_from_providers():
+    """LocalHost composes providers instead of a hard-wired executor."""
+    host = LocalHost()
+
+    assert [provider.name for provider in host.executor_providers] == ["local"]
+    assert [provider.name for provider in host.path_providers] == ["local"]
+    assert isinstance(host.executor_providers[0], LocalExecutorProvider)
+    assert isinstance(host.path_providers[0], LocalPathProvider)
+    # The public capability set is unchanged by the assembly.
+    assert host.capabilities == frozenset(("run", "path"))
+
+
+def test_local_assembly_never_replays_a_dispatched_command():
+    """A local command that failed after dispatch is terminal."""
+    injector = FaultInjector()
+    host = LocalHost(
+        executor_providers=(
+            injector.executor(
+                "primary", fault=lambda: ConnectionResetError("dropped mid-command")
+            ),
+            injector.executor("secondary"),
+        )
+    )
+
+    with pytest.raises(ConnectionResetError):
+        host.run("systemctl restart nginx", check=False)
+
+    assert injector.calls == ["primary"]
+
+
+def test_local_assembly_falls_back_only_on_a_proven_pre_dispatch_refusal():
+    injector = FaultInjector()
+    host = LocalHost(
+        executor_providers=(
+            injector.executor(
+                "primary", fault=lambda: OperationNotStarted("refused before dispatch")
+            ),
+            injector.executor("secondary"),
+            injector.executor("tertiary"),
+        )
+    )
+
+    result = host.run("uptime", check=False)
+
+    assert result.stdout == b"ok"
+    assert injector.calls == ["primary", "secondary"]
+
+
+def test_local_assembly_skips_a_probe_rejected_provider_without_invoking_it():
+    injector = FaultInjector()
+    host = LocalHost(
+        executor_providers=(
+            injector.executor(
+                "primary", probe=lambda: ProviderProbe("unavailable", "shell missing")
+            ),
+            injector.executor("secondary"),
+        )
+    )
+
+    assert host.run("uptime", check=False).stdout == b"ok"
+    assert injector.calls == ["secondary"]
+
+
+def test_local_path_assembly_does_not_replay_an_uncertain_path_build():
+    injector = FaultInjector()
+    second_backend = MemPathBackend()
+    host = LocalHost(
+        path_providers=(
+            injector.path(
+                "local",
+                MemPathBackend(),
+                fault=lambda: ConnectionResetError("filesystem went away"),
+            ),
+            injector.path("secondary", second_backend),
+        )
+    )
+
+    with pytest.raises(ConnectionResetError):
+        host.path("state.db")
+
+    assert injector.calls == ["local"]
+
+
+# --- (d) the container assembly obeys the same rule --------------------------
+
+
+class _FakeContainer:
+    """A container double that never touches Docker or the network."""
+
+    def __init__(self):
+        self.attrs = {
+            "Id": "fake",
+            "Platform": "linux",
+            "Architecture": "amd64",
+            "State": {"Running": True},
+        }
+
+    def reload(self):
+        return None
+
+    def exec_run(self, command, **options):
+        raise AssertionError("the executor provider double must own dispatch")
+
+
+class _FakeContainers:
+    def __init__(self, container):
+        self.container = container
+
+    def get(self, name):
+        return self.container
+
+
+class _FakeClient:
+    def __init__(self):
+        self.containers = _FakeContainers(_FakeContainer())
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def _container_host(**providers):
+    client = _FakeClient()
+    config = ContainerConfig("fake-target", client_factory=lambda **_: client)
+    return ContainerHost(config, **providers), client
+
+
+def test_container_host_is_assembled_from_providers():
+    host, _ = _container_host()
+
+    assert [provider.name for provider in host.executor_providers] == ["container"]
+    assert [provider.name for provider in host.path_providers] == ["archive"]
+    assert isinstance(host.path_providers[0], ContainerArchivePathProvider)
+    # The public capability set is unchanged by the assembly.
+    assert host.capabilities == frozenset(("run", "path", "spawn", "tty"))
+
+
+def test_container_archive_provider_declares_no_namespace_mutations():
+    """The archive API cannot mkdir/chmod/unlink/rmdir/rename, so it says so."""
+    host, _ = _container_host()
+    capabilities = host.path_providers[0].capabilities
+
+    assert capabilities == ARCHIVE_PATH_OPERATIONS
+    for operation in ("mkdir", "chmod", "unlink", "rmdir", "rename"):
+        assert operation not in capabilities
+    # Content operations the archive API genuinely implements remain declared.
+    for operation in ("read", "write", "stat", "scandir", "open_read", "open_write"):
+        assert operation in capabilities
+
+
+def test_container_assembly_never_replays_a_dispatched_exec():
+    injector = FaultInjector()
+    host, _ = _container_host(
+        executor_providers=(
+            injector.executor(
+                "primary", fault=lambda: ConnectionResetError("exec stream dropped")
+            ),
+            injector.executor("secondary"),
+        )
+    )
+
+    with pytest.raises(ConnectionResetError):
+        host.run("systemctl restart nginx", check=False)
+
+    assert injector.calls == ["primary"]
+
+
+def test_container_assembly_falls_back_once_on_a_pre_dispatch_refusal():
+    injector = FaultInjector()
+    host, _ = _container_host(
+        executor_providers=(
+            injector.executor(
+                "primary", fault=lambda: OperationNotStarted("container starting")
+            ),
+            injector.executor("secondary"),
+            injector.executor("tertiary"),
+        )
+    )
+
+    assert host.run("uptime", check=False).stdout == b"ok"
+    assert injector.calls == ["primary", "secondary"]
+
+
+def test_container_uncertain_path_write_is_not_retried_elsewhere():
+    injector = FaultInjector()
+    second_backend = MemPathBackend()
+    host, _ = _container_host(
+        path_providers=(
+            injector.path(
+                "archive",
+                MemPathBackend(),
+                fault=lambda: ConnectionResetError("archive upload dropped"),
+            ),
+            injector.path("secondary", second_backend),
+        )
+    )
+
+    with pytest.raises(ConnectionResetError):
+        host.path("/etc/app.conf")
+
+    assert injector.calls == ["archive"]
+    assert not MemPath("/etc/app.conf", backend=second_backend).exists()
+
+
+def test_container_close_releases_the_provider_and_the_sdk_client():
+    host, client = _container_host()
+    with host:
+        pass
+    assert client.closed
+
+
+# --- (e) read-only providers reject mutations instead of falling through -----
+
+
+def test_read_only_download_provider_rejects_a_mutation_without_fallback():
+    """A declared read-only provider must not silently route a write away."""
+    injector = FaultInjector()
+    writable_backend = MemPathBackend()
+    download = DownloadPathProvider(
+        lambda *parts: MemPath(*parts, backend=writable_backend)
+    )
+    host = PosixHost(path_providers=(download,))
+
+    path = host.path("payload")
+    with pytest.raises(NotImplementedError):
+        path.write_bytes(b"mutation")
+
+    assert "write" not in download.capabilities
+    assert not MemPath("payload", backend=writable_backend).exists()
+    assert injector.calls == []
