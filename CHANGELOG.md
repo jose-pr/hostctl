@@ -82,5 +82,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A path provider that declined before dispatch is remembered for the
   connection generation instead of being re-attempted by every later
   operation; `invalidate()` clears the record along with cached probes.
+- `SystemHost` serializes its connection bookkeeping under a reentrant lock.
+  Concurrent `run()` calls previously raced the check-then-append in
+  `_ensure_provider_connected`, so every caller repeated the connect
+  round-trip and appended a duplicate entry to `_connected_providers`, which
+  grew without bound. Provider membership is now tested by identity.
+- Capability vocabularies agree. `ExecutorCapability` members subclass `str`,
+  so the enum published by executors and the strings published by providers
+  and hosts compare equal. `Shell` previously tested `ExecutorCapability.CWD`
+  against a set of strings — always false — so a host with native `cwd`/`env`
+  still had `cd`/`export` rendered into the script and the native values
+  dropped.
+- `SystemConfig` no longer fails with `AttributeError`. It is explicitly
+  abstract: `_create_host()` raises `TypeError` naming the concrete
+  configurations, and it no longer advertises a `system://` URI that
+  `HostConfig` rejected as an unsupported scheme.
+- `scheme` is a URI-derived property across the whole `HostConfig` hierarchy.
+  The system configurations shadowed it with a plain string and `SystemHost`
+  assigned to it; a config-less host now builds its own family configuration
+  instead.
 
 <!-- Add the [Unreleased] compare link after the first v0.1.0 tag exists. -->
