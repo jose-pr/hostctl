@@ -17,6 +17,7 @@ from ..provider import (
     PathProvider,
     ProviderSelector,
     ProviderSelection,
+    SessionInitializer,
 )
 from ..shell import CMD, POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ._common import (
@@ -202,6 +203,7 @@ class SystemHost(Host):
         path_providers=(),
         shell=None,
         info: HostInfo | None = None,
+        initializer=None,
     ):
         self.config = config or SystemConfig()
         if config is None and self.system_family != "generic":
@@ -225,6 +227,19 @@ class SystemHost(Host):
             )
         )
         self._info = info
+        config_options = getattr(self.config, "options", {})
+        self._initializer = (
+            initializer
+            if initializer is not None
+            else (
+                config_options.get("initializer")
+                if isinstance(config_options, dict)
+                else None
+            )
+        )
+        if self._initializer is not None and not callable(self._initializer):
+            raise TypeError("initializer must be callable")
+        self._initializer_generation = False
         self._connected = False
         self._connected_providers = []
         self._closed_targets = set()
@@ -295,6 +310,24 @@ class SystemHost(Host):
                     close()
             raise
         self._connected_providers = connected
+        if self._initializer is not None and not self._initializer_generation:
+            try:
+                target = connected[0] if connected else self
+                initializer = self._initializer
+                if isinstance(initializer, SessionInitializer):
+                    initializer(target)
+                else:
+                    initializer(target)
+                self._initializer_generation = True
+            except BaseException:
+                for provider in reversed(connected):
+                    close = getattr(provider, "close", None)
+                    if close:
+                        close()
+                self._connected_providers = []
+                self._executor_selector.invalidate()
+                self._path_selector.invalidate()
+                raise
         self._connected = True
 
     def close(self):
@@ -321,6 +354,7 @@ class SystemHost(Host):
             self._closed_targets.add(id(target))
         self._connected = False
         self._connected_providers = []
+        self._initializer_generation = False
         self._executor_selector.invalidate()
         self._path_selector.invalidate()
         if self._shell_resolver is not None:
