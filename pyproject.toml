@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hostctl"
+version = "0.1.0"
+authors = [{ name = "Jose A." }]
+description = "Run commands and access files on a host, local or remote, protocol-agnostic"
+readme = "README.md"
+keywords = ["ssh", "sysadmin", "pathlib", "subprocess", "remote"]
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: System :: Systems Administration",
+    "Topic :: System :: Filesystems",
+    "Typing :: Typed",
+]
+# pathlib_next supplies the common local/remote path return type. Transport
+# implementations remain extras, so importing hostctl never requires them.
+dependencies = ["pathlib_next>=0.8.4,<0.9"]
+
+[project.optional-dependencies]
+# SSH-backed run()/path(): asyncssh for shell exec, pathlib_next's SftpPath
+# (asyncssh-only since 0.8.2) for the remote path backend.
+ssh = ["asyncssh", "pathlib_next[sftp-async]>=0.8.4,<0.9"]
+# Windows Remote Management command execution.
+winrm = ["pywinrm>=0.5.0,<0.6"]
+# Docker Engine-compatible container execution, paths, and sessions.
+container = ["docker>=7.1,<8"]
+# Raw native, RFC 2217, socket, and virtual serial transports.
+serial = ["pyserial>=3.5,<4"]
+# Local libvirt domain lookup and arbitrary QGA commands.
+qemu-libvirt = ["libvirt-python"]
+# Optional pywinrm authentication providers. The base winrm extra already
+# supports basic/plaintext/ssl and NTLM.
+winrm-credssp = ["pywinrm[credssp]>=0.5.0,<0.6"]
+winrm-kerberos = ["pywinrm[kerberos]>=0.5.0,<0.6"]
+dev = ["black", "build", "pytest"]
+docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
+
+[project.urls]
+Homepage = "https://github.com/jose-pr/hostctl/"
+Documentation = "https://jose-pr.github.io/hostctl/"
+Issues = "https://github.com/jose-pr/hostctl/issues"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.*"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hostctl"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.black]
+target-version = ["py39"]

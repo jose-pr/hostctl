@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+*.egg-info/
+.venv/
+dist/
+build/
+site/
+
+# Private agent working area (dotagents link is a symlink; a directory-only
+# `.agents/` pattern would not match it, so this must stay slashless).
+.agents
+CLAUDE*
+.claude

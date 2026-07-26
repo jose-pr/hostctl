@@ -1,0 +1,440 @@
+"""Transport-independent shell construction and executor binding."""
+
+import os
+import subprocess
+import typing
+from pathlib import PurePosixPath
+
+import pytest
+
+from hostctl import (
+    BASH,
+    CMD,
+    FISH,
+    Executor,
+    ExecutorCapability,
+    ExecutorCommand,
+    ExecutionOptions,
+    POSIX_SHELL,
+    POWERSHELL,
+    PWSH,
+    Shell,
+    ShellOperator,
+    SshConfig,
+    SshExecutor,
+    SshHost,
+    WinRMConfig,
+    WinRMExecutor,
+    WinRMHost,
+    ZSH,
+    register_shell_flavour,
+    shell_flavour,
+)
+from hostctl.executor import Executor as ModuleExecutor
+
+
+def test_shell_callable_executor_receives_one_script():
+    commands = []
+    shell = Shell(POWERSHELL, commands.append)
+
+    result = shell.run(
+        ["Write-Output", "first"],
+        ["Write-Output", "second"],
+        cwd=r"C:\Temp",
+        env={"NAME": "value"},
+    )
+
+    assert result is None
+    assert len(commands) == 1
+    assert "Write-Output" in commands[0]
+    assert "Set-Location -LiteralPath 'C:\\Temp'" in commands[0]
+    assert "$env:NAME='value'" in commands[0]
+
+
+def test_executor_contracts_are_direct_hostctl_api():
+    assert Executor is ModuleExecutor
+    assert Executor in Shell.__mro__
+    assert Executor in SshExecutor.__mro__
+    assert Executor in WinRMExecutor.__mro__
+
+
+def test_executor_contract_declares_subprocess_basics():
+    hints = typing.get_type_hints(Executor.__call__)
+    assert {
+        "stdin",
+        "stdout",
+        "stderr",
+        "cwd",
+        "env",
+        "capture_output",
+        "check",
+        "encoding",
+        "errors",
+        "input",
+        "timeout",
+        "text",
+    } <= hints.keys()
+
+
+def test_shell_accepts_host_shaped_executor():
+    class _Host:
+        def __init__(self):
+            self.commands = []
+
+        def run(self, command):
+            self.commands.append(command)
+            return 7
+
+    host = _Host()
+    shell = Shell(POSIX_SHELL, host)
+
+    assert shell.run("echo hello", env={"NAME": "a b"}) == 7
+    assert host.commands == ["export NAME='a b';echo hello"]
+
+
+def test_shell_execute_preserves_path_for_executor():
+    commands = []
+    shell = Shell(POSIX_SHELL, commands.append)
+
+    shell.execute(PurePosixPath("/usr/local/bin/tool"))
+
+    assert commands == [PurePosixPath("/usr/local/bin/tool")]
+
+
+def test_shell_passes_context_separately_when_executor_accepts_it():
+    calls = []
+
+    def executor(command, *, cwd=None, env=None):
+        calls.append((command, cwd, env))
+        return "done"
+
+    shell = Shell(POSIX_SHELL, executor)
+    result = shell.run(
+        "echo hello",
+        cwd=PurePosixPath("/tmp/work"),
+        env={"NAME": "value"},
+    )
+
+    assert result == "done"
+    assert calls == [
+        (
+            "echo hello",
+            PurePosixPath("/tmp/work"),
+            {"NAME": "value"},
+        )
+    ]
+
+
+def test_shell_execute_rejects_context_the_executor_cannot_accept():
+    shell = Shell(POSIX_SHELL, lambda command: command)
+
+    try:
+        shell.execute("echo hello", cwd="/tmp")
+    except TypeError as exc:
+        assert str(exc) == "executor does not accept cwd"
+    else:
+        raise AssertionError("unsupported execution context was silently ignored")
+
+
+def test_shell_forwards_executor_io_and_text_options_unchanged():
+    calls = []
+
+    def executor(command, *, stdin=None, stdout=None, encoding=None, text=False):
+        calls.append((command, stdin, stdout, encoding, text))
+        return "result"
+
+    shell = Shell(POSIX_SHELL, executor)
+    result = shell.run(
+        "echo hello",
+        stdin="input-stream",
+        stdout="output-stream",
+        encoding="utf-8",
+        text=True,
+    )
+
+    assert result == "result"
+    assert calls == [
+        (
+            "echo hello",
+            "input-stream",
+            "output-stream",
+            "utf-8",
+            True,
+        )
+    ]
+
+
+def test_executor_can_distinguish_command_from_script_by_value_type():
+    calls = []
+
+    def executor(command):
+        calls.append(command)
+
+    shell = Shell(POSIX_SHELL, executor)
+    shell.execute(PurePosixPath("/usr/bin/true"))
+    shell.execute("printf direct-shell-text")
+    shell.run(("printf", "%s", "hello"))
+
+    assert calls == [
+        PurePosixPath("/usr/bin/true"),
+        "printf direct-shell-text",
+        "printf %s hello",
+    ]
+
+
+def test_shell_passes_native_args_only_when_executor_supports_them():
+    class _NativeExecutor:
+        executor_capabilities = frozenset((ExecutorCapability.ARGS,))
+
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, command, *args):
+            self.calls.append((command, args))
+
+    executor = _NativeExecutor()
+    Shell(POSIX_SHELL, executor).execute(
+        PurePosixPath("/usr/bin/tool"),
+        "--name",
+        "value with spaces",
+    )
+
+    assert executor.calls == [
+        (
+            PurePosixPath("/usr/bin/tool"),
+            ("--name", "value with spaces"),
+        )
+    ]
+
+
+def test_shell_renders_args_when_executor_has_no_native_args():
+    calls = []
+    Shell(POSIX_SHELL, calls.append).execute(
+        PurePosixPath("/usr/bin/tool"),
+        "--name",
+        "value with spaces",
+    )
+
+    assert calls == ["/usr/bin/tool --name 'value with spaces'"]
+
+
+def test_posix_raw_commands_preserve_shell_operators():
+    script = POSIX_SHELL.script(
+        (
+            "printf first && printf second",
+            "printf third | cat > output.txt",
+        )
+    )
+
+    assert script == (
+        "printf first && printf second;" "printf third | cat > output.txt"
+    )
+
+
+def test_shell_flavour_environment_script_is_reusable():
+    assert (
+        POSIX_SHELL.environment_script({"NAME": "value with spaces", b"BYTES": b"data"})
+        == "export NAME='value with spaces';export BYTES=data"
+    )
+    assert (
+        POWERSHELL.environment_script({"NAME": "value with spaces", b"BYTES": b"data"})
+        == "$env:NAME='value with spaces';$env:BYTES='data'"
+    )
+    assert (
+        POSIX_SHELL.environment_script({"PORT": 8080, "RATIO": 1.5, "ENABLED": True})
+        == "export PORT=8080;export RATIO=1.5;export ENABLED=True"
+    )
+
+
+def test_posix_structured_commands_quote_operators_as_arguments():
+    script = POSIX_SHELL.script(
+        (
+            ("printf", "%s", "left && right"),
+            ("printf", "%s", b"bytes | data"),
+        )
+    )
+
+    assert script == ("printf %s 'left && right';" "printf %s 'bytes | data'")
+
+
+def test_posix_multiple_path_commands_are_quoted_individually():
+    script = POSIX_SHELL.script(
+        (
+            PurePosixPath("/opt/first command"),
+            PurePosixPath("/opt/second command"),
+        )
+    )
+
+    assert script == "'/opt/first command';'/opt/second command'"
+
+
+def test_explicit_shell_operators_compose_structured_commands():
+    script = POSIX_SHELL.script(
+        (
+            ("printf", "%s", "first"),
+            ShellOperator.AND,
+            ("printf", "%s", "second"),
+            ShellOperator.PIPE,
+            ("cat",),
+            ShellOperator.REDIRECT,
+            PurePosixPath("/tmp/output file"),
+        )
+    )
+
+    assert script == ("printf %s first&&printf %s second|cat>" "'/tmp/output file'")
+
+
+def test_shell_operators_must_be_infix():
+    with pytest.raises(ValueError, match="between commands"):
+        POSIX_SHELL.script((ShellOperator.AND, ("true",)))
+    with pytest.raises(ValueError, match="followed by"):
+        POSIX_SHELL.script((("true",), ShellOperator.AND))
+
+
+def test_windows_powershell_rejects_nonportable_and_operator():
+    with pytest.raises(NotImplementedError, match="not portable"):
+        POWERSHELL.script(
+            (
+                ("Write-Output", "first"),
+                ShellOperator.AND,
+                ("Write-Output", "second"),
+            )
+        )
+
+
+def test_powershell_7_supports_pipeline_chain_operators():
+    assert (
+        PWSH.script(
+            (("Write-Output", "first"), ShellOperator.AND, ("Write-Output", "second"))
+        )
+        == "& 'Write-Output' 'first' && & 'Write-Output' 'second'"
+    )
+
+
+def test_common_shell_executables_are_explicit():
+    assert POSIX_SHELL.default_executable == "/bin/sh"
+    assert BASH.default_executable == "/bin/bash"
+    assert ZSH.default_executable == "/bin/zsh"
+    assert FISH.default_executable == "/usr/bin/fish"
+    assert CMD.default_executable == "cmd.exe"
+    assert POWERSHELL.default_executable == "powershell.exe"
+    assert POWERSHELL.major_version == 5
+    assert PWSH.default_executable == "pwsh"
+    assert PWSH.major_version == 7
+
+
+def test_cmd_shell_renders_environment_cwd_args_and_operators():
+    script = CMD.script(
+        (
+            ("tool.exe", "value & data"),
+            ShellOperator.AND,
+            ("echo", "done"),
+        ),
+        cwd=r"C:\Program Files",
+        env={"NAME": "100%"},
+    )
+    assert script == (
+        'set "NAME=100%%"&cd /d "C:\\Program Files"&'
+        'tool.exe "value & data"&&echo done'
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+def test_cmd_shell_operators_execute_on_windows():
+    command = CMD.command(
+        (
+            ("cmd", "/c", "echo A"),
+            ShellOperator.AND,
+            ("cmd", "/c", "echo B"),
+        )
+    )
+
+    result = subprocess.run(
+        command.command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == ["A", "B"]
+
+
+def test_fish_uses_native_environment_and_boolean_syntax():
+    script = FISH.script(
+        (("echo", "first"), ShellOperator.AND, ("echo", "second")),
+        env={"NAME": "a b"},
+    )
+    assert script == "set -gx NAME 'a b';echo first; and echo second"
+
+
+def test_host_builds_shell_from_its_flavour_and_executor():
+    ssh = SshHost(SshConfig("host", dialect="powershell"))
+    winrm = WinRMHost(WinRMConfig("host", "user"))
+
+    assert ssh.shell.flavour is POWERSHELL
+    assert winrm.shell.flavour is POWERSHELL
+    assert isinstance(ssh.executor, SshExecutor)
+    assert isinstance(winrm.executor, WinRMExecutor)
+    assert getattr(ssh.shell._execute, "__self__", None) is ssh
+    assert getattr(winrm.shell._execute, "__self__", None) is winrm
+
+
+def test_shell_session_uses_flavour_wrapper_and_provider_spawn():
+    class _Process:
+        returncode = None
+
+        def __init__(self):
+            self.written = ""
+
+        def write(self, value):
+            self.written += value
+
+    class _Provider:
+        executor_capabilities = frozenset()
+
+        def __init__(self):
+            self.calls = []
+
+        def run(self, command, **options):
+            raise AssertionError("session must not call run")
+
+        def spawn(self, *commands, **options):
+            self.calls.append((commands, options))
+            return _Process()
+
+    provider = _Provider()
+    shell = Shell(POWERSHELL, provider)
+
+    result = shell.session(
+        ["Write-Output", "a b"],
+        cwd=r"C:\Program Files",
+        env={"NUMBER": 7},
+        encoding="utf-8",
+    )
+
+    assert result.process is not None
+    assert provider.calls[0][0] == ()
+    assert "Set-Location -LiteralPath 'C:\\Program Files'" in result.process.written
+    assert "$env:NUMBER='7'" in result.process.written
+    assert "'Write-Output' 'a b'" in result.process.written
+    assert provider.calls[0][1]["encoding"] == "utf-8"
+
+    result.send(["Write-Output", "c d"], ShellOperator.PIPE, "Out-String")
+    assert "'Write-Output' 'c d' | Out-String;" in result.process.written
+
+
+def test_shell_session_without_spawn_fails_explicitly():
+    shell = Shell(POSIX_SHELL, lambda command: None)
+    with pytest.raises(NotImplementedError, match="persistent sessions"):
+        shell.session("sh")
+
+
+def test_shell_flavour_accepts_class_and_registered_string():
+    class _Custom(type(POSIX_SHELL)):
+        name = "test-custom-shell"
+
+    constructed = shell_flavour(_Custom)
+    assert isinstance(constructed, _Custom)
+    registered = register_shell_flavour(constructed)
+    assert shell_flavour("test-custom-shell") is registered

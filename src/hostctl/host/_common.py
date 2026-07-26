@@ -1,0 +1,476 @@
+"""Protocol-independent host contracts and shared implementation helpers."""
+
+from __future__ import annotations
+
+import abc as _abc
+import dataclasses as _dc
+import importlib.metadata as _metadata
+import subprocess as _subprocess
+import typing as _ty
+import types as _types
+from pathlib import PurePath as _PurePath
+from urllib.parse import (
+    SplitResult as _SplitResult,
+    parse_qsl as _parse_qsl,
+    urlsplit as _urlsplit,
+)
+
+from pathlib_next import Path as HostPath, Pathname as _Pathname
+
+from ..executor import (
+    CaptureOutput,
+    Environment,
+    FileHandle,
+    Input,
+    PathLike,
+)
+
+if _ty.TYPE_CHECKING:
+    from ..executor import Executor, ExecutorCapability
+    from ..process import Process, TerminalRequest
+    from ..shell import Shell, ShellFlavour
+
+Command = _ty.Union[str, PathLike, _ty.Sequence[object]]
+
+
+def starts_direct_command(
+    cmds: _ty.Sequence[Command],
+) -> _ty.Optional[_ty.Tuple[_ty.Union[_PurePath, _Pathname], _ty.Tuple[object, ...]]]:
+    """Split a path-led call into one executable and its argv arguments.
+
+    A leading path object is the explicit direct-execution marker.  Every
+    trailing value is an argv scalar; nested command sequences are rejected so
+    callers cannot accidentally mix shell-command and argv semantics.
+    """
+    if not cmds or not isinstance(cmds[0], (_PurePath, _Pathname)):
+        return None
+    command = cmds[0]
+    argv = tuple(cmds[1:])
+    for value in argv:
+        if isinstance(value, (tuple, list)):
+            raise TypeError("direct command arguments must be scalar values")
+        if not isinstance(value, (str, bytes, _PurePath, _Pathname)):
+            raise TypeError(
+                "direct command arguments must be str, bytes, or path values"
+            )
+    return command, argv
+
+
+@_dc.dataclass(frozen=True)
+class HostInfo:
+    """Normalized system information; unavailable values remain ``None``."""
+
+    hostname: _ty.Optional[str] = None
+    os_family: _ty.Optional[str] = None
+    os_name: _ty.Optional[str] = None
+    os_version: _ty.Optional[str] = None
+    architecture: _ty.Optional[str] = None
+
+
+def parse_host_info(output: _ty.Union[bytes, str, None]) -> HostInfo:
+    """Parse newline-delimited ``HostInfo`` fields from a transport response."""
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", "replace")
+    values = {}
+    for line in (output or "").splitlines():
+        key, separator, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if separator and key in HostInfo.__dataclass_fields__ and value:
+            values[key] = value
+    if "os_family" in values:
+        values["os_family"] = normalize_os_family(values["os_family"])
+    return HostInfo(**values)
+
+
+def normalize_os_family(value: _ty.Optional[str]) -> _ty.Optional[str]:
+    """Normalize a directly reported OS family without inferring one."""
+    if not value:
+        return None
+    normalized = value.casefold()
+    aliases = {
+        "win32nt": "windows",
+        "windows": "windows",
+        "linux": "linux",
+        "darwin": "macos",
+        "macos": "macos",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def uri_host(host: str) -> str:
+    """Bracket an IPv6 literal for use in a URI authority."""
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
+
+
+def capture_streams(
+    capture_output: CaptureOutput,
+    stdout: _ty.Optional[FileHandle],
+    stderr: _ty.Optional[FileHandle],
+) -> _ty.Tuple[_ty.Optional[FileHandle], _ty.Optional[FileHandle]]:
+    """Apply hostctl's extended capture_output convention."""
+    if capture_output not in (True, False, "stdout", "stderr"):
+        raise ValueError("capture_output must be True, False, 'stdout', or 'stderr'")
+    capture = capture_output or ""
+    if capture == "stdout":
+        if stdout not in (None, _subprocess.PIPE):
+            raise ValueError("stdout argument cannot be used with capture_output='stdout'")
+        stdout = _subprocess.PIPE
+    elif capture == "stderr":
+        if stderr not in (None, _subprocess.PIPE):
+            raise ValueError("stderr argument cannot be used with capture_output='stderr'")
+        stderr = _subprocess.PIPE
+    elif capture is True:
+        if stdout is None:
+            stdout = _subprocess.PIPE
+        if stderr is None:
+            stderr = _subprocess.PIPE
+    return stdout, stderr
+
+
+class _HostConfigMeta(_abc.ABCMeta):
+    def __call__(cls, *args: object, **options: object) -> HostConfig:
+        if cls is HostConfig:
+            if len(args) != 1 or not isinstance(args[0], str):
+                raise TypeError(
+                    "HostConfig() requires one connection string positional argument"
+                )
+            return cls._from_uri(args[0], **options)
+        return super().__call__(*args, **options)
+
+
+class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
+    """Secret-safe connection configuration and extensible URI dispatch."""
+
+    _uri_schemes: _ty.ClassVar[_ty.Tuple[str, ...]] = ()
+    _uri_registry_cache: _ty.ClassVar[
+        _ty.Optional[_ty.Tuple[_ty.Type["HostConfig"], ...]]
+    ] = None
+
+    def __init__(self) -> None:
+        self._opened_host: _ty.Optional[Host] = None
+
+    def __init_subclass__(
+        cls,
+        *,
+        schemes: _ty.Iterable[str] = (),
+        **kwargs: object,
+    ) -> None:
+        super().__init_subclass__(**kwargs)
+        cls._uri_schemes = tuple(scheme.casefold() for scheme in schemes)
+        HostConfig._refresh_uri_registry()
+
+    @property
+    def scheme(self) -> str:
+        return _urlsplit(self.connection_uri).scheme.casefold()
+
+    def __str__(self) -> str:
+        return self.connection_uri
+
+    @property
+    @_abc.abstractmethod
+    def connection_uri(self) -> str:
+        """Credential-safe canonical connection URI."""
+
+    @_abc.abstractmethod
+    def _create_host(self) -> Host:
+        """Create the operational host represented by this configuration."""
+
+    def open(self) -> Host:
+        """Return a host context manager for this configuration."""
+        return self._create_host()
+
+    def __enter__(self) -> Host:
+        if getattr(self, "_opened_host", None) is not None:
+            raise RuntimeError("host configuration is already open")
+        host = self._create_host()
+        self._opened_host = host
+        try:
+            return host.__enter__()
+        except BaseException:
+            try:
+                host.close()
+            finally:
+                self._opened_host = None
+            raise
+
+    def __exit__(
+        self,
+        exc_type: _ty.Optional[_ty.Type[BaseException]],
+        exc_value: _ty.Optional[BaseException],
+        traceback: _ty.Optional[_types.TracebackType],
+    ) -> _ty.Optional[bool]:
+        host, self._opened_host = self._opened_host, None
+        if host is not None:
+            return host.__exit__(exc_type, exc_value, traceback)
+        return False
+
+    @classmethod
+    def _from_uri(
+        cls,
+        uri: str,
+        **credentials: object,
+    ) -> HostConfig:
+        """Dispatch a credential-safe URI to a registered configuration."""
+        parsed = _urlsplit(uri)
+        if parsed.fragment:
+            raise ValueError("connection URI fragments are not supported")
+        if parsed.password is not None:
+            raise ValueError("passwords must not appear in connection URIs")
+        matches = [
+            implementation
+            for implementation in cls._uri_implementations()
+            if implementation._matches_uri(parsed)
+        ]
+        if not matches:
+            raise ValueError(
+                f"unsupported host scheme: {parsed.scheme.casefold() or '<missing>'}"
+            )
+        if len(matches) > 1:
+            names = ", ".join(item.__name__ for item in matches)
+            raise ValueError(f"ambiguous host URI matched: {names}")
+        return matches[0]._from_parsed_uri(parsed, **credentials)
+
+    @classmethod
+    def _matches_uri(cls, parsed: _SplitResult) -> bool:
+        """Whether this implementation accepts a parsed URI."""
+        return parsed.scheme.casefold() in cls._uri_schemes
+
+    @classmethod
+    def _from_parsed_uri(
+        cls, parsed: _SplitResult, **credentials: object
+    ) -> HostConfig:
+        """Construct from a URI selected by :meth:`_matches_uri`."""
+        raise NotImplementedError(f"{cls.__name__} does not implement URI construction")
+
+    @classmethod
+    def _refresh_uri_registry(cls) -> None:
+        """Clear URI implementation discovery for tests and newly loaded plugins."""
+        HostConfig._uri_registry_cache = None
+
+    @classmethod
+    def _uri_implementations(
+        cls,
+    ) -> _ty.Tuple[_ty.Type[HostConfig], ...]:
+        if HostConfig._uri_registry_cache is None:
+            from . import (
+                container as _container,
+                local as _local,
+                qemu as _qemu,
+                ssh as _ssh,
+                winrm as _winrm,
+            )
+
+            del _container, _local, _qemu, _ssh, _winrm
+            loaded = []
+            entry_points = _metadata.entry_points()
+            if hasattr(entry_points, "select"):
+                entry_points = entry_points.select(group="hostctl.configs")
+            elif hasattr(entry_points, "get"):  # Python 3.9 metadata compatibility
+                entry_points = entry_points.get("hostctl.configs", ())
+            else:
+                entry_points = tuple(
+                    item
+                    for item in entry_points
+                    if getattr(item, "group", None) == "hostctl.configs"
+                )
+            for entry_point in entry_points:
+                try:
+                    implementation = entry_point.load()
+                    if not isinstance(implementation, type) or not issubclass(
+                        implementation, HostConfig
+                    ):
+                        raise TypeError(
+                            f"hostctl.configs entry point {entry_point.name!r} "
+                            "must load a HostConfig subclass"
+                        )
+                except Exception as exc:
+                    import warnings
+
+                    warnings.warn(
+                        f"unable to load hostctl.configs entry point "
+                        f"{entry_point.name!r}: {exc}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    continue
+                loaded.append(implementation)
+            discovered = list(_recursive_subclasses(HostConfig))
+            HostConfig._uri_registry_cache = tuple(dict.fromkeys(discovered + loaded))
+        return tuple(
+            item
+            for item in HostConfig._uri_registry_cache
+            if issubclass(item, cls) and item._uri_schemes
+        )
+
+
+class _HostMeta(_abc.ABCMeta):
+    def __call__(cls, *args: object, **options: object) -> Host:
+        if cls is Host:
+            if len(args) != 1 or not isinstance(args[0], str):
+                raise TypeError(
+                    "Host() requires one connection string positional argument"
+                )
+            config = HostConfig._from_uri(args[0], **options)
+            return config._create_host()
+        return super().__call__(*args, **options)
+
+
+class Host(_abc.ABC, metaclass=_HostMeta):
+    """Protocol-independent operational interface to a machine."""
+
+    config: HostConfig
+
+    @property
+    def scheme(self) -> str:
+        return self.config.scheme
+
+    @property
+    def connection_uri(self) -> str:
+        return self.config.connection_uri
+
+    @property
+    def shell_flavour(self) -> ShellFlavour:
+        """The explicitly known shell language used by this host."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not identify a shell flavour"
+        )
+
+    @property
+    def executor(self) -> Executor[_subprocess.CompletedProcess]:
+        """The command executor used when binding this host's shell."""
+        host = self
+
+        class _HostExecutor:
+            executor_capabilities = host.executor_capabilities
+
+            def __call__(self, command, *args, **options):
+                return host.run(command, *args, **options)
+
+        return _HostExecutor()
+
+    @property
+    def executor_capabilities(self) -> _ty.FrozenSet[ExecutorCapability]:
+        """Native context/argument features of the underlying executor."""
+        return frozenset()
+
+    @property
+    def shell(self) -> Shell[_subprocess.CompletedProcess]:
+        """Build a shell bound to this host's executor."""
+        from ..shell import Shell
+
+        return Shell(self.shell_flavour, self)
+
+    @property
+    @_abc.abstractmethod
+    def capabilities(self) -> _ty.FrozenSet[str]:
+        """Operations supported by this host."""
+
+    @_abc.abstractmethod
+    def info(self) -> HostInfo:
+        """Return normalized system information without inferred values."""
+
+    def connect(self) -> None:
+        """Open transport resources; local/default implementations are no-op."""
+
+    def close(self) -> None:
+        """Close transport resources; local/default implementations are no-op."""
+
+    def __enter__(self) -> Host:
+        try:
+            self.connect()
+        except BaseException:
+            self.close()
+            raise
+        return self
+
+    def __exit__(
+        self,
+        exc_type: _ty.Optional[_ty.Type[BaseException]],
+        exc_value: _ty.Optional[BaseException],
+        traceback: _ty.Optional[_types.TracebackType],
+    ) -> bool:
+        self.close()
+        return False
+
+    def path(self, *segments: PathLike, backend: _ty.Optional[str] = None) -> HostPath:
+        """Return a pathlib-compatible path for this host."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide the 'path' capability"
+        )
+
+    def spawn(
+        self,
+        *cmds: Command,
+        executable: _ty.Optional[str] = None,
+        cwd: _ty.Optional[PathLike] = None,
+        env: _ty.Optional[Environment] = None,
+        terminal: TerminalRequest = None,
+        encoding: _ty.Optional[str] = None,
+        errors: _ty.Optional[str] = None,
+    ) -> Process:
+        """Start a persistent process controlled through a synchronous facade."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide the 'spawn' capability"
+        )
+
+    def run(
+        self,
+        *cmds: Command,
+        bufsize: int = -1,
+        executable: _ty.Optional[str] = None,
+        stdin: _ty.Optional[FileHandle] = None,
+        stdout: _ty.Optional[FileHandle] = None,
+        stderr: _ty.Optional[FileHandle] = None,
+        cwd: _ty.Optional[PathLike] = None,
+        env: _ty.Optional[Environment] = None,
+        capture_output: CaptureOutput = True,
+        check: bool = True,
+        encoding: _ty.Optional[str] = None,
+        errors: _ty.Optional[str] = None,
+        input: Input = None,
+        timeout: _ty.Optional[float] = None,
+        text: _ty.Optional[bool] = None,
+    ) -> _subprocess.CompletedProcess:
+        """Run commands and return a subprocess-compatible result."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide the 'run' capability"
+        )
+
+
+def strict_uri_query(
+    parsed: _SplitResult, allowed: _ty.Iterable[str]
+) -> _ty.Dict[str, str]:
+    """Parse one selected implementation's query without ambiguity."""
+    query = {}
+    for key, value in _parse_qsl(parsed.query, keep_blank_values=True):
+        if key in query:
+            raise ValueError(f"duplicate connection parameter: {key}")
+        query[key] = value
+    unknown = set(query) - set(allowed)
+    if unknown:
+        raise ValueError(f"unknown connection parameter: {sorted(unknown)[0]}")
+    return query
+
+
+def strict_uri_credentials(
+    credentials: _ty.Mapping[str, object], allowed: _ty.Iterable[str]
+) -> None:
+    """Reject credentials which the selected implementation does not accept."""
+    unknown = set(credentials) - set(allowed)
+    if unknown:
+        raise ValueError(f"unknown credential argument: {sorted(unknown)[0]}")
+
+
+def _query_int(query: _ty.Mapping[str, str], name: str, default: int) -> int:
+    try:
+        return int(query.get(name, default))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+
+
+def _recursive_subclasses(
+    base: _ty.Type[HostConfig],
+) -> _ty.Iterator[_ty.Type[HostConfig]]:
+    for subclass in base.__subclasses__():
+        yield subclass
+        yield from _recursive_subclasses(subclass)
