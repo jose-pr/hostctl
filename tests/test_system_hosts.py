@@ -14,9 +14,33 @@ from hostctl import (
     WindowsHost,
     WinRMConfig,
     ProviderSelector,
+    SessionInitializer,
 )
 from hostctl.executor import LocalExecutor
 from hostctl.host import HostPath
+
+
+class _InitProvider:
+    def __init__(self, name="p", fail_close=False):
+        self.name = name
+        self.capabilities = frozenset()
+        self.transport = self
+        self.calls = []
+        self.fail_close = fail_close
+
+    def probe(self):
+        return ProviderProbe("available")
+
+    def connect(self):
+        self.calls.append("connect")
+
+    def close(self):
+        self.calls.append("close")
+        if self.fail_close:
+            raise RuntimeError("close failed")
+
+    def execute(self, *args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, b"", b"")
 
 
 def test_system_uri_roundtrip_and_ordered_providers():
@@ -29,6 +53,41 @@ def test_system_uri_roundtrip_and_ordered_providers():
     )
     assert config.executors == ("first", "second")
     assert config.paths == ("rpc", "sftp")
+
+
+def test_system_initializer_default_and_generation_timeout_and_override():
+    provider = _InitProvider()
+    calls = []
+    config = PosixConfig("node", initializer=lambda session: calls.append(session))
+    host = PosixHost(
+        config, executor_providers=(provider,), initializer=lambda s: calls.append(s)
+    )
+    host.connect()
+    host.connect()
+    assert len(calls) == 1 and calls[0] is provider
+    host.close()
+    host.connect()
+    assert len(calls) == 2
+    captured = []
+    timeout_init = SessionInitializer(
+        lambda session, **opts: captured.append(opts), timeout=3
+    )
+    PosixHost(executor_providers=(provider,), initializer=timeout_init).connect()
+    assert captured == [{"timeout": 3}]
+
+
+def test_system_initializer_failure_cleans_up_without_replay():
+    first, second = _InitProvider("first"), _InitProvider("second", fail_close=True)
+    host = PosixHost(
+        executor_providers=(first, second),
+        initializer=lambda _: (_ for _ in ()).throw(ValueError("boom")),
+    )
+    with pytest.raises(ValueError, match="boom"):
+        host.connect()
+    assert first.calls.count("close") == 1
+    assert second.calls.count("close") == 0
+    assert host._connected is False
+    assert host._executor_selector.last_selection is None
 
 
 def test_system_config_resolves_builtin_local_descriptors():

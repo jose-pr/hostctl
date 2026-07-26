@@ -323,7 +323,10 @@ class SystemHost(Host):
                 for provider in reversed(connected):
                     close = getattr(provider, "close", None)
                     if close:
-                        close()
+                        try:
+                            close()
+                        except BaseException:
+                            pass
                 self._connected_providers = []
                 self._executor_selector.invalidate()
                 self._path_selector.invalidate()
