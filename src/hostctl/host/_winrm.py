@@ -412,8 +412,12 @@ class WinRMPathBackend:
         self, path: str, body: str, *, target: typing.Optional[str] = None
     ) -> str:
         values = [
-            "$OutputEncoding=[Console]::OutputEncoding="
-            "[Text.UTF8Encoding]::new($false)",
+            # A headless native Invoke-Command runspace can have no valid
+            # console handle. Keep the WinRS UTF-8 fix, but do not let
+            # Console.OutputEncoding abort otherwise-valid filesystem work.
+            "try{[Console]::OutputEncoding="
+            "[Text.UTF8Encoding]::new($false)}catch{};"
+            "$OutputEncoding=[Text.UTF8Encoding]::new($false)",
             "$ErrorActionPreference='Stop'",
             "$p=[Text.Encoding]::UTF8.GetString("
             f"[Convert]::FromBase64String('{_encoded(path)}'))",

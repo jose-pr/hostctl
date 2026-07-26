@@ -147,6 +147,11 @@ def test_winrm_backend_prelude_and_command_budget_for_large_write():
         len(script.encode("utf-8")) <= backend.max_script_bytes for script in scripts
     )
     assert all("OutputEncoding" in script for script in scripts)
+    assert all(
+        "try{[Console]::OutputEncoding=" in script
+        and "catch{};$OutputEncoding=" in script
+        for script in scripts
+    )
     # Multiple chunks are grouped into a single PowerShell invocation.
     assert len(scripts) < 1024
 
