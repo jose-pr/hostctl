@@ -360,7 +360,7 @@ def fake_providers() -> tuple[Provider, ...]:
 
     return (
         Provider(
-            "local", _local, frozenset(("run", "path", "spawn", "args", "cwd", "env"))
+            "local", _local, frozenset(("run", "path", "args", "cwd", "env"))
         ),
         Provider("ssh", lambda: _fake(FakeSshHost), frozenset(("run", "path"))),
         Provider("winrm", lambda: _fake(FakeWinRMHost), frozenset(("run", "path"))),
