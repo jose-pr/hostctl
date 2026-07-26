@@ -58,7 +58,16 @@ class SerialProcess(Process):
         if size < -1:
             raise ValueError("read size must be -1 or non-negative")
         if size == -1:
-            size = 64 * 1024
+            available = getattr(self._serial, "in_waiting", None)
+            if available is not None:
+                size = min(max(int(available), 0), 64 * 1024)
+                if size == 0:
+                    return b""
+            else:
+                # A generic injected serial object may not expose an
+                # availability count. Read at most one byte rather than
+                # blocking for an arbitrary 64 KiB request.
+                size = 1
         try:
             with self._io_lock:
                 return self._serial.read(size)

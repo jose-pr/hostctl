@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import subprocess
+import time
 
 import pytest
 
@@ -28,6 +29,8 @@ class _Serial:
         self.closed = False
         self.breaks = []
         self.resets = 0
+        self.timeout = None
+        self.write_timeout = None
 
     def close(self):
         self.closed = True
@@ -204,6 +207,48 @@ def test_serial_transport_deadlines_reset_and_line_controls():
     transport.rts = True
     assert serial_port.resets == 1
     assert transport.dtr and transport.rts
+
+
+def test_serial_transport_applies_deadlines_to_blocking_backend_calls():
+    class DeadlineSerial(_Serial):
+        def __init__(self):
+            super().__init__()
+            self.seen_read_timeouts = []
+            self.seen_write_timeouts = []
+
+        def read(self, size=1):
+            self.seen_read_timeouts.append(self.timeout)
+            time.sleep(min(self.timeout or 0, 0.01))
+            return b""
+
+        def write(self, data):
+            self.seen_write_timeouts.append(self.write_timeout)
+            return len(data)
+
+    serial_port = DeadlineSerial()
+    transport = SerialTransport(serial_port)
+
+    started = time.monotonic()
+    assert transport.read(1, timeout=0.03) == b""
+    assert time.monotonic() - started < 0.15
+    transport.write(b"x", timeout=0.25)
+
+    assert serial_port.seen_read_timeouts
+    assert all(0 <= value <= 0.03 for value in serial_port.seen_read_timeouts)
+    assert serial_port.seen_write_timeouts[0] <= 0.25
+    assert serial_port.timeout is None
+    assert serial_port.write_timeout is None
+
+
+def test_serial_process_read_all_means_current_available_bytes():
+    serial_port = _Serial((b"available",))
+    serial_port.in_waiting = 4
+    process = SerialExecutor(
+        SerialSettings("injected"),
+        serial_port=serial_port,
+    ).open()
+
+    assert process.read() == b"avai"
 
 
 def test_serial_transport_rejects_negative_deadlines():

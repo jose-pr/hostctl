@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import errno
+import contextlib
 import threading
 import time
 import types
@@ -17,6 +18,8 @@ class SerialLike(typing.Protocol):
     is_open: bool
     dtr: bool
     rts: bool
+    timeout: typing.Optional[float]
+    write_timeout: typing.Optional[float]
 
     def close(self) -> None: ...
 
@@ -48,6 +51,25 @@ class SerialTransport:
     def connected(self) -> bool:
         return bool(self.serial.is_open)
 
+    @contextlib.contextmanager
+    def _deadline_timeout(
+        self, attribute: str, deadline: typing.Optional[float]
+    ) -> typing.Iterator[None]:
+        if deadline is None:
+            yield
+            return
+        if not hasattr(self.serial, attribute):
+            raise NotImplementedError(
+                f"serial backend cannot enforce a finite {attribute.replace('_', ' ')}"
+            )
+        previous = getattr(self.serial, attribute)
+        remaining = max(0.0, deadline - time.monotonic())
+        setattr(self.serial, attribute, remaining)
+        try:
+            yield
+        finally:
+            setattr(self.serial, attribute, previous)
+
     def read(
         self, size: int = 4096, *, timeout: typing.Optional[float] = None
     ) -> bytes:
@@ -58,7 +80,8 @@ class SerialTransport:
             raise ValueError("timeout must not be negative")
         with self.lock:
             while True:
-                value = self.serial.read(size)
+                with self._deadline_timeout("timeout", deadline):
+                    value = self.serial.read(size)
                 if value or deadline is None or time.monotonic() >= deadline:
                     return value
 
@@ -69,7 +92,8 @@ class SerialTransport:
         offset = 0
         with self.lock:
             while offset < len(data):
-                written = self.serial.write(data[offset:])
+                with self._deadline_timeout("write_timeout", deadline):
+                    written = self.serial.write(data[offset:])
                 if written <= 0:
                     raise TimeoutError("serial write made no progress")
                 offset += written
