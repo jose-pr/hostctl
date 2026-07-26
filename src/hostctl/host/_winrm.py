@@ -6,6 +6,7 @@ import base64
 import dataclasses
 import io
 import json
+import logging
 import os
 import stat as _stat
 import subprocess
@@ -32,6 +33,7 @@ from ..provider import (
     OperationNotStarted,
     PathProvider,
     ProviderProbe,
+    ProviderSelector,
 )
 from ._common import (
     _query_int,
@@ -51,6 +53,8 @@ from ._common import (
 )
 from ..shell import POWERSHELL, ShellFlavour
 
+log = logging.getLogger("hostctl.host.winrm")
+
 WinRMTransport = typing.Literal[
     "basic",
     "credssp",
@@ -61,7 +65,7 @@ WinRMTransport = typing.Literal[
 ]
 CertificateValidation = typing.Literal["validate", "ignore"]
 MessageEncryption = typing.Literal["auto", "always", "never"]
-WinRMProvider = typing.Literal["auto", "pywinrm", "psrp"]
+WinRMProviderName = typing.Literal["auto", "pywinrm", "psrp"]
 
 
 @dataclasses.dataclass
@@ -78,7 +82,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     message_encryption: MessageEncryption = "auto"
     operation_timeout_sec: int = 20
     read_timeout_sec: int = 30
-    provider: WinRMProvider = "auto"
+    provider: WinRMProviderName = "auto"
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
@@ -100,7 +104,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             raise ValueError(
                 "read_timeout_sec must be greater than operation_timeout_sec"
             )
-        if self.provider not in typing.get_args(WinRMProvider):
+        if self.provider not in typing.get_args(WinRMProviderName):
             raise ValueError("provider must be 'auto', 'pywinrm', or 'psrp'")
 
     @property
@@ -167,7 +171,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             ),
             operation_timeout_sec=_query_int(query, "operation_timeout_sec", 20),
             read_timeout_sec=_query_int(query, "read_timeout_sec", 30),
-            provider=typing.cast(WinRMProvider, query.get("provider", "auto")),
+            provider=typing.cast(WinRMProviderName, query.get("provider", "auto")),
         )
 
     def _create_host(self):
@@ -308,12 +312,28 @@ class _WinRMTransport:
         return self._runspace
 
     def connect(self) -> None:
+        log.debug(
+            "opening WinRM %s session to %s",
+            self._provider,
+            ProviderSelector.redact(self.config.connection_uri),
+        )
         if self._provider == "psrp":
             self.runspace()
         else:
             _ = self.session
+        log.debug(
+            "WinRM %s session to %s established",
+            self._provider,
+            ProviderSelector.redact(self.config.connection_uri),
+        )
 
     def close(self) -> None:
+        if self._session is not None or self._runspace is not None:
+            log.debug(
+                "closing WinRM %s session to %s",
+                self._provider,
+                ProviderSelector.redact(self.config.connection_uri),
+            )
         if self._session is not None:
             session, self._session = self._session, None
             close = getattr(session, "close", None)
@@ -932,6 +952,11 @@ class WinRMExecutorProvider(ExecutorProvider):
         try:
             self.transport.connect()
         except (ConnectionError, TimeoutError) as exc:
+            log.debug(
+                "WinRM provider declining before dispatch: %s: %s",
+                type(exc).__name__,
+                ProviderSelector.redact(exc),
+            )
             raise OperationNotStarted(
                 "WinRM connection failed before dispatch", cause=exc
             ) from exc

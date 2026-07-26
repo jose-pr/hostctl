@@ -16,11 +16,10 @@ from ..executor.container import (
     normalize_container_error,
 )
 from ..executor import normalize_environment
-from ..provider import (
+from ..provider import OperationNotStarted, ProviderSelector
+from ..provider.transports import (
     ContainerArchivePathProvider,
     ContainerExecutorProvider,
-    OperationNotStarted,
-    ProviderSelector,
 )
 from ..process import (
     ContainerProcess,
@@ -222,6 +221,9 @@ class ContainerHost(Host):
     def path_providers(self) -> typing.Tuple[object, ...]:
         """The ordered filesystem providers backing :meth:`path`."""
         return self._path_provider_selector.providers
+
+    def _run_selector(self) -> ProviderSelector:
+        return self._executor_provider_selector
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:

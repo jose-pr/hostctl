@@ -8,12 +8,8 @@ import subprocess as _subprocess
 import typing as _ty
 
 from ..executor import LocalExecutor
-from ..provider import (
-    LocalExecutorProvider,
-    LocalPathProvider,
-    OperationNotStarted,
-    ProviderSelector,
-)
+from ..provider import OperationNotStarted, ProviderSelector
+from ..provider.transports import LocalExecutorProvider, LocalPathProvider
 from ._common import (
     CaptureOutput,
     Command,
@@ -85,6 +81,9 @@ class LocalHost(Host):
     def path_providers(self) -> _ty.Tuple[object, ...]:
         """The ordered filesystem providers backing :meth:`path`."""
         return self._path_provider_selector.providers
+
+    def _run_selector(self) -> ProviderSelector:
+        return self._executor_provider_selector
 
     @property
     def capabilities(self) -> _ty.FrozenSet[str]:

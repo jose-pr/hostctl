@@ -423,7 +423,7 @@ class QemuHost(Host):
             self._path_provider is None
             or self._path_provider.backend is not path_backend
         ):
-            from ..provider import QgaPathProvider
+            from ..provider.transports import QgaPathProvider
 
             # The provider declares exactly the operations the probed guest
             # agent supports, so an unavailable metadata/mutation RPC is
