@@ -384,6 +384,20 @@ class _ContainerPathMixin:
 
     __slots__ = ()
 
+    def copy(self, target, **kwargs):
+        return Path.copy(self, target, **kwargs)
+
+    def move(self, target, **kwargs):
+        return Path.move(self, target, **kwargs)
+
+    def _copy_from(self, source, **kwargs):
+        if self.exists() and not kwargs.get("overwrite", False):
+            raise FileExistsError(str(self))
+        with source.open("rb") as src, self.open("wb") as dst:
+            while chunk := src.read(1024 * 1024):
+                dst.write(chunk)
+        return self
+
     @property
     def backend(self) -> ContainerPathBackend:
         return self._backend

@@ -865,6 +865,12 @@ class _QgaReadStream(io.RawIOBase):
 class _QgaPathMixin:
     __slots__ = ()
 
+    def copy(self, target, **kwargs):
+        return Path.copy(self, target, **kwargs)
+
+    def move(self, target, **kwargs):
+        return Path.move(self, target, **kwargs)
+
     @property
     def backend(self) -> QgaPathBackend:
         return self._backend

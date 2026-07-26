@@ -32,6 +32,12 @@ class _CompositePathMixin:
 
     __slots__ = ()
 
+    def copy(self, target, **kwargs):
+        return Path.copy(self, target, **kwargs)
+
+    def move(self, target, **kwargs):
+        return Path.move(self, target, **kwargs)
+
     @classmethod
     def from_path(
         cls,

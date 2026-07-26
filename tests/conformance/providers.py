@@ -199,7 +199,7 @@ class _FakeDockerContainer:
         stream = io.BytesIO()
         with tarfile.open(fileobj=stream, mode="w") as archive:
             archive.add(path, arcname=os.path.basename(path) or ".")
-        return stream.getvalue(), {"size": len(stream.getvalue())}
+        return [stream.getvalue()], {"size": len(stream.getvalue())}
 
     def put_archive(self, path, data):
         with tarfile.open(fileobj=io.BytesIO(data), mode="r") as archive:

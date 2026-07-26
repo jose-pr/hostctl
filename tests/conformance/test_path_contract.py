@@ -74,3 +74,18 @@ def test_path_dangling_symlink_exists_is_boolean(provider, tmp_path):
         except (OSError, NotImplementedError) as exc:
             pytest.skip(f"symlink unavailable: {exc}")
         assert link.exists() is False
+
+
+def test_cross_provider_copy_local_and_container(tmp_path):
+    providers = {item.name: item for item in fake_providers()}
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"cross-provider\n")
+    with (
+        provider_context(providers["local"]) as local,
+        provider_context(providers["container"]) as container,
+    ):
+        target = container.path(tmp_path, "target.bin")
+        local.path(source).copy(target)
+        assert target.read_bytes() == source.read_bytes()
+        with pytest.raises(FileExistsError):
+            local.path(source).copy(target)
