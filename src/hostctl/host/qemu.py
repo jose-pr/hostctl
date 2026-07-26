@@ -247,6 +247,7 @@ class QemuHost(Host):
         self._hostname: typing.Optional[str] = None
         self._executor = QemuExecutor(lambda: self.transport)
         self._path_backend: typing.Optional[QgaPathBackend] = None
+        self._path_provider: typing.Optional[object] = None
 
     @property
     def transport(self) -> GuestAgentTransport:
@@ -355,6 +356,7 @@ class QemuHost(Host):
         self._os_info = {}
         self._hostname = None
         self._path_backend = None
+        self._path_provider = None
         transport, self._transport = self._transport, None
         ssh, self._ssh_transport = self._ssh_transport, None
         try:
@@ -410,6 +412,28 @@ class QemuHost(Host):
                 supported_commands=self.supported_commands,
                 timeout=self.config.agent_timeout,
             )
+        path_backend = self._path_backend
+        if (
+            self._path_provider is None
+            or self._path_provider.backend is not path_backend
+        ):
+            from ..provider import QgaPathProvider
+
+            # The provider declares exactly the operations the probed guest
+            # agent supports, so an unavailable metadata/mutation RPC is
+            # rejected rather than routed to a different backend.
+            self._path_provider = QgaPathProvider(self._qga_path, path_backend)
+        if not self._path_provider.probe().usable:
+            raise NotImplementedError("guest agent does not provide usable file RPCs")
+        return self._path_provider.path(*segments)
+
+    @property
+    def path_provider(self):
+        """The QGA path provider, once :meth:`path` has assembled it."""
+        return self._path_provider
+
+    def _qga_path(self, *segments: PathLike) -> HostPath:
+        """Build a QGA-backed guest path with the configured pathname flavour."""
         path_backend = self._path_backend
         selection = self.config.path_flavor
         windows = (
@@ -809,6 +833,18 @@ class QgaPathBackend:
     def chmod(self, path: str, mode: int, *, follow_symlinks: bool = True) -> None:
         self._helper_method("chmod")(path, mode, follow_symlinks=follow_symlinks)
 
+    def symlink(self, path: str, target: str) -> None:
+        raise NotImplementedError(
+            "QEMU Guest Agent has no symlink RPC; the guest-file-* commands "
+            "only open, read, write, seek, flush, and close regular files"
+        )
+
+    def readlink(self, path: str) -> str:
+        raise NotImplementedError(
+            "QEMU Guest Agent has no readlink RPC; the guest-file-* commands "
+            "only open, read, write, seek, flush, and close regular files"
+        )
+
 
 class _WriteBackBytesIO(io.BytesIO):
     def __init__(
@@ -949,6 +985,20 @@ class _QgaPathMixin:
         elif not readable:
             stream.seek(0)
         return stream
+
+    def symlink_to(self, target, target_is_directory: bool = False):
+        """Always raise -- QGA exposes no symlink RPC.
+
+        The guest agent's file protocol is limited to opening, reading,
+        writing, seeking, flushing, and closing handles.  Emulating a
+        symlink through ``guest-exec`` would be a different transport with
+        different failure and permission semantics, so the gap is reported
+        explicitly instead of being faked.
+        """
+        self.backend.symlink(str(self), str(target))
+
+    def readlink(self):
+        return self.with_segments(self.backend.readlink(str(self)))
 
     def _mkdir(self, mode: int):
         self.backend.mkdir(str(self), mode)
