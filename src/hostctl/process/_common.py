@@ -5,8 +5,31 @@ from __future__ import annotations
 import dataclasses
 import typing
 import types
+import codecs
 
 ProcessData = typing.Union[str, bytes]
+
+
+def raise_normalized(
+    exc: Exception, normalizer: typing.Callable[[Exception], Exception]
+) -> typing.NoReturn:
+    """Raise a normalized transport error while preserving its cause."""
+    normalized = normalizer(exc)
+    if normalized is exc:
+        raise exc
+    raise normalized from exc
+
+
+class IncrementalTextDecoder:
+    """Decode arbitrary byte chunks without splitting multibyte characters."""
+
+    def __init__(self, encoding: str, errors: str = "strict") -> None:
+        self._decoder = codecs.getincrementaldecoder(encoding)(errors)
+
+    def decode(self, data: bytes, *, final: bool = False) -> str:
+        return self._decoder.decode(data, final=final)
+
+
 TerminalRequest = typing.Optional[typing.Union[bool, "TerminalOptions"]]
 
 

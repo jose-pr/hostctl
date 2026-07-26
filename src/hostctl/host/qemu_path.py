@@ -12,7 +12,11 @@ from pathlib import PurePath as _StdPurePath
 from pathlib_next import Path, PosixPathname, WindowsPathname
 from pathlib_next.utils.stat import FileStat
 
-from ..qga._common import GuestAgentTransport
+from ..qga._common import (
+    GuestAgentTransport,
+    QgaDisconnectedError,
+    QgaTimeoutError,
+)
 
 
 class GuestPathHelper(typing.Protocol):
@@ -35,6 +39,8 @@ class GuestPathHelper(typing.Protocol):
 
 def _qga_error(exc: Exception, path: str) -> OSError:
     """Translate transport-specific QGA errors without importing a provider."""
+    if isinstance(exc, (QgaTimeoutError, QgaDisconnectedError)):
+        return exc
     name = str(
         getattr(exc, "error_class", "")
         or getattr(exc, "name", "")

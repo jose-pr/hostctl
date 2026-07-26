@@ -39,5 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   exec streams return available data promptly, detect truncated frames,
   preserve merged output ordering, and map missing containers to
   `ConnectionError`.
+- QEMU Guest Agent transports now share one framed-session implementation with
+  split-read buffering, parse-error correlation, safe timeout/disconnect
+  cleanup, and loop-bound SSH writes. QEMU serial consoles and raw serial
+  processes use incremental text decoding and the common `read(-1)` contract
+  (up to 64 KiB available data); serial ownership and QEMU URI/lifecycle edge
+  cases are normalized consistently.
 
 <!-- Add the [Unreleased] compare link after the first v0.1.0 tag exists. -->

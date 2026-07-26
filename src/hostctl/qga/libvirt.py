@@ -8,14 +8,16 @@ import math
 import typing
 
 from ._common import (
-    QgaCommandError,
     QgaProtocolError,
     QgaTimeoutError,
+    _QgaFramedSession,
 )
 
 
 def normalize_libvirt_error(error: BaseException) -> BaseException:
     """Normalize common libvirt/QGA failures without importing libvirt eagerly."""
+    if not isinstance(error, Exception):
+        return error
     message = str(error)
     folded = message.casefold()
     if any(value in folded for value in ("permission denied", "access denied")):
@@ -87,6 +89,7 @@ class LibvirtGuestAgentTransport:
                 ) from exc
             connect_factory = connect_factory or libvirt.open
             command_factory = command_factory or libvirt_qemu.qemuAgentCommand
+        connection = None
         try:
             connection = connect_factory(self.connection_uri)
             if connection is None:
@@ -100,9 +103,26 @@ class LibvirtGuestAgentTransport:
                     f"libvirt domain {self.domain_name!r} is not active"
                 )
         except (ConnectionError, FileNotFoundError, PermissionError):
+            if connection is not None:
+                try:
+                    close = getattr(connection, "close", None)
+                    if close is not None:
+                        close()
+                except Exception:
+                    pass
             raise
-        except BaseException as exc:
-            raise normalize_libvirt_error(exc) from exc
+        except Exception as exc:
+            try:
+                if connection is not None:
+                    close = getattr(connection, "close", None)
+                    if close is not None:
+                        close()
+            except Exception:
+                pass
+            normalized = normalize_libvirt_error(exc)
+            if normalized is exc:
+                raise
+            raise normalized from exc
         self._connect_factory = connect_factory
         self._command_factory = command_factory
         self._connection = connection
@@ -140,8 +160,10 @@ class LibvirtGuestAgentTransport:
                 max(1, math.ceil(request_timeout)),
                 0,
             )
-        except BaseException as exc:
+        except Exception as exc:
             normalized = normalize_libvirt_error(exc)
+            if normalized is exc:
+                raise
             raise normalized from exc
         try:
             reply = json.loads(raw)
@@ -151,23 +173,4 @@ class LibvirtGuestAgentTransport:
             raise QgaProtocolError("QGA reply must be a JSON object")
         if reply.get("id") not in (None, request_id):
             raise QgaProtocolError("libvirt returned a mismatched QGA reply")
-        if "error" in reply:
-            error = reply["error"]
-            if not isinstance(error, dict):
-                raise QgaProtocolError("QGA error reply must contain an object")
-            error_class = error.get("class", "GenericError")
-            description = error.get("desc", "QGA command failed")
-            if not isinstance(error_class, str) or not isinstance(description, str):
-                raise QgaProtocolError("QGA error fields must be strings")
-            raise QgaCommandError(
-                error_class,
-                description,
-                data={
-                    key: value
-                    for key, value in error.items()
-                    if key not in {"class", "desc"}
-                },
-            )
-        if "return" not in reply:
-            raise QgaProtocolError("QGA reply has neither 'return' nor 'error'")
-        return reply["return"]
+        return _QgaFramedSession._unwrap(reply)

@@ -126,27 +126,32 @@ class SerialExecutor:
         self.settings = settings
         self._factory = serial_factory or _default_serial_factory
         self._serial = serial_port
+        self._injected = serial_port is not None
         self._owns_serial = owns_serial_port if serial_port is not None else True
         self._lease = threading.Lock()
         self._io_lock = threading.RLock()
+        self._connect_lock = threading.Lock()
 
     @property
     def connected(self) -> bool:
         return self._serial is not None and self._serial.is_open
 
     def connect(self) -> SerialLike:
-        if self.connected:
+        with self._connect_lock:
+            if self.connected:
+                return typing.cast(SerialLike, self._serial)
+            if self._injected:
+                raise ConnectionError("injected serial port is closed")
+            try:
+                self._serial = self._factory(
+                    self.settings.port, **self.settings.factory_options()
+                )
+            except Exception as exc:
+                normalized = normalize_serial_error(exc)
+                if normalized is exc:
+                    raise
+                raise normalized from exc
             return typing.cast(SerialLike, self._serial)
-        try:
-            self._serial = self._factory(
-                self.settings.port, **self.settings.factory_options()
-            )
-        except Exception as exc:
-            normalized = normalize_serial_error(exc)
-            if normalized is exc:
-                raise
-            raise normalized from exc
-        return self._serial
 
     def open(self) -> SerialProcess:
         """Acquire the connection for one raw byte-stream process."""
@@ -154,7 +159,7 @@ class SerialExecutor:
             raise RuntimeError("serial connection already has an active process")
         try:
             serial_port = self.connect()
-        except BaseException:
+        except Exception:
             self._lease.release()
             raise
         from ..process.serial import SerialProcess

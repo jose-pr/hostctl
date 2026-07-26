@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import io
 import os
 import subprocess
 import time
@@ -160,6 +159,7 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
             {"execute": "guest-exec", "arguments": arguments},
             deadline,
             command_display,
+            timeout=timeout,
         )
         if not isinstance(started, typing.Mapping):
             raise GuestAgentProtocolError("guest-exec returned a non-object result")
@@ -213,8 +213,9 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
         request: typing.Mapping[str, object],
         deadline: typing.Optional[float],
         command: typing.Sequence[str],
+        timeout: typing.Optional[float] = None,
     ) -> object:
-        remaining = self._remaining(deadline, command)
+        remaining = self._remaining(deadline, command, timeout=timeout)
         try:
             return self._transport().execute(request, timeout=remaining)
         except (TimeoutError, subprocess.TimeoutExpired) as exc:
@@ -241,6 +242,7 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
                     },
                     deadline,
                     command,
+                    timeout=timeout,
                 )
             except subprocess.TimeoutExpired as exc:
                 self._annotate_timeout(exc, pid, timeout, partial_out, partial_err)
@@ -295,6 +297,7 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
         if remaining > 0:
             return remaining
         expired = subprocess.TimeoutExpired(command, timeout)
+        expired.orphaned = pid is not None
         if pid is not None:
             expired.pid = pid
         raise expired

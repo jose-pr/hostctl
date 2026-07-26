@@ -8,7 +8,7 @@ import threading
 import types
 import typing
 
-from ._common import Process, ProcessData
+from ._common import IncrementalTextDecoder, Process, ProcessData, raise_normalized
 
 
 class QemuConsoleStream(typing.Protocol):
@@ -119,6 +119,11 @@ class QemuSerialProcess(Process):
         self._encoding = encoding
         self._errors = errors or "strict"
         self._closed = threading.Event()
+        self._decoder = (
+            IncrementalTextDecoder(encoding, self._errors)
+            if encoding is not None
+            else None
+        )
 
     @property
     def returncode(self) -> typing.Optional[int]:
@@ -143,7 +148,7 @@ class QemuSerialProcess(Process):
                         raise ConnectionError("QEMU console write made no progress")
                     offset += sent
         except Exception as exc:
-            self._raise_normalized(exc)
+            raise_normalized(exc, normalize_qemu_console_error)
 
     def read(self, size: int = -1) -> ProcessData:
         self._require_open()
@@ -156,11 +161,11 @@ class QemuSerialProcess(Process):
             with self._io_lock:
                 value = self._stream.recv(request_size)
         except Exception as exc:
-            self._raise_normalized(exc)
+            raise_normalized(exc, normalize_qemu_console_error)
         if not value:
-            self._finish(closing_stream=False)
-        if self._encoding is not None:
-            return value.decode(self._encoding, self._errors)
+            self._finish(closing_stream=self._close_stream)
+        if self._decoder is not None:
+            return self._decoder.decode(value, final=not value)
         return value
 
     def read_stderr(self, size: int = -1) -> bytes:
@@ -190,7 +195,7 @@ class QemuSerialProcess(Process):
         try:
             self._resize(columns, rows, pixel_width, pixel_height)
         except Exception as exc:
-            self._raise_normalized(exc)
+            raise_normalized(exc, normalize_qemu_console_error)
 
     def wait(self, timeout: typing.Optional[float] = None) -> int:
         if timeout is not None and timeout < 0:
@@ -227,14 +232,7 @@ class QemuSerialProcess(Process):
         self._closed.set()
         self._release()
         if error is not None:
-            self._raise_normalized(error)
-
-    @staticmethod
-    def _raise_normalized(exc: Exception) -> typing.NoReturn:
-        normalized = normalize_qemu_console_error(exc)
-        if normalized is exc:
-            raise exc
-        raise normalized from exc
+            raise_normalized(error, normalize_qemu_console_error)
 
     def __enter__(self) -> QemuSerialProcess:
         return self

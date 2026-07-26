@@ -39,6 +39,7 @@ from ._common import (
     starts_direct_command,
     strict_uri_credentials,
     strict_uri_query,
+    uri_host,
 )
 from .qemu_path import PosixQemuPath, QgaPathBackend, WindowsQemuPath
 from .ssh import SshConfig, SshHost
@@ -95,6 +96,8 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             raise ValueError("ssh config requires transport='ssh'")
         if self.dialect != "auto":
             self.dialect = shell_flavour(self.dialect)
+        if isinstance(self.path_flavor, str):
+            self.path_flavor = _path_selection(self.path_flavor)
         if self.path_flavor != "auto":
             value = self.path_flavor
             if not isinstance(value, type) or not issubclass(
@@ -142,7 +145,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         query["socket_path"] = self.socket_path or (
             f"/run/qemu-server/{self.domain}.qga"
         )
-        authority = f"{quote(ssh.username, safe='')}@{ssh.host}:{ssh.port}"
+        authority = f"{quote(ssh.username, safe='')}@{uri_host(ssh.host)}:{ssh.port}"
         return (
             f"qga+ssh://{authority}/{quote(self.domain, safe='')}?"
             f"{urlencode(query)}"
@@ -261,8 +264,16 @@ class QemuHost(Host):
                     timeout=self.config.agent_timeout,
                 )
             else:
-                self._ssh_host = SshHost(typing.cast(SshConfig, self.config.ssh))
-                self._ssh_host.connect()
+                ssh_host = SshHost(typing.cast(SshConfig, self.config.ssh))
+                try:
+                    ssh_host.connect()
+                except Exception:
+                    try:
+                        ssh_host.close()
+                    except Exception:
+                        pass
+                    raise
+                self._ssh_host = ssh_host
                 socket_path = self.config.socket_path or (
                     f"/run/qemu-server/{self.config.domain}.qga"
                 )
@@ -341,12 +352,14 @@ class QemuHost(Host):
         self._os_info = {}
         self._hostname = None
         self._path_backend = None
-        if self._transport is not None:
-            transport, self._transport = self._transport, None
-            transport.close()
-        if self._ssh_host is not None:
-            ssh, self._ssh_host = self._ssh_host, None
-            ssh.close()
+        transport, self._transport = self._transport, None
+        ssh, self._ssh_host = self._ssh_host, None
+        try:
+            if transport is not None:
+                transport.close()
+        finally:
+            if ssh is not None:
+                ssh.close()
 
     @property
     def _windows(self) -> bool:
@@ -354,7 +367,7 @@ class QemuHost(Host):
         values = " ".join(
             str(self._os_info.get(key, "")) for key in ("id", "name", "pretty-name")
         ).casefold()
-        return "windows" in values or "mswindows" in values
+        return "windows" in values
 
     @property
     def shell_flavour(self) -> ShellFlavour:

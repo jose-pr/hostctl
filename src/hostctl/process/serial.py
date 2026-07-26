@@ -7,7 +7,7 @@ import threading
 import types
 import typing
 
-from ._common import Process, ProcessData
+from ._common import Process, ProcessData, raise_normalized
 from ..executor.serial import SerialLike, normalize_serial_error
 
 
@@ -58,15 +58,12 @@ class SerialProcess(Process):
         if size < -1:
             raise ValueError("read size must be -1 or non-negative")
         if size == -1:
-            size = 1
+            size = 64 * 1024
         try:
             with self._io_lock:
                 return self._serial.read(size)
         except Exception as exc:
-            normalized = normalize_serial_error(exc)
-            if normalized is exc:
-                raise
-            raise normalized from exc
+            raise_normalized(exc, normalize_serial_error)
 
     def read_stderr(self, size: int = -1) -> bytes:
         raise NotImplementedError("serial has one merged byte stream")
