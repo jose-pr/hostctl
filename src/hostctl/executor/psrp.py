@@ -85,7 +85,9 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         result = self._session().invoke(str(command), raw=False)
         codec = encoding or "utf-8"
-        out_text = "".join(str(item) for item in result.output)
+        # Preserve PowerShell's object-pipeline line orientation when
+        # projecting objects to subprocess-compatible text.
+        out_text = "\n".join(str(item) for item in result.output)
         err_text = "\n".join(str(item) for item in result.streams.error)
         if out_text:
             out_text += "\n"

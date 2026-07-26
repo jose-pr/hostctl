@@ -7,7 +7,8 @@ import types
 import pytest
 
 from hostctl import HostConfig, RunspaceSession, WinRMConfig, WinRMHost
-from hostctl.executor.psrp import pypsrp_available
+from hostctl.executor.psrp import PsrpExecutor, pypsrp_available
+from hostctl.process.psrp import PipelineResult, PipelineStreams
 
 
 def test_provider_uri_roundtrip_and_secret_safety():
@@ -24,22 +25,28 @@ def test_explicit_psrp_has_actionable_error_when_missing(monkeypatch):
         host.runspace()
 
 
-def test_runspace_preserves_state_and_typed_streams(monkeypatch):
+@pytest.mark.parametrize(
+    ("state", "had_errors", "returncode"),
+    [("Completed", False, 0), ("Failed", False, 1), ("Stopped", False, 1)],
+)
+def test_runspace_preserves_state_and_typed_streams(
+    monkeypatch, state, had_errors, returncode
+):
     class Streams:
         error = ["err"]
         warning = ["warn"]
-        verbose = []
-        debug = []
-        information = []
-        progress = []
+        verbose = ["verbose"]
+        debug = ["debug"]
+        information = ["info"]
+        progress = ["progress"]
 
     class Pipeline:
         streams = Streams()
-        state = "Completed"
-        had_errors = True
 
         def __init__(self, pool):
             self.pool = pool
+            self.state = state
+            self.had_errors = had_errors
 
         def add_script(self, script):
             self.script = script
@@ -70,5 +77,36 @@ def test_runspace_preserves_state_and_typed_streams(monkeypatch):
     assert first.output == ("$x = 1",)
     assert second.output == ("$x",)
     assert first.streams.error == ("err",)
-    assert first.had_errors and first.returncode == 1
+    assert first.streams.warning == ("warn",)
+    assert first.streams.verbose == ("verbose",)
+    assert first.streams.debug == ("debug",)
+    assert first.streams.information == ("info",)
+    assert first.streams.progress == ("progress",)
+    assert first.returncode == returncode
     session.close()
+
+
+def test_psrp_executor_projects_objects_and_error_streams():
+    class Session:
+        def invoke(self, script, *, raw=False):
+            assert script == "Write-Output x"
+            return PipelineResult(
+                ("one", "two"),
+                PipelineStreams(error=("bad",)),
+                "Completed",
+                True,
+                1,
+            )
+
+    result = PsrpExecutor(lambda: Session())("Write-Output x", check=False, text=True)
+    assert result.stdout == "one\ntwo\n"
+    assert result.stderr == "bad"
+    assert result.returncode == 1
+
+
+def test_psrp_executor_rejects_byte_stream_options():
+    executor = PsrpExecutor(lambda: object())
+    with pytest.raises(NotImplementedError, match="stdin"):
+        executor("x", input=b"x")
+    with pytest.raises(NotImplementedError, match="timeout"):
+        executor("x", timeout=1)
