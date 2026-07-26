@@ -80,6 +80,7 @@ without a deprecation cycle.
 ## Connection strings
 
 ::: hostctl.redact_uri
+::: hostctl.parse_credentials
 
 ## Transfers and checksums
 

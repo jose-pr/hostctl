@@ -72,8 +72,17 @@ that value type; no duplicate command-kind flag is carried.
   extracted into the credential arguments and stripped from the parsed
   authority, so it never reaches a field that `connection_uri` or `repr()`
   renders. Supplying a password both in the URI and as an argument raises.
-  `redact_uri(uri)` replaces a password with `***` and returns a still-parseable
-  URI, for logs, reprs, and error messages.
+  `redact_uri(uri)` STRIPS a password and returns a valid, reusable URI (not a
+  masked one, so a rendered form can never round-trip a wrong credential), for
+  logs, reprs, and error messages.
+- `parse_credentials(password) -> (password, extras)` splits a password field
+  on a newline: the first line is the password, each later line is a
+  credential extra. `name:value` sets a value, a bare `name` is a flag
+  equivalent to `name:` (empty string). Names are casefolded and stripped,
+  values keep everything after the first `:`, blank lines are ignored, and
+  CRLF is handled. URI dispatch runs the password field through it, so an OTP
+  or other second factor travels in the same field; an extra a config does not
+  declare is rejected by name rather than dropped.
 - `config.connection_uri` never includes passwords or private keys;
   `config.scheme` matches its URI scheme.
 - `with config as host:` and `with config.open() as host:` connect and always

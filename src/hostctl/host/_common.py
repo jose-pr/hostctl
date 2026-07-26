@@ -107,10 +107,6 @@ def uri_host(host: str) -> str:
     return f"[{host}]" if ":" in host and not host.startswith("[") else host
 
 
-#: Stands in for a password wherever a URI is rendered for a human.
-REDACTED = "***"
-
-
 def _rebuild_authority(parsed: _SplitResult, password: _ty.Optional[str]) -> str:
     """Rebuild a URI authority with `password` in place of the original."""
     host = uri_host(parsed.hostname or "")
@@ -124,24 +120,71 @@ def _rebuild_authority(parsed: _SplitResult, password: _ty.Optional[str]) -> str
     return f"{userinfo}@{host}"
 
 
-def _redacted_authority(parsed: _SplitResult, keep_password: bool) -> _SplitResult:
-    """Return `parsed` with its password removed or replaced by `REDACTED`."""
-    return parsed._replace(
-        netloc=_rebuild_authority(parsed, REDACTED if keep_password else None)
-    )
+def _without_password(parsed: _SplitResult) -> _SplitResult:
+    """Return `parsed` with any password removed from its authority."""
+    return parsed._replace(netloc=_rebuild_authority(parsed, None))
 
 
 def redact_uri(uri: str) -> str:
-    """Replace any password in `uri` with `REDACTED`, leaving it parseable.
+    """Strip any password from `uri`, leaving a valid, reusable URI.
 
-    Use this wherever a connection string reaches a human -- an error message,
-    a log record, a repr. `scheme://user:secret@host` renders as
-    `scheme://user:***@host`; a URI with no password is returned unchanged.
+    `scheme://user:secret@host` becomes `scheme://user@host`. The password is
+    removed rather than masked: a placeholder would make the URI round-trip
+    into a *wrong* credential if anything fed the rendered form back in, and
+    would not be a real password anyway. What comes out is the same canonical,
+    credential-free string a config renders, so it is safe to log, repr, or
+    hand back to `HostConfig`.
+
+    A URI with no password is returned unchanged.
     """
     parsed = _urlsplit(uri)
     if parsed.password is None:
         return uri
-    return _redacted_authority(parsed, keep_password=True).geturl()
+    return _without_password(parsed).geturl()
+
+
+def parse_credentials(password: str) -> _ty.Tuple[str, _ty.Dict[str, str]]:
+    """Split a password field into the password and any trailing extras.
+
+    A newline separates the password from additional credential values, one
+    per line, each `key:value`:
+
+        "hunter2"                       -> ("hunter2", {})
+        "hunter2\\notp:123456"           -> ("hunter2", {"otp": "123456"})
+        "hunter2\\notp:123456\\nrealm:CORP" -> ("hunter2", {"otp": ..., "realm": ...})
+
+    A bare name with no `:` is a flag -- it maps to the empty string, exactly
+    as `name:` does:
+
+        "hunter2\\ninteractive"           -> ("hunter2", {"interactive": ""})
+
+    This is how a second factor reaches a transport through a single password
+    field -- a URI's userinfo, an environment variable, a prompt -- without
+    every caller inventing its own encoding. A newline is assumed not to be a
+    valid password character, which is the same assumption pytruenas makes.
+
+    Names are casefolded and stripped; a value is everything after the first
+    `:`, so a value may itself contain colons. Blank lines are ignored.
+    """
+    # Split on any line ending: a value pasted from a file or a Windows prompt
+    # arrives CRLF-terminated, and a trailing "\r" left on the password would
+    # fail authentication with no visible cause.
+    lines = password.splitlines()
+    if len(lines) <= 1:
+        return password, {}
+    password, remainder = lines[0], lines[1:]
+    extras: _ty.Dict[str, str] = {}
+    for line in remainder:
+        if not line.strip():
+            continue
+        # A line with no ":" is a bare flag; `partition` already yields "" for
+        # its value, so flags and `name:` need no separate branch.
+        key, _, value = line.partition(":")
+        key = key.strip().casefold()
+        if not key:
+            raise ValueError("credential extra names must not be empty")
+        extras[key] = value
+    return password, extras
 
 
 class _HostConfigMeta(_abc.ABCMeta):
@@ -245,6 +288,10 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         authority, so it is never stored where `connection_uri` or `repr()`
         would render it. Use :func:`redact_uri` before showing a URI that may
         still carry one.
+
+        The password field is parsed by :func:`parse_credentials`, so a newline
+        separates trailing `key:value` extras -- an OTP or other second factor
+        travels through the same field.
         """
         parsed = _urlsplit(uri)
         if parsed.fragment:
@@ -259,8 +306,16 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
                 raise ValueError(
                     "password given both in the connection URI and as an argument"
                 )
-            credentials["password"] = _unquote(parsed.password)
-            parsed = _redacted_authority(parsed, keep_password=False)
+            password, extras = parse_credentials(_unquote(parsed.password))
+            credentials["password"] = password
+            for key, value in extras.items():
+                if key in credentials:
+                    raise ValueError(
+                        f"credential {key!r} given both in the connection URI "
+                        "and as an argument"
+                    )
+                credentials[key] = value
+            parsed = _without_password(parsed)
         matches = [
             implementation
             for implementation in cls._uri_implementations(parsed.scheme)

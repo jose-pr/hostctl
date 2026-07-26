@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import pytest
 from pathlib_next import WindowsPathname
@@ -18,6 +18,7 @@ from hostctl import (
     WindowsHost,
     SshConfig,
     WinRMConfig,
+    parse_credentials,
     redact_uri,
 )
 
@@ -233,13 +234,63 @@ def test_uri_password_conflicting_with_an_argument_is_rejected():
         HostConfig("ssh://admin:fromuri@host", password="fromarg")
 
 
-def test_redact_uri_replaces_a_password_but_keeps_the_uri_parseable():
+def test_redact_uri_strips_the_password_leaving_a_reusable_uri():
     redacted = redact_uri("ssh://admin:hunter2@nas.example.com:22?dialect=posix")
 
     assert "hunter2" not in redacted
-    assert redacted == "ssh://admin:***@nas.example.com:22?dialect=posix"
-    # Still a URI, and still dispatchable once the placeholder is replaced.
+    # The password is removed, not masked: a placeholder would round-trip into
+    # a wrong credential if the rendered form were fed back in.
+    assert "*" not in redacted
+    assert redacted == "ssh://admin@nas.example.com:22?dialect=posix"
+    # Still valid input, and it reconstructs the same configuration.
     assert urlsplit(redacted).hostname == "nas.example.com"
+    assert HostConfig(redacted).username == "admin"
+
+
+def test_redact_uri_output_carries_no_credential_back_in():
+    config = HostConfig(redact_uri("ssh://admin:hunter2@nas.example.com"))
+
+    assert config.password is None
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("hunter2", ("hunter2", {})),
+        ("hunter2\notp:123456", ("hunter2", {"otp": "123456"})),
+        (
+            "hunter2\notp:123456\nrealm:CORP",
+            ("hunter2", {"otp": "123456", "realm": "CORP"}),
+        ),
+        # A CRLF-terminated value must not leave "\r" on the password.
+        ("hunter2\r\notp:1", ("hunter2", {"otp": "1"})),
+        # Only the first ":" separates; a value may contain more.
+        ("pw\nurl:https://host:8080/x", ("pw", {"url": "https://host:8080/x"})),
+        # Names are casefolded and stripped; blank lines are ignored.
+        ("pw\n\n  Otp  :123456", ("pw", {"otp": "123456"})),
+        # A bare name is a flag: it means the same as "name:".
+        ("pw\ninteractive", ("pw", {"interactive": ""})),
+        ("pw\nflag:", ("pw", {"flag": ""})),
+        ("pw\ninteractive\notp:1", ("pw", {"interactive": "", "otp": "1"})),
+        ("pw\r\nInteractive\r\nOtp:9", ("pw", {"interactive": "", "otp": "9"})),
+    ],
+)
+def test_parse_credentials_splits_extras_after_the_password(value, expected):
+    assert parse_credentials(value) == expected
+
+
+def test_parse_credentials_rejects_an_empty_extra_name():
+    with pytest.raises(ValueError, match="must not be empty"):
+        parse_credentials("pw\n:novalue")
+
+
+def test_uri_password_field_carries_credential_extras():
+    quoted = quote("hunter2\notp:123456", safe="")
+
+    with pytest.raises(ValueError, match="otp"):
+        # SshConfig declares no `otp` credential, so the extra is rejected by
+        # name rather than silently dropped.
+        HostConfig(f"ssh://admin:{quoted}@nas.example.com")
 
 
 @pytest.mark.parametrize(

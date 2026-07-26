@@ -122,8 +122,15 @@ A URI may carry `user:password@host` on the way *in* — it is a valid URI, so
 hostctl accepts it, extracts the password into the credentials, and keeps it
 out of every rendered form. Passing the same password both in the URI and as an
 argument is an error rather than a silent precedence rule. `redact_uri(uri)`
-replaces a password with `***` and leaves the result parseable, for logs and
-error messages.
+strips the password and returns a valid, reusable URI — it is removed rather
+than masked, so a rendered form can never round-trip a wrong credential.
+
+A password field may also carry extra credentials, one per line after it:
+`parse_credentials("hunter2\notp:123456")` yields `("hunter2", {"otp":
+"123456"})`. A bare name is a flag meaning the same as `name:`. This lets an
+OTP or other second factor reach a transport through a single field — a URI's
+userinfo, an environment variable, a prompt — without each caller inventing an
+encoding.
 
 `str(config)` is the same canonical, secret-free connection string as
 `config.connection_uri`. `HostConfig(str(config), **secrets)` reconstructs the
