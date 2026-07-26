@@ -199,3 +199,68 @@ def test_windows_host_dispatches_psrp_as_a_script_without_nested_powershell():
     assert result.stdout == b"9000\n"
     assert scripts == ["$x='x' * 9000; Write-Output $x.Length"]
     assert "powershell.exe" not in scripts[0].casefold()
+
+
+@pytest.mark.parametrize("provider", ["psrp", "pywinrm"])
+def test_winrm_provider_backed_host_never_double_wraps_powershell(
+    monkeypatch, provider
+):
+    """A provider-backed Windows host dispatches one finalized shell layer.
+
+    Live testing found provider-backed Windows execution nesting
+    ``powershell.exe -Command ...`` inside the transport's own PowerShell
+    layer.  The outer layer expanded ``$x`` before the inner script ever ran,
+    so ``$x='x' * 9000; Write-Output $x.Length`` reported an empty length
+    instead of 9000.  This asserts the whole composition -- transport,
+    executor capability set, provider, and ``SystemHost`` dispatch -- keeps a
+    single layer, which is the seam the bare-``ExecutorProvider`` test above
+    does not cover.
+    """
+    from hostctl.host._winrm import WinRMExecutorProvider, _WinRMTransport
+
+    if provider == "psrp":
+        pytest.importorskip(
+            "pypsrp", reason="PSRP capability wiring requires the psrp extra"
+        )
+        if not pypsrp_available():
+            pytest.skip("PSRP requires Python 3.10 or newer")
+
+    script = "$x='x' * 9000; Write-Output $x.Length"
+    dispatched = []
+
+    class FakeRunspace:
+        def invoke(self, value, *, raw=False, capture_exit=False):
+            dispatched.append(value)
+            return PipelineResult(("9000",), PipelineStreams(), "Completed", False, 0)
+
+    class FakeWinRMSession:
+        def run_ps(self, value):
+            dispatched.append(value)
+            return types.SimpleNamespace(status_code=0, std_out=b"9000\n", std_err=b"")
+
+    config = WinRMConfig("host", username="u", password="p", provider=provider)
+    transport = _WinRMTransport(config)
+    # Pin the transport to an in-memory session: constructing a real one would
+    # open a network connection, which a unit test must never do.
+    if provider == "psrp":
+        monkeypatch.setattr(transport, "runspace", lambda: FakeRunspace())
+    else:
+        transport._session = FakeWinRMSession()
+
+    executor_provider = WinRMExecutorProvider(transport)
+    # The executor must advertise that it accepts a *finalized script*, which
+    # is what suppresses the extra ``powershell.exe -Command`` invocation.
+    assert "script" in executor_provider.capabilities
+    assert "args" not in executor_provider.capabilities
+
+    host = WindowsHost(config, executor_providers=(executor_provider,))
+    result = host.run(script, check=False)
+
+    assert len(dispatched) == 1
+    sent = dispatched[0]
+    # The regression: the script must arrive intact, not nested inside another
+    # PowerShell invocation that would expand $x one layer too early.
+    assert "powershell.exe" not in sent.casefold()
+    assert "-command" not in sent.casefold()
+    assert sent.startswith(script)
+    assert result.stdout.strip() == b"9000"
