@@ -41,6 +41,8 @@ class CompositePath(LocalPath):
         )
         if selected is None:
             raise ValueError(f"unknown path provider: {name}")
+        if selected is self._provider:
+            return self
         value = selected.path(*self.parts)
         return type(self)(value, selected, selected.path, self._providers)
 
