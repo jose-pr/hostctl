@@ -122,6 +122,94 @@ for detail in host.provider_details:
     print(detail["kind"], detail["name"], detail["availability"])
 ```
 
+A provider that declined before dispatch reports `unavailable` with its refusal
+reason for the rest of the connection generation, rather than continuing to
+advertise the availability its cached probe found. Reconnecting starts a new
+generation and clears the decline.
+
+## Debugging
+
+When a remote command fails, two things tell you what happened: the log, and
+the selection trace.
+
+### Turning on the log
+
+Every subsystem logs under the `hostctl` namespace — `hostctl.provider`,
+`hostctl.provider.transports`, `hostctl.host.ssh`, `hostctl.host.winrm`. As a
+library, hostctl never installs a handler, never sets a level, and never calls
+`basicConfig()`; the application owns all of that:
+
+```python
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger("hostctl").setLevel(logging.DEBUG)
+```
+
+At `debug` you get provider selection outcomes and why each candidate was
+skipped, every decline with its reason, each dispatched command, and transport
+connect/close lifecycle:
+
+```text
+hostctl.provider DEBUG selected provider ssh (generation 0, policy ordered, pin False) after 1 candidate(s)
+hostctl.provider DEBUG provider ssh dispatching: /bin/sh -c uptime
+hostctl.provider DEBUG provider ssh declined before dispatch (generation 0): ssh refused: connection lost
+hostctl.provider DEBUG selected provider winrm (generation 0, policy ordered, pin False) after 2 candidate(s)
+```
+
+`warning` is reserved for events that are recoverable but genuinely surprising —
+a provider silently degrading, for instance — so a `warning` from hostctl is
+always worth reading.
+
+### Reading the run-side trace
+
+`host.last_selection` is the command-side counterpart of a path's
+`selection_trace`:
+
+```python
+try:
+    host.run("systemctl restart nginx")
+except Exception:
+    for item in host.last_selection:
+        print(item["provider"], item["availability"], item["chosen"], item["reason"])
+```
+
+The trace **accumulates across the failover attempts of a single `run()`**, so
+the call that actually failed reports every provider tried and every refusal
+reason — you do not have to make a second call to find out why the first one
+fell through:
+
+```text
+ssh   unavailable  False  ssh refused: connection lost
+winrm available    True
+```
+
+`last_selection` is `()` before the first `run()`, and `()` for a host whose
+`run()` does not choose between providers (`QemuHost`, `SerialHost`). Each call
+returns a fresh copy, so mutating it cannot disturb selector state.
+
+### The redaction guarantee, and its limits
+
+Everything that reaches a log record or a trace entry — command text, provider
+names, URIs, refusal reasons — passes through `ProviderSelector.redact()`
+first.
+
+It recognizes credentials that **announce themselves**: a `password=`,
+`passwd=`, `token=`, `secret=`, `api_key=`, or `key=` assignment (with `=` or
+`:`, quoted or bare), and the userinfo half of a `scheme://user:secret@host`
+URI. Those become `<redacted>`.
+
+!!! warning "Best effort, not a guarantee of secrecy"
+    A secret with no marker identifying it cannot be detected by inspection. A
+    positional argument (`mysql -p hunter2`), a bare token passed as an argv
+    element, or a credential embedded in a script body will appear verbatim.
+    **Treat hostctl debug output as sensitive** — do not ship it to a log
+    aggregator you would not trust with the credentials themselves.
+
+Redaction is also lazy: log arguments are formatted with `%`-style
+interpolation, so when nobody is listening at `debug` the redaction work never
+runs at all.
+
 ## Backend pinning
 
 Composite paths select a provider per operation until they are pinned.
@@ -212,6 +300,23 @@ refused explicitly instead of being attempted and failing deeper in the stack.
 
 For a worked example composing metadata, download, and SFTP legs with ordered
 selection and pinning, see `examples/application_provider.py`.
+
+### What is public
+
+`hostctl.provider` exports the *authoring* contracts, and only those:
+`ExecutorProvider`, `PathProvider`, `ProviderProbe`, `ProviderSelection`,
+`ProviderSelector`, `SessionInitializer`, and `OperationNotStarted`. They are
+also re-exported from top-level `hostctl`, so the two spellings agree.
+
+`hostctl.provider.transports` holds the adapters `LocalHost`, `ContainerHost`,
+and `QemuHost` assemble themselves from — `LocalExecutorProvider`,
+`LocalPathProvider`, `ContainerExecutorProvider`, `ContainerArchivePathProvider`,
+`QgaPathProvider`, `DownloadPathProvider` — plus the capability frozensets
+describing what each built-in backend can do. They are importable, and reading
+them is the fastest way to see a complete provider, but they are implementation
+detail: nothing outside hostctl constructs them, and they carry no stability
+promise. Write your own `ExecutorProvider`/`PathProvider` instead of
+subclassing one.
 
 ## Session initialization
 
