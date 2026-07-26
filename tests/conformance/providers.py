@@ -309,7 +309,8 @@ class FakeQemuHost:
     transport = "qemu"
 
     def __new__(cls):
-        from hostctl import QemuConfig, QemuHost, QgaPathBackend
+        from hostctl import QemuConfig, QemuHost
+        from hostctl.host.qemu import QgaPathBackend
 
         transport = LocalQgaTransport()
         host = QemuHost(QemuConfig("fake", transport_factory=lambda: transport))

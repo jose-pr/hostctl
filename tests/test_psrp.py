@@ -9,11 +9,11 @@ import pytest
 from hostctl import (
     ExecutorProvider,
     HostConfig,
-    RunspaceSession,
     WinRMConfig,
     WindowsHost,
 )
 from hostctl.executor.psrp import PsrpExecutor, pypsrp_available
+from hostctl.process import RunspaceSession
 from hostctl.process.psrp import PipelineResult, PipelineStreams
 
 

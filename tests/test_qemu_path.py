@@ -6,11 +6,7 @@ import pytest
 from pathlib_next import Path
 from pathlib_next.utils.stat import FileStat
 
-from hostctl import (
-    PosixQemuPath,
-    QgaPathBackend,
-    WindowsQemuPath,
-)
+from hostctl.host.qemu import PosixQemuPath, QgaPathBackend, WindowsQemuPath
 from hostctl.executor._qga import QgaCommandError
 
 FILE_COMMANDS = {

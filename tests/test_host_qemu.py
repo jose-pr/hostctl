@@ -2,14 +2,8 @@
 
 import base64
 
-from hostctl import (
-    HostConfig,
-    PosixQemuPath,
-    QemuConfig,
-    QemuHost,
-    SshConfig,
-    WindowsQemuPath,
-)
+from hostctl import HostConfig, QemuConfig, QemuHost, SshConfig
+from hostctl.host.qemu import PosixQemuPath, WindowsQemuPath
 
 
 class _Transport:

@@ -4,7 +4,7 @@ import collections
 
 import pytest
 
-from hostctl import ContainerProcess
+from hostctl.process import ContainerProcess
 
 
 def _frame(stream, value):

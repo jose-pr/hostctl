@@ -16,10 +16,10 @@ from hostctl import (
     POWERSHELL,
     PWSH,
     HostConfig,
-    PowerShellFlavour,
     Shell,
     SshConfig,
 )
+from hostctl.shell import PowerShellFlavour
 from hostctl.host._ssh import _SshTransport
 
 

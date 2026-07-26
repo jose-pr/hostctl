@@ -8,7 +8,8 @@ import pytest
 from pathlib_next import Path
 from pathlib_next.utils.stat import FileStat
 
-from hostctl import WinRMPath, WinRMPathBackend
+from hostctl import WinRMPath
+from hostctl.host._winrm import WinRMPathBackend
 
 
 class _MemoryBackend:

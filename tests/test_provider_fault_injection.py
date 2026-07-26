@@ -25,7 +25,7 @@ from hostctl import (
     PosixHost,
     ProviderProbe,
 )
-from hostctl.provider import (
+from hostctl.provider.transports import (
     ARCHIVE_PATH_OPERATIONS,
     ContainerArchivePathProvider,
     DownloadPathProvider,
