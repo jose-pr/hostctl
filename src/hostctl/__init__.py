@@ -74,6 +74,8 @@ from .host import (
     IosConfig as IosConfig,
     IosHost as IosHost,
     CompositePath as CompositePath,
+    CompositePosixPath as CompositePosixPath,
+    CompositeWindowsPath as CompositeWindowsPath,
 )
 from .provider import (
     ExecutorProvider as ExecutorProvider,
@@ -250,6 +252,8 @@ __all__ = [
     "IosConfig",
     "IosHost",
     "CompositePath",
+    "CompositePosixPath",
+    "CompositeWindowsPath",
     "ExecutorProvider",
     "OperationNotStarted",
     "PathProvider",

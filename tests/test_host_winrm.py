@@ -37,7 +37,7 @@ class _Session:
 
 
 def _host(response=None):
-    host = _WinRMTransport(WinRMConfig("windows.example.com", "admin", "secret"))
+    host = _WinRMTransport(WinRMConfig("windows.example.com", "admin", "secret", provider="pywinrm"))
     session = _Session(response)
     host._session = session
     return host, session
@@ -138,7 +138,7 @@ def test_winrm_validates_environment_keys_and_builds_windows_path():
 
 
 def test_winrm_missing_dependency_is_lazy(monkeypatch):
-    host = _WinRMTransport(WinRMConfig("host", "user", "password"))
+    host = _WinRMTransport(WinRMConfig("host", "user", "password", provider="pywinrm"))
     monkeypatch.setitem(sys.modules, "winrm", None)
     with pytest.raises(ImportError, match=r"hostctl\[winrm\]"):
         _ = host.session
@@ -190,7 +190,7 @@ def test_native_winrm_remote_marker_is_checkable(monkeypatch):
         stderr = marker
 
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: Result())
-    host = _WinRMTransport(WinRMConfig("server.example", "user", "secret"))
+    host = _WinRMTransport(WinRMConfig("server.example", "user", "secret", provider="pywinrm"))
     host._session = NativeWinRMSession("server.example")
     result = host.run("Write-Output x", check=False)
     assert result.returncode == 5

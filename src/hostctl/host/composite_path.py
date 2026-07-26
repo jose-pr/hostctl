@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import PurePath
+from pathlib import PurePath, PurePosixPath, PureWindowsPath
 
 from pathlib_next.fspath import LocalPath
 
@@ -54,6 +54,19 @@ class CompositePath(LocalPath):
             self._providers,
         )
 
+    def _operation_path(self, operation):
+        if (
+            operation in self._provider.capabilities
+            or "path" in self._provider.capabilities
+        ):
+            return self._backend_path
+        for provider in self._providers:
+            if operation in provider.capabilities:
+                return provider.path(*self.parts)
+        raise NotImplementedError(
+            f"provider {self._provider.name!r} does not support {operation}"
+        )
+
     def __truediv__(self, key):
         return self.with_segments(*(tuple(self.parts) + (str(key),)))
 
@@ -64,32 +77,58 @@ class CompositePath(LocalPath):
         return result
 
     def stat(self, *, follow_symlinks=True):
-        return self._backend_path.stat(follow_symlinks=follow_symlinks)
+        return self._operation_path("stat").stat(follow_symlinks=follow_symlinks)
 
     def open(self, *args, **kwargs):
-        return self._backend_path.open(*args, **kwargs)
+        return self._operation_path("open").open(*args, **kwargs)
 
     def read_bytes(self):
-        return self._backend_path.read_bytes()
+        return self._operation_path("read").read_bytes()
 
     def write_bytes(self, data):
-        return self._backend_path.write_bytes(data)
+        return self._operation_path("write").write_bytes(data)
 
     def read_text(self, *args, **kwargs):
-        return self._backend_path.read_text(*args, **kwargs)
+        return self._operation_path("read").read_text(*args, **kwargs)
 
     def write_text(self, data, *args, **kwargs):
-        return self._backend_path.write_text(data, *args, **kwargs)
+        return self._operation_path("write").write_text(data, *args, **kwargs)
 
     def exists(self):
-        return self._backend_path.exists()
+        return self._operation_path("exists").exists()
 
     def is_file(self):
-        return self._backend_path.is_file()
+        return self._operation_path("stat").is_file()
 
     def is_dir(self):
-        return self._backend_path.is_dir()
+        return self._operation_path("stat").is_dir()
 
     def iterdir(self):
-        for child in self._backend_path.iterdir():
+        for child in self._operation_path("scandir").iterdir():
             yield type(self)(child, self._provider, self._factory, self._providers)
+
+
+class CompositePosixPath(CompositePath):
+    """Composite path with POSIX syntax independent of the client OS."""
+
+    __slots__ = ()
+
+    def __str__(self):
+        return str(PurePosixPath(str(self._backend_path).replace("\\", "/")))
+
+    @property
+    def parts(self):
+        return PurePosixPath(str(self._backend_path).replace("\\", "/")).parts
+
+
+class CompositeWindowsPath(CompositePath):
+    """Composite path with Windows syntax independent of the client OS."""
+
+    __slots__ = ()
+
+    def __str__(self):
+        return str(PureWindowsPath(str(self._backend_path).replace("/", "\\")))
+
+    @property
+    def parts(self):
+        return PureWindowsPath(str(self._backend_path)).parts

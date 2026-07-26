@@ -32,7 +32,7 @@ from ._common import (
     starts_direct_command,
     normalize_os_family,
 )
-from .composite_path import CompositePath
+from .composite_path import CompositePath, CompositePosixPath, CompositeWindowsPath
 
 
 class SystemConfig(HostConfig):
@@ -189,19 +189,24 @@ class SystemHost(Host):
     def info(self) -> HostInfo:
         if self._info is not None:
             return self._info
-        try:
-            provider = self._executor_selector.select().provider
-            callback = getattr(provider, "info", None)
-            if callback is not None:
-                return callback()
-        except Exception:
-            pass
+        if self._connected:
+            try:
+                provider = self._executor_selector.select().provider
+                callback = getattr(provider, "info", None)
+                if callback is not None:
+                    return callback()
+            except Exception:
+                pass
         hostname = getattr(self.config, "authority", None) or getattr(
             self.config, "host", None
         )
         return HostInfo(hostname=hostname, os_family=self.system_family)
 
     def path(self, *segments: PathLike, backend: str | None = None) -> Path:
+        if not self._path_selector.providers:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not provide the 'path' capability"
+            )
         if backend is None:
             selected = self._path_selector.select()
         else:
@@ -230,7 +235,12 @@ class SystemHost(Host):
             )
         try:
             value = selected.provider.path(*segments)
-            return CompositePath.from_path(
+            path_type = (
+                CompositeWindowsPath
+                if self.system_family == "windows"
+                else CompositePosixPath
+            )
+            return path_type.from_path(
                 value,
                 selected.provider,
                 selected.provider.path,
@@ -243,7 +253,12 @@ class SystemHost(Host):
                 exclude=(selected.provider.name,)
             ).provider
             value = fallback.path(*segments)
-            return CompositePath.from_path(
+            path_type = (
+                CompositeWindowsPath
+                if self.system_family == "windows"
+                else CompositePosixPath
+            )
+            return path_type.from_path(
                 value, fallback, fallback.path, self._path_selector.providers
             )
 
@@ -265,6 +280,10 @@ class SystemHost(Host):
         timeout=None,
         text=None,
     ):
+        if not self._executor_selector.providers:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not provide the 'run' capability"
+            )
         selected = self._executor_selector.select()
         provider = selected.provider
         direct = starts_direct_command(cmds)
@@ -298,7 +317,8 @@ class SystemHost(Host):
                     )
                 command = self.shell_flavour.command(
                     cmds,
-                    executable=executable,
+                    executable=executable
+                    or getattr(provider, "shell_executable", None),
                     cwd=None if "cwd" in provider.capabilities else cwd,
                     env=None if "env" in provider.capabilities else env,
                 )
@@ -319,9 +339,10 @@ class SystemHost(Host):
         native_cwd = cwd if "cwd" in provider.capabilities else None
         native_env = env if "env" in provider.capabilities else None
         flavour = self.shell_flavour
+        shell_executable = executable or getattr(provider, "shell_executable", None)
         command = flavour.command(
             cmds,
-            executable=executable,
+            executable=shell_executable,
             cwd=None if native_cwd is not None else cwd,
             env=None if native_env is not None else env,
         )
@@ -331,7 +352,7 @@ class SystemHost(Host):
             options["env"] = native_env
         if "args" not in provider.capabilities:
             return provider.execute(command.command, **options)
-        invocation = flavour.invocation(command.command, executable=executable)
+        invocation = flavour.invocation(command.command, executable=shell_executable)
         try:
             return provider.execute(invocation[0], *invocation[1:], **options)
         except OperationNotStarted:
