@@ -373,13 +373,19 @@ class SystemHost(Host):
 
     def close(self):
         targets = []
+        # Dedupe by identity, matching the `id(target)` check below. Value
+        # equality would collapse two distinct transports that compare equal
+        # (e.g. a user-supplied dataclass transport registered through
+        # `register_system_provider`) into one entry and leak the other.
+        seen_targets = set()
         for provider in (
             *self._connected_providers,
             *self._executor_selector.providers,
             *self._path_selector.providers,
         ):
             target = getattr(provider, "transport", provider)
-            if target not in targets:
+            if id(target) not in seen_targets:
+                seen_targets.add(id(target))
                 targets.append(target)
         first_error = None
         for target in reversed(targets):

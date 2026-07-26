@@ -946,8 +946,11 @@ class WinRMExecutorProvider(ExecutorProvider):
     def info(self):
         return self.transport.info()
 
-    def spawn(self, *args, **options):
-        return self.transport.spawn(*args, **options)
+    # No `spawn`: WinRM has no persistent byte-stream session (see
+    # docs/guide/contracts.md). Defining a pass-through here would satisfy
+    # SystemHost.spawn's `getattr(provider, "spawn", None)` guard and then
+    # fail one frame deeper with AttributeError; omitting it lets that guard
+    # raise the documented NotImplementedError instead.
 
     def runspace(self):
         if "runspace" not in self.capabilities:
