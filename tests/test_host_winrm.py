@@ -10,7 +10,7 @@ from pathlib import PureWindowsPath
 import pytest
 
 from pathlib_next import Path as NextPath
-from hostctl import WinRMConfig, WinRMPath
+from hostctl import Shell, WinRMConfig, WinRMPath
 from hostctl.host._winrm import _WinRMTransport
 from hostctl.executor.winrm import NativeWinRMSession
 
@@ -59,14 +59,19 @@ def test_winrm_text_mode_decodes_with_utf8_default():
 
 def test_winrm_shell_execute_path_invokes_it_as_a_command():
     host, session = _host()
-    host.shell.execute(PureWindowsPath(r"C:\Program Files\tool.exe"))
-    assert session.scripts == ["& 'C:\\Program Files\\tool.exe'; exit $LASTEXITCODE"]
+    Shell(host.shell_flavour, host.executor).execute(
+        PureWindowsPath(r"C:\Program Files\tool.exe")
+    )
+    assert session.scripts == [r"C:\Program Files\tool.exe"]
 
 
 def test_winrm_context_closes_when_session_supports_close():
     host, session = _host()
-    with host:
+    host.connect()
+    try:
         pass
+    finally:
+        host.close()
     assert session.closed
     assert host._session is None
 

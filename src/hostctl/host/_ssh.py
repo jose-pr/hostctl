@@ -21,7 +21,6 @@ from ._common import (
     Command,
     Environment,
     FileHandle,
-    Host,
     HostConfig,
     HostInfo,
     HostPath,
@@ -175,7 +174,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         )
 
 
-class _SshTransport(Host):
+class _SshTransport:
     """A host reached over SSH, with an explicitly configured command dialect."""
 
     def __init__(self, config: SshConfig) -> None:

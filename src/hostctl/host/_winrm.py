@@ -24,7 +24,6 @@ from ._common import (
     Command,
     Environment,
     FileHandle,
-    Host,
     HostConfig,
     HostInfo,
     Input,
@@ -167,7 +166,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
         )
 
 
-class _WinRMTransport(Host):
+class _WinRMTransport:
     """A Windows host reached through PowerShell over WinRM."""
 
     def __init__(self, config: WinRMConfig) -> None:

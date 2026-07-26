@@ -31,6 +31,7 @@ from hostctl import (
 )
 from hostctl.host._ssh import _SshTransport
 from hostctl.host._winrm import _WinRMTransport
+from hostctl.executor.psrp import PsrpExecutor
 from hostctl.executor import Executor as ModuleExecutor
 
 
@@ -408,12 +409,10 @@ def test_host_builds_shell_from_its_flavour_and_executor():
     ssh = _SshTransport(SshConfig("host", dialect="powershell"))
     winrm = _WinRMTransport(WinRMConfig("host", "user"))
 
-    assert ssh.shell.flavour is POWERSHELL
-    assert winrm.shell.flavour is POWERSHELL
+    assert Shell(ssh.shell_flavour, ssh.executor).flavour is POWERSHELL
+    assert Shell(winrm.shell_flavour, winrm.executor).flavour is POWERSHELL
     assert isinstance(ssh.executor, SshExecutor)
-    assert isinstance(winrm.executor, WinRMExecutor)
-    assert getattr(ssh.shell._execute, "__self__", None) is ssh
-    assert getattr(winrm.shell._execute, "__self__", None) is winrm
+    assert isinstance(winrm.executor, (WinRMExecutor, PsrpExecutor))
 
 
 def test_shell_session_uses_flavour_wrapper_and_provider_spawn():

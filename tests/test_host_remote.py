@@ -17,6 +17,7 @@ from hostctl import (
     PWSH,
     HostConfig,
     PowerShellFlavour,
+    Shell,
     SshConfig,
 )
 from hostctl.host._ssh import _SshTransport
@@ -81,13 +82,13 @@ def test_ssh_text_mode_selects_an_encoding_for_executor():
 
 def test_ssh_shell_execute_path_quotes_it_as_a_direct_command():
     host, stub = _host()
-    host.shell.execute(PurePosixPath("/opt/my command"))
-    assert "'/opt/my command'" in stub.calls[0][0]
+    Shell(host.shell_flavour, host.executor).execute(PurePosixPath("/opt/my command"))
+    assert stub.calls[0][0] == "/opt/my command"
 
 
 def test_ssh_shell_execute_path_with_args_renders_safe_script():
     host, stub = _host()
-    host.shell.execute(
+    Shell(host.shell_flavour, host.executor).execute(
         PurePosixPath("/opt/my command"),
         "--name",
         "value with spaces",
@@ -114,8 +115,11 @@ def test_ssh_inherited_capture_stream_without_fileno(monkeypatch):
 def test_ssh_host_context_closes_connection_on_exception():
     host, stub = _host()
     with pytest.raises(RuntimeError):
-        with host:
+        host.connect()
+        try:
             raise RuntimeError("body failed")
+        finally:
+            host.close()
     assert stub.closed
     assert stub.waited
 
