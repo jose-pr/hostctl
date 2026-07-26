@@ -40,6 +40,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `joinpath`, `parent`/`parents`, `with_name`/`with_suffix`, `iterdir`,
   `glob`/`rglob`/`walk`, and open streams. See the "Systems and providers"
   guide for the no-replay safety rule and provider-authoring contract.
+- Symbolic-link support on every path backend whose transport provides it.
+  `symlink_to(target, target_is_directory=False)` and `readlink()` follow the
+  `pathlib.Path` signatures, `readlink()` reports the stored target verbatim,
+  and `stat(follow_symlinks=...)` stays consistent with `is_symlink()`. Local
+  paths delegate to `os.symlink`, SFTP uses the SSH backend's
+  `symlink`/`readlink`, WinRM issues `New-Item -ItemType SymbolicLink`
+  (normalizing the Windows elevation/Developer-Mode requirement to
+  `PermissionError`), and container paths ship a `SYMTYPE` tar member through
+  `put_archive()`. QGA paths raise `NotImplementedError` because the guest
+  agent exposes no symlink RPC. Container reads now follow a symlink member to
+  its target instead of failing, without giving up streaming laziness.
 - Subprocess-shaped execution options, normalized transport errors, bounded
   buffered file transfers, and Python 3.9+ typing support (Python 3.14 is the
   default development interpreter).

@@ -41,6 +41,24 @@ file raises `NotADirectoryError`. `exists()` is a boolean probe and never raises
 for a dangling symlink/reparse point. Binary and text writes must round-trip,
 including empty files and multibyte text split across transfer chunks.
 
+### Symbolic links
+
+`symlink_to(target, target_is_directory=False)` and `readlink()` follow the
+`pathlib.Path` signatures. `readlink()` reports the target the transport
+stored, verbatim: a relative target stays relative and is never resolved
+against the link's parent. `stat()` follows links by default and
+`stat(follow_symlinks=False)` does not, so `is_symlink()` and `exists()`
+always agree.
+
+Local, SFTP (SSH), WinRM, and container archive paths implement both. QGA
+paths raise `NotImplementedError` because the guest agent exposes no symlink
+RPC. Creating a symbolic link on a Windows target additionally requires an
+elevated session or Developer Mode; without one the backend raises
+`PermissionError`, which is a host policy rather than a transport gap.
+
+`target_is_directory` is a local-Windows-filesystem hint with no wire
+representation, so every remote backend accepts and ignores it.
+
 ## Capability selection
 
 The conformance tests are capability-driven. A skipped test must state the
@@ -55,5 +73,7 @@ they advertise.
 | Serial process `read(-1)` | returns bytes currently reported as available, capped at 64 KiB, rather than waiting for EOF | Physical and network serial ports normally have no EOF until disconnected; waiting for EOF would make interactive sessions unusable. |
 | WinRM persistent process | `spawn`/TTY unavailable | WinRM's buffered command API does not expose a durable bidirectional stream. |
 | QEMU Guest Agent | timed-out guest processes cannot be cancelled | QGA exposes process IDs and polling but no portable kill operation in the buffered contract. |
-| Container path mutations | unsupported operations raise `NotImplementedError` | Docker archive APIs provide safe file transfer but not all remote filesystem metadata primitives. |
+| Container path mutations | unsupported operations raise `NotImplementedError` | Docker archive APIs provide safe file transfer but not all remote filesystem metadata primitives. Symlinks are the exception: a `SYMTYPE` tar member is a faithful archive representation, so `symlink_to()`/`readlink()` are implemented. |
+| QGA `symlink_to()`/`readlink()` | raise `NotImplementedError` | The guest agent's `guest-file-*` protocol has no symlink RPC; emulating one through `guest-exec` would be a different transport with different permission semantics. |
+| WinRM `symlink_to()` | may raise `PermissionError` | Windows requires an elevated session or Developer Mode to create a symbolic link. This is a host policy, not a transport gap, so the privilege failure is normalized rather than reported as an unsupported operation. |
 | LocalPath on Windows | opening a directory may surface `PermissionError` | CPython's Windows file API reports EACCES; remote providers normalize this to `IsADirectoryError`. |

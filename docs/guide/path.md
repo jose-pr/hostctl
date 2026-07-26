@@ -37,6 +37,22 @@ commit, and an abandoned writable stream is discarded with a
 apply. Reparse points are reported as symlink-style metadata; following one
 resolves its target once and raises `OSError` when unresolved.
 
+`WinRMPath.symlink_to()` issues `New-Item -ItemType SymbolicLink`. Windows
+only permits this from an elevated session or with Developer Mode enabled;
+otherwise the privilege failure is normalized to `PermissionError`.
+`readlink()` reports the reparse point's stored target.
+
+Container archive paths create symlinks by shipping a `SYMTYPE` tar member
+through `put_archive()`, and `readlink()` reads the member's `linkname` (or
+Docker's `linkTarget` metadata when supplied). Reads through a container
+symlink follow it lazily: the link is recognized from its member header, so a
+regular file still costs exactly one archive pull.
+
+QGA paths raise `NotImplementedError` for `symlink_to()` and `readlink()` --
+the guest agent's `guest-file-*` protocol has no symlink RPC, and emulating
+one through `guest-exec` would be a different transport with different
+permission semantics.
+
 For SSH, `SshConfig.path_flavor` explicitly selects
 the `PosixPathname` or `WindowsPathname` constructor; it is independent of the
 command dialect. Concrete stdlib `PurePosixPath` and `PureWindowsPath`
