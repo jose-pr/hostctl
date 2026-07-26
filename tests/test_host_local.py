@@ -27,6 +27,8 @@ def test_local_path_is_plain_pathlib(tmp_path):
     assert isinstance(path, Path)
     assert isinstance(path, NextPath)
     assert path == tmp_path / "foo.txt"
+    with pytest.raises(ValueError, match="local"):
+        LocalHost().path(tmp_path, backend="sftp")
 
 
 def test_local_run_captures_stdout_and_quotes_arguments():

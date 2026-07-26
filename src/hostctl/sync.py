@@ -17,7 +17,7 @@ _REMOTE_ALGORITHMS = frozenset(("md5", "sha1", "sha256", "sha384", "sha512"))
 _HEX_DIGEST = re.compile(r"^[0-9a-fA-F]+$")
 
 
-def stat_checksum(entry: PathAndStat) -> tuple[int, int]:
+def stat_checksum(entry: PathAndStat) -> tuple[int, float]:
     """Return the cached size and modification time without reading content."""
     if entry.stat is None:
         raise FileNotFoundError(entry.path)

@@ -78,6 +78,8 @@ class LocalHost(Host):
         )
 
     def path(self, *segments: PathLike, backend: _ty.Optional[str] = None) -> HostPath:
+        if backend not in (None, "local"):
+            raise ValueError("local path backend must be 'local'")
         return HostPath(*segments) if segments else HostPath(_os.getcwd())
 
     def run(

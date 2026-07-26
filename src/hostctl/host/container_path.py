@@ -214,18 +214,23 @@ class ContainerPathBackend:
         current = path
         for _ in range(hops):
             stream, metadata = self.container.get_archive(current)
-            if metadata:
-                link_target = metadata.get("linkTarget")
-                if link_target:
-                    target = str(link_target)
-                    parent = posixpath.dirname(current.rstrip("/"))
-                    current = (
-                        target
-                        if target.startswith("/")
-                        else posixpath.join(parent, target)
-                    )
-                    continue
-                return self._metadata_stat(metadata)
+            try:
+                if metadata:
+                    link_target = metadata.get("linkTarget")
+                    if link_target:
+                        target = str(link_target)
+                        parent = posixpath.dirname(current.rstrip("/"))
+                        current = (
+                            target
+                            if target.startswith("/")
+                            else posixpath.join(parent, target)
+                        )
+                        continue
+                    return self._metadata_stat(metadata)
+            finally:
+                close = getattr(stream, "close", None)
+                if close is not None:
+                    close()
             archive, members = self._archive(current)
             try:
                 member = self._root_member(members)

@@ -7,7 +7,7 @@ machinery. There is deliberately no separate transfer engine:
 from hostctl import Host
 
 with Host("ssh://source.example") as source, Host(
-    "winrms://target.example", username="operator", password=password
+    "winrms://operator@target.example", password=password
 ) as target:
     source.path("/srv/report.csv").copy(
         target.path(r"C:\Imports\report.csv"),

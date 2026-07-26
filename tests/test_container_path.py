@@ -88,6 +88,33 @@ def test_container_stat_closes_unused_archive_stream():
     assert stream.closed
 
 
+def test_container_followed_metadata_links_close_every_unused_stream():
+    class Stream:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    streams = [Stream(), Stream()]
+    responses = iter(
+        (
+            (streams[0], {"linkTarget": "target"}),
+            (
+                streams[1],
+                {"name": "target", "size": 4, "mode": 0o100644, "mtime": "0"},
+            ),
+        )
+    )
+    container = _Container()
+    container.get_archive = lambda path: next(responses)
+
+    result = ContainerPathBackend(container).stat("/link", follow_symlinks=True)
+
+    assert result.st_size == 4
+    assert all(stream.closed for stream in streams)
+
+
 def test_container_open_read_is_lazy_and_bounded():
     container = _Container()
     payload = _tar((("data.bin", b"x" * (1024 * 1024)),))

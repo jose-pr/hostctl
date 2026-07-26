@@ -142,6 +142,7 @@ def test_winrm_validates_environment_keys_and_builds_windows_path():
     assert isinstance(path, WinRMPath)
     assert str(path) == r"C:\Temp\a b.txt"
     assert path.parent.backend is path.backend
+    assert str(host.path("C:")) == "C:\\"
 
 
 def test_winrm_missing_dependency_is_lazy(monkeypatch):
