@@ -61,6 +61,11 @@ class NativeWinRMSession:
             )
         if message_encryption not in {"auto", "always", "never"}:
             raise ValueError("invalid message_encryption")
+        if message_encryption != "auto":
+            raise NotImplementedError(
+                "native WinRM cannot override WS-Man message encryption; "
+                "use message_encryption='auto' or the pywinrm provider"
+            )
         if server_cert_validation not in {"validate", "ignore"}:
             raise ValueError("invalid server_cert_validation")
         if ssl and server_cert_validation == "ignore":

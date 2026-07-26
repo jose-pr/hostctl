@@ -176,7 +176,16 @@ class WinRMHost(Host):
             lambda: self.session,
             lambda: float(self.config.read_timeout_sec),
         )
-        self._path_backend = WinRMPathBackend(self.run)
+        # WinRS/pywinrm carries the generated script on a command line and
+        # therefore uses a conservative budget.  Native PowerShell remoting
+        # and PSRP feed scripts through stdin/messages and can safely batch
+        # larger payloads.
+        native_context = self.config.password is None and os.name == "nt"
+        script_budget = 256_000 if self._provider == "psrp" or native_context else 6_000
+        self._path_backend = WinRMPathBackend(
+            self.run,
+            max_script_bytes=script_budget,
+        )
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:

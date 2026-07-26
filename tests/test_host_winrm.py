@@ -159,6 +159,15 @@ def test_winrm_config_exposes_secure_transport_settings():
     assert config.message_encryption == "always"
 
 
+def test_winrm_path_budget_tracks_provider(monkeypatch):
+    monkeypatch.setattr("hostctl.host._winrm.pypsrp_available", lambda: False)
+    pywinrm = WinRMHost(WinRMConfig("host", "user", "secret", provider="pywinrm"))
+    assert pywinrm._path_backend.max_script_bytes == 6000
+    monkeypatch.setattr("hostctl.host._winrm.pypsrp_available", lambda: True)
+    psrp = WinRMHost(WinRMConfig("host", "user", "secret", provider="psrp"))
+    assert psrp._path_backend.max_script_bytes == 256000
+
+
 def test_native_winrm_timeout_names_remote_host(monkeypatch):
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(kwargs.get("input", "remote"), 1)
@@ -185,6 +194,37 @@ def test_native_winrm_remote_marker_is_checkable(monkeypatch):
     result = host.run("Write-Output x", check=False)
     assert result.returncode == 5
     assert result.stderr == b"remote failed"
+
+
+def test_native_winrm_rejects_unrepresentable_message_encryption():
+    with pytest.raises(NotImplementedError, match="message encryption"):
+        NativeWinRMSession("server.example", message_encryption="always")
+
+
+def test_native_winrm_option_assembly(monkeypatch):
+    captured = {}
+
+    class Result:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["input"] = kwargs["input"]
+        return Result()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    NativeWinRMSession(
+        "server.example",
+        ssl=True,
+        port=5987,
+        server_cert_validation="ignore",
+    ).run_ps("Write-Output x")
+    wrapper = captured["input"].decode("utf-8")
+    assert "UseSSL=$true" in wrapper
+    assert "Port=5987" in wrapper
+    assert "SkipCACheck=$true" in wrapper
 
 
 @pytest.mark.parametrize(

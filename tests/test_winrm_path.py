@@ -2,6 +2,7 @@
 
 import stat
 import subprocess
+import json
 
 import pytest
 from pathlib_next import Path
@@ -148,3 +149,64 @@ def test_winrm_backend_prelude_and_command_budget_for_large_write():
     assert all("OutputEncoding" in script for script in scripts)
     # Multiple chunks are grouped into a single PowerShell invocation.
     assert len(scripts) < 1024
+
+
+@pytest.mark.parametrize(
+    ("marker", "error_type"),
+    [
+        ("missing", FileNotFoundError),
+        ("permission", PermissionError),
+        ("exists", FileExistsError),
+        ("isdir", IsADirectoryError),
+        ("notdir", NotADirectoryError),
+    ],
+)
+def test_winrm_backend_marker_error_mapping(marker, error_type):
+    encoded = __import__("base64").b64encode(b"detail").decode("ascii")
+
+    def run(script, **kwargs):
+        return subprocess.CompletedProcess(
+            script, 0, f"HOSTCTL_ERROR:{marker}:{encoded}", ""
+        )
+
+    backend = WinRMPathBackend(run)
+    with pytest.raises(error_type, match="detail"):
+        backend.stat(r"C:\hostile'$(rm x).txt")
+
+
+def test_winrm_backend_hostile_path_is_encoded_and_json_stat_is_parsed():
+    scripts = []
+
+    def run(script, **kwargs):
+        scripts.append(script)
+        value = {
+            "name": "smart’quote.txt",
+            "directory": False,
+            "size": 3,
+            "mtime": 12,
+            "readonly": False,
+            "link": False,
+            "target": "",
+        }
+        return subprocess.CompletedProcess(script, 0, json.dumps(value), "")
+
+    backend = WinRMPathBackend(run)
+    result = backend.stat(r"C:\foo'$(rm x).txt")
+    assert result.st_size == 3
+    assert "foo'$(rm x)" not in scripts[0]
+    assert "OutputEncoding" in scripts[0]
+
+
+@pytest.mark.parametrize("size", [0, 1535, 1536, 1537, 3072])
+def test_winrm_backend_write_chunk_boundaries_stay_within_budget(size):
+    scripts = []
+
+    def run(script, **kwargs):
+        scripts.append(script)
+        return subprocess.CompletedProcess(script, 0, "", "")
+
+    backend = WinRMPathBackend(run)
+    backend.write_bytes(r"C:\boundary.bin", b"x" * size)
+    assert all(
+        len(script.encode("utf-8")) <= backend.max_script_bytes for script in scripts
+    )
