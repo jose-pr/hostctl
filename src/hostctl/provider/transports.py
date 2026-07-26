@@ -15,6 +15,7 @@ proven pre-dispatch refusal is raised as
 
 from __future__ import annotations
 
+import logging
 import os
 import typing
 
@@ -25,7 +26,10 @@ from ._common import (
     OperationNotStarted,
     PathProvider,
     ProviderProbe,
+    ProviderSelector,
 )
+
+log = logging.getLogger("hostctl.provider.transports")
 
 #: Operations a POSIX-complete filesystem backend performs.
 FULL_PATH_OPERATIONS = frozenset(
@@ -141,15 +145,23 @@ class ContainerExecutorProvider(ExecutorProvider):
     def connect(self):
         if self._connect is None:
             return
+        log.debug("inspecting container before dispatch")
         try:
             self._connect()
         except (ConnectionError, TimeoutError) as exc:
+            log.debug(
+                "container provider declining before dispatch: %s: %s",
+                type(exc).__name__,
+                ProviderSelector.redact(exc),
+            )
             raise OperationNotStarted(
                 "container is unavailable before dispatch", cause=exc
             ) from exc
+        log.debug("container is running and ready for dispatch")
 
     def close(self):
         if self._close is not None:
+            log.debug("releasing container provider resources")
             self._close()
 
     def info(self):
@@ -237,6 +249,15 @@ class QgaPathProvider(PathProvider):
                 "unavailable", "guest agent provides no usable file RPCs"
             )
         if getattr(self.backend, "helper", None) is None:
+            # Warning, not debug: the provider stays usable, so the operation
+            # proceeds and nothing surfaces an error -- but the caller silently
+            # loses stat/scandir and every namespace mutation.  Degrading
+            # without saying so is exactly the case a log is for.
+            log.warning(
+                "QGA provider %s is degraded: no guest helper was probed, so "
+                "metadata and namespace mutations are unavailable",
+                ProviderSelector.redact(self.name),
+            )
             return ProviderProbe(
                 "degraded",
                 "guest helper was not probed; metadata and mutations are unavailable",

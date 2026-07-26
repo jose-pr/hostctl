@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib
+import logging
 import os
 import subprocess
 import threading
@@ -19,7 +20,10 @@ from ..provider import (
     OperationNotStarted,
     PathProvider,
     ProviderProbe,
+    ProviderSelector,
 )
+
+log = logging.getLogger("hostctl.host.ssh")
 from ..process import Process, SshProcess, TerminalRequest
 from ._common import (
     CaptureOutput,
@@ -297,6 +301,10 @@ class _SshTransport:
             if self._ssh is None or self._ssh.is_closed():
                 from .. import _async
 
+                log.debug(
+                    "opening SSH connection to %s",
+                    ProviderSelector.redact(self.config.connection_uri),
+                )
                 try:
                     self._ssh = _async.async_to_sync(
                         _async.asyncssh().connect(
@@ -306,10 +314,19 @@ class _SshTransport:
                         )
                     )
                 except Exception as exc:
+                    log.debug(
+                        "SSH connection to %s failed: %s",
+                        ProviderSelector.redact(self.config.connection_uri),
+                        type(exc).__name__,
+                    )
                     normalized = _async.normalize_asyncssh_error(exc)
                     if normalized is exc:
                         raise
                     raise normalized from exc
+                log.debug(
+                    "SSH connection to %s established",
+                    ProviderSelector.redact(self.config.connection_uri),
+                )
             return self._ssh
 
     def connect(self) -> None:
@@ -321,6 +338,10 @@ class _SshTransport:
             if self._ssh is None:
                 return
             connection, self._ssh = self._ssh, None
+            log.debug(
+                "closing SSH connection to %s",
+                ProviderSelector.redact(self.config.connection_uri),
+            )
             from .. import _async
 
             async def close_connection() -> None:
@@ -506,6 +527,11 @@ class SshExecutorProvider(ExecutorProvider):
         try:
             self.transport.connect()
         except (ConnectionError, TimeoutError) as exc:
+            log.debug(
+                "SSH provider declining before dispatch: %s: %s",
+                type(exc).__name__,
+                ProviderSelector.redact(exc),
+            )
             raise OperationNotStarted(
                 "SSH connection failed before dispatch", cause=exc
             ) from exc

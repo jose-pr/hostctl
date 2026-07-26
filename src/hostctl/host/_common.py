@@ -373,6 +373,40 @@ class Host(_abc.ABC, metaclass=_HostMeta):
 
         return Shell(self.shell_flavour, self)
 
+    def _run_selector(self) -> _ty.Optional[object]:
+        """The :class:`~hostctl.provider.ProviderSelector` backing :meth:`run`.
+
+        ``None`` for a host that does not select a command provider at all.
+        The default finds the attribute used by the provider-composed system
+        hosts; assemblies that name theirs differently override this.
+        """
+        return getattr(self, "_executor_selector", None)
+
+    @property
+    def last_selection(self) -> _ty.Tuple[_ty.Dict[str, object], ...]:
+        """The redacted provider trace for the most recent :meth:`run`.
+
+        The run-side counterpart of ``CompositePosixPath.selection_trace``.
+        Entries appear in provider precedence order and carry ``provider``,
+        ``availability``, ``reason``, ``capabilities``, ``chosen``,
+        ``generation``, ``policy``, and ``pin``.
+
+        The trace accumulates across the failover attempts of a single
+        ``run()``, so a call that fell through from one provider to another
+        reports every provider tried and every refusal reason -- including on
+        the very call that suffered them.
+
+        Empty for a host whose ``run()`` does not select between providers
+        (``QemuHost``, ``SerialHost``), and empty before the first ``run()``.
+        Values are redacted on the way in; see
+        :meth:`~hostctl.provider.ProviderSelector.redact` for the limits of
+        that guarantee.
+        """
+        selector = self._run_selector()
+        if selector is None:
+            return ()
+        return getattr(selector, "trace", ())
+
     @property
     @_abc.abstractmethod
     def capabilities(self) -> _ty.FrozenSet[str]:
