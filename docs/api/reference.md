@@ -96,6 +96,7 @@ from their docstrings.
 ::: hostctl.ProviderSelection
 ::: hostctl.ProviderSelector
 ::: hostctl.SessionInitializer
+::: hostctl.register_system_provider
 ::: hostctl.CompositePosixPath
 ::: hostctl.CompositeWindowsPath
 

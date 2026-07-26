@@ -29,6 +29,10 @@ providers. `PosixHost.from_ssh(SshConfig(...))` and
 `WindowsHost.from_winrm(WinRMConfig(...))` retain the original connection URI
 and lifecycle while exposing transport operations through provider adapters;
 transport implementations remain private.
+`register_system_provider(name, resolver)` extends logical system URI
+descriptors. Built-ins include `local`, `ssh`, `sftp`, and `winrm`; transport
+descriptors require matching objects in `SystemConfig(provider_options=...)` and
+never serialize credentials into the canonical URI.
 
 `Executor(command, *, stdin=None, stdout=None, stderr=None, cwd=None, env=None,
 capture_output=None, check=None, encoding=None, errors=None, input=None,
