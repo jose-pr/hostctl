@@ -22,6 +22,8 @@ from ._common import (
     PathLike,
     dispatch_output,
     normalize_environment,
+    capture_streams,
+    reject_stdin_conflict,
 )
 
 
@@ -110,16 +112,13 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
             raise NotImplementedError(
                 "QGA guest-exec has no native working-directory support"
             )
-        if input is not None and stdin is not None:
-            raise ValueError("stdin")
+        reject_stdin_conflict(input, stdin)
         if not str(command):
             raise ValueError("QGA guest-exec path must not be empty")
         if timeout is not None and timeout < 0:
             raise ValueError("timeout must not be negative")
         if text and encoding is None:
             encoding = "utf-8"
-
-        from ..host._common import capture_streams
 
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         argv = [

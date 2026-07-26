@@ -25,10 +25,11 @@ from ._common import (
     Input,
     PathLike,
     parse_host_info,
-    is_direct_command,
+    starts_direct_command,
     strict_uri_credentials,
     strict_uri_query,
     uri_host,
+    reject_stdin_conflict,
 )
 from ..shell import (
     BASH,
@@ -320,11 +321,11 @@ class SshHost(Host):
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
-        if input is not None and stdin is not None:
-            raise ValueError("stdin")
-        if is_direct_command(cmds):
-            command = cmds[0]
-            cmds = (command if isinstance(command, (tuple, list)) else (command,),)
+        reject_stdin_conflict(input, stdin)
+        direct = starts_direct_command(cmds)
+        if direct is not None:
+            command, args = direct
+            cmds = ((command, *args),)
         if text and encoding is None:
             encoding = "utf-8"
         shell_command = self.shell_flavour.command(

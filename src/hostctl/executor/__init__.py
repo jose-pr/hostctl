@@ -12,6 +12,8 @@ from ._common import (
     Input as Input,
     PathLike as PathLike,
     normalize_environment as normalize_environment,
+    capture_streams as capture_streams,
+    reject_stdin_conflict as reject_stdin_conflict,
 )
 from .container import (
     ContainerExecutor as ContainerExecutor,
@@ -56,6 +58,8 @@ __all__ = [
     "NativeWinRMSession",
     "normalize_container_error",
     "normalize_environment",
+    "capture_streams",
+    "reject_stdin_conflict",
     "normalize_serial_error",
     "SerialExecutor",
     "SerialFactory",

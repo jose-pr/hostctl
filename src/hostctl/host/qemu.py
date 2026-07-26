@@ -36,7 +36,7 @@ from ._common import (
     HostPath,
     Input,
     PathLike,
-    is_direct_command,
+    starts_direct_command,
     strict_uri_credentials,
     strict_uri_query,
 )
@@ -427,8 +427,13 @@ class QemuHost(Host):
     ) -> subprocess.CompletedProcess:
         if "run" not in self.capabilities:
             raise NotImplementedError("guest agent does not provide guest-exec")
-        if cmds and is_direct_command((cmds[0],)):
-            command, args = cmds[0], cmds[1:]
+        direct = starts_direct_command(cmds)
+        if direct is not None:
+            command, args = direct
+            if executable is not None:
+                raise NotImplementedError(
+                    "executable cannot be combined with a direct QGA command"
+                )
             if cwd is not None:
                 raise NotImplementedError("QGA direct argv execution cannot apply cwd")
         else:

@@ -17,6 +17,7 @@ from ._common import (
     PathLike,
     dispatch_output,
     normalize_environment,
+    capture_streams,
 )
 
 
@@ -76,8 +77,6 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
             raise NotImplementedError(
                 "Docker Engine exec does not provide a cancellable command timeout"
             )
-
-        from ..host._common import capture_streams
 
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         argv = [str(command)]

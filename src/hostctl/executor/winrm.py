@@ -16,6 +16,7 @@ from ._common import (
     FileHandle,
     Input,
     dispatch_output,
+    capture_streams,
 )
 
 
@@ -144,8 +145,6 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
             )
         if stdin is not None or input is not None:
             raise NotImplementedError("WinRMExecutor does not support stdin/input")
-        from ..host._common import capture_streams
-
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         try:
             result = self._session().run_ps(command)

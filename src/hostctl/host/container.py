@@ -40,7 +40,7 @@ from ._common import (
     HostPath,
     Input,
     PathLike,
-    is_direct_command,
+    starts_direct_command,
     parse_host_info,
     strict_uri_credentials,
     strict_uri_query,
@@ -314,10 +314,16 @@ class ContainerHost(Host):
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
-        if cmds and is_direct_command((cmds[0],)):
+        direct = starts_direct_command(cmds)
+        if direct is not None:
+            command, args = direct
+            if executable is not None:
+                raise NotImplementedError(
+                    "executable cannot be combined with a direct command"
+                )
             return self.executor(
-                cmds[0],
-                *cmds[1:],
+                command,
+                *args,
                 bufsize=bufsize,
                 stdin=stdin,
                 stdout=stdout,
@@ -365,12 +371,14 @@ class ContainerHost(Host):
         errors: typing.Optional[str] = None,
     ) -> Process:
         """Start a persistent Docker exec process with an optional TTY."""
-        if cmds and is_direct_command((cmds[0],)):
+        direct = starts_direct_command(cmds)
+        if direct is not None:
+            command, args = direct
             invocation = [
-                str(cmds[0]),
+                str(command),
                 *[
                     value.decode() if isinstance(value, bytes) else str(value)
-                    for value in cmds[1:]
+                    for value in args
                 ],
             ]
             environment = normalize_environment(env)

@@ -18,6 +18,8 @@ from ._common import (
     Input,
     dispatch_output,
     normalize_environment,
+    capture_streams,
+    reject_stdin_conflict,
 )
 
 
@@ -92,14 +94,12 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
         if args:
             raise NotImplementedError("SshExecutor does not support native arguments")
         command = str(command)
-        if input is not None and stdin is not None:
-            raise ValueError("stdin")
+        reject_stdin_conflict(input, stdin)
         if text and encoding is None:
             encoding = "utf-8"
         env = normalize_environment(env)
 
         from .. import _async
-        from ..host._common import capture_streams
 
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         if input is not None:

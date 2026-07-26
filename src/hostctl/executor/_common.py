@@ -22,6 +22,39 @@ ExecutorCommand = typing.Union[str, PurePath, Pathname]
 CommandArgument = typing.Union[str, bytes, PurePath, Pathname]
 
 
+def capture_streams(
+    capture_output: CaptureOutput,
+    stdout: typing.Optional[FileHandle],
+    stderr: typing.Optional[FileHandle],
+) -> typing.Tuple[typing.Optional[FileHandle], typing.Optional[FileHandle]]:
+    """Apply hostctl's extended capture_output convention."""
+    if capture_output not in (True, False, "stdout", "stderr"):
+        raise ValueError("capture_output must be True, False, 'stdout', or 'stderr'")
+    if capture_output == "stdout":
+        if stdout not in (None, subprocess.PIPE):
+            raise ValueError(
+                "stdout argument cannot be used with capture_output='stdout'"
+            )
+        stdout = subprocess.PIPE
+    elif capture_output == "stderr":
+        if stderr not in (None, subprocess.PIPE):
+            raise ValueError(
+                "stderr argument cannot be used with capture_output='stderr'"
+            )
+        stderr = subprocess.PIPE
+    elif capture_output is True:
+        if stdout is None:
+            stdout = subprocess.PIPE
+        if stderr is None:
+            stderr = subprocess.PIPE
+    return stdout, stderr
+
+
+def reject_stdin_conflict(input: Input, stdin: typing.Optional[FileHandle]) -> None:
+    if input is not None and stdin is not None:
+        raise ValueError("stdin and input arguments may not both be used")
+
+
 def normalize_environment(
     env: typing.Optional[Environment],
 ) -> typing.Optional[typing.Dict[str, str]]:

@@ -21,7 +21,7 @@ from ._common import (
     Input,
     PathLike,
     parse_host_info,
-    is_direct_command,
+    starts_direct_command,
     strict_uri_credentials,
     strict_uri_query,
     uri_host,
@@ -262,9 +262,10 @@ class WinRMHost(Host):
             raise NotImplementedError(
                 "WinRMHost.run supports PowerShell only and does not accept executable"
             )
-        if is_direct_command(cmds):
-            command = cmds[0]
-            cmds = (command if isinstance(command, (tuple, list)) else (command,),)
+        direct = starts_direct_command(cmds)
+        if direct is not None:
+            command, args = direct
+            cmds = ((command, *args),)
         script = POWERSHELL.script(cmds, cwd=cwd, env=env)
         return self.executor(
             script,

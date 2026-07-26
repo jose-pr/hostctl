@@ -6,6 +6,7 @@ import abc as _abc
 import dataclasses as _dc
 import importlib.metadata as _metadata
 import subprocess as _subprocess
+import threading as _threading
 import typing as _ty
 import types as _types
 from pathlib import PurePath as _PurePath
@@ -23,6 +24,8 @@ from ..executor import (
     FileHandle,
     Input,
     PathLike,
+    capture_streams,
+    reject_stdin_conflict,
 )
 
 if _ty.TYPE_CHECKING:
@@ -102,31 +105,6 @@ def uri_host(host: str) -> str:
     return f"[{host}]" if ":" in host and not host.startswith("[") else host
 
 
-def capture_streams(
-    capture_output: CaptureOutput,
-    stdout: _ty.Optional[FileHandle],
-    stderr: _ty.Optional[FileHandle],
-) -> _ty.Tuple[_ty.Optional[FileHandle], _ty.Optional[FileHandle]]:
-    """Apply hostctl's extended capture_output convention."""
-    if capture_output not in (True, False, "stdout", "stderr"):
-        raise ValueError("capture_output must be True, False, 'stdout', or 'stderr'")
-    capture = capture_output or ""
-    if capture == "stdout":
-        if stdout not in (None, _subprocess.PIPE):
-            raise ValueError("stdout argument cannot be used with capture_output='stdout'")
-        stdout = _subprocess.PIPE
-    elif capture == "stderr":
-        if stderr not in (None, _subprocess.PIPE):
-            raise ValueError("stderr argument cannot be used with capture_output='stderr'")
-        stderr = _subprocess.PIPE
-    elif capture is True:
-        if stdout is None:
-            stdout = _subprocess.PIPE
-        if stderr is None:
-            stderr = _subprocess.PIPE
-    return stdout, stderr
-
-
 class _HostConfigMeta(_abc.ABCMeta):
     def __call__(cls, *args: object, **options: object) -> HostConfig:
         if cls is HostConfig:
@@ -145,9 +123,14 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
     _uri_registry_cache: _ty.ClassVar[
         _ty.Optional[_ty.Tuple[_ty.Type["HostConfig"], ...]]
     ] = None
+    _uri_entry_points: _ty.ClassVar[_ty.Optional[tuple[object, ...]]] = None
+    _uri_plugin_failures: _ty.ClassVar[dict[str, Exception]] = {}
+    _uri_registry_generation: _ty.ClassVar[int] = 0
+    _uri_registry_lock: _ty.ClassVar[_threading.RLock] = _threading.RLock()
 
     def __init__(self) -> None:
         self._opened_host: _ty.Optional[Host] = None
+        self._lifecycle_lock = _threading.Lock()
 
     def __init_subclass__(
         cls,
@@ -180,17 +163,22 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         return self._create_host()
 
     def __enter__(self) -> Host:
-        if getattr(self, "_opened_host", None) is not None:
-            raise RuntimeError("host configuration is already open")
-        host = self._create_host()
-        self._opened_host = host
+        with self._lifecycle_lock:
+            if self._opened_host is not None:
+                raise RuntimeError("host configuration is already open")
+            host = self._create_host()
+            self._opened_host = host
         try:
             return host.__enter__()
         except BaseException:
             try:
                 host.close()
+            except BaseException:
+                pass
             finally:
-                self._opened_host = None
+                with self._lifecycle_lock:
+                    if self._opened_host is host:
+                        self._opened_host = None
             raise
 
     def __exit__(
@@ -199,7 +187,8 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         exc_value: _ty.Optional[BaseException],
         traceback: _ty.Optional[_types.TracebackType],
     ) -> _ty.Optional[bool]:
-        host, self._opened_host = self._opened_host, None
+        with self._lifecycle_lock:
+            host, self._opened_host = self._opened_host, None
         if host is not None:
             return host.__exit__(exc_type, exc_value, traceback)
         return False
@@ -218,7 +207,7 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
             raise ValueError("passwords must not appear in connection URIs")
         matches = [
             implementation
-            for implementation in cls._uri_implementations()
+            for implementation in cls._uri_implementations(parsed.scheme)
             if implementation._matches_uri(parsed)
         ]
         if not matches:
@@ -245,62 +234,85 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
     @classmethod
     def _refresh_uri_registry(cls) -> None:
         """Clear URI implementation discovery for tests and newly loaded plugins."""
-        HostConfig._uri_registry_cache = None
+        with HostConfig._uri_registry_lock:
+            HostConfig._uri_registry_generation += 1
+            HostConfig._uri_registry_cache = None
+            HostConfig._uri_entry_points = None
+            HostConfig._uri_plugin_failures = {}
 
     @classmethod
     def _uri_implementations(
         cls,
+        requested_scheme: _ty.Optional[str] = None,
     ) -> _ty.Tuple[_ty.Type[HostConfig], ...]:
-        if HostConfig._uri_registry_cache is None:
-            from . import (
-                container as _container,
-                local as _local,
-                qemu as _qemu,
-                ssh as _ssh,
-                winrm as _winrm,
-            )
-
-            del _container, _local, _qemu, _ssh, _winrm
-            loaded = []
-            entry_points = _metadata.entry_points()
-            if hasattr(entry_points, "select"):
-                entry_points = entry_points.select(group="hostctl.configs")
-            elif hasattr(entry_points, "get"):  # Python 3.9 metadata compatibility
-                entry_points = entry_points.get("hostctl.configs", ())
-            else:
-                entry_points = tuple(
-                    item
-                    for item in entry_points
-                    if getattr(item, "group", None) == "hostctl.configs"
+        scheme = requested_scheme.casefold() if requested_scheme else None
+        with HostConfig._uri_registry_lock:
+            if HostConfig._uri_registry_cache is None:
+                from . import (
+                    container as _container,
+                    local as _local,
+                    qemu as _qemu,
+                    ssh as _ssh,
+                    winrm as _winrm,
                 )
-            for entry_point in entry_points:
-                try:
-                    implementation = entry_point.load()
-                    if not isinstance(implementation, type) or not issubclass(
-                        implementation, HostConfig
-                    ):
-                        raise TypeError(
-                            f"hostctl.configs entry point {entry_point.name!r} "
-                            "must load a HostConfig subclass"
-                        )
-                except Exception as exc:
-                    import warnings
 
-                    warnings.warn(
-                        f"unable to load hostctl.configs entry point "
-                        f"{entry_point.name!r}: {exc}",
-                        RuntimeWarning,
-                        stacklevel=2,
+                del _container, _local, _qemu, _ssh, _winrm
+                while HostConfig._uri_registry_cache is None:
+                    generation = HostConfig._uri_registry_generation
+                    discovered = list(_recursive_subclasses(HostConfig))
+                    if generation != HostConfig._uri_registry_generation:
+                        continue
+                    HostConfig._uri_registry_cache = tuple(
+                        item for item in discovered if item._uri_schemes
                     )
-                    continue
-                loaded.append(implementation)
-            discovered = list(_recursive_subclasses(HostConfig))
-            HostConfig._uri_registry_cache = tuple(dict.fromkeys(discovered + loaded))
-        return tuple(
-            item
-            for item in HostConfig._uri_registry_cache
-            if issubclass(item, cls) and item._uri_schemes
-        )
+            if HostConfig._uri_entry_points is None:
+                points = _metadata.entry_points()
+                if hasattr(points, "select"):
+                    points = points.select(group="hostctl.configs")
+                elif hasattr(points, "get"):
+                    points = points.get("hostctl.configs", ())
+                else:
+                    points = tuple(
+                        item
+                        for item in points
+                        if getattr(item, "group", None) == "hostctl.configs"
+                    )
+                HostConfig._uri_entry_points = tuple(points)
+            candidates = list(HostConfig._uri_registry_cache)
+            if scheme is not None:
+                for entry_point in HostConfig._uri_entry_points:
+                    name = str(getattr(entry_point, "name", "")).casefold()
+                    if name != scheme:
+                        continue
+                    failure = HostConfig._uri_plugin_failures.get(name)
+                    if failure is not None:
+                        raise failure
+                    try:
+                        implementation = entry_point.load()
+                        if not isinstance(implementation, type) or not issubclass(
+                            implementation, HostConfig
+                        ):
+                            raise TypeError(
+                                f"hostctl.configs entry point {name!r} "
+                                "must load a HostConfig subclass"
+                            )
+                    except Exception as exc:
+                        HostConfig._uri_plugin_failures[name] = exc
+                        import warnings
+
+                        warnings.warn(
+                            f"unable to load hostctl.configs entry point {name!r}: {exc}",
+                            RuntimeWarning,
+                            stacklevel=2,
+                        )
+                        raise
+                    candidates.append(implementation)
+                    break
+            return tuple(
+                item
+                for item in dict.fromkeys(candidates)
+                if issubclass(item, cls) and item._uri_schemes
+            )
 
 
 class _HostMeta(_abc.ABCMeta):
@@ -373,13 +385,16 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         """Open transport resources; local/default implementations are no-op."""
 
     def close(self) -> None:
-        """Close transport resources; local/default implementations are no-op."""
+        """Close transport resources; must be safe to call repeatedly."""
 
     def __enter__(self) -> Host:
         try:
             self.connect()
         except BaseException:
-            self.close()
+            try:
+                self.close()
+            except BaseException:
+                pass
             raise
         return self
 
@@ -431,7 +446,14 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         timeout: _ty.Optional[float] = None,
         text: _ty.Optional[bool] = None,
     ) -> _subprocess.CompletedProcess:
-        """Run commands and return a subprocess-compatible result."""
+        """Run commands and return a subprocess-compatible result.
+
+        A string is verbatim shell text.  A tuple/list is one quoted argv
+        command.  A leading :class:`pathlib.PurePath`/``pathlib_next`` path is
+        a direct executable and all trailing values are its argv arguments.
+        Otherwise multiple top-level commands are joined by the selected
+        shell's command separator.
+        """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide the 'run' capability"
         )

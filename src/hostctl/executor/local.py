@@ -16,6 +16,8 @@ from ._common import (
     FileHandle,
     Input,
     normalize_environment,
+    capture_streams,
+    reject_stdin_conflict,
 )
 
 
@@ -47,10 +49,7 @@ class LocalExecutor(Executor[subprocess.CompletedProcess]):
     ) -> subprocess.CompletedProcess:
         if options:
             raise TypeError(f"unsupported local executor option: {sorted(options)[0]}")
-        if input is not None and stdin is not None:
-            raise ValueError("stdin")
-        from ..host._common import capture_streams
-
+        reject_stdin_conflict(input, stdin)
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         argv = [
             os.fspath(command),

@@ -27,13 +27,9 @@ import typing as _ty
 
 _T = _ty.TypeVar("_T")
 
-#: No bridge-level timeout by default (block until the awaitable completes).
-#: Callers that want a bound pass their own timeout= through to the
-#: operation (e.g. asyncssh's own per-command timeout=, which Host.run forwards).
-_DEFAULT_TIMEOUT = None
-
 _loop: _ty.Optional[_asyncio.AbstractEventLoop] = None
 _loop_pid: _ty.Optional[int] = None
+_loop_thread: _ty.Optional[_threading.Thread] = None
 _loop_lock = _threading.Lock()
 
 
@@ -68,8 +64,11 @@ def normalize_asyncssh_error(
     if isinstance(exc, module.PermissionDenied):
         return PermissionError(str(exc))
     if isinstance(exc, module.ProcessError):
+        returncode = getattr(exc, "returncode", None)
+        if returncode is None:
+            returncode = -1
         return _subprocess.CalledProcessError(
-            getattr(exc, "returncode", None),
+            returncode,
             command or getattr(exc, "command", None),
             output=getattr(exc, "stdout", None),
             stderr=getattr(exc, "stderr", None),
@@ -97,12 +96,25 @@ def _new_loop() -> _asyncio.AbstractEventLoop:
 
 
 def _ensure_loop() -> _asyncio.AbstractEventLoop:
-    global _loop, _loop_pid
+    global _loop, _loop_pid, _loop_thread
     pid = _os.getpid()
     with _loop_lock:
-        if _loop is not None and not _loop.is_closed() and _loop_pid == pid:
+        if (
+            _loop is not None
+            and not _loop.is_closed()
+            and _loop_pid == pid
+            and _loop_thread is not None
+            and _loop_thread.is_alive()
+        ):
             return _loop
         # First call, or a fork()'d child that inherited a now-dead loop thread.
+        if _loop is not None and (
+            _loop_pid != pid or _loop_thread is None or not _loop_thread.is_alive()
+        ):
+            try:
+                _loop.close()
+            except Exception:
+                pass
         loop = _new_loop()
         thread = _threading.Thread(
             target=loop.run_forever,
@@ -110,24 +122,33 @@ def _ensure_loop() -> _asyncio.AbstractEventLoop:
             daemon=True,
         )
         thread.start()
-        _loop, _loop_pid = loop, pid
+        _loop, _loop_pid, _loop_thread = loop, pid, thread
         return loop
 
 
 def async_to_sync(
     awaitable: _ty.Awaitable[_T],
-    *,
-    timeout: _ty.Optional[float] = _DEFAULT_TIMEOUT,
 ) -> _T:
     """Drive ``awaitable`` to completion on the shared background loop.
 
-    Safe to call from any thread and from inside an already-running event
-    loop (the coroutine runs on the dedicated background loop, not the
-    caller's). Blocks up to ``timeout`` seconds; ``None`` waits indefinitely.
+    Safe to call from any thread and from inside an unrelated running event
+    loop. Calling from the bridge loop itself is rejected to avoid deadlock.
     """
+    try:
+        running = _asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is not None and running is _loop:
+        if _asyncio.iscoroutine(awaitable):
+            awaitable.close()
+        raise RuntimeError("async_to_sync called from the bridge loop thread")
     loop = _ensure_loop()
+    if _loop_thread is None or not _loop_thread.is_alive():
+        if _asyncio.iscoroutine(awaitable):
+            awaitable.close()
+        raise RuntimeError("hostctl async bridge thread is not alive")
     future = _asyncio.run_coroutine_threadsafe(_ensure_coro(awaitable), loop)
-    return future.result(timeout)
+    return future.result()
 
 
 def _ensure_coro(

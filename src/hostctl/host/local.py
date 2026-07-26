@@ -19,10 +19,9 @@ from ._common import (
     HostPath,
     Input,
     PathLike,
-    is_direct_command,
+    starts_direct_command,
     normalize_os_family,
     strict_uri_credentials,
-    strict_uri_query,
 )
 from ..shell import POSIX_SHELL, POWERSHELL, ShellFlavour
 
@@ -40,7 +39,6 @@ class LocalConfig(HostConfig, schemes=("local",)):
         strict_uri_credentials(credentials, ())
         if parsed.netloc or parsed.path or parsed.query:
             raise ValueError("local URI must be exactly 'local:'")
-        strict_uri_query(parsed, ())
         return cls()
 
     def _create_host(self) -> LocalHost:
@@ -80,7 +78,7 @@ class LocalHost(Host):
         )
 
     def path(self, *segments: PathLike, backend: _ty.Optional[str] = None) -> HostPath:
-        return HostPath(*segments) if segments else HostPath("/")
+        return HostPath(*segments) if segments else HostPath(_os.getcwd())
 
     def run(
         self,
@@ -100,10 +98,16 @@ class LocalHost(Host):
         timeout: _ty.Optional[float] = None,
         text: _ty.Optional[bool] = None,
     ) -> _subprocess.CompletedProcess:
-        if cmds and is_direct_command((cmds[0],)):
+        direct = starts_direct_command(cmds)
+        if direct is not None:
+            command, args = direct
+            if executable is not None:
+                raise NotImplementedError(
+                    "executable cannot be combined with a direct command"
+                )
             return self.executor(
-                cmds[0],
-                *cmds[1:],
+                command,
+                *args,
                 bufsize=bufsize,
                 stdin=stdin,
                 stdout=stdout,
