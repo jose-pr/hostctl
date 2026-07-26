@@ -95,6 +95,7 @@ from their docstrings.
 ::: hostctl.ProviderProbe
 ::: hostctl.ProviderSelection
 ::: hostctl.ProviderSelector
+::: hostctl.OperationNotStarted
 ::: hostctl.SessionInitializer
 ::: hostctl.register_system_provider
 ::: hostctl.CompositePosixPath
@@ -106,9 +107,12 @@ from their docstrings.
 `WindowsContainerPath`, `QgaPathBackend`, `PosixQemuPath`, `WindowsQemuPath`,
 `CommandArgument`, `ExecutorCommand`, `CaptureOutput`, `Environment`,
 `FileHandle`, `Input`, `PathLike`, `PathnameConstructor`, `ProcessData`,
-`ShellFlavourSelection`, `ShellToken`, and `TerminalRequest` are typing aliases
-re-exported from `hostctl`. `BASH`, `CMD`, `FISH`, `POWERSHELL`, `POSIX_SHELL`,
-`PWSH`, and `ZSH` are ready-to-use shell-flavour instances. `ExecutorCapability`
-and `ShellOperator` are enums; `SerialSettings` and `ProcessData` describe
-transport and result metadata. `__version__` contains the installed package
-version.
+`ShellFlavourSelection`, `ShellToken`, `TerminalRequest`, `SerialFactory`,
+`SerialLike`, `SerialConsoleProtocol`, and `WinRMPathBackend` are typing
+aliases and backend types re-exported from `hostctl`. `BASH`, `CMD`, `FISH`,
+`POWERSHELL`, `POSIX_SHELL`, `PWSH`, and `ZSH` are ready-to-use shell-flavour
+instances. `ExecutorCapability` and `ShellOperator` are enums; `SerialSettings`
+and `ProcessData` describe transport and result metadata.
+`pypsrp_available()` reports whether the optional PSRP extra is importable and
+`require_pypsrp()` raises an actionable `ImportError` naming the extra when it
+is not. `__version__` contains the installed package version.
