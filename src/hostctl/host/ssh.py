@@ -33,6 +33,7 @@ from ._common import (
     uri_host,
     reject_stdin_conflict,
 )
+from ._facade import TransportHostFacade
 from ..shell import (
     BASH,
     CMD,
@@ -159,7 +160,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         return SshHost(self)
 
 
-class SshHost(Host):
+class SshHost(TransportHostFacade, Host):
     """A host reached over SSH, with an explicitly configured command dialect."""
 
     def __init__(self, config: SshConfig) -> None:
@@ -172,6 +173,8 @@ class SshHost(Host):
         ] = None
         self._sftp_backend: typing.Optional[object] = None
         self._sftp_sources: typing.Set[object] = set()
+
+    _facade_executor_capabilities = SshExecutor.executor_capabilities
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:

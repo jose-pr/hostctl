@@ -23,6 +23,7 @@ from ._common import (
     normalize_os_family,
     strict_uri_credentials,
 )
+from ._facade import TransportHostFacade
 from ..shell import POSIX_SHELL, POWERSHELL, ShellFlavour
 
 
@@ -45,12 +46,14 @@ class LocalConfig(HostConfig, schemes=("local",)):
         return LocalHost(self)
 
 
-class LocalHost(Host):
+class LocalHost(TransportHostFacade, Host):
     """A host whose commands and paths are local to this process."""
 
     def __init__(self, config: _ty.Optional[LocalConfig] = None) -> None:
         self.config = config or LocalConfig()
         self._executor = LocalExecutor()
+
+    _facade_executor_capabilities = LocalExecutor.executor_capabilities
 
     @property
     def capabilities(self) -> _ty.FrozenSet[str]:
