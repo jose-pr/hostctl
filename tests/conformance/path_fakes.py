@@ -31,9 +31,35 @@ class _Sandbox:
         self.flavour = flavour
         self._temporary = tempfile.TemporaryDirectory(prefix="hostctl-path-fake-")
         self.root = Path(self._temporary.name)
+        # A real server stores the caller's target string verbatim and
+        # resolves it in its own namespace.  The sandbox's remote->local
+        # mapping is lossy, so the raw target is recorded alongside the link
+        # rather than recovered by reversing the mapping.
+        self._link_targets: Dict[str, str] = {}
 
     def close(self) -> None:
         self._temporary.cleanup()
+
+    def symlink(self, remote: str, remote_target: str) -> None:
+        """Create a link at ``remote`` storing ``remote_target`` verbatim."""
+        link = self.local(remote)
+        if link.exists() or link.is_symlink():
+            raise FileExistsError(remote)
+        # Point the on-disk link at the sandbox-mapped target so following it
+        # behaves like the real server would; a target that does not exist
+        # stays dangling, exactly as on the wire.
+        link.symlink_to(self.local(remote_target))
+        self._link_targets[str(link)] = remote_target
+
+    def readlink(self, remote: str) -> str:
+        link = self.local(remote)
+        if not link.is_symlink():
+            raise OSError(f"not a symbolic link: {remote}")
+        return self.stored_target(link)
+
+    def stored_target(self, link: Path) -> str:
+        """Return the verbatim target recorded for an already-mapped link."""
+        return self._link_targets.get(str(link), os.readlink(link))
 
     def local(self, remote: str) -> Path:
         if self.flavour == "windows":
@@ -133,10 +159,11 @@ class LocalSftpClient:
         source.rename(destination)
 
     def symlink(self, target: str, path: str):
-        self._path(path).symlink_to(target)
+        # SFTP's wire order is (target, path); the sandbox takes (path, target).
+        self.sandbox.symlink(path, target)
 
     def readlink(self, path: str):
-        return os.readlink(self._path(path))
+        return self.sandbox.readlink(path)
 
 
 class LocalSftpBackend(BaseSftpBackend):
@@ -194,9 +221,14 @@ class WinRMFilesystemRunner:
             script, 0, "HOSTCTL_ERROR:%s:%s" % (kind, encoded), ""
         )
 
-    @staticmethod
-    def _json_metadata(path: Path) -> Dict[str, object]:
+    def _json_metadata(self, path: Path) -> Dict[str, object]:
         value = path.lstat()
+        target = ""
+        if path.is_symlink():
+            # Report the target the caller stored, not the sandbox-mapped
+            # one: WinRMPathBackend.stat() follows by re-issuing stat() on
+            # this string, which is mapped again on the way back in.
+            target = self.sandbox.stored_target(path)
         return {
             "name": path.name,
             "directory": path.is_dir(),
@@ -204,7 +236,7 @@ class WinRMFilesystemRunner:
             "mtime": int(value.st_mtime),
             "readonly": not bool(value.st_mode & stat.S_IWUSR),
             "link": path.is_symlink(),
-            "target": os.readlink(path) if path.is_symlink() else "",
+            "target": target,
         }
 
     def __call__(self, script: str, **_options):
@@ -214,7 +246,7 @@ class WinRMFilesystemRunner:
             self.sandbox.local(remote_target) if remote_target is not None else None
         )
         try:
-            output = self._dispatch(script, path, target)
+            output = self._dispatch(script, path, target, remote, remote_target)
         except FileNotFoundError:
             return self._error(script, "missing", remote)
         except FileExistsError:
@@ -227,7 +259,14 @@ class WinRMFilesystemRunner:
             return self._error(script, "permission", remote)
         return subprocess.CompletedProcess(script, 0, output, "")
 
-    def _dispatch(self, script: str, path: Path, target: Optional[Path]) -> str:
+    def _dispatch(
+        self,
+        script: str,
+        path: Path,
+        target: Optional[Path],
+        remote: str,
+        remote_target: Optional[str],
+    ) -> str:
         if "Get-ChildItem -LiteralPath $p" in script:
             if not path.is_dir():
                 raise NotADirectoryError(str(path))
@@ -282,6 +321,31 @@ class WinRMFilesystemRunner:
                     target.unlink()
             path.rename(target)
             return ""
+
+        if "New-Item -ItemType SymbolicLink" in script:
+            assert remote_target is not None, "symlink script omitted its target"
+            try:
+                self.sandbox.symlink(remote, remote_target)
+            except OSError as exc:
+                # Windows raises WinError 1314 (ERROR_PRIVILEGE_NOT_HELD)
+                # without elevation or Developer Mode.  The production script
+                # maps that to the 'permission' marker, so the fake must
+                # produce the same PermissionError rather than a bare OSError.
+                if getattr(exc, "winerror", None) == 1314:
+                    raise PermissionError(remote) from exc
+                raise
+            return ""
+
+        if "not a symbolic link: " in script:
+            if not path.is_symlink():
+                # The production script emits this marker itself rather than
+                # throwing, so the fake reproduces its stdout, not an
+                # exception.
+                detail = "not a symbolic link: " + str(path)
+                encoded = base64.b64encode(detail.encode("utf-8")).decode("ascii")
+                return "HOSTCTL_ERROR:oserror:" + encoded
+            value = self.sandbox.readlink(remote)
+            return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
         if "[IO.Directory]::CreateDirectory($p)" in script:
             path.mkdir()

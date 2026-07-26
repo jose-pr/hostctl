@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -202,7 +203,19 @@ class _FakeDockerContainer:
 
     def put_archive(self, path, data):
         with tarfile.open(fileobj=io.BytesIO(data), mode="r") as archive:
-            archive.extractall(path)
+            # Python 3.14 defaults extractall() to filter='data', which
+            # rejects symlink members whose target is absolute.  Real Docker
+            # accepts them -- absolute links are ordinary inside a container
+            # image (/etc/localtime -> /usr/share/zoneinfo/...) -- so the fake
+            # must not be stricter than the transport it stands in for.
+            # 'tar' still blocks traversal outside the destination, which is
+            # the property the backend's own _safe_name() also enforces.
+            # The keyword does not exist on the 3.9 floor, where extractall()
+            # already behaves like 'tar'.
+            if sys.version_info >= (3, 12):
+                archive.extractall(path, filter="tar")
+            else:
+                archive.extractall(path)
         return True
 
 
@@ -328,6 +341,17 @@ class Provider:
     factory: Callable[[], object]
     capabilities: frozenset[str]
     live: bool = False
+    #: Why this transport cannot create symlinks, when ``symlink`` is absent
+    #: from :attr:`capabilities`.  Required so a symlink skip always names a
+    #: real transport limitation instead of an unexplained attribute error.
+    symlink_gap: str = ""
+
+    def __post_init__(self) -> None:
+        if "path" in self.capabilities and "symlink" not in self.capabilities:
+            if not self.symlink_gap:
+                raise ValueError(
+                    f"{self.name} must explain why it cannot create symlinks"
+                )
 
 
 def _local() -> tuple[object, Callable[[], None]]:
@@ -351,27 +375,35 @@ def fake_providers() -> tuple[Provider, ...]:
         Provider(
             "local",
             _local,
-            frozenset(("run", "path", "args", "cwd", "env", "input", "timeout")),
+            frozenset(
+                ("run", "path", "args", "cwd", "env", "input", "timeout", "symlink")
+            ),
         ),
         Provider(
             "ssh",
             lambda: _fake(FakeSshHost),
-            frozenset(("run", "path", "args", "cwd", "env", "input", "timeout")),
+            frozenset(
+                ("run", "path", "args", "cwd", "env", "input", "timeout", "symlink")
+            ),
         ),
         Provider(
             "winrm",
             lambda: _fake(FakeWinRMHost),
-            frozenset(("run", "path", "args", "cwd", "env")),
+            frozenset(("run", "path", "args", "cwd", "env", "symlink")),
         ),
         Provider(
             "container",
             lambda: _fake(FakeContainerHost),
-            frozenset(("run", "path", "args", "cwd", "env")),
+            frozenset(("run", "path", "args", "cwd", "env", "symlink")),
         ),
         Provider(
             "qemu",
             lambda: _fake(FakeQemuHost),
             frozenset(("run", "path", "args", "env", "input", "timeout")),
+            symlink_gap=(
+                "QEMU Guest Agent has no symlink RPC (guest-file-* covers only "
+                "open/read/write/seek/flush/close)"
+            ),
         ),
         Provider("serial", lambda: _fake(FakeSerialHost), frozenset(("session",))),
     )
@@ -392,8 +424,22 @@ def conformance_path(host, provider: Provider, tmp_path: Path, *parts: str):
     return root.joinpath(*parts)
 
 
+# Live legs address a real remote whose symlink policy this process cannot
+# know ahead of time (a Windows target without Developer Mode, a read-only
+# guest, a container image with no writable parent).  They therefore stay out
+# of the symlink capability set and say why.
+_LIVE_SYMLINK_GAP = "live symlink support depends on the real remote's policy"
+
+
 def live_providers() -> tuple[Provider, ...]:
-    providers = [Provider("local", _local, frozenset(("run", "path")), True)]
+    providers = [
+        Provider(
+            "local",
+            _local,
+            frozenset(("run", "path", "symlink")),
+            True,
+        )
+    ]
     providers.append(
         Provider("loop-serial", _loop_serial, frozenset(("session",)), True)
     )
@@ -402,7 +448,13 @@ def live_providers() -> tuple[Provider, ...]:
         # failures are reported as pytest skips by provider_context, never
         # replaced with LocalHost.
         providers.append(
-            Provider("ssh-local", _ssh_local, frozenset(("run", "path")), True)
+            Provider(
+                "ssh-local",
+                _ssh_local,
+                frozenset(("run", "path")),
+                True,
+                symlink_gap=_LIVE_SYMLINK_GAP,
+            )
         )
     if os.environ.get("HOSTCTL_TEST_DOCKER") == "1":
         try:
@@ -414,7 +466,13 @@ def live_providers() -> tuple[Provider, ...]:
             pass
         else:
             providers.append(
-                Provider("docker-live", _docker_live, frozenset(("run", "path")), True)
+                Provider(
+                    "docker-live",
+                    _docker_live,
+                    frozenset(("run", "path")),
+                    True,
+                    symlink_gap=_LIVE_SYMLINK_GAP,
+                )
             )
     for name, variable, capabilities in (
         ("ssh-uri", "HOSTCTL_TEST_SSH_URI", frozenset(("run", "path"))),
@@ -429,6 +487,7 @@ def live_providers() -> tuple[Provider, ...]:
                     lambda uri=uri: _uri_live(uri),
                     capabilities,
                     True,
+                    symlink_gap=_LIVE_SYMLINK_GAP,
                 )
             )
     return tuple(providers)
@@ -534,6 +593,10 @@ def test_provider_registry_is_capability_explicit() -> None:
     for provider in providers:
         assert provider.capabilities
         assert callable(provider.factory)
+        # A path provider either advertises symlink support or names the
+        # transport limitation; an unexplained gap is a registry bug.
+        if "path" in provider.capabilities:
+            assert ("symlink" in provider.capabilities) != bool(provider.symlink_gap)
 
 
 def test_transport_fakes_are_not_local_host_aliases() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 
 import pytest
 
@@ -13,6 +14,33 @@ from .providers import conformance_path, fake_providers, provider_context
 _PATH_PROVIDERS = tuple(
     provider for provider in fake_providers() if "path" in provider.capabilities
 )
+
+
+def _link_target_parts(path) -> tuple:
+    """Return a backend-independent identity for a symlink target.
+
+    ``readlink()`` reports the target the transport stored, and the exact
+    spelling is legitimately backend-specific: Windows ``os.readlink`` adds
+    the ``\\\\?\\`` extended-length prefix, and ``SftpPath`` renders as a
+    ``sftp://host:port/...`` URI.  Comparing the trailing path components
+    checks the contract that actually matters -- the same file is named --
+    without asserting one backend's spelling onto the others.
+    """
+
+    text = str(path).replace("\\", "/")
+    if text.startswith("//?/"):
+        text = text[4:]
+    # SftpPath renders as "sftp:/host:port/..." (one slash), a Uri as
+    # "scheme://host/...". Strip whichever scheme prefix is present.
+    for separator in ("://", ":/"):
+        if separator in text:
+            text = text.split(separator, 1)[1]
+            break
+    parts = [part for part in text.split("/") if part and part != "."]
+    # Drop a leading drive letter or "host:port" authority.
+    if parts and ":" in parts[0]:
+        parts = parts[1:]
+    return tuple(parts)
 
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
@@ -72,16 +100,73 @@ def test_path_empty_text_and_metadata_roundtrip(provider, tmp_path):
 def test_path_dangling_symlink_exists_is_boolean(provider, tmp_path):
     if "path" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no path capability")
+    if "symlink" not in provider.capabilities:
+        # The provider registry names the real transport limitation; a
+        # backend that advertises symlink support must actually deliver it,
+        # so no exception below is converted into a skip.
+        pytest.skip(f"{provider.name} cannot create symlinks: {provider.symlink_gap}")
     if not hasattr(os, "symlink"):
-        pytest.skip("symlink unavailable")
+        pytest.skip("symlink unavailable on this client")
     with provider_context(provider) as host:
         target = conformance_path(host, provider, tmp_path, "missing-target")
         link = conformance_path(host, provider, tmp_path, "dangling")
         try:
             link.symlink_to(target)
-        except (AttributeError, OSError, NotImplementedError) as exc:
-            pytest.skip(f"symlink unavailable: {exc}")
+        except PermissionError as exc:
+            # Windows refuses symlink creation without elevation or
+            # Developer Mode.  That is a host policy, not a transport gap,
+            # and every backend must report it as PermissionError.
+            pytest.skip(f"{provider.name} symlink requires elevation: {exc}")
         assert link.exists() is False
+        # is_symlink() -- not exists(follow_symlinks=False) -- is the portable
+        # probe here: LocalPath inherits stdlib pathlib.Path.exists(), which
+        # only grew the follow_symlinks keyword in 3.12, so the composite and
+        # local backends disagree on that signature at the 3.9 floor.
+        assert link.is_symlink() is True
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_path_symlink_round_trips_through_readlink(provider, tmp_path):
+    """A backend advertising symlinks must read back the stored target."""
+
+    if "path" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no path capability")
+    if "symlink" not in provider.capabilities:
+        pytest.skip(f"{provider.name} cannot create symlinks: {provider.symlink_gap}")
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlink unavailable on this client")
+    with provider_context(provider) as host:
+        target = conformance_path(host, provider, tmp_path, "readlink-target")
+        target.write_bytes(b"symlink payload")
+        link = conformance_path(host, provider, tmp_path, "readlink-link")
+        try:
+            link.symlink_to(target)
+        except PermissionError as exc:
+            pytest.skip(f"{provider.name} symlink requires elevation: {exc}")
+
+        assert link.is_symlink() is True
+        # stat() follows by default and lstat() must not, or is_symlink()
+        # and exists() would disagree with each other.
+        assert link.stat().st_size == len(b"symlink payload")
+        assert stat.S_ISLNK(link.stat(follow_symlinks=False).st_mode)
+        assert link.read_bytes() == b"symlink payload"
+        assert _link_target_parts(link.readlink()) == _link_target_parts(target)
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_path_symlink_gap_is_explicit(provider, tmp_path):
+    """A backend without symlink support must say so, never fail silently."""
+
+    if "path" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no path capability")
+    if "symlink" in provider.capabilities:
+        pytest.skip(f"{provider.name} supports symlinks")
+    with provider_context(provider) as host:
+        link = conformance_path(host, provider, tmp_path, "unsupported-link")
+        with pytest.raises(NotImplementedError):
+            link.symlink_to(conformance_path(host, provider, tmp_path, "target"))
+        with pytest.raises(NotImplementedError):
+            link.readlink()
 
 
 @pytest.mark.parametrize("provider", _PATH_PROVIDERS, ids=lambda p: p.name)
