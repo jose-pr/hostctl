@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import dataclasses
+import io
 import subprocess
 import typing
+import uuid
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
+from pathlib import PurePath as _StdPurePath
 from urllib.parse import quote, unquote, urlencode
 
-from pathlib_next import Pathname, PosixPathname, WindowsPathname
+from pathlib_next import Path, Pathname, PosixPathname, WindowsPathname
+from pathlib_next.utils.stat import FileStat
 
 from ..executor import QemuExecutor
 from ..executor._qga import (
@@ -511,17 +517,6 @@ class QemuHost(Host):
             timeout=timeout,
             text=text,
         )
-
-
-import base64
-import binascii
-import io
-import typing
-import uuid
-
-from pathlib import PurePath as _StdPurePath
-from pathlib_next import Path, PosixPathname, WindowsPathname
-from pathlib_next.utils.stat import FileStat
 
 
 class GuestPathHelper(typing.Protocol):

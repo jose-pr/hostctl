@@ -161,10 +161,8 @@ class _CompositePathMixin:
                     # on every later operation.
                     self._selector.decline(provider.name, str(exc))
                 continue
-            if not pin and provider is not self._provider:
-                # Reads are intentionally not pinned, but retain the selected
-                # backend only for this operation.
-                pass
+            # Reads are intentionally not pinned: the selected backend applies
+            # to this operation only and is not retained on the path.
             return (result, provider) if with_provider else result
         if not attempted:
             raise NotImplementedError(f"no path provider supports {operation}")

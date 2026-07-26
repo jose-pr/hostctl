@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import base64
 import dataclasses
+import io
+import json
 import os
+import stat as _stat
 import subprocess
 import typing
+import uuid
+import warnings
+from pathlib import PurePath as _StdPurePath
 from urllib.parse import quote, unquote, urlencode
+
+from pathlib_next import Path, WindowsPathname
+from pathlib_next.utils.stat import FileStat
 
 from ..executor import (
     NativeWinRMSession,
@@ -368,20 +378,6 @@ class _WinRMTransport:
             timeout=timeout,
             text=text,
         )
-
-
-import base64
-import io
-import json
-import stat as _stat
-import subprocess
-import typing
-import uuid
-import warnings
-
-from pathlib import PurePath as _StdPurePath
-from pathlib_next import Path, WindowsPathname
-from pathlib_next.utils.stat import FileStat
 
 
 def _encoded(value: str) -> str:

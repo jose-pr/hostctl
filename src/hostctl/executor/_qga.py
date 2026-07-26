@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-import typing
+import asyncio
+import itertools
 import json
+import math
 import secrets
+import socket
+import subprocess
 import threading
 import time
+import typing
 
 
 class QgaError(Exception):
@@ -253,12 +258,6 @@ class GuestAgentTransport(typing.Protocol):
         """Release transport resources."""
 
 
-import itertools
-import json
-import math
-import typing
-
-
 def normalize_libvirt_error(error: BaseException) -> BaseException:
     """Normalize common libvirt/QGA failures without importing libvirt eagerly."""
     if not isinstance(error, Exception):
@@ -421,10 +420,6 @@ class LibvirtGuestAgentTransport:
         return _QgaFramedSession._unwrap(reply)
 
 
-import socket
-import typing
-
-
 class UnixSocketGuestAgentTransport(_QgaFramedSession):
     """Persistent QGA connection over a Unix-domain socket."""
 
@@ -502,11 +497,6 @@ class UnixSocketGuestAgentTransport(_QgaFramedSession):
         if self._socket is None:
             raise QgaDisconnectedError("QGA transport is not connected")
         return self._socket
-
-
-import asyncio
-import subprocess
-import typing
 
 
 class _Reader(typing.Protocol):
