@@ -14,7 +14,12 @@ from urllib.parse import quote, unquote, urlencode
 from pathlib_next import Pathname, PosixPathname, WindowsPathname
 
 from ..executor import SshConnection, SshExecutor
-from ..provider import ExecutorProvider, PathProvider, ProviderProbe
+from ..provider import (
+    ExecutorProvider,
+    OperationNotStarted,
+    PathProvider,
+    ProviderProbe,
+)
 from ..process import Process, SshProcess, TerminalRequest
 from ._common import (
     CaptureOutput,
@@ -494,7 +499,12 @@ class SshExecutorProvider(ExecutorProvider):
         return ProviderProbe("available", capabilities=self.capabilities)
 
     def connect(self):
-        self.transport.connect()
+        try:
+            self.transport.connect()
+        except ConnectionError as exc:
+            raise OperationNotStarted(
+                "SSH connection failed before dispatch", cause=exc
+            ) from exc
 
     def close(self):
         self.transport.close()

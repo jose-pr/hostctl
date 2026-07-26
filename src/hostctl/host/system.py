@@ -34,6 +34,83 @@ from ._common import (
 )
 from .composite_path import CompositePosixPath, CompositeWindowsPath
 
+_SYSTEM_PROVIDER_RESOLVERS = {}
+
+
+def register_system_provider(name: str, resolver) -> None:
+    """Register a provider descriptor resolver for :class:`SystemConfig`."""
+    key = str(name).casefold().strip()
+    if not key or not callable(resolver):
+        raise ValueError("provider name and callable resolver are required")
+    _SYSTEM_PROVIDER_RESOLVERS[key] = resolver
+
+
+def _provider_option(config: "SystemConfig", name: str):
+    values = config.options.get("provider_options", {})
+    if isinstance(values, dict):
+        return values.get(name)
+    return None
+
+
+def _local_provider(config, kind):
+    del config
+    if kind == "executor":
+        from ..executor import LocalExecutor
+
+        return ExecutorProvider("local", LocalExecutor())
+    from pathlib_next import Path as LocalPath
+
+    return PathProvider("local", lambda *parts: LocalPath(*parts))
+
+
+def _ssh_provider(config, kind):
+    from ._ssh import SftpPathProvider, SshConfig, SshExecutorProvider, _SshTransport
+
+    value = _provider_option(config, "ssh")
+    if not isinstance(value, SshConfig):
+        raise ValueError(
+            "system SSH descriptors require provider_options={'ssh': SshConfig(...)}"
+        )
+    transports = getattr(config, "_provider_transports", {})
+    transport = transports.get("ssh")
+    if transport is None:
+        transport = _SshTransport(value)
+        transports["ssh"] = transport
+        config._provider_transports = transports
+    if kind == "executor":
+        return SshExecutorProvider(transport)
+    return SftpPathProvider(transport)
+
+
+def _winrm_provider(config, kind):
+    from ._winrm import (
+        WinRMConfig,
+        WinRMExecutorProvider,
+        WinRMPathProvider,
+        _WinRMTransport,
+    )
+
+    value = _provider_option(config, "winrm")
+    if not isinstance(value, WinRMConfig):
+        raise ValueError(
+            "system WinRM descriptors require provider_options={'winrm': WinRMConfig(...)}"
+        )
+    transports = getattr(config, "_provider_transports", {})
+    transport = transports.get("winrm")
+    if transport is None:
+        transport = _WinRMTransport(value)
+        transports["winrm"] = transport
+        config._provider_transports = transports
+    if kind == "executor":
+        return WinRMExecutorProvider(transport)
+    return WinRMPathProvider(transport)
+
+
+register_system_provider("local", _local_provider)
+register_system_provider("ssh", _ssh_provider)
+register_system_provider("sftp", _ssh_provider)
+register_system_provider("winrm", _winrm_provider)
+
 
 class SystemConfig(HostConfig):
     """Configuration for a logical system with one or more providers."""
@@ -55,6 +132,23 @@ class SystemConfig(HostConfig):
         self.executors = tuple(executor)
         self.paths = tuple(path)
         self.options = dict(options)
+        self._provider_transports = {}
+
+    def _build_providers(self, kind: str):
+        descriptors = self.executors if kind == "executor" else self.paths
+        result = []
+        for descriptor in descriptors:
+            key = str(descriptor).casefold()
+            resolver = _SYSTEM_PROVIDER_RESOLVERS.get(key)
+            if resolver is None:
+                raise ValueError(f"unknown {kind} provider descriptor: {descriptor!r}")
+            provider = resolver(self, kind)
+            if provider is None:
+                raise ValueError(
+                    f"provider descriptor {descriptor!r} does not support {kind}"
+                )
+            result.append(provider)
+        return tuple(result)
 
     @property
     def connection_uri(self) -> str:
@@ -87,7 +181,11 @@ class SystemConfig(HostConfig):
         )
 
     def _create_host(self):
-        return self.host_type(self)
+        return self.host_type(
+            self,
+            executor_providers=self._build_providers("executor"),
+            path_providers=self._build_providers("path"),
+        )
 
 
 class SystemHost(Host):
@@ -173,16 +271,23 @@ class SystemHost(Host):
         connected = []
         try:
             for selector in (self._executor_selector, self._path_selector):
-                try:
-                    provider = selector.select().provider
-                except OperationNotStarted:
-                    continue
-                connect = getattr(provider, "connect", None)
-                if connect:
-                    connect()
-                target = getattr(provider, "transport", provider)
-                self._closed_targets.discard(id(target))
-                connected.append(provider)
+                excluded = []
+                while True:
+                    try:
+                        provider = selector.select(exclude=excluded).provider
+                    except OperationNotStarted:
+                        break
+                    try:
+                        connect = getattr(provider, "connect", None)
+                        if connect:
+                            connect()
+                    except OperationNotStarted:
+                        excluded.append(provider.name)
+                        continue
+                    target = getattr(provider, "transport", provider)
+                    self._closed_targets.discard(id(target))
+                    connected.append(provider)
+                    break
         except BaseException:
             for provider in reversed(connected):
                 close = getattr(provider, "close", None)
@@ -202,12 +307,17 @@ class SystemHost(Host):
             target = getattr(provider, "transport", provider)
             if target not in targets:
                 targets.append(target)
+        first_error = None
         for target in reversed(targets):
             if id(target) in self._closed_targets:
                 continue
             close = getattr(target, "close", None)
             if close:
-                close()
+                try:
+                    close()
+                except BaseException as exc:
+                    if first_error is None:
+                        first_error = exc
             self._closed_targets.add(id(target))
         self._connected = False
         self._connected_providers = []
@@ -215,6 +325,8 @@ class SystemHost(Host):
         self._path_selector.invalidate()
         if self._shell_resolver is not None:
             self._shell = None
+        if first_error is not None:
+            raise first_error
 
     def info(self) -> HostInfo:
         if self._info is not None:
@@ -447,7 +559,12 @@ class PosixHost(SystemHost):
     @classmethod
     def from_ssh(cls, config):
         """Compose POSIX semantics over an existing :class:`SshConfig`."""
-        return config._create_host()
+        host = config._create_host()
+        if not isinstance(host, cls):
+            raise ValueError(
+                f"SSH configuration selects {type(host).__name__}, not {cls.__name__}"
+            )
+        return host
 
 
 class WindowsHost(SystemHost):
@@ -457,7 +574,12 @@ class WindowsHost(SystemHost):
     @classmethod
     def from_winrm(cls, config):
         """Compose Windows semantics over an existing :class:`WinRMConfig`."""
-        return config._create_host()
+        host = config._create_host()
+        if not isinstance(host, cls):
+            raise ValueError(
+                f"WinRM configuration selects {type(host).__name__}, not {cls.__name__}"
+            )
+        return host
 
 
 class IosHost(SystemHost):

@@ -42,6 +42,7 @@ from .system import (
     SystemHost as SystemHost,
     WindowsConfig as WindowsConfig,
     WindowsHost as WindowsHost,
+    register_system_provider as register_system_provider,
 )
 from .serial import SerialConfig as SerialConfig, SerialHost as SerialHost
 from .composite_path import (
@@ -80,6 +81,7 @@ __all__ = [
     "PosixHost",
     "WindowsConfig",
     "WindowsHost",
+    "register_system_provider",
     "IosConfig",
     "IosHost",
     "CompositePosixPath",

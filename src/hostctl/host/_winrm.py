@@ -17,7 +17,12 @@ from ..executor import (
     require_pypsrp,
 )
 from ..process import RunspaceSession
-from ..provider import ExecutorProvider, PathProvider, ProviderProbe
+from ..provider import (
+    ExecutorProvider,
+    OperationNotStarted,
+    PathProvider,
+    ProviderProbe,
+)
 from ._common import (
     _query_int,
     CaptureOutput,
@@ -314,7 +319,7 @@ class _WinRMTransport:
         if backend not in (None, "winrm"):
             raise ValueError("WinRM path backend must be 'winrm'")
         if (
-            len(segments) > 1
+            len(segments) >= 1
             and isinstance(segments[0], str)
             and len(segments[0]) == 2
             and segments[0].endswith(":")
@@ -865,7 +870,12 @@ class WinRMExecutorProvider(ExecutorProvider):
         return ProviderProbe("available", capabilities=self.capabilities)
 
     def connect(self):
-        self.transport.connect()
+        try:
+            self.transport.connect()
+        except ConnectionError as exc:
+            raise OperationNotStarted(
+                "WinRM connection failed before dispatch", cause=exc
+            ) from exc
 
     def close(self):
         self.transport.close()

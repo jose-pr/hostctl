@@ -10,7 +10,9 @@ from hostctl import (
     ProviderProbe,
     ExecutorProvider,
     PosixHost,
+    PosixConfig,
     WindowsHost,
+    WinRMConfig,
     ProviderSelector,
 )
 from hostctl.executor import LocalExecutor
@@ -27,6 +29,32 @@ def test_system_uri_roundtrip_and_ordered_providers():
     )
     assert config.executors == ("first", "second")
     assert config.paths == ("rpc", "sftp")
+
+
+def test_system_config_resolves_builtin_local_descriptors():
+    config = HostConfig("posix://node?executor=local&path=local")
+    host = config._create_host()
+    assert host.capabilities == frozenset(("run", "path"))
+    assert host.path("tmp").name == "tmp"
+
+
+def test_system_config_rejects_unknown_provider_descriptor():
+    config = HostConfig("posix://node?executor=does-not-exist")
+    with pytest.raises(ValueError, match="unknown executor provider"):
+        config._create_host()
+
+
+def test_system_config_resolves_transport_descriptors_with_explicit_options():
+    from hostctl import SshConfig
+
+    config = PosixConfig(
+        "node",
+        executor=("ssh",),
+        path=("sftp",),
+        provider_options={"ssh": SshConfig("node", username="root")},
+    )
+    host = config._create_host()
+    assert host.capabilities == frozenset(("run", "path"))
 
 
 def test_provider_selector_rejects_unavailable_without_replay():
@@ -185,6 +213,44 @@ def test_system_host_connects_only_available_provider_and_closes_once():
     host.close()
     host.close()
     assert events == ["connect", "close"]
+
+
+def test_system_host_retries_pre_dispatch_connect_failure():
+    events = []
+
+    first = ExecutorProvider("first", lambda *args, **kwargs: None)
+    first.connect = lambda: (_ for _ in ()).throw(
+        OperationNotStarted("connection unavailable")
+    )
+    second = ExecutorProvider("second", lambda *args, **kwargs: None)
+    second.connect = lambda: events.append("second")
+    host = PosixHost(executor_providers=(first, second))
+
+    host.connect()
+    assert events == ["second"]
+
+
+def test_system_host_close_attempts_all_targets_and_reraises_first_error():
+    events = []
+    first = ExecutorProvider("first", lambda *args, **kwargs: None)
+    second = ExecutorProvider("second", lambda *args, **kwargs: None)
+    first.close = lambda: (_ for _ in ()).throw(RuntimeError("first close"))
+    second.close = lambda: events.append("second")
+    host = PosixHost(executor_providers=(first, second))
+    host.connect()
+    with pytest.raises(RuntimeError, match="first close"):
+        host.close()
+    assert events == ["second"]
+
+
+def test_transport_facade_helpers_validate_system_family():
+    from hostctl import PosixHost, SshConfig, WindowsHost
+
+    from pathlib_next import WindowsPathname
+
+    with pytest.raises(ValueError, match="selects"):
+        PosixHost.from_ssh(SshConfig("host", path_flavor=WindowsPathname))
+    assert isinstance(WindowsHost.from_winrm(WinRMConfig("host", "user")), WindowsHost)
 
 
 def test_transport_configs_compose_system_hosts_without_uri_changes():
