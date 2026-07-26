@@ -7,6 +7,7 @@ import io
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -73,12 +74,100 @@ class _FakeTransport:
         return self.executor(command, *args, **options)
 
 
+class _PopenWriter:
+    """asyncssh-shaped stdin over a local pipe."""
+
+    def __init__(self, pipe):
+        self._pipe = pipe
+
+    def write(self, data):
+        self._pipe.write(data.encode() if isinstance(data, str) else data)
+
+    async def drain(self):
+        self._pipe.flush()
+
+    def write_eof(self):
+        self._pipe.close()
+
+
+class _PopenReader:
+    """asyncssh-shaped stdout/stderr over a local pipe."""
+
+    def __init__(self, pipe):
+        self._pipe = pipe
+
+    async def read(self, size=-1):
+        if size is None or size < 0:
+            return self._pipe.read()
+        return self._pipe.read(size)
+
+
+class _FakeSshChannel:
+    """AsyncSSH ``create_process`` stand-in backed by a local subprocess.
+
+    This is a real bidirectional byte channel, so ``SshProcess`` -- the
+    production adapter, driven through hostctl's real ``_async`` bridge --
+    is genuinely exercised.  The child is a local shell; nothing here opens a
+    socket, resolves a name, or reaches the network.
+    """
+
+    def __init__(self, command):
+        argv = (
+            ["cmd.exe", "/c", command]
+            if os.name == "nt"
+            else ["/bin/sh", "-c", command]
+        )
+        self._popen = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.stdin = _PopenWriter(self._popen.stdin)
+        self.stdout = _PopenReader(self._popen.stdout)
+        self.stderr = _PopenReader(self._popen.stderr)
+
+    @property
+    def returncode(self):
+        return self._popen.returncode
+
+    def change_terminal_size(self, width, height, pixwidth, pixheight):
+        # A pipe has no window size; accepting the resize matches what a
+        # real channel does when no PTY was requested.
+        return None
+
+    def close(self):
+        for pipe in (self._popen.stdin, self._popen.stdout, self._popen.stderr):
+            try:
+                pipe.close()
+            except Exception:
+                pass
+
+    def kill(self):
+        self._popen.kill()
+
+    def terminate(self):
+        self._popen.terminate()
+
+    async def wait(self, check=False, timeout=None):
+        returncode = self._popen.wait(timeout=timeout)
+        return type("Completed", (), {"returncode": returncode})()
+
+    async def wait_closed(self):
+        return None
+
+
 class FakeSshSession(_FakeTransport):
     def is_closed(self):
         return not self.connected
 
     async def wait_closed(self):
         return None
+
+    async def create_process(self, command, **options):
+        """Back ``_SshTransport.spawn`` with a real streaming channel."""
+        self.connect()
+        return _FakeSshChannel(command)
 
     async def run(self, command, **options):
         self.connect()
@@ -219,11 +308,97 @@ class _FakeDockerContainer:
         return True
 
 
+class _FakeExecSocket:
+    """Docker exec socket stand-in over a finished local subprocess.
+
+    Non-TTY Docker exec output is multiplexed with an 8-byte header per chunk
+    (``stream``, three reserved bytes, then a big-endian length), which
+    ``ContainerProcess`` demultiplexes.  The fake reproduces that framing so
+    the production adapter's real parsing path runs.
+    """
+
+    def __init__(self, argv, tty):
+        self._completed = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+        )
+        if tty:
+            payload = self._completed.stdout + self._completed.stderr
+        else:
+            payload = b"".join(
+                struct.pack(">BxxxI", stream, len(data)) + data
+                for stream, data in (
+                    (1, self._completed.stdout),
+                    (2, self._completed.stderr),
+                )
+                if data
+            )
+        self._buffer = io.BytesIO(payload)
+        self.closed = False
+
+    @property
+    def returncode(self):
+        return self._completed.returncode
+
+    def recv(self, size):
+        return self._buffer.read(size)
+
+    def sendall(self, value):
+        # The child already exited, so writes are accepted and discarded --
+        # the same observable behaviour as writing to a finished exec.
+        return None
+
+    def settimeout(self, value):
+        return None
+
+    def shutdown(self, how):
+        return None
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeDockerApi:
+    """Minimal `docker.APIClient` surface used by ContainerHost.spawn."""
+
+    def __init__(self):
+        self._execs = {}
+        self._next_id = 0
+
+    def exec_create(self, container, **options):
+        self._next_id += 1
+        exec_id = f"fake-exec-{self._next_id}"
+        self._execs[exec_id] = {"cmd": list(options.get("cmd", ())), "socket": None}
+        return {"Id": exec_id}
+
+    def exec_start(self, exec_id, socket=False, tty=False):
+        entry = self._execs[exec_id]
+        argv = entry["cmd"]
+        stream = _FakeExecSocket(argv, tty)
+        entry["socket"] = stream
+        return stream
+
+    def exec_inspect(self, exec_id):
+        stream = self._execs[exec_id]["socket"]
+        if stream is None:
+            return {"Running": True, "ExitCode": None}
+        return {"Running": False, "ExitCode": stream.returncode}
+
+    def exec_resize(self, exec_id, *, height, width):
+        return None
+
+
 class _FakeDockerClient:
     def __init__(self, executor):
         self.executor = executor
         self.container = _FakeDockerContainer()
         self.containers = self
+        # Real `docker.DockerClient` exposes the low-level API here; spawn
+        # goes through it, so a fake without it made ContainerHost.spawn fail
+        # with AttributeError while looking "covered".
+        self.api = _FakeDockerApi()
 
     def get(self, name):
         return self.container
@@ -384,7 +559,20 @@ def fake_providers() -> tuple[Provider, ...]:
             "ssh",
             lambda: _fake(FakeSshHost),
             frozenset(
-                ("run", "path", "args", "cwd", "env", "input", "timeout", "symlink")
+                (
+                    "run",
+                    "path",
+                    "args",
+                    "cwd",
+                    "env",
+                    "input",
+                    "timeout",
+                    "symlink",
+                    # Backed by _FakeSshChannel: a local subprocess presenting
+                    # the asyncssh channel shape, so the production SshProcess
+                    # adapter really runs.  Never touches the network.
+                    "spawn",
+                )
             ),
         ),
         Provider(
@@ -395,7 +583,11 @@ def fake_providers() -> tuple[Provider, ...]:
         Provider(
             "container",
             lambda: _fake(FakeContainerHost),
-            frozenset(("run", "path", "args", "cwd", "env", "symlink")),
+            # `spawn` is backed by _FakeDockerApi/_FakeExecSocket: a local
+            # subprocess wrapped in Docker's exec stream framing, so
+            # ContainerProcess's real demultiplexing runs.  No daemon, no
+            # socket, no network.
+            frozenset(("run", "path", "args", "cwd", "env", "symlink", "spawn")),
         ),
         Provider(
             "qemu",
@@ -406,7 +598,14 @@ def fake_providers() -> tuple[Provider, ...]:
                 "open/read/write/seek/flush/close)"
             ),
         ),
-        Provider("serial", lambda: _fake(FakeSerialHost), frozenset(("session",))),
+        Provider(
+            "serial",
+            lambda: _fake(FakeSerialHost),
+            # A serial console is a persistent merged byte stream, so spawn is
+            # its native mode; `loop://` is pyserial's in-memory loopback and
+            # opens no device and no socket.
+            frozenset(("session", "spawn")),
+        ),
     )
 
 
