@@ -91,9 +91,38 @@ def test_runspace_preserves_state_and_typed_streams(
     session.close()
 
 
+def test_runspace_structured_arguments_use_powershell_literals(monkeypatch):
+    class Pipeline:
+        streams = types.SimpleNamespace(error=[])
+        state = "Completed"
+        had_errors = False
+
+        def __init__(self, pool):
+            self.script = None
+
+        def add_script(self, script):
+            self.script = script
+
+        def invoke(self):
+            self.output = (self.script,)
+            return self.output
+
+    fake = types.ModuleType("pypsrp")
+    fake_powershell = types.ModuleType("pypsrp.powershell")
+    fake_powershell.PowerShell = Pipeline
+    monkeypatch.setitem(__import__("sys").modules, "pypsrp", fake)
+    monkeypatch.setitem(__import__("sys").modules, "pypsrp.powershell", fake_powershell)
+
+    session = RunspaceSession(pool=types.SimpleNamespace(open=lambda: None))
+    result = session.invoke("C:\\Program Files\\tool.exe", "a’b", "$(danger)")
+    assert "'C:\\Program Files\\tool.exe'" in result.output[0]
+    assert "'a’’b'" in result.output[0]
+    assert "'$(danger)'" in result.output[0]
+
+
 def test_psrp_executor_projects_objects_and_error_streams():
     class Session:
-        def invoke(self, script, *, raw=False):
+        def invoke(self, script, *, raw=False, capture_exit=False):
             assert script == "Write-Output x"
             return PipelineResult(
                 ("one", "two"),
@@ -107,6 +136,23 @@ def test_psrp_executor_projects_objects_and_error_streams():
     assert result.stdout == "one\ntwo\n"
     assert result.stderr == "bad"
     assert result.returncode == 1
+
+
+def test_psrp_executor_projects_native_last_exit_code():
+    class Session:
+        def invoke(self, script, *, raw=False, capture_exit=False):
+            assert capture_exit is True
+            return PipelineResult(
+                ("ok", "__HOSTCTL_LASTEXITCODE__:7"),
+                PipelineStreams(),
+                "Completed",
+                False,
+                0,
+            )
+
+    result = PsrpExecutor(lambda: Session())("cmd", check=False, text=True)
+    assert result.stdout == "ok\n"
+    assert result.returncode == 7
 
 
 def test_psrp_executor_rejects_byte_stream_options():

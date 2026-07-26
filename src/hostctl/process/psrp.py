@@ -129,19 +129,26 @@ class RunspaceSession:
         script: object,
         *args: object,
         raw: bool = False,
+        capture_exit: bool = False,
     ) -> PipelineResult:
         """Invoke a script or executable with persistent runspace state."""
         self.connect()
+        from ..shell import POWERSHELL
+
         if args:
             # PowerShell's call operator preserves executable semantics while
             # still allowing arguments to be represented as object literals.
-            command = str(script).replace("'", "''")
-            values = " ".join(
-                "'{}'".format(str(value).replace("'", "''")) for value in args
-            )
-            script_text = "& '{}' {}".format(command, values)
+            command = POWERSHELL.quote(script)
+            values = " ".join(POWERSHELL.quote(value) for value in args)
+            script_text = "& {} {}".format(command, values)
         else:
             script_text = str(script)
+        marker = "__HOSTCTL_LASTEXITCODE__"
+        if capture_exit:
+            script_text = (
+                f"{script_text}; Write-Output ('{marker}:' + "
+                "[string]([int]$LASTEXITCODE))"
+            )
         from pypsrp.powershell import PowerShell
 
         pipeline = PowerShell(self._pool)
@@ -160,9 +167,28 @@ class RunspaceSession:
         state = getattr(state_obj, "name", state_obj)
         state = str(state)
         had_errors = bool(getattr(pipeline, "had_errors", bool(streams.error)))
+        values = tuple(output or ())
         returncode = 0 if state.casefold() == "completed" and not had_errors else 1
+        if capture_exit:
+            retained = []
+            for value in values:
+                text_value = str(value)
+                if text_value.startswith(marker + ":"):
+                    try:
+                        parsed_returncode = int(text_value.split(":", 1)[1])
+                        returncode = (
+                            1
+                            if had_errors and parsed_returncode == 0
+                            else parsed_returncode
+                        )
+                    except ValueError:
+                        had_errors = True
+                        returncode = 1
+                else:
+                    retained.append(value)
+            values = tuple(retained)
         if raw:
-            values = tuple(output or ())
+            values = tuple(values)
         else:
-            values = tuple(str(value) for value in (output or ()))
+            values = tuple(str(value) for value in values)
         return PipelineResult(values, streams, state, had_errors, returncode)

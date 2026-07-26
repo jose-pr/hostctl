@@ -85,11 +85,28 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
                 "PSRP pipeline timeout is unsupported; configure WinRM timeouts"
             )
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
-        result = self._session().invoke(str(command), raw=False)
+        result = self._session().invoke(str(command), raw=False, capture_exit=True)
         codec = encoding or "utf-8"
         # Preserve PowerShell's object-pipeline line orientation when
         # projecting objects to subprocess-compatible text.
-        out_text = "\n".join(str(item) for item in result.output)
+        projected_output = []
+        returncode = result.returncode
+        marker = "__HOSTCTL_LASTEXITCODE__:"
+        for item in result.output:
+            value = str(item)
+            if value.startswith(marker):
+                try:
+                    parsed_returncode = int(value[len(marker) :])
+                    returncode = (
+                        1
+                        if result.had_errors and parsed_returncode == 0
+                        else parsed_returncode
+                    )
+                except ValueError:
+                    returncode = 1
+                continue
+            projected_output.append(item)
+        out_text = "\n".join(str(item) for item in projected_output)
         err_text = "\n".join(str(item) for item in result.streams.error)
         if out_text:
             out_text += "\n"
@@ -112,7 +129,7 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
         )
         completed = subprocess.CompletedProcess(
             args=str(command),
-            returncode=result.returncode,
+            returncode=returncode,
             stdout=out,
             stderr=err,
         )
