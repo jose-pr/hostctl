@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import subprocess
 import typing
+import types
 
 from ._common import (
     CaptureOutput,
@@ -18,6 +19,9 @@ from ._common import (
     dispatch_output,
 )
 
+if typing.TYPE_CHECKING:
+    from ..process import RunspaceSession
+
 
 def pypsrp_available() -> bool:
     """Return whether the optional PSRP dependency can be imported."""
@@ -30,7 +34,7 @@ def pypsrp_available() -> bool:
     return True
 
 
-def require_pypsrp() -> typing.Any:
+def require_pypsrp() -> types.ModuleType:
     """Import pypsrp with an actionable, version-aware error."""
     import sys
 
@@ -56,7 +60,7 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
         (ExecutorCapability.SCRIPT, ExecutorCapability.MANAGES_STATUS)
     )
 
-    def __init__(self, session: typing.Callable[[], typing.Any]) -> None:
+    def __init__(self, session: typing.Callable[[], RunspaceSession]) -> None:
         self._session = session
 
     def __call__(

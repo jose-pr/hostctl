@@ -22,7 +22,11 @@ from .host import Host, HostPath
 _URI_OPERAND = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
-def _write(stream: typing.Any, value: typing.Any) -> None:
+_OutputStream = typing.Union[typing.TextIO, typing.BinaryIO]
+_OutputValue = typing.Union[str, bytes]
+
+
+def _write(stream: _OutputStream, value: _OutputValue) -> None:
     if value is None:
         return
     if isinstance(value, bytes):
@@ -201,8 +205,8 @@ def _parser() -> argparse.ArgumentParser:
 def main(
     argv: typing.Optional[typing.Sequence[str]] = None,
     *,
-    stdout: typing.Any = None,
-    stderr: typing.Any = None,
+    stdout: typing.Optional[_OutputStream] = None,
+    stderr: typing.Optional[_OutputStream] = None,
 ) -> int:
     """Run the CLI and return its process exit status."""
     stdout = sys.stdout if stdout is None else stdout

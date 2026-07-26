@@ -137,7 +137,7 @@ class _CompositePathMixin:
     def _dispatch(
         self,
         operation: PathOperation,
-        callback: typing.Callable[[Path], typing.Any],
+        callback: typing.Callable[[Path], object],
         *,
         pin: bool = False,
         with_provider: bool = False,

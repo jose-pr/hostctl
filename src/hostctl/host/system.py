@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
-import platform
 import subprocess
 import typing
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit
+from urllib.parse import parse_qsl, quote, urlencode
 
-from pathlib import PurePath
 from pathlib_next import Path
 
 from ..provider import (
@@ -19,19 +17,14 @@ from ..provider import (
     ProviderSelection,
     SessionInitializer,
 )
-from ..shell import CMD, POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
+from ..shell import POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ._common import (
     Host,
     HostConfig,
     HostInfo,
     PathLike,
     Command,
-    Environment,
-    FileHandle,
-    Input,
-    CaptureOutput,
     starts_direct_command,
-    normalize_os_family,
 )
 from .composite_path import CompositePosixPath, CompositeWindowsPath
 
