@@ -21,21 +21,39 @@ def _argument(value: object) -> str:
     if value and not any(char.isspace() or char in '&|<>()@^"%!' for char in value):
         return value
     value = value.replace("^", "^^").replace("%", "^%").replace("!", "^!")
+    for character in "&|<>()":
+        value = value.replace(character, f"^{character}")
     escaped = []
     backslashes = 0
     for char in value:
         if char == "\\":
             backslashes += 1
         elif char == '"':
-            # A backslash is data to cmd.exe, not its quote escape.  Caret
-            # quoting keeps the quote from terminating the command string.
-            escaped.append("\\" * (backslashes * 2) + '^"')
+            # The caret preserves the quote through cmd.exe; the extra
+            # backslash makes the child C argv parser retain it as data.
+            escaped.append("\\" * (backslashes * 2 + 1) + '^"')
             backslashes = 0
         else:
             escaped.append("\\" * backslashes + char)
             backslashes = 0
     escaped.append("\\" * (backslashes * 2))
-    return '"' + "".join(escaped) + '"'
+    # The delimiters must survive cmd.exe so the child C runtime, rather
+    # than cmd itself, consumes them as argv quoting.
+    return '^"' + "".join(escaped) + '^"'
+
+
+def _builtin_argument(value: object) -> str:
+    """Escape data for a cmd.exe builtin, which has no C argv parser."""
+    if isinstance(value, os.PathLike):
+        value = os.fspath(value)
+    elif isinstance(value, bytes):
+        value = value.decode("utf-8", "surrogateescape")
+    text = str(value).replace("^", "^^")
+    for character in '&|<>()@^"%!':
+        if character == "^":
+            continue
+        text = text.replace(character, f"^{character}")
+    return text
 
 
 class CmdShellFlavour(ShellFlavour):
@@ -51,9 +69,57 @@ class CmdShellFlavour(ShellFlavour):
         "echo os_name=%OS%&"
         "echo architecture=%PROCESSOR_ARCHITECTURE%"
     )
+    builtins = frozenset(
+        (
+            "assoc",
+            "break",
+            "call",
+            "cd",
+            "chdir",
+            "cls",
+            "color",
+            "copy",
+            "date",
+            "del",
+            "dir",
+            "echo",
+            "endlocal",
+            "erase",
+            "exit",
+            "md",
+            "mkdir",
+            "mklink",
+            "move",
+            "path",
+            "pause",
+            "popd",
+            "prompt",
+            "pushd",
+            "rd",
+            "ren",
+            "rename",
+            "rmdir",
+            "set",
+            "setlocal",
+            "shift",
+            "start",
+            "time",
+            "title",
+            "type",
+            "ver",
+            "verify",
+            "vol",
+        )
+    )
 
     def quote(self, value: object) -> str:
         return _argument(self._text(value))
+
+    def structured_command(self, values: typing.Iterable[object]) -> str:
+        values = tuple(values)
+        if values and self._text(values[0]).casefold() in self.builtins:
+            return " ".join(_builtin_argument(self._text(value)) for value in values)
+        return super().structured_command(values)
 
     def operator(self, value: ShellOperator) -> str:
         return {
@@ -71,7 +137,7 @@ class CmdShellFlavour(ShellFlavour):
         return f'set "{key}={value}"'
 
     def change_directory(self, cwd: PathLike) -> str:
-        return f"cd /d {self.quote(cwd)}"
+        return f"cd /d {_builtin_argument(self._text(cwd))}"
 
     def command(
         self,

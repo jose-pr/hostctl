@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 import typing
 from collections import deque
 from pathlib import PurePosixPath
@@ -382,8 +383,8 @@ def test_cmd_shell_renders_environment_cwd_args_and_operators():
         env={"NAME": "100%"},
     )
     assert script == (
-        'set "NAME=100^%"&cd /d "C:\\Program Files"&&'
-        'tool.exe "value & data"&&echo done'
+        'set "NAME=100^%"&cd /d C:\\Program Files&&'
+        'tool.exe ^"value ^& data^"&&echo done'
     )
 
 
@@ -406,6 +407,41 @@ def test_cmd_shell_operators_execute_on_windows():
 
     assert result.returncode == 0
     assert result.stdout.splitlines() == ["A", "B"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.parametrize(
+    "value",
+    ("a b", "%PATH%", "a & b", 'quote"value', "bang!", "snowman \N{SNOWMAN}"),
+)
+def test_cmd_external_structured_arguments_round_trip_on_windows(value):
+    code = "import sys; print(ascii(sys.argv[1]))"
+    command = CMD.command(((sys.executable, "-c", code, value),))
+
+    result = subprocess.run(
+        command.command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == ascii(value)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+def test_cmd_builtin_arguments_do_not_leak_escaping():
+    command = CMD.command((("echo", "%PATH% & bang!"),))
+
+    result = subprocess.run(
+        command.command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "%PATH% & bang!"
 
 
 def test_fish_uses_native_environment_and_boolean_syntax():
