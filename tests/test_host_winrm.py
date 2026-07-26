@@ -37,7 +37,9 @@ class _Session:
 
 
 def _host(response=None):
-    host = _WinRMTransport(WinRMConfig("windows.example.com", "admin", "secret", provider="pywinrm"))
+    host = _WinRMTransport(
+        WinRMConfig("windows.example.com", "admin", "secret", provider="pywinrm")
+    )
     session = _Session(response)
     host._session = session
     return host, session
@@ -190,7 +192,9 @@ def test_native_winrm_remote_marker_is_checkable(monkeypatch):
         stderr = marker
 
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: Result())
-    host = _WinRMTransport(WinRMConfig("server.example", "user", "secret", provider="pywinrm"))
+    host = _WinRMTransport(
+        WinRMConfig("server.example", "user", "secret", provider="pywinrm")
+    )
     host._session = NativeWinRMSession("server.example")
     result = host.run("Write-Output x", check=False)
     assert result.returncode == 5
