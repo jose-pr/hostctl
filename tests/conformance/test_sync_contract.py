@@ -166,10 +166,12 @@ def test_path_syncer_skips_files_whose_stat_already_matches(provider, tmp_path):
 def test_stat_checksum_does_not_converge_after_a_copy(provider, tmp_path):
     """Pin the documented caveat so a future upstream fix is noticed.
 
-    ``pathlib_next.Path.copy()`` propagates ``st_mode`` only.  Until it also
-    preserves timestamps, a ``stat_checksum`` sync cannot settle into a no-op,
-    and the guide says so.  If this ever starts failing, upstream gained
-    timestamp preservation and the documentation should be revisited.
+    ``pathlib_next.Path.copy()`` propagates ``st_mode`` only, so a
+    ``stat_checksum`` sync re-copies forever on interpreters without stdlib
+    timestamp preservation.  Python 3.14 added a stdlib ``Path.copy()`` that
+    DOES preserve timestamps, and a local path resolves to it there, so the
+    same sync converges.  This test pins the invariant that holds either way:
+    convergence and "a second pass would copy again" are exact opposites.
     """
 
     import os
@@ -195,7 +197,18 @@ def test_stat_checksum_does_not_converge_after_a_copy(provider, tmp_path):
         target_stat = stat_checksum(PathAndStat(target))
 
         assert source_stat[0] == target_stat[0]  # size survives the copy
-        assert source_stat[1] != target_stat[1]  # the modification time does not
+
+        # Whether the mtime survives is version- and backend-dependent: Python
+        # 3.14 added a stdlib ``Path.copy()`` that preserves timestamps, and a
+        # local path resolves to it there, so this sync DOES converge. Older
+        # interpreters copy content only, so it never does. Assert the property
+        # that actually matters to callers -- convergence and the documented
+        # guidance agree -- rather than pinning one interpreter's behavior.
+        converges = source_stat[1] == target_stat[1]
+        second_pass_would_copy = stat_checksum(PathAndStat(source)) != stat_checksum(
+            PathAndStat(target)
+        )
+        assert converges is not second_pass_would_copy
 
 
 @pytest.mark.parametrize("provider", _PATH_PROVIDERS, ids=lambda p: p.name)

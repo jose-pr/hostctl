@@ -68,10 +68,13 @@ PathSyncer(stat_checksum).sync(source.path("/src"), target.path("/dst"))
 
 Two caveats decide whether it fits. It can **miss** a content change which
 preserves both size and modification time. It can also **report** a change
-which is not one: `Path.copy()` preserves `st_mode` but not timestamps, so a
-file it copies lands with a fresh modification time and compares unequal on the
-next run. A repeated `stat_checksum` sync therefore re-copies what it copied
-before, rather than settling into a no-op.
+which is not one, and whether it does depends on the interpreter. Where
+`Path.copy()` preserves `st_mode` but not timestamps, a file it copies lands
+with a fresh modification time and compares unequal on the next run, so a
+repeated `stat_checksum` sync re-copies what it copied before rather than
+settling into a no-op. Python 3.14 added a stdlib `Path.copy()` which does
+preserve timestamps, and a local path resolves to it there, so the same sync
+converges. Do not rely on either behavior across versions.
 
 Choose it when source modification times are meaningful on both sides — a tree
 replicated by something which preserves them. Choose `host_checksum` when
