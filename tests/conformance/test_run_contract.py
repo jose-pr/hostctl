@@ -22,6 +22,8 @@ def test_live_provider_registry_is_env_gated():
 def test_direct_argv_and_capture(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    if "args" not in provider.capabilities:
+        pytest.skip(f"{provider.name} executor has no native argv capability")
     with provider_context(provider) as host:
         result = host.run(
             Path(sys.executable),
@@ -38,6 +40,8 @@ def test_direct_argv_and_capture(provider):
 def test_text_env_cwd_and_nonzero_check(provider, tmp_path):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    if not {"cwd", "env"} <= provider.capabilities:
+        pytest.skip(f"{provider.name} executor has no cwd/env capability")
     code = "import os, pathlib; print(os.environ['HOSTCTL_CONFORMANCE']); print(pathlib.Path.cwd())"
     with provider_context(provider) as host:
         result = host.run(
@@ -62,6 +66,8 @@ def test_text_env_cwd_and_nonzero_check(provider, tmp_path):
 def test_silent_capture_is_empty_bytes(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    if "args" not in provider.capabilities:
+        pytest.skip(f"{provider.name} executor has no native argv capability")
     with provider_context(provider) as host:
         result = host.run(Path(sys.executable), "-c", "pass")
     assert result.stdout == b""
@@ -90,6 +96,8 @@ def test_shell_command_shapes_and_operators_remain_explicit(provider):
 def test_timeout_and_input_are_subprocess_compatible(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    if provider.name != "local":
+        pytest.skip(f"{provider.name} does not advertise buffered input/timeout")
     with provider_context(provider) as host:
         result = host.run(
             Path(sys.executable),

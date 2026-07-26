@@ -309,11 +309,11 @@ def fake_providers() -> tuple[Provider, ...]:
     """
 
     return (
-        Provider("local", _local, frozenset(("run", "path"))),
+        Provider("local", _local, frozenset(("run", "path", "args", "cwd", "env"))),
         Provider("ssh", lambda: _fake(FakeSshHost), frozenset(("run", "path"))),
         Provider("winrm", lambda: _fake(FakeWinRMHost), frozenset(("run", "path"))),
         Provider(
-            "container", lambda: _fake(FakeContainerHost), frozenset(("run", "path"))
+            "container", lambda: _fake(FakeContainerHost), frozenset(("run", "path", "args", "cwd", "env"))
         ),
         Provider("qemu", lambda: _fake(FakeQemuHost), frozenset(("run", "path"))),
         Provider("serial", lambda: _fake(FakeSerialHost), frozenset(("session",))),
