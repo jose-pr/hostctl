@@ -58,13 +58,24 @@ Supported remote algorithms are MD5, SHA-1, SHA-256, SHA-384, and SHA-512.
 
 For a fast comparison which reads no file content and launches no remote
 commands, use `stat_checksum`. It compares cached `(size, modification time)`
-metadata and can miss a content change which preserves both values:
+metadata:
 
 ```python
 from hostctl import stat_checksum
 
 PathSyncer(stat_checksum).sync(source.path("/src"), target.path("/dst"))
 ```
+
+Two caveats decide whether it fits. It can **miss** a content change which
+preserves both size and modification time. It can also **report** a change
+which is not one: `Path.copy()` preserves `st_mode` but not timestamps, so a
+file it copies lands with a fresh modification time and compares unequal on the
+next run. A repeated `stat_checksum` sync therefore re-copies what it copied
+before, rather than settling into a no-op.
+
+Choose it when source modification times are meaningful on both sides — a tree
+replicated by something which preserves them. Choose `host_checksum` when
+hostctl's own copies must converge.
 
 The default `PathSyncer` checksum reads both files completely. It is strongest
 when no platform hash tool exists, but often the most expensive choice for
@@ -100,3 +111,13 @@ with ProgressReader(source_path.open("rb"), report, total=size) as reader:
   implementation.
 - Commit-on-close writers may buffer the destination content until close even
   though their read sides stream.
+
+Three gaps are tracked as `pathlib_next` requests rather than hostctl features,
+because each one lives inside machinery hostctl deliberately does not fork.
+Drafts are kept in the repository under `.agents/upstream/`:
+
+| Request | Draft |
+| --- | --- |
+| Byte-progress hook in `BinaryOpen.copy` / `Path.copy()` | `pathlib_next-copy-progress-hook.md` |
+| Symlink handling in `PathSyncer` (plus its unreachable `ignore_error`) | `pathlib_next-symlink-sync.md` |
+| Optional backend-native checksum protocol | `pathlib_next-backend-checksum-protocol.md` |

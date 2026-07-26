@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import subprocess
 import typing
 
 from pathlib_next.utils.sync import PathAndStat
@@ -16,9 +17,35 @@ if typing.TYPE_CHECKING:
 _REMOTE_ALGORITHMS = frozenset(("md5", "sha1", "sha256", "sha384", "sha512"))
 _HEX_DIGEST = re.compile(r"^[0-9a-fA-F]+$")
 
+#: Remote hashing is an optimization, never a requirement.  A host which owns
+#: the path but cannot hash it in place -- no such tool, a refused command, an
+#: unparseable answer -- must degrade to reading the content, not fail the
+#: whole sync.  Missing files and other path-level errors are deliberately not
+#: absorbed here: those are real answers about the path and must propagate.
+_UNAVAILABLE_REMOTE_TOOL = (
+    ValueError,
+    OSError,
+    NotImplementedError,
+    subprocess.SubprocessError,
+)
+
 
 def stat_checksum(entry: PathAndStat) -> tuple[int, float]:
-    """Return the cached size and modification time without reading content."""
+    """Return the cached size and modification time without reading content.
+
+    This is rsync's quick check: no content is read and no command is run.
+    Two caveats decide whether it suits a given sync.
+
+    It can *miss* a change which preserves both size and modification time.
+
+    It can also *report* a change which is not one, because
+    ``pathlib_next.Path.copy()`` preserves ``st_mode`` but not timestamps.
+    A file this helper copies therefore lands with a fresh modification time
+    and compares unequal on the next run.  Use it where the source
+    modification times are meaningful on both sides -- a tree replicated by
+    something which preserves them -- and prefer :func:`host_checksum` when
+    hostctl's own copies must converge to a no-op.
+    """
     if entry.stat is None:
         raise FileNotFoundError(entry.path)
     return entry.stat.st_size, entry.stat.st_mtime
@@ -52,7 +79,14 @@ def host_checksum(
     def checksum(entry: PathAndStat) -> str:
         for host, owner_token in owners:
             if _host_owns_path(host, entry.path, owner_token):
-                return _remote_checksum(host, entry.path, normalized)
+                try:
+                    return _remote_checksum(host, entry.path, normalized)
+                except _UNAVAILABLE_REMOTE_TOOL:
+                    # The host owns the path but cannot hash it in place: the
+                    # tool is missing, refused, or answered unintelligibly.
+                    # Reading the content is slower but still correct, so a
+                    # sync degrades rather than aborting.
+                    break
         return _stream_checksum(entry.path, normalized, chunk_size)
 
     return checksum
@@ -137,9 +171,15 @@ def _parse_digest(output: typing.Union[bytes, str, None], algorithm: str) -> str
         output = output.decode("utf-8", "replace")
     expected = hashlib.new(algorithm).digest_size * 2
     for line in (output or "").splitlines():
-        compact = "".join(line.split())
-        candidates = (compact, line.strip().split(maxsplit=1)[0])
-        for candidate in candidates:
+        fields = line.split()
+        if not fields:
+            continue
+        # Two shapes to accept: certutil spreads the digest across
+        # space-separated byte pairs, so the whole line joins into one
+        # candidate; md5sum emits "<digest>  <path>", so the first field is
+        # the candidate. A path may itself look like a digest, hence the
+        # first field rather than any field.
+        for candidate in ("".join(fields), fields[0]):
             if len(candidate) == expected and _HEX_DIGEST.fullmatch(candidate):
                 return candidate.casefold()
     raise ValueError(f"unable to parse {algorithm} checksum from host output")

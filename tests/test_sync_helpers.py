@@ -84,7 +84,12 @@ def test_host_checksum_falls_back_to_streaming_for_an_unowned_path():
     assert calls == []
 
 
-def test_host_checksum_rejects_unparseable_remote_output():
+def test_host_checksum_surfaces_a_missing_file_after_falling_back():
+    """Unparseable output falls back to reading; a missing file then reports.
+
+    The fallback must not convert a real "this path does not exist" answer
+    into a checksum or a confusing parse error.
+    """
     backend = MemPathBackend()
     provider = PathProvider("memory", lambda *parts: MemPath(*parts, backend=backend))
     host = PosixHost(
@@ -97,8 +102,29 @@ def test_host_checksum_rejects_unparseable_remote_output():
         path_providers=(provider,),
     )
 
-    with pytest.raises(ValueError, match="unable to parse"):
+    with pytest.raises(FileNotFoundError):
         host_checksum(host)(PathAndStat.from_stat(host.path("data"), object()))
+
+
+def test_digest_parsing_tolerates_blank_and_noisy_lines():
+    """Real tools pad their output; a blank line must not crash the parser."""
+    from hostctl.sync import _parse_digest
+
+    md5sum = "\n\nd41d8cd98f00b204e9800998ecf8427e  /srv/some file.txt\n\n"
+    assert _parse_digest(md5sum, "md5") == "d41d8cd98f00b204e9800998ecf8427e"
+
+    certutil = (
+        "MD5 hash of file data:\r\n\r\n"
+        "d4 1d 8c d9 8f 00 b2 04 e9 80 09 98 ec f8 42 7e\r\n"
+        "CertUtil: -hashfile command completed successfully.\r\n"
+    )
+    assert _parse_digest(certutil, "md5") == "d41d8cd98f00b204e9800998ecf8427e"
+
+    get_filehash = "\r\nD41D8CD98F00B204E9800998ECF8427E\r\n"
+    assert _parse_digest(get_filehash, "md5") == "d41d8cd98f00b204e9800998ecf8427e"
+
+    with pytest.raises(ValueError, match="unable to parse"):
+        _parse_digest("\n\n  \n", "md5")
 
 
 def test_powershell_checksum_falls_back_to_certutil():
@@ -131,6 +157,55 @@ def test_powershell_checksum_falls_back_to_certutil():
     assert result == "a" * 32
     assert len(calls) == 2
     assert "certutil.exe" in str(calls[1])
+
+
+def test_host_checksum_degrades_to_reading_when_the_remote_tool_fails():
+    """An owned path whose host cannot hash in place must still be checksummed.
+
+    Remote hashing is an optimization. A host missing ``md5sum`` (or refusing
+    the command) must not abort the whole sync.
+    """
+    backend = MemPathBackend()
+
+    def execute(command, *args, **options):
+        raise FileNotFoundError("md5sum")
+
+    host = PosixHost(
+        executor_providers=(ExecutorProvider("broken", execute),),
+        path_providers=(
+            PathProvider("memory", lambda *parts: MemPath(*parts, backend=backend)),
+        ),
+    )
+    path = host.path("payload")
+    path.write_bytes(b"content")
+
+    assert host_checksum(host)(PathAndStat(path)) == (
+        "9a0364b9e99bb480dd25e1f0284c8555"
+    )
+
+
+def test_host_checksum_degrades_when_the_remote_output_is_unparseable():
+    """A host answering with garbage falls back rather than raising."""
+    backend = MemPathBackend()
+    host = PosixHost(
+        executor_providers=(
+            ExecutorProvider(
+                "noisy",
+                lambda *args, **kwargs: subprocess.CompletedProcess(
+                    args, 0, "command not found\n", ""
+                ),
+            ),
+        ),
+        path_providers=(
+            PathProvider("memory", lambda *parts: MemPath(*parts, backend=backend)),
+        ),
+    )
+    path = host.path("payload")
+    path.write_bytes(b"content")
+
+    assert host_checksum(host)(PathAndStat(path)) == (
+        "9a0364b9e99bb480dd25e1f0284c8555"
+    )
 
 
 def test_remote_to_remote_sync_uses_both_hosts_without_content_reads():
