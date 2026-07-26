@@ -328,6 +328,65 @@ class _HostMeta(_abc.ABCMeta):
         return super().__call__(*args, **options)
 
 
+class _ShellAccessor:
+    """Expose `host.shell` as both the shell itself and a configuring call.
+
+    `host.shell` must keep working as the bound `Shell` -- `host.shell.run()`,
+    `host.shell.session()`, `with host.shell as session:` all predate this.
+    `host.shell(cwd=...)` must additionally return a shell carrying defaults.
+
+    A plain property cannot do both, and overloading `Shell.__call__` is not an
+    option: that is the `Executor` protocol's execute entry point, so making it
+    mean "configure" when called without a command would make every executor
+    call site ambiguous. This descriptor instead returns the built shell for
+    attribute access and, because a `Shell` is itself callable, routes a
+    keyword-only call through `Shell.configure`.
+    """
+
+    def __init__(self, build):
+        self._build = build
+        self.__doc__ = build.__doc__
+
+    def __set_name__(self, owner, name):
+        self._name = name
+
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            return self
+        return _ConfigurableShell(self._build(instance))
+
+
+class _ConfigurableShell:
+    """A `Shell` proxy whose keyword-only call returns a configured shell."""
+
+    __slots__ = ("_shell",)
+
+    def __init__(self, shell):
+        object.__setattr__(self, "_shell", shell)
+
+    def __call__(self, *args, **options):
+        if args:
+            # A positional argument means the caller is using the `Executor`
+            # protocol (`shell(command, ...)`); defer to the real shell.
+            return self._shell(*args, **options)
+        return self._shell.configure(**options)
+
+    def __getattr__(self, name):
+        return getattr(self._shell, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._shell, name, value)
+
+    def __enter__(self):
+        return self._shell.__enter__()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return self._shell.__exit__(exc_type, exc_value, traceback)
+
+    def __repr__(self):
+        return repr(self._shell)
+
+
 class Host(_abc.ABC, metaclass=_HostMeta):
     """Protocol-independent operational interface to a machine."""
 
@@ -376,9 +435,18 @@ class Host(_abc.ABC, metaclass=_HostMeta):
             return frozenset()
         return frozenset(getattr(self.executor, "executor_capabilities", ()))
 
-    @property
+    @_ShellAccessor
     def shell(self) -> Shell[_subprocess.CompletedProcess]:
-        """Build a shell bound to this host's executor."""
+        """A shell bound to this host's executor.
+
+        Used directly -- `host.shell.run(...)`, `host.shell.session(...)`, or
+        `with host.shell as session:` -- it carries no defaults.
+
+        Called with keywords -- `host.shell(cwd="/srv/app", env={"TZ": "UTC"})`
+        -- it returns a shell carrying those defaults, applied to every later
+        `run`, `execute`, and `session` that does not pass its own value.
+        `env` merges per key; `cwd`, `encoding`, and `errors` override.
+        """
         from ..shell import Shell
 
         return Shell(self.shell_flavour, self)

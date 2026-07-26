@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import abc
 import collections.abc
+import copy
 import dataclasses
 import enum
 import inspect
@@ -294,8 +295,21 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         self,
         flavour: ShellFlavour,
         executor: typing.Union[Executor[_Result], Host],
+        *,
+        cwd: typing.Optional[PathLike] = None,
+        env: typing.Optional[Environment] = None,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
     ) -> None:
         self.flavour = flavour
+        #: Defaults applied to every `run`, `execute`, and `session` call that
+        #: does not pass its own value.  `cwd`, `encoding`, and `errors`
+        #: override wholesale; `env` merges per key so a call can change one
+        #: variable without restating the rest (see `_resolve_env`).
+        self.cwd = cwd
+        self.env = dict(env) if env is not None else None
+        self.encoding = encoding
+        self.errors = errors
         run = getattr(executor, "run", None)
         spawn = getattr(executor, "spawn", None)
         self._spawn = spawn if callable(spawn) else None
@@ -347,6 +361,27 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
             inspect.Parameter.KEYWORD_ONLY,
         )
 
+    def _resolve_env(
+        self, env: typing.Optional[Environment]
+    ) -> typing.Optional[Environment]:
+        """Merge a per-call environment over this shell's default.
+
+        Per-call keys win; keys present only in the default survive, so a
+        caller can change one variable without restating the others. Returns
+        `None` when neither side supplies anything, leaving the executor's own
+        inherited environment untouched.
+        """
+        if self.env is None:
+            return env
+        if env is None:
+            return dict(self.env)
+        merged = dict(self.env)
+        merged.update(env)
+        return merged
+
+    def _resolve_cwd(self, cwd: typing.Optional[PathLike]) -> typing.Optional[PathLike]:
+        return self.cwd if cwd is None else cwd
+
     def execute(
         self,
         command: ExecutorCommand,
@@ -369,6 +404,21 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         if args and ExecutorCapability.ARGS not in self.executor_capabilities:
             command = self.flavour.structured_command((command, *args))
             executor_args = ()
+        # Apply the shell's cwd/env defaults only where the executor can carry
+        # them natively. Where it cannot, the caller renders them into the
+        # script instead -- `run` does exactly that and then passes
+        # cwd=None/env=None here, so resolving again would forward a value this
+        # executor rejects. `execute` used directly against a capability-less
+        # executor therefore ignores the defaults by design: it dispatches one
+        # opaque command rather than building a script.
+        if self._executor_accepts_cwd:
+            cwd = self._resolve_cwd(cwd)
+        if self._executor_accepts_env:
+            env = self._resolve_env(env)
+        if encoding is None:
+            encoding = self.encoding
+        if errors is None:
+            errors = self.errors
         options = {
             name: value
             for name, value in (
@@ -421,6 +471,11 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         text: typing.Optional[bool] = None,
     ) -> _Result:
         """Build one script from all commands and pass it to the executor."""
+        # Resolve defaults here as well as in `execute`: the script is rendered
+        # before dispatch, so an embedded `cd`/env assignment has to see the
+        # shell's defaults too. `execute` resolving again is idempotent.
+        cwd = self._resolve_cwd(cwd)
+        env = self._resolve_env(env)
         script = self.flavour.script(
             cmds,
             cwd=None if self._executor_accepts_cwd else cwd,
@@ -455,15 +510,19 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         """Open a persistent process using this shell language."""
         if self._spawn is None:
             raise NotImplementedError("executor does not provide persistent sessions")
+        cwd = self._resolve_cwd(cwd)
+        env = self._resolve_env(env)
         session = ShellSession(
             self.flavour,
             self._spawn(
                 executable=executable,
                 terminal=terminal,
-                encoding=encoding,
-                errors=errors,
+                encoding=self.encoding if encoding is None else encoding,
+                errors=self.errors if errors is None else errors,
             ),
         )
+        # A shell default cwd/env applies to the session too: it is submitted
+        # once here so it persists for every later `send` in that shell.
         if cmds or cwd is not None or env:
             session.send(
                 *cmds,
@@ -471,6 +530,29 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
                 env=env,
             )
         return session
+
+    def configure(
+        self,
+        *,
+        cwd: typing.Optional[PathLike] = None,
+        env: typing.Optional[Environment] = None,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
+    ) -> "Shell[_Result]":
+        """Return a copy of this shell with additional defaults applied.
+
+        `env` merges over this shell's default the same way a per-call `env`
+        does, so configuring twice layers rather than replaces. The original
+        shell is left unchanged, which keeps `host.shell` -- a fresh object per
+        access -- safe to configure without surprising another caller.
+        """
+        clone = copy.copy(self)
+        clone._session = None
+        clone.cwd = self.cwd if cwd is None else cwd
+        clone.env = self._resolve_env(env)
+        clone.encoding = self.encoding if encoding is None else encoding
+        clone.errors = self.errors if errors is None else errors
+        return clone
 
     def __enter__(self) -> ShellSession:
         """Open a default session, so ``with host.shell as session:`` works.

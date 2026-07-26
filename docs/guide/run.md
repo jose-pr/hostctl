@@ -56,6 +56,32 @@ command, `cwd`, `env`, `terminal`, or `encoding`. A shell can be entered again
 after its session closes, but not while one is still open — that raises
 `RuntimeError` rather than silently sharing or leaking a process.
 
+## Shell defaults
+
+Calling `host.shell(...)` returns a shell carrying defaults for every later
+`run()` and `session()` that does not pass its own value:
+
+```python
+shell = host.shell(cwd="/srv/app", env={"TZ": "UTC", "LANG": "C"})
+
+shell.run("pwd")                      # runs in /srv/app with TZ and LANG set
+shell.run("pwd", cwd="/tmp")          # the call wins: /tmp
+shell.run("printenv", env={"TZ": "EST"})   # TZ=EST, LANG=C still applied
+
+with shell as session:                # the session inherits both
+    session.send("pwd")
+```
+
+`cwd`, `encoding`, and `errors` are replaced by a per-call value. `env`
+**merges per key**, so a call can change one variable without restating the
+rest. `configure(...)` returns a further-configured copy and leaves the
+original untouched, which matters because `host.shell` builds a new shell on
+each access. Bare `host.shell` carries no defaults.
+
+Defaults apply wherever the shell builds a script. `Shell.execute()` used
+directly against an executor with no native `cwd`/`env` support dispatches one
+opaque command and does not receive them.
+
 `session.send(*cmds, cwd=..., env=...)` accepts the same raw strings, structured
 argument lists, multiple commands, paths, and `ShellOperator` values as `run()`.
 Changing directory or environment inside the session persists in that shell.

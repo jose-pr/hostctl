@@ -17,6 +17,7 @@ from hostctl import (
     ExecutorCapability,
     ExecutorCommand,
     ExecutionOptions,
+    LocalConfig,
     POSIX_SHELL,
     POWERSHELL,
     PWSH,
@@ -600,6 +601,88 @@ def test_shell_context_manager_without_spawn_fails_explicitly():
     with pytest.raises(NotImplementedError, match="persistent sessions"):
         with shell:
             pass
+
+
+def _recording_shell(**defaults):
+    """A shell over a capability-less executor recording rendered scripts."""
+    scripts = []
+
+    def execute(command, *args, **options):
+        scripts.append(command)
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    return Shell(POSIX_SHELL, execute, **defaults), scripts
+
+
+def test_shell_defaults_apply_to_run_when_the_call_omits_them():
+    shell, scripts = _recording_shell(cwd="/srv/app", env={"TZ": "UTC"})
+
+    shell.run("pwd")
+
+    assert "cd -- /srv/app&&" in scripts[0]
+    assert "export TZ=UTC" in scripts[0]
+
+
+def test_shell_default_cwd_is_overridden_by_the_call():
+    shell, scripts = _recording_shell(cwd="/srv/app")
+
+    shell.run("pwd", cwd="/tmp")
+
+    assert "cd -- /tmp&&" in scripts[0]
+    assert "/srv/app" not in scripts[0]
+
+
+def test_shell_default_env_merges_with_the_call_env_per_key():
+    shell, scripts = _recording_shell(env={"TZ": "UTC", "LANG": "C"})
+
+    shell.run("printenv", env={"TZ": "EST"})
+
+    # The per-call key wins; the default-only key survives.
+    assert "export TZ=EST" in scripts[0]
+    assert "export LANG=C" in scripts[0]
+    assert "TZ=UTC" not in scripts[0]
+
+
+def test_shell_configure_layers_defaults_without_mutating_the_original():
+    shell, _ = _recording_shell(cwd="/srv/app", env={"TZ": "UTC"})
+
+    derived = shell.configure(env={"EXTRA": "1"}, cwd="/opt")
+
+    assert derived.cwd == "/opt"
+    assert derived.env == {"TZ": "UTC", "EXTRA": "1"}
+    assert shell.cwd == "/srv/app"
+    assert shell.env == {"TZ": "UTC"}
+
+
+def test_shell_defaults_reach_the_opened_session():
+    provider = _LifecycleProvider()
+    shell = Shell(POSIX_SHELL, provider, cwd="/srv/app", env={"TZ": "UTC"})
+
+    with shell as session:
+        session.send("pwd")
+
+    # The session submits the defaults once, as their own line: there is no
+    # payload command to guard with `&&`, and the directory/environment must
+    # persist for every later `send` in that shell.
+    written = provider.processes[0].written
+    assert "cd -- /srv/app" in written
+    assert "export TZ=UTC" in written
+    assert written.startswith("export TZ=UTC;cd -- /srv/app;")
+
+
+def test_host_shell_call_returns_a_configured_shell_and_bare_access_does_not():
+    host = LocalConfig()._create_host()
+    host.connect()
+    try:
+        configured = host.shell(cwd="/srv/app", env={"TZ": "UTC"})
+        assert configured.cwd == "/srv/app"
+        assert configured.env == {"TZ": "UTC"}
+        # Bare access stays default-free, and is still usable as a Shell.
+        assert host.shell.cwd is None
+        assert host.shell.env is None
+        assert host.shell.run("echo hi", capture_output=True).returncode == 0
+    finally:
+        host.close()
 
 
 def test_shell_flavour_accepts_class_and_registered_string():

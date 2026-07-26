@@ -118,6 +118,12 @@ corresponding hosts.
   `register_shell_flavour()` adds application-defined string selections.
 - `ShellCommand.command` is transport-ready text; `.environment` is the
   environment sent out of band, or `None` when embedded into the script.
+- `Shell(flavour, executor, cwd=None, env=None, encoding=None, errors=None)`
+  accepts defaults applied to every `run`/`session` call that omits them.
+  `host.shell(cwd=..., env=...)` returns such a shell; bare `host.shell` has
+  none. `cwd`/`encoding`/`errors` are replaced by a per-call value, `env`
+  merges per key, and `Shell.configure(...)` returns a configured copy without
+  mutating the original.
 - `Shell.session(*cmds, terminal=False, cwd=None, env=None, ...) -> ShellSession`
   opens a persistent provider process. `Shell` is also a context manager:
   `with host.shell as session:` opens a default session and closes it on exit,
