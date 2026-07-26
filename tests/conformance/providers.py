@@ -5,11 +5,9 @@ from __future__ import annotations
 import contextlib
 import io
 import os
-import platform
 import shutil
 import subprocess
 import tarfile
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
@@ -20,13 +18,13 @@ from hostctl.executor import LocalExecutor
 from hostctl.shell import POSIX_SHELL, POWERSHELL
 import pytest
 
-
-@dataclass(frozen=True)
-class _FakeConfig:
-    """Minimal credential-free config carried by a fake transport host."""
-
-    scheme: str
-    connection_uri: str
+from .path_fakes import (
+    LocalQgaPathHelper,
+    LocalQgaTransport,
+    LocalSftpBackend,
+    QGA_FILE_COMMANDS,
+    WinRMFilesystemRunner,
+)
 
 
 class _FakeTransport:
@@ -150,18 +148,6 @@ class FakeWinRMSession(_FakeTransport):
         )()
 
 
-class FakeContainerClient(_FakeTransport):
-    pass
-
-
-class FakeQemuTransport(_FakeTransport):
-    pass
-
-
-class FakeSerialTransport(_FakeTransport):
-    pass
-
-
 class _ExecResult:
     def __init__(self, result):
         self.exit_code = result.returncode
@@ -199,7 +185,15 @@ class _FakeDockerContainer:
         stream = io.BytesIO()
         with tarfile.open(fileobj=stream, mode="w") as archive:
             archive.add(path, arcname=os.path.basename(path) or ".")
-        return [stream.getvalue()], {"size": len(stream.getvalue())}
+        value = os.lstat(path)
+        metadata = {
+            "name": os.path.basename(path),
+            "size": value.st_size,
+            "mode": value.st_mode,
+            "mtime": int(value.st_mtime),
+            "linkTarget": os.readlink(path) if os.path.islink(path) else "",
+        }
+        return [stream.getvalue()], metadata
 
     def put_archive(self, path, data):
         with tarfile.open(fileobj=io.BytesIO(data), mode="r") as archive:
@@ -220,61 +214,16 @@ class _FakeDockerClient:
         return None
 
 
-class _FakeQemuGuest(_FakeTransport):
-    def __init__(self, executor):
-        super().__init__("qemu", executor)
-        self._result = None
-
-    def execute(self, request, timeout=None):
-        command = request["execute"]
-        if command in ("guest-ping", "guest-info"):
-            if command == "guest-ping":
-                return {}
-            return {
-                "supported_commands": [
-                    {"name": n, "enabled": True}
-                    for n in ("guest-exec", "guest-exec-status")
-                ]
-            }
-        if command == "guest-get-osinfo":
-            return {
-                "id": "linux",
-                "pretty-name": "Linux",
-                "version": "fake",
-                "machine": "x86_64",
-            }
-        if command == "guest-get-host-name":
-            return {"host-name": "fake-qemu"}
-        if command == "guest-exec":
-            args = request.get("arguments", {})
-            path = args.get("path")
-            argv = args.get("arg", [])
-            result = self.executor(path, *argv, capture_output=True, check=False)
-            self._result = result
-            return {"pid": 1}
-        if command == "guest-exec-status":
-            result = self._result
-            return {
-                "exited": True,
-                "exitcode": result.returncode if result else 1,
-                "out-data": __import__("base64")
-                .b64encode((result.stdout or b"") if result else b"")
-                .decode(),
-            }
-        raise AssertionError(command)
-
-
-class _TransportFakeHost:
-    """Marker shared by concrete transport host fakes below."""
-
-
 class FakeSshHost:
     transport = "ssh"
 
     def __new__(cls):
-        from hostctl import HostPath, PosixHost, SshConfig
-        from hostctl.host._ssh import SshExecutorProvider, _SshTransport
-        from hostctl.provider import PathProvider
+        from hostctl import PosixHost, SshConfig
+        from hostctl.host._ssh import (
+            SftpPathProvider,
+            SshExecutorProvider,
+            _SshTransport,
+        )
 
         dialect = POWERSHELL if os.name == "nt" else POSIX_SHELL
         config = SshConfig("fake", dialect=dialect, known_hosts=None)
@@ -282,31 +231,43 @@ class FakeSshHost:
         session = FakeSshSession("ssh", LocalExecutor())
         session.connect()
         transport._ssh = session
-        return PosixHost(
+        backend = LocalSftpBackend()
+        transport._sftp_backend = backend
+        host = PosixHost(
             config,
             executor_providers=(SshExecutorProvider(transport),),
-            path_providers=(PathProvider("fake-sftp", lambda *s: HostPath(*s)),),
+            path_providers=(SftpPathProvider(transport),),
             shell=dialect,
         )
+        host._conformance_cleanup = backend.close
+        return host
 
 
 class FakeWinRMHost:
     transport = "winrm"
 
     def __new__(cls):
-        from hostctl import HostPath, WindowsHost, WinRMConfig
-        from hostctl.host._winrm import WinRMExecutorProvider, _WinRMTransport
-        from hostctl.provider import PathProvider
+        from hostctl import WindowsHost, WinRMConfig
+        from hostctl.host._winrm import (
+            WinRMExecutorProvider,
+            WinRMPathBackend,
+            WinRMPathProvider,
+            _WinRMTransport,
+        )
 
         config = WinRMConfig("fake", username="fake", password="fake")
         transport = _WinRMTransport(config)
         transport._session = FakeWinRMSession("winrm", LocalExecutor())
-        return WindowsHost(
+        runner = WinRMFilesystemRunner()
+        transport._path_backend = WinRMPathBackend(runner)
+        host = WindowsHost(
             config,
             executor_providers=(WinRMExecutorProvider(transport),),
-            path_providers=(PathProvider("fake-winrm", lambda *s: HostPath(*s)),),
+            path_providers=(WinRMPathProvider(transport),),
             shell=POWERSHELL,
         )
+        host._conformance_cleanup = runner.close
+        return host
 
 
 class FakeContainerHost:
@@ -325,11 +286,16 @@ class FakeQemuHost:
     transport = "qemu"
 
     def __new__(cls):
-        from hostctl import HostPath, QemuConfig, QemuHost
+        from hostctl import QemuConfig, QemuHost, QgaPathBackend
 
-        transport = _FakeQemuGuest(LocalExecutor())
+        transport = LocalQgaTransport()
         host = QemuHost(QemuConfig("fake", transport_factory=lambda: transport))
-        host.path = lambda *s, **_: HostPath(*s)
+        host.connect()
+        host._path_backend = QgaPathBackend(
+            transport,
+            supported_commands=QGA_FILE_COMMANDS,
+            helper=LocalQgaPathHelper(transport),
+        )
         return host
 
 
@@ -359,7 +325,8 @@ def _local() -> tuple[object, Callable[[], None]]:
 
 
 def _fake(host_type: Callable[[], object]) -> tuple[object, Callable[[], None]]:
-    return host_type(), lambda: None
+    host = host_type()
+    return host, getattr(host, "_conformance_cleanup", lambda: None)
 
 
 def fake_providers() -> tuple[Provider, ...]:
@@ -382,6 +349,21 @@ def fake_providers() -> tuple[Provider, ...]:
         Provider("qemu", lambda: _fake(FakeQemuHost), frozenset(("run", "path"))),
         Provider("serial", lambda: _fake(FakeSerialHost), frozenset(("session",))),
     )
+
+
+def conformance_path(host, provider: Provider, tmp_path: Path, *parts: str):
+    """Return an existing, transport-native scratch root joined with parts."""
+
+    token = tmp_path.name
+    if provider.name == "winrm":
+        root = host.path(r"C:\hostctl-conformance", token)
+    elif provider.name in ("ssh", "qemu"):
+        root = host.path("/hostctl-conformance", token)
+    else:
+        root = host.path(tmp_path)
+    if provider.name != "container":
+        root.mkdir(parents=True, exist_ok=True)
+    return root.joinpath(*parts)
 
 
 def live_providers() -> tuple[Provider, ...]:

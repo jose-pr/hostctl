@@ -835,6 +835,7 @@ class _QgaReadStream(io.RawIOBase):
     def __init__(self, backend: QgaPathBackend, path: str) -> None:
         self._backend = backend
         self._path = path
+        self._handle: typing.Optional[int] = None
         self._handle = backend._open(path, "rb")
         self._eof = False
 
@@ -845,7 +846,7 @@ class _QgaReadStream(io.RawIOBase):
         if self._eof or not target:
             return 0
         data, eof = self._backend.read_handle(
-            self._handle,
+            typing.cast(int, self._handle),
             min(len(target), self._backend.chunk_size),
             path=self._path,
         )
@@ -855,11 +856,14 @@ class _QgaReadStream(io.RawIOBase):
         return len(data)
 
     def close(self) -> None:
-        if not self.closed:
+        if not self.closed and self._handle is not None:
+            handle, self._handle = self._handle, None
             try:
-                self._backend._close(self._handle, self._path)
+                self._backend._close(handle, self._path)
             finally:
                 super().close()
+        else:
+            super().close()
 
 
 class _QgaPathMixin:
@@ -870,6 +874,14 @@ class _QgaPathMixin:
 
     def move(self, target, **kwargs):
         return Path.move(self, target, **kwargs)
+
+    def _copy_from(self, source, **kwargs):
+        if self.exists() and not kwargs.get("overwrite", False):
+            raise FileExistsError(str(self))
+        with source.open("rb") as src, self.open("wb") as dst:
+            while chunk := src.read(1024 * 1024):
+                dst.write(chunk)
+        return self
 
     @property
     def backend(self) -> QgaPathBackend:

@@ -38,6 +38,16 @@ class _CompositePathMixin:
     def move(self, target, **kwargs):
         return Path.move(self, target, **kwargs)
 
+    def _copy_from(self, source, **kwargs):
+        """Accept Python 3.14 stdlib ``Path.copy()`` destinations."""
+
+        if self.exists() and not kwargs.get("overwrite", False):
+            raise FileExistsError(str(self))
+        with source.open("rb") as src, self.open("wb") as dst:
+            while chunk := src.read(1024 * 1024):
+                dst.write(chunk)
+        return self
+
     @classmethod
     def from_path(
         cls,
@@ -70,9 +80,7 @@ class _CompositePathMixin:
 
     @property
     def selection_trace(self):
-        if self._selector is None or self._selector.last_selection is None:
-            return ()
-        return self._selector.last_selection.trace
+        return self._selection_trace
 
     def _provider_path(self, provider: PathProvider) -> Path:
         if provider is self._provider and self._backend_path is not None:
@@ -109,6 +117,7 @@ class _CompositePathMixin:
                     selected = self._selector.select(exclude=excluded)
                 except OperationNotStarted:
                     return
+                self._selection_trace = selected.trace
                 provider = selected.provider
                 if _supports(provider, operation):
                     excluded.append(provider.name)
@@ -165,13 +174,13 @@ class _CompositePathMixin:
         provider = next((item for item in self._providers if item.name == name), None)
         if provider is None:
             raise ValueError(f"unknown path provider: {name}")
-        if provider is self._provider:
+        if provider is self._provider and self._pinned:
             return self
         if self._selector is not None:
             probe = provider.probe()
             if not probe.usable:
                 raise OperationNotStarted(f"path provider {name!r} is unavailable")
-        backend = provider.path(str(self))
+        backend = self._provider_path(provider)
         return type(self).from_path(
             backend,
             provider,
@@ -296,13 +305,32 @@ class _CompositePathMixin:
         return self._dispatch("rmdir", lambda path: path.rmdir(), pin=True)
 
     def rename(self, target):
-        if isinstance(target, _CompositePathMixin):
-            if target.provider is not self.provider:
-                raise ValueError("cannot rename across path providers")
-            target_path = target._backend_path
-        else:
-            target_path = self._factory(str(target))
-        return self._dispatch("rename", lambda path: path.rename(target_path), pin=True)
+        logical_target = str(target)
+
+        def rename_with_selected_provider(path):
+            provider = self._provider
+            if provider is None:  # pragma: no cover - guarded by _dispatch
+                raise NotImplementedError("rename requires a path provider")
+            if isinstance(target, _CompositePathMixin):
+                if target._pinned and target.provider is not provider:
+                    raise ValueError("cannot rename across path providers")
+                if not any(item is provider for item in target.providers):
+                    raise ValueError("cannot rename across path providers")
+                target_path = target._provider_path(provider)
+            else:
+                target_path = provider.path(logical_target)
+            path.rename(target_path)
+            return type(self).from_path(
+                target_path,
+                provider,
+                provider.path,
+                self._providers,
+                self._selector,
+                pinned=True,
+                logical_segments=(logical_target,),
+            )
+
+        return self._dispatch("rename", rename_with_selected_provider, pin=True)
 
 
 class CompositePosixPath(_CompositePathMixin, PosixPathname, Path):
@@ -315,6 +343,7 @@ class CompositePosixPath(_CompositePathMixin, PosixPathname, Path):
         "_selector",
         "_factory",
         "_pinned",
+        "_selection_trace",
     )
 
     def __new__(
@@ -349,6 +378,9 @@ class CompositePosixPath(_CompositePathMixin, PosixPathname, Path):
         self._selector = selector
         self._factory = factory or (provider.path if provider else None)
         self._pinned = pinned
+        self._selection_trace = (
+            inherited._selection_trace if inherited is not None else ()
+        )
         if (
             self._provider is None
             or self._backend_path is None
@@ -372,6 +404,7 @@ class CompositeWindowsPath(_CompositePathMixin, WindowsPathname, Path):
         "_selector",
         "_factory",
         "_pinned",
+        "_selection_trace",
     )
 
     def __new__(
@@ -406,6 +439,9 @@ class CompositeWindowsPath(_CompositePathMixin, WindowsPathname, Path):
         self._selector = selector
         self._factory = factory or (provider.path if provider else None)
         self._pinned = pinned
+        self._selection_trace = (
+            inherited._selection_trace if inherited is not None else ()
+        )
         if (
             self._provider is None
             or self._backend_path is None
