@@ -104,17 +104,17 @@ def test_config_reentry_is_guarded_and_connect_failure_cleans_up():
 
 
 def test_ssh_uri_round_trip_keeps_secrets_separate():
-    source = PosixHost.from_ssh(
-        SshConfig(
-            "windows.example.com",
-            port=2222,
-            username="admin",
-            password="top-secret",
-            executable="C:/Program Files/PowerShell/7/pwsh.exe",
-            dialect="powershell",
-            path_flavor=WindowsPathname,
-        )
+    source = SshConfig(
+        "windows.example.com",
+        port=2222,
+        username="admin",
+        password="top-secret",
+        executable="C:/Program Files/PowerShell/7/pwsh.exe",
+        dialect="powershell",
+        path_flavor=WindowsPathname,
     )
+    source = source.open()
+    assert isinstance(source, WindowsHost)
     uri = source.connection_uri
     assert "top-secret" not in uri
     restored = Host(uri, password="top-secret", known_hosts=None)

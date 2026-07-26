@@ -168,7 +168,8 @@ def test_posix_dialect_quotes_cwd_and_embeds_environment():
     host, stub = _host()
     host.run(["printf", "%s", "a b"], cwd="/tmp/a b", env={"NAME": "value"})
     command, options = stub.calls[0]
-    assert "cd '/tmp/a b'" in command
+    assert "cd -- '/tmp/a b'" in command
+    assert command.count("cd -- ") == 1
     assert "'a b'" in command
     assert "export NAME=value" in command
     assert options["env"] is None

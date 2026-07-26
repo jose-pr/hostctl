@@ -237,7 +237,6 @@ class ShellFlavour(abc.ABC):
             "cwd": changed,
             "command": command,
         }
-        parts = [rendered[name] for name in self.context_order if rendered[name]]
         if (
             "cwd" in self.context_order
             and "command" in self.context_order
@@ -247,7 +246,9 @@ class ShellFlavour(abc.ABC):
             cwd_index = self.context_order.index("cwd")
             command_index = self.context_order.index("command")
             if command_index == cwd_index + 1:
-                parts[cwd_index : command_index + 1] = [self.join_cwd(changed, command)]
+                rendered["cwd"] = self.join_cwd(changed, command)
+                rendered["command"] = ""
+        parts = [rendered[name] for name in self.context_order if rendered[name]]
         script = self.command_separator.join(parts)
         epilogue = getattr(self, "execution_epilogue", "")
         if script and epilogue and not for_session:

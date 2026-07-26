@@ -107,7 +107,8 @@ def test_qemu_host_shell_run_embeds_cwd_and_uses_guest_exec():
     )
     arguments = request["arguments"]
     assert arguments["path"] == "/bin/sh"
-    assert "cd '/tmp/a b'" in arguments["arg"][-1]
+    assert "cd -- '/tmp/a b'" in arguments["arg"][-1]
+    assert arguments["arg"][-1].count("cd -- ") == 1
     assert arguments["env"] == ["NUMBER=7"]
 
 
