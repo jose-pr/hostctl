@@ -24,11 +24,7 @@ class FishShellFlavour(ShellFlavour):
     def quote(self, value: object) -> str:
         if isinstance(value, (PurePath, Path)):
             value = value.as_posix()
-        elif isinstance(value, os.PathLike):
-            value = os.fspath(value)
-        elif isinstance(value, bytes):
-            value = value.decode()
-        return shlex.quote(str(value))
+        return shlex.quote(self._text(value))
 
     def operator(self, value: ShellOperator) -> str:
         return {
@@ -41,26 +37,10 @@ class FishShellFlavour(ShellFlavour):
         }[value]
 
     def environment_assignment(self, key: str, value: object) -> str:
-        if isinstance(value, bytes):
-            value = value.decode()
-        return f"set -gx {key} {shlex.quote(str(value))}"
+        return f"set -gx {key} {self.quote(value)}"
 
-    def script(
-        self,
-        cmds: typing.Iterable[ShellToken],
-        *,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
-    ) -> str:
-        parts = []
-        if env:
-            parts.append(self.environment_script(env))
-        if cwd:
-            parts.append(f"cd {shlex.quote(PurePosixPath(cwd).as_posix())}")
-        command = self.join(cmds)
-        if command:
-            parts.append(command)
-        return self.command_separator.join(parts)
+    def change_directory(self, cwd: PathLike) -> str:
+        return f"cd -- {self.quote(PurePosixPath(cwd).as_posix())}"
 
     def command(
         self,

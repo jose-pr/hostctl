@@ -27,11 +27,7 @@ class PosixShellFlavour(ShellFlavour):
     def quote(self, value: object) -> str:
         if isinstance(value, (PurePath, Path)):
             value = value.as_posix()
-        elif isinstance(value, os.PathLike):
-            value = os.fspath(value)
-        elif isinstance(value, bytes):
-            value = value.decode()
-        return shlex.quote(str(value))
+        return shlex.quote(self._text(value))
 
     def operator(self, value: ShellOperator) -> str:
         return {
@@ -44,25 +40,10 @@ class PosixShellFlavour(ShellFlavour):
         }[value]
 
     def environment_assignment(self, key: str, value: object) -> str:
-        if isinstance(value, bytes):
-            value = value.decode()
-        return f"export {key}={shlex.quote(str(value))}"
+        return f"export {key}={self.quote(value)}"
 
-    def script(
-        self,
-        cmds: typing.Iterable[ShellToken],
-        *,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
-    ) -> str:
-        script = self.join(cmds)
-        if env:
-            script = self.command_separator.join(
-                part for part in (self.environment_script(env), script) if part
-            )
-        if cwd:
-            script = f"{shlex.join(['cd', PurePosixPath(cwd).as_posix()])}; {script}"
-        return script
+    def change_directory(self, cwd: PathLike) -> str:
+        return f"cd {self.quote(PurePosixPath(cwd).as_posix())}"
 
     def command(
         self,
@@ -78,10 +59,7 @@ class PosixShellFlavour(ShellFlavour):
         )
         remote_command = shlex.join(command)
         if cwd:
-            remote_command = (
-                f"{shlex.join(['cd', PurePosixPath(cwd).as_posix()])}; "
-                f"{remote_command}"
-            )
+            remote_command = f"{self.change_directory(cwd)}{self.operator(ShellOperator.AND)}{remote_command}"
         return ShellCommand(remote_command, None)
 
     def invocation(

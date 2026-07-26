@@ -11,13 +11,24 @@ from ._common import ShellCommand, ShellFlavour, ShellOperator, ShellToken
 
 
 def _literal(value: object) -> str:
-    return "'" + str(value).replace("'", "''") + "'"
+    return (
+        "'"
+        + str(value)
+        .replace("'", "''")
+        .replace("‘", "‘‘")
+        .replace("’", "’’")
+        .replace("‚", "‚‚")
+        .replace("‛", "‛‛")
+        + "'"
+    )
 
 
 class PowerShellFlavour(ShellFlavour):
     name = "powershell"
     default_executable = "powershell.exe"
     command_separator = ";"
+    context_order = ("cwd", "env", "command")
+    execution_epilogue = "; exit $LASTEXITCODE"
     structured_command_prefix = "& "
     info_script = (
         'Write-Output ("hostname=" + [Environment]::MachineName);'
@@ -44,11 +55,7 @@ class PowerShellFlavour(ShellFlavour):
             self.name = "pwsh"
 
     def quote(self, value: object) -> str:
-        if isinstance(value, os.PathLike):
-            value = os.fspath(value)
-        elif isinstance(value, bytes):
-            value = value.decode()
-        return _literal(value)
+        return _literal(self._text(value))
 
     def operator(self, value: ShellOperator) -> str:
         if self.major_version >= 7 and value in (
@@ -72,25 +79,17 @@ class PowerShellFlavour(ShellFlavour):
             ) from exc
 
     def environment_assignment(self, key: str, value: object) -> str:
-        if isinstance(value, bytes):
-            value = value.decode()
-        return f"$env:{key}={_literal(value)}"
+        return f"$env:{key}={_literal(self._text(value))}"
 
-    def script(
-        self,
-        cmds: typing.Iterable[ShellToken],
-        *,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
-    ) -> str:
-        script = self.join(cmds)
-        if env:
-            script = self.command_separator.join(
-                part for part in (self.environment_script(env), script) if part
-            )
-        if cwd:
-            script = f"Set-Location -LiteralPath {_literal(cwd)};{script}"
-        return script
+    def change_directory(self, cwd: PathLike) -> str:
+        return (
+            f"Set-Location -LiteralPath {_literal(self._text(cwd))} -ErrorAction Stop"
+        )
+
+    def join_cwd(self, changed: str, command: str) -> str:
+        # PowerShell 5 has no &&.  ErrorAction Stop makes a failed Set-Location
+        # terminate the script before the payload is evaluated.
+        return f"{changed};{command}"
 
     def command(
         self,
@@ -100,8 +99,9 @@ class PowerShellFlavour(ShellFlavour):
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
     ) -> ShellCommand:
+        script = self.script(cmds, cwd=cwd, env=env)
         command = self.invocation(
-            self.script(cmds, cwd=cwd, env=env),
+            script,
             executable=executable,
         )
         return ShellCommand(subprocess.list2cmdline(command), None)

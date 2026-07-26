@@ -76,6 +76,13 @@ corresponding hosts.
   use the flavour's `command_separator`.
 - `ShellFlavour.command(cmds, *, executable=None, cwd=None, env=None) ->
   ShellCommand` wraps that script for an SSH exec channel.
+- Structured values are normalized through the base class (including bytes and
+  iterable argv sequences); empty structured commands and control characters
+  are rejected. Raw empty command strings are skipped when joining.
+- Environment assignments embedded by a shell are additive to the inherited
+  remote environment. This intentionally differs from local
+  `subprocess.run(env=...)`, which replaces the environment; a clear-env mode
+  remains a separate future contract.
 - `POSIX_SHELL` and `POWERSHELL` are the built-in strategies;
   common built-ins also include `BASH`, `ZSH`, `FISH`, `CMD`, and PowerShell 7
   `PWSH`. PowerShell 5 rejects `AND`/`OR`; PowerShell 7 supports them.
@@ -86,7 +93,9 @@ corresponding hosts.
   environment sent out of band, or `None` when embedded into the script.
 - `Shell.session(*cmds, terminal=False, cwd=None, env=None, ...) -> ShellSession`
   opens a persistent provider process. `ShellSession.send(*cmds, cwd=None,
-  env=None)` uses the same command grammar and mutates the live shell context.
+  env=None)` uses the same command grammar, writes the flavour terminator and
+  a line terminator, and mutates the live shell context. This newline is
+  required for interactive shells to submit each command.
   TTY stderr is merged into stdout.
 
 ## Host contract

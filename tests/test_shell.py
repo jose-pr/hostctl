@@ -3,6 +3,7 @@
 import os
 import subprocess
 import typing
+from collections import deque
 from pathlib import PurePosixPath
 
 import pytest
@@ -236,6 +237,41 @@ def test_shell_flavour_environment_script_is_reusable():
         POSIX_SHELL.environment_script({"NAME": "value with spaces", b"BYTES": b"data"})
         == "export NAME='value with spaces';export BYTES=data"
     )
+
+
+@pytest.mark.parametrize("flavour", [POSIX_SHELL, FISH, POWERSHELL, CMD])
+def test_shell_flavours_reject_control_characters(flavour):
+    with pytest.raises(ValueError, match="control"):
+        flavour.quote("bad\x00value")
+
+
+def test_shell_normalizes_bytes_deques_and_empty_commands():
+    assert POSIX_SHELL.script((b"echo hi",)) == "'echo hi'"
+    assert POSIX_SHELL.script((deque(("printf", "%s", "ok")),)) == "printf %s ok"
+    assert POSIX_SHELL.script(("", "echo ok")) == "echo ok"
+    with pytest.raises(ValueError, match="must not be empty"):
+        POSIX_SHELL.script(((),))
+
+
+def test_powershell_doubles_all_tokenizer_smart_quotes():
+    assert POWERSHELL.quote("it's ‘smart’‚safe‛") == "'it''s ‘‘smart’’‚‚safe‛‛'"
+
+
+def test_shell_environment_invalid_bytes_key_is_value_error():
+    with pytest.raises(ValueError, match="invalid environment"):
+        POSIX_SHELL.environment_script({b"\xff": "value"})
+
+
+def test_powershell_execution_has_native_exit_status_epilogue():
+    calls = []
+    Shell(POWERSHELL, calls.append).run("Write-Output ok")
+    assert calls[-1].endswith("; exit $LASTEXITCODE")
+
+
+def test_cmd_disables_delayed_expansion_and_batch_percent_doubling():
+    assert "/v:off" in CMD.command(("echo ok",)).command
+    assert "%%" not in CMD.environment_script({"VALUE": "%PATH%"})
+    assert "^%" in CMD.environment_script({"VALUE": "%PATH%"})
     assert (
         POWERSHELL.environment_script({"NAME": "value with spaces", b"BYTES": b"data"})
         == "$env:NAME='value with spaces';$env:BYTES='data'"
@@ -307,7 +343,7 @@ def test_powershell_7_supports_pipeline_chain_operators():
         PWSH.script(
             (("Write-Output", "first"), ShellOperator.AND, ("Write-Output", "second"))
         )
-        == "& 'Write-Output' 'first' && & 'Write-Output' 'second'"
+        == "& 'Write-Output' 'first' && & 'Write-Output' 'second'; exit $LASTEXITCODE"
     )
 
 
@@ -334,7 +370,7 @@ def test_cmd_shell_renders_environment_cwd_args_and_operators():
         env={"NAME": "100%"},
     )
     assert script == (
-        'set "NAME=100%%"&cd /d "C:\\Program Files"&'
+        'set "NAME=100^%"&cd /d "C:\\Program Files"&&'
         'tool.exe "value & data"&&echo done'
     )
 
@@ -421,7 +457,7 @@ def test_shell_session_uses_flavour_wrapper_and_provider_spawn():
     assert provider.calls[0][1]["encoding"] == "utf-8"
 
     result.send(["Write-Output", "c d"], ShellOperator.PIPE, "Out-String")
-    assert "'Write-Output' 'c d' | Out-String;" in result.process.written
+    assert "'Write-Output' 'c d' | Out-String;\n" in result.process.written
 
 
 def test_shell_session_without_spawn_fails_explicitly():

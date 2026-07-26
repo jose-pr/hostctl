@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import abc
+import collections.abc
 import dataclasses
 import enum
 import inspect
@@ -75,8 +76,10 @@ class ShellSession(Process):
         """Render and submit commands using this session's shell language."""
         if not cmds and cwd is None and not env:
             raise ValueError("send requires commands, cwd, or env")
-        script = self.flavour.script(cmds, cwd=cwd, env=env)
-        self.process.write(script + self.flavour.command_separator)
+        script = self.flavour.script(cmds, cwd=cwd, env=env, for_session=True)
+        self.process.write(
+            script + self.flavour.command_separator + self.flavour.line_terminator
+        )
 
     def write(self, data):
         self.process.write(data)
@@ -131,7 +134,21 @@ class ShellFlavour(abc.ABC):
     default_executable: str
     info_script: str
     command_separator: str
+    line_terminator: str = "\n"
+    context_order = ("env", "cwd", "command")
     structured_command_prefix = ""
+
+    @staticmethod
+    def _text(value: object) -> str:
+        """Normalize values and reject shell control characters."""
+        if isinstance(value, os.PathLike):
+            value = os.fspath(value)
+        elif isinstance(value, bytes):
+            value = value.decode("utf-8", "surrogateescape")
+        text = str(value)
+        if any(ord(char) < 32 or ord(char) == 127 for char in text):
+            raise ValueError("shell values cannot contain control characters")
+        return text
 
     @abc.abstractmethod
     def quote(self, value: object) -> str:
@@ -155,18 +172,23 @@ class ShellFlavour(abc.ABC):
         assignments = []
         for key, value in env.items():
             if isinstance(key, bytes):
-                key = key.decode()
+                key = key.decode("utf-8", "surrogateescape")
             if not isinstance(key, str) or not _ENVIRONMENT_KEY.fullmatch(key):
                 raise ValueError(f"invalid environment variable name: {key!r}")
             assignments.append(self.environment_assignment(key, value))
         return self.command_separator.join(assignments)
 
     def command_text(self, value: Command) -> str:
-        if isinstance(value, (tuple, list)):
-            return self.structured_command(value)
-        if isinstance(value, (PurePath, Path, os.PathLike)):
+        if isinstance(value, (bytes, PurePath, Path, os.PathLike)):
             return self.quote(value)
-        return str(value)
+        if isinstance(value, str):
+            return self._text(value)
+        if isinstance(value, collections.abc.Iterable):
+            values = tuple(value)
+            if not values:
+                raise ValueError("structured command must not be empty")
+            return self.structured_command(values)
+        return self._text(value)
 
     def join(self, values: typing.Iterable[ShellToken]) -> str:
         """Join commands, preserving raw strings and explicit operators."""
@@ -181,9 +203,12 @@ class ShellFlavour(abc.ABC):
                 pending = self.operator(value)
                 expecting_command = True
                 continue
+            command = self.command_text(value)
+            if not command:
+                continue
             if has_command:
                 result.append(pending)
-            result.append(self.command_text(value))
+            result.append(command)
             has_command = True
             expecting_command = False
             pending = self.command_separator
@@ -191,15 +216,46 @@ class ShellFlavour(abc.ABC):
             raise ValueError("shell operator must be followed by a command")
         return "".join(result)
 
-    @abc.abstractmethod
     def script(
         self,
         cmds: typing.Iterable[ShellToken],
         *,
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
+        for_session: bool = False,
     ) -> str:
-        """Build a script in this shell's language."""
+        """Build a script, applying environment and cwd consistently."""
+        command = self.join(cmds)
+        changed = self.change_directory(cwd) if cwd is not None else ""
+        rendered = {
+            "env": self.environment_script(env) if env else "",
+            "cwd": changed,
+            "command": command,
+        }
+        parts = [rendered[name] for name in self.context_order if rendered[name]]
+        if (
+            "cwd" in self.context_order
+            and "command" in self.context_order
+            and cwd is not None
+            and command
+        ):
+            cwd_index = self.context_order.index("cwd")
+            command_index = self.context_order.index("command")
+            if command_index == cwd_index + 1:
+                parts[cwd_index : command_index + 1] = [self.join_cwd(changed, command)]
+        script = self.command_separator.join(parts)
+        epilogue = getattr(self, "execution_epilogue", "")
+        if script and epilogue and not for_session:
+            script += epilogue
+        return script
+
+    @abc.abstractmethod
+    def change_directory(self, cwd: PathLike) -> str:
+        """Render a directory change which fails if the directory is absent."""
+
+    def join_cwd(self, changed: str, command: str) -> str:
+        """Join cwd setup and payload with the shell's AND operator."""
+        return f"{changed}{self.operator(ShellOperator.AND)}{command}"
 
     @abc.abstractmethod
     def command(
@@ -274,11 +330,10 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
 
     def _accepts_keyword(self, name: str) -> bool:
         parameter = self._executor_parameters.get(name)
-        return (
-            parameter is not None
-            and parameter.kind
-            in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-        ) or self._executor_accepts_options
+        return parameter is not None and parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
 
     def execute(
         self,
@@ -326,7 +381,11 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
             if not self._executor_accepts_env:
                 raise TypeError("executor does not accept env")
             options["env"] = env
-        unsupported = [name for name in options if not self._accepts_keyword(name)]
+        unsupported = [
+            name
+            for name in options
+            if not self._accepts_keyword(name) and not self._executor_accepts_options
+        ]
         if unsupported:
             raise TypeError(f"executor does not accept {sorted(unsupported)[0]}")
         return self._execute(command, *executor_args, **options)

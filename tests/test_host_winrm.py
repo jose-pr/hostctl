@@ -56,7 +56,7 @@ def test_winrm_text_mode_decodes_with_utf8_default():
 def test_winrm_shell_execute_path_invokes_it_as_a_command():
     host, session = _host()
     host.shell.execute(PureWindowsPath(r"C:\Program Files\tool.exe"))
-    assert session.scripts == ["& 'C:\\Program Files\\tool.exe'"]
+    assert session.scripts == ["& 'C:\\Program Files\\tool.exe'; exit $LASTEXITCODE"]
 
 
 def test_winrm_context_closes_when_session_supports_close():
@@ -82,7 +82,9 @@ def test_winrm_structured_command_cwd_and_env_are_powershell_safe():
         env={"NAME": "a'b"},
     )
     script = session.scripts[0]
-    assert script.startswith("Set-Location -LiteralPath 'C:\\Program Files';")
+    assert script.startswith(
+        "Set-Location -LiteralPath 'C:\\Program Files' -ErrorAction Stop;"
+    )
     assert "$env:NAME='a''b'" in script
     assert "& 'Write-Output' 'a''b'" in script
 
