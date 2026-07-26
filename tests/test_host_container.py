@@ -20,6 +20,20 @@ class _ExecResult:
         self.output = output
 
 
+def test_container_silent_streams_are_empty_and_stderr_stdout_preserves_bytes():
+    host, _, container = _host()
+    container.exec_run = lambda *args, **kwargs: _ExecResult(0, None)
+    result = host.run("true")
+    assert result.stdout == b""
+    assert result.stderr == b""
+
+    container.exec_run = lambda *args, **kwargs: _ExecResult(0, b"out-err")
+    result = host.run("echo", stderr=subprocess.STDOUT)
+    assert result.stdout == b"out-err"
+    assert result.stderr is None
+    assert container.calls == []
+
+
 class _Container:
     def __init__(self, *, os_name="linux", running=True):
         self.attrs = {

@@ -83,10 +83,13 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
         argv.extend(
             value.decode() if isinstance(value, bytes) else str(value) for value in args
         )
+        merge_stderr = stderr is subprocess.STDOUT
         exec_options: typing.Dict[str, object] = {
             "stdout": True,
             "stderr": True,
-            "demux": True,
+            # Docker's demux=False stream preserves stdout/stderr ordering,
+            # which is required when callers request STDERR->STDOUT.
+            "demux": not merge_stderr,
         }
         normalized_env = normalize_environment(env)
         if normalized_env is not None:
@@ -100,6 +103,8 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
         try:
             result = self._container().exec_run(argv, **exec_options)
         except Exception as exc:
+            if _is_not_found(exc):
+                raise ConnectionError("container not found") from exc
             normalized = normalize_container_error(exc)
             if normalized is exc:
                 raise
@@ -111,6 +116,10 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
             out, err = output
         else:
             out, err = output, None
+        if out is None:
+            out = b""
+        if err is None and not merge_stderr:
+            err = b""
         if text or encoding is not None or errors is not None:
             codec = encoding or "utf-8"
             out = (
@@ -119,10 +128,9 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
             err = (
                 err.decode(codec, errors or "strict") if isinstance(err, bytes) else err
             )
-        if stderr is subprocess.STDOUT:
+        if merge_stderr:
             if err:
-                empty = "" if isinstance(err, str) else b""
-                out = (out or empty) + err
+                out = out + err
             err = None
         out, err = dispatch_output(
             stdout, stderr, out, err, encoding=encoding, errors=errors
@@ -154,3 +162,10 @@ def normalize_container_error(exc: Exception) -> Exception:
     ):
         return ConnectionError(str(exc))
     return exc
+
+
+def _is_not_found(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+    return status_code == 404 or type(exc).__name__ == "NotFound"

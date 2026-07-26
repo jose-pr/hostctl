@@ -25,6 +25,29 @@ class ContainerArchiveClient(typing.Protocol):
     def put_archive(self, path: str, data: bytes) -> bool: ...
 
 
+class _ChunkReader(io.RawIOBase):
+    """File-like adapter over Docker's chunk iterator for streaming tar reads."""
+
+    def __init__(self, chunks: typing.Iterable[bytes]) -> None:
+        self._chunks = iter(chunks)
+        self._buffer = bytearray()
+        self._done = False
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, target: bytearray) -> int:
+        while not self._buffer and not self._done:
+            try:
+                self._buffer.extend(next(self._chunks))
+            except StopIteration:
+                self._done = True
+        count = min(len(target), len(self._buffer))
+        target[:count] = self._buffer[:count]
+        del self._buffer[:count]
+        return count
+
+
 def _safe_name(name: str) -> typing.Tuple[str, ...]:
     """Return safe POSIX tar components, rejecting archive traversal."""
     normalized = name.replace("\\", "/")
@@ -39,7 +62,7 @@ def _safe_name(name: str) -> typing.Tuple[str, ...]:
 def _file_stat(member: tarfile.TarInfo) -> FileStat:
     if member.isdir():
         kind = _stat.S_IFDIR
-    elif member.issym() or member.islnk():
+    elif member.issym():
         kind = _stat.S_IFLNK
     elif member.ischr():
         kind = _stat.S_IFCHR
@@ -59,8 +82,11 @@ def _file_stat(member: tarfile.TarInfo) -> FileStat:
 class ContainerPathBackend:
     """Shell-independent filesystem reads and writes through archive calls."""
 
-    def __init__(self, container: ContainerArchiveClient) -> None:
+    def __init__(
+        self, container: ContainerArchiveClient, *, path_flavor: str = "posix"
+    ) -> None:
         self.container = container
+        self.path_flavor = path_flavor
 
     def _archive(
         self, path: str
@@ -83,8 +109,6 @@ class ContainerPathBackend:
         members = archive.getmembers()
         for member in members:
             _safe_name(member.name)
-            if member.linkname:
-                _safe_name(member.linkname)
         if not members:
             archive.close()
             raise FileNotFoundError(path)
@@ -97,24 +121,116 @@ class ContainerPathBackend:
         return min(members, key=lambda member: len(_safe_name(member.name)))
 
     def stat(self, path: str, *, follow_symlinks: bool = True) -> FileStat:
+        # Docker returns a compact stat mapping alongside get_archive().  Use
+        # it without consuming the potentially huge tar stream whenever it is
+        # available; this is also the only portable way to follow symlinks.
+        try:
+            stream, metadata = self.container.get_archive(path)
+            if metadata:
+                value = self._metadata_stat(metadata)
+                link_target = metadata.get("linkTarget")
+                if follow_symlinks and link_target:
+                    target = str(link_target)
+                    parent = posixpath.dirname(path.rstrip("/"))
+                    if not target.startswith("/"):
+                        target = posixpath.join(parent, target)
+                    return self._stat_following(target, hops=8)
+                return value
+        except Exception as exc:
+            status = getattr(exc, "status_code", None) or getattr(
+                getattr(exc, "response", None), "status_code", None
+            )
+            if status == 404:
+                raise FileNotFoundError(path) from exc
+            if status == 403:
+                raise PermissionError(path) from exc
         archive, members = self._archive(path)
         try:
             member = self._root_member(members)
-            if follow_symlinks and (member.issym() or member.islnk()):
-                raise NotImplementedError(
-                    "ContainerPath cannot follow archive symlinks portably"
+            if follow_symlinks and member.issym():
+                target = member.linkname
+                parent = posixpath.dirname(path.rstrip("/"))
+                target = (
+                    target if target.startswith("/") else posixpath.join(parent, target)
                 )
+                return self._stat_following(target, hops=8)
             return _file_stat(member)
         finally:
             archive.close()
 
+    @staticmethod
+    def _metadata_stat(metadata: typing.Mapping[str, object]) -> FileStat:
+        mode = int(metadata.get("mode", 0o644))
+        size = int(metadata.get("size", 0))
+        mtime = metadata.get("mtime", 0)
+        if isinstance(mtime, str):
+            try:
+                mtime = int(
+                    datetime.datetime.fromisoformat(
+                        mtime.replace("Z", "+00:00")
+                    ).timestamp()
+                )
+            except ValueError:
+                mtime = 0
+        return FileStat(st_mode=mode, st_size=size, st_mtime=int(mtime or 0))
+
+    def _stat_following(self, path: str, *, hops: int) -> FileStat:
+        # A bounded iterative resolver avoids recursive archive calls for
+        # symlink loops while retaining Docker's relative-link semantics.
+        current = path
+        for _ in range(hops):
+            stream, metadata = self.container.get_archive(current)
+            if metadata:
+                link_target = metadata.get("linkTarget")
+                if link_target:
+                    target = str(link_target)
+                    parent = posixpath.dirname(current.rstrip("/"))
+                    current = (
+                        target
+                        if target.startswith("/")
+                        else posixpath.join(parent, target)
+                    )
+                    continue
+                return self._metadata_stat(metadata)
+            archive, members = self._archive(current)
+            try:
+                member = self._root_member(members)
+                if member.issym():
+                    parent = posixpath.dirname(current.rstrip("/"))
+                    target = member.linkname
+                    current = (
+                        target
+                        if target.startswith("/")
+                        else posixpath.join(parent, target)
+                    )
+                    continue
+                return _file_stat(member)
+            finally:
+                archive.close()
+        raise OSError("too many symbolic links")
+
     def scandir(self, path: str) -> typing.List[typing.Tuple[str, FileStat]]:
-        archive, members = self._archive(path)
         try:
-            root = _safe_name(self._root_member(members).name)
+            stream, _ = self.container.get_archive(path)
+            archive = tarfile.open(fileobj=_ChunkReader(stream), mode="r|*")
+        except Exception as exc:
+            status = getattr(exc, "status_code", None) or getattr(
+                getattr(exc, "response", None), "status_code", None
+            )
+            if status == 404:
+                raise FileNotFoundError(path) from exc
+            if status == 403:
+                raise PermissionError(path) from exc
+            raise
+        try:
+            root: typing.Optional[typing.Tuple[str, ...]] = None
             entries: typing.Dict[str, FileStat] = {}
-            for member in members:
+            for member in archive:
                 parts = _safe_name(member.name)
+                if root is None:
+                    root = parts
+                    if not member.isdir():
+                        raise NotADirectoryError(path)
                 if parts[: len(root)] != root or len(parts) != len(root) + 1:
                     continue
                 entries.setdefault(parts[-1], _file_stat(member))
@@ -128,7 +244,7 @@ class ContainerPathBackend:
             member = self._root_member(members)
             if member.isdir():
                 raise IsADirectoryError(path)
-            if not member.isfile():
+            if not member.isfile() and not member.islnk():
                 raise OSError(f"archive member is not a regular file: {path}")
             stream = archive.extractfile(member)
             if stream is None:
@@ -137,11 +253,10 @@ class ContainerPathBackend:
         finally:
             archive.close()
 
-    @staticmethod
-    def _split(path: str) -> typing.Tuple[str, str]:
-        path_module = (
-            ntpath if "\\" in path or ntpath.splitdrive(path)[0] else posixpath
-        )
+    def _split(self, path: str) -> typing.Tuple[str, str]:
+        if path.endswith(("/", "\\")):
+            raise IsADirectoryError(path)
+        path_module = ntpath if self.path_flavor == "windows" else posixpath
         parent, name = path_module.split(path_module.normpath(path))
         if not name:
             raise IsADirectoryError(path)
@@ -160,7 +275,11 @@ class ContainerPathBackend:
         with tarfile.open(fileobj=payload, mode="w") as archive:
             member = tarfile.TarInfo(name)
             member.size = len(value)
-            member.mode = 0o666
+            try:
+                prior = self.stat(path, follow_symlinks=False)
+                member.mode = prior.st_mode & 0o7777
+            except FileNotFoundError:
+                member.mode = 0o666
             member.mtime = int(datetime.datetime.now().timestamp())
             archive.addfile(member, io.BytesIO(value))
         try:

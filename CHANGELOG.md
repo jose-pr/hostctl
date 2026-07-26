@@ -32,5 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   timeout cleanup (with `TimeoutExpired.orphaned`), and normalizes persistent
   process I/O failures. SFTP backends are reused per host and invalidated on
   close; auto-dialect probes preserve the discovered shell executable.
+- Container archive paths now accept normal absolute and relative symlink
+  targets, resolve links with a bounded hop count, preserve hardlink/file
+  semantics, use Docker's header stat metadata where available, and reject
+  traversal names without buffering directory archives unnecessarily. Docker
+  exec streams return available data promptly, detect truncated frames,
+  preserve merged output ordering, and map missing containers to
+  `ConnectionError`.
 
 <!-- Add the [Unreleased] compare link after the first v0.1.0 tag exists. -->

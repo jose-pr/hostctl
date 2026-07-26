@@ -213,6 +213,13 @@ class ContainerHost(Host):
                 container = self.client.containers.get(self.config.container)
                 container.reload()
             except Exception as exc:
+                if (
+                    type(exc).__name__ == "NotFound"
+                    or getattr(exc, "status_code", None) == 404
+                ):
+                    raise ConnectionError(
+                        f"container {self.config.container!r} not found"
+                    ) from exc
                 normalized = normalize_container_error(exc)
                 if normalized is exc:
                     raise
@@ -281,7 +288,6 @@ class ContainerHost(Host):
     ) -> HostPath:
         if backend not in (None, "archive", "docker"):
             raise ValueError(f"unsupported container path backend: {backend!r}")
-        path_backend = ContainerPathBackend(self.container)
         selection = self.config.path_flavor
         windows = (
             self.inspected_os == "windows"
@@ -289,6 +295,10 @@ class ContainerHost(Host):
             else issubclass(
                 typing.cast(PathnameConstructor, selection), PureWindowsPath
             )
+        )
+        path_backend = ContainerPathBackend(
+            self.container,
+            path_flavor=("windows" if windows else "posix"),
         )
         if windows:
             values = segments or ("C:\\",)
@@ -424,11 +434,17 @@ class ContainerHost(Host):
             exec_id = created["Id"] if isinstance(created, dict) else created
             stream = api.exec_start(exec_id, socket=True, tty=tty)
             if selected_terminal is not None:
-                api.exec_resize(
-                    exec_id,
-                    height=selected_terminal.rows,
-                    width=selected_terminal.columns,
-                )
+                try:
+                    api.exec_resize(
+                        exec_id,
+                        height=selected_terminal.rows,
+                        width=selected_terminal.columns,
+                    )
+                except Exception:
+                    close = getattr(stream, "close", None)
+                    if close is not None:
+                        close()
+                    raise
         except Exception as exc:
             normalized = normalize_container_error(exc)
             if normalized is exc:

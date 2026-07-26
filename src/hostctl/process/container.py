@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections
+import codecs
 import socket
 import subprocess
 import time
@@ -55,24 +56,50 @@ class ContainerProcess(Process):
         }
         self._eof = False
         self._closed = False
+        self._returncode: typing.Optional[int] = None
+        self._decoders = {
+            1: (
+                codecs.getincrementaldecoder(encoding)(self._errors)
+                if encoding
+                else None
+            ),
+            2: (
+                codecs.getincrementaldecoder(encoding)(self._errors)
+                if encoding
+                else None
+            ),
+        }
+        settimeout = getattr(self._socket, "settimeout", None)
+        if settimeout is not None:
+            settimeout(None)
 
     @property
     def returncode(self) -> typing.Optional[int]:
+        if self._returncode is not None:
+            return self._returncode
         state = self._api.exec_inspect(self._exec_id)
         if state.get("Running"):
             return None
         value = state.get("ExitCode")
-        return int(value) if value is not None else None
+        if value is None:
+            return None
+        self._returncode = int(value)
+        return self._returncode
 
     def _encode(self, value: ProcessData) -> bytes:
         if isinstance(value, bytes):
             return value
         return value.encode(self._encoding or "utf-8", self._errors)
 
-    def _decode(self, value: bytes) -> ProcessData:
+    def _decode(
+        self, value: bytes, stream: int = 1, *, final: bool = False
+    ) -> ProcessData:
         if self._encoding is None:
             return value
-        return value.decode(self._encoding, self._errors)
+        decoder = self._decoders[stream]
+        return typing.cast(codecs.IncrementalDecoder, decoder).decode(
+            value, final=final
+        )
 
     def write(self, data: ProcessData) -> None:
         if self._closed:
@@ -93,9 +120,13 @@ class ContainerProcess(Process):
         if not header:
             self._eof = True
             return
+        if len(header) != 8:
+            raise ConnectionError("connection dropped mid-frame")
         stream = header[0]
         length = int.from_bytes(header[4:8], "big")
         payload = self._read_exact(length)
+        if len(payload) != length:
+            raise ConnectionError("connection dropped mid-frame")
         if stream in self._buffers and payload:
             self._buffers[stream].append(payload)
 
@@ -126,9 +157,11 @@ class ContainerProcess(Process):
                 self._buffers[stream].appendleft(chunk[take:])
             else:
                 output.extend(chunk)
-            if size >= 0 and len(output) >= size:
+            # read(n) returns as soon as data is available, like SSH and
+            # socket streams; callers needing exactly n bytes can loop.
+            if size >= 0 and output:
                 break
-        return self._decode(bytes(output))
+        return self._decode(bytes(output), stream)
 
     def read(self, size: int = -1) -> ProcessData:
         return self._read_stream(1, size)
@@ -137,7 +170,13 @@ class ContainerProcess(Process):
         return self._read_stream(2, size)
 
     def send_eof(self) -> None:
-        self._socket.shutdown(socket.SHUT_WR)
+        shutdown = getattr(self._socket, "shutdown", None)
+        if shutdown is None:
+            raise NotImplementedError("exec transport cannot half-close stdin")
+        try:
+            shutdown(socket.SHUT_WR)
+        except (OSError, ValueError) as exc:
+            raise NotImplementedError("exec transport cannot half-close stdin") from exc
 
     def resize(
         self,
@@ -157,12 +196,34 @@ class ContainerProcess(Process):
     def wait(self, timeout: typing.Optional[float] = None) -> int:
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
+            # Drain one available frame before polling.  Non-blocking Docker
+            # sockets raise timeout/BlockingIOError when no data is ready.
+            self._receive_available()
             returncode = self.returncode
             if returncode is not None:
                 return returncode
             if deadline is not None and time.monotonic() >= deadline:
                 raise subprocess.TimeoutExpired(self._command, timeout)
             time.sleep(0.01)
+
+    def _receive_available(self) -> None:
+        settimeout = getattr(self._socket, "settimeout", None)
+        gettimeout = getattr(self._socket, "gettimeout", None)
+        if settimeout is None:
+            try:
+                self._receive()
+            except (socket.timeout, BlockingIOError):
+                pass
+            return
+        previous = gettimeout() if gettimeout is not None else None
+        try:
+            settimeout(0.0)
+            try:
+                self._receive()
+            except (socket.timeout, BlockingIOError):
+                pass
+        finally:
+            settimeout(previous)
 
     def terminate(self) -> None:
         raise NotImplementedError("Docker Engine cannot signal one exec process")

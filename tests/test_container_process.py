@@ -92,3 +92,25 @@ def test_container_process_unsupported_signals_are_explicit():
         process.terminate()
     with pytest.raises(NotImplementedError, match="signal"):
         process.kill()
+
+
+def test_container_process_read_returns_available_data_and_rejects_truncated_frames():
+    process = ContainerProcess(
+        _Api([{"Running": False, "ExitCode": 0}]),
+        "exec",
+        _Socket(_frame(1, b"abcdef")),
+        tty=False,
+        command=["cat"],
+    )
+    assert process.read(2) == b"ab"
+    assert process.read(2) == b"cd"
+
+    broken = ContainerProcess(
+        _Api([{"Running": False, "ExitCode": 0}]),
+        "exec",
+        _Socket(b"\x01\x00"),
+        tty=False,
+        command=["cat"],
+    )
+    with pytest.raises(ConnectionError, match="mid-frame"):
+        broken.read()

@@ -31,6 +31,24 @@ def _tar(entries):
     return payload.getvalue()
 
 
+def _tar_special():
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w") as archive:
+        target = tarfile.TarInfo("target")
+        target.mode = 0o640
+        target.size = 4
+        archive.addfile(target, io.BytesIO(b"data"))
+        symlink = tarfile.TarInfo("absolute-link")
+        symlink.type = tarfile.SYMTYPE
+        symlink.linkname = "/etc/hosts"
+        archive.addfile(symlink)
+        hardlink = tarfile.TarInfo("hard-link")
+        hardlink.type = tarfile.LNKTYPE
+        hardlink.linkname = "target"
+        archive.addfile(hardlink)
+    return payload.getvalue()
+
+
 class _Container:
     def __init__(self):
         self.archives = {}
@@ -104,6 +122,28 @@ def test_archive_member_traversal_is_rejected():
 
     with pytest.raises(OSError, match="unsafe archive member"):
         path.read_bytes()
+
+
+def test_archive_links_keep_targets_unvalidated_and_hardlinks_are_files():
+    container = _Container()
+    container.archives["/links"] = _tar_special()
+    container.archives["/links/absolute-link"] = _tar((("absolute-link", None),))
+    # Replace the directory-style entry with a symlink member.
+    link_payload = io.BytesIO()
+    with tarfile.open(fileobj=link_payload, mode="w") as archive:
+        member = tarfile.TarInfo("absolute-link")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "/etc/hosts"
+        archive.addfile(member)
+    container.archives["/links/absolute-link"] = link_payload.getvalue()
+    container.archives["/links/hard-link"] = _tar_special()
+    container.archives["/etc/hosts"] = _tar((("hosts", b"hosts"),))
+    backend = ContainerPathBackend(container)
+    root = PosixContainerPath("/links", backend=backend)
+
+    assert stat.S_ISLNK((root / "absolute-link").stat(follow_symlinks=False).st_mode)
+    assert (root / "hard-link").read_bytes() == b"data"
+    assert stat.S_ISREG((root / "hard-link").stat().st_mode)
 
 
 @pytest.mark.parametrize("operation", ("mkdir", "unlink", "rmdir", "rename", "chmod"))
