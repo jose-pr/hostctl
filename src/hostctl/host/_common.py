@@ -363,8 +363,18 @@ class Host(_abc.ABC, metaclass=_HostMeta):
 
     @property
     def executor_capabilities(self) -> _ty.FrozenSet[ExecutorCapability]:
-        """Native context/argument features of the underlying executor."""
-        return frozenset()
+        """Native context/argument features of the underlying executor.
+
+        Derived from the host's own executor so a host that does not compose
+        providers still reports truthfully. `Host.executor`'s default wrapper
+        reads this property, so it is skipped here to avoid recursing; a host
+        that overrides `executor` with a real executor reports that executor's
+        capabilities.
+        """
+        executor = type(self).executor
+        if executor is Host.executor:
+            return frozenset()
+        return frozenset(getattr(self.executor, "executor_capabilities", ()))
 
     @property
     def shell(self) -> Shell[_subprocess.CompletedProcess]:
