@@ -44,6 +44,9 @@ class OperationNotStarted(RuntimeError):
 class ProviderSelection:
     provider: typing.Union["ExecutorProvider", "PathProvider"]
     trace: tuple[dict[str, object], ...]
+    generation: int = 0
+    policy: str = "ordered"
+    pinned: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -189,7 +192,12 @@ class ProviderSelector:
         )
 
     def select(
-        self, *, capability: str | None = None, exclude: typing.Iterable[str] = ()
+        self,
+        *,
+        capability: str | None = None,
+        exclude: typing.Iterable[str] = (),
+        policy: str = "ordered",
+        pin: bool = False,
     ) -> ProviderSelection:
         excluded = set(exclude)
         trace = []
@@ -218,10 +226,19 @@ class ProviderSelector:
                     "reason": self._safe_name(probe.reason),
                     "capabilities": tuple(sorted(capabilities)),
                     "chosen": allowed,
+                    "generation": self._generation,
+                    "policy": self._safe_name(policy),
+                    "pin": bool(pin),
                 }
             )
             if allowed:
-                result = ProviderSelection(provider, tuple(trace))
+                result = ProviderSelection(
+                    provider,
+                    tuple(trace),
+                    generation=self._generation,
+                    policy=policy,
+                    pinned=bool(pin),
+                )
                 self.last_selection = result
                 return result
         raise OperationNotStarted("no provider is available")

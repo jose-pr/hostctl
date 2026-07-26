@@ -163,8 +163,16 @@ class SystemConfig(HostConfig):
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials):
+        constructor_only = {}
+        for key in ("provider_options", "initializer"):
+            if key in credentials:
+                constructor_only[key] = credentials.pop(key)
         if credentials:
-            raise ValueError("system credentials must be supplied to the constructor")
+            names = ", ".join(sorted(str(key) for key in credentials))
+            raise ValueError(
+                "system URI reconstruction accepts only provider_options= and "
+                f"initializer= constructor options; unsupported credentials: {names}"
+            )
         values = dict(parse_qsl(parsed.query, keep_blank_values=True))
         executors = tuple(
             v
@@ -179,6 +187,7 @@ class SystemConfig(HostConfig):
             shell=values.get("shell"),
             executor=executors,
             path=paths,
+            **constructor_only,
         )
 
     def _create_host(self):
@@ -258,20 +267,62 @@ class SystemHost(Host):
     def executor_capabilities(self):
         values = set()
         for provider in self._executor_selector.providers:
-            values.update(provider.capabilities)
+            if self._provider_probe(provider).usable:
+                values.update(provider.capabilities)
         return frozenset(values)
+
+    @staticmethod
+    def _provider_probe(provider):
+        try:
+            result = provider.probe()
+        except Exception as exc:
+            from ..provider import ProviderProbe
+
+            return ProviderProbe("unavailable", type(exc).__name__)
+        return result
+
+    @property
+    def provider_details(self):
+        """Return deterministic, non-dispatching provider availability details."""
+        details = []
+        for kind, providers in (
+            ("executor", self._executor_selector.providers),
+            ("path", self._path_selector.providers),
+        ):
+            for provider in providers:
+                probe = self._provider_probe(provider)
+                capabilities = probe.capabilities or provider.capabilities
+                details.append(
+                    {
+                        "kind": kind,
+                        "name": provider.name,
+                        "availability": probe.availability,
+                        "reason": probe.reason,
+                        "capabilities": tuple(sorted(capabilities)),
+                        "system_hint": probe.system_hint,
+                    }
+                )
+        return tuple(details)
 
     @property
     def capabilities(self):
         values = set()
-        if self._executor_selector.providers:
+        executor_probes = [
+            (provider, self._provider_probe(provider))
+            for provider in self._executor_selector.providers
+        ]
+        path_probes = [
+            (provider, self._provider_probe(provider))
+            for provider in self._path_selector.providers
+        ]
+        if any(probe.usable for _, probe in executor_probes):
             values.add("run")
         if any(
-            "runspace" in provider.capabilities
-            for provider in self._executor_selector.providers
+            probe.usable and "runspace" in (probe.capabilities | provider.capabilities)
+            for provider, probe in executor_probes
         ):
             values.add("runspace")
-        if self._path_selector.providers:
+        if any(probe.usable for _, probe in path_probes):
             values.add("path")
         return frozenset(values)
 
@@ -366,21 +417,43 @@ class SystemHost(Host):
             raise first_error
 
     def info(self) -> HostInfo:
+        fields = {name: None for name in HostInfo.__dataclass_fields__}
         if self._info is not None:
-            return self._info
-        if self._connected:
+            fields.update(
+                {
+                    name: value
+                    for name, value in dataclasses.asdict(self._info).items()
+                    if value is not None
+                }
+            )
+        for provider in self._executor_selector.providers:
+            if not self._provider_probe(provider).usable:
+                continue
+            callback = getattr(provider, "info", None)
+            if callback is None:
+                continue
             try:
-                provider = self._executor_selector.select().provider
                 self._ensure_provider_connected(provider)
-                callback = getattr(provider, "info", None)
-                if callback is not None:
-                    return callback()
+                value = callback()
+            except (OperationNotStarted, ConnectionError, TimeoutError, OSError):
+                continue
             except Exception:
-                pass
+                continue
+            if not isinstance(value, HostInfo):
+                continue
+            for name, item in dataclasses.asdict(value).items():
+                if fields[name] is None and item is not None:
+                    fields[name] = item
         hostname = getattr(self.config, "authority", None) or getattr(
             self.config, "host", None
         )
-        return HostInfo(hostname=hostname, os_family=self.system_family)
+        if fields["hostname"] is None:
+            fields["hostname"] = hostname
+        if self.system_family != "generic":
+            fields["os_family"] = self.system_family
+        elif fields["os_family"] is None:
+            fields["os_family"] = self.system_family
+        return HostInfo(**fields)
 
     def path(self, *segments: PathLike, backend: str | None = None) -> Path:
         if not self._path_selector.providers:
