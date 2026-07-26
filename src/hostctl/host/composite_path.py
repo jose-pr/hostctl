@@ -366,6 +366,50 @@ class _CompositePathMixin:
             pin=True,
         )
 
+    def symlink_to(self, target, target_is_directory: bool = False):
+        """Create this path as a symlink, through the selected provider.
+
+        The backend path class owns the transport's real capability: a
+        backend without symlink support raises ``NotImplementedError``
+        (never a silent no-op), and that surfaces here unchanged.
+        """
+        logical_target = str(target)
+
+        def symlink_with_selected_provider(path):
+            method = getattr(path, "symlink_to", None)
+            if method is None:
+                raise NotImplementedError(
+                    f"{type(path).__name__} does not support symlink_to"
+                )
+            return method(logical_target, target_is_directory)
+
+        return self._dispatch("symlink_to", symlink_with_selected_provider, pin=True)
+
+    def readlink(self):
+        def readlink_with_selected_provider(path):
+            method = getattr(path, "readlink", None)
+            if method is None:
+                raise NotImplementedError(
+                    f"{type(path).__name__} does not support readlink"
+                )
+            return method()
+
+        target, provider = self._dispatch(
+            "readlink", readlink_with_selected_provider, with_provider=True
+        )
+        # readlink() reports the stored target verbatim -- a relative target
+        # stays relative, exactly like pathlib.Path.readlink(). Rebuild it as
+        # a composite path so the result keeps this path's provider routing.
+        return type(self).from_path(
+            provider.path(str(target)),
+            provider,
+            provider.path,
+            self._providers,
+            self._selector,
+            pinned=self._pinned,
+            logical_segments=(str(target),),
+        )
+
     def unlink(self, missing_ok=False):
         return self._dispatch(
             "unlink", lambda path: path.unlink(missing_ok=missing_ok), pin=True

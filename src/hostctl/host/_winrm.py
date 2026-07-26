@@ -661,6 +661,51 @@ class WinRMPathBackend:
             target=target,
         )
 
+    def symlink(self, path: str, target: str) -> None:
+        """Create ``path`` as a symbolic link to ``target``.
+
+        Creating a symbolic link on Windows requires either an elevated
+        session or Developer Mode; without one, ``New-Item`` fails with a
+        privilege error which the shared error mapping surfaces as
+        :class:`PermissionError`.  ``-ItemType SymbolicLink`` is used for
+        both file and directory targets: Windows records the distinction
+        from the target itself when it exists, and a dangling link is
+        created as a file link (matching ``os.symlink`` defaults).
+        """
+        self._execute(
+            path,
+            "if([IO.Directory]::Exists($p) -or [IO.File]::Exists($p)){"
+            "throw [IO.IOException]::new('Path exists',-2147024816)};"
+            # A privilege failure raised by New-Item is a SecurityException or
+            # a Win32 ERROR_PRIVILEGE_NOT_HELD (1314) IOException; normalize
+            # both to the 'permission' marker the caller maps to
+            # PermissionError, rather than letting them fall through to a
+            # bare OSError.
+            "try{New-Item -ItemType SymbolicLink -Path $p -Target $t "
+            "-Force:$false|Out-Null}catch{"
+            "$x=$_.Exception;"
+            "if($x -is [Security.SecurityException] -or "
+            "$x.HResult -eq -2147024891 -or $x.HResult -eq -2147023582 -or "
+            "$x.Message -match 'privilege'){"
+            "throw [UnauthorizedAccessException]::new($x.Message)};throw}",
+            target=target,
+        )
+
+    def readlink(self, path: str) -> str:
+        body = (
+            "$i=Get-Item -LiteralPath $p -Force;"
+            "if(-not ($i.Attributes -band [IO.FileAttributes]::ReparsePoint)){"
+            "$m=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("
+            "'not a symbolic link: '+$p));"
+            "Write-Output ('HOSTCTL_ERROR:oserror:'+$m)}else{"
+            "Write-Output ([Convert]::ToBase64String("
+            "[Text.Encoding]::UTF8.GetBytes([string]$i.Target)))}"
+        )
+        output = self._execute(path, body).strip()
+        if not output:
+            raise OSError(f"cannot resolve reparse point: {path}")
+        return base64.b64decode(output).decode("utf-8", "replace")
+
     def chmod(self, path: str, mode: int) -> None:
         readonly = "$false" if mode & 0o200 else "$true"
         self._execute(
@@ -836,6 +881,20 @@ class WinRMPath(WindowsPathname, Path):
         elif not readable:
             stream.seek(0)
         return stream
+
+    def symlink_to(self, target, target_is_directory: bool = False):
+        """Create this path as a symbolic link to ``target``.
+
+        Windows only permits this from an elevated session or with
+        Developer Mode enabled; otherwise the backend raises
+        :class:`PermissionError`.  ``target_is_directory`` is accepted for
+        :meth:`pathlib.Path.symlink_to` signature parity and ignored --
+        ``New-Item -ItemType SymbolicLink`` infers the kind from the target.
+        """
+        self.backend.symlink(str(self), str(target))
+
+    def readlink(self):
+        return self.with_segments(self.backend.readlink(str(self)))
 
     def _mkdir(self, mode: int):
         self.backend.mkdir(str(self))

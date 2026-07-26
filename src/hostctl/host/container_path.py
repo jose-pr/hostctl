@@ -277,12 +277,28 @@ class ContainerPathBackend:
         finally:
             archive.close()
 
-    def read_bytes(self, path: str) -> bytes:
+    def _link_destination(self, path: str, target: str) -> str:
+        """Resolve a stored link target against the link's own parent."""
+        if target.startswith("/"):
+            return target
+        return posixpath.join(posixpath.dirname(path.rstrip("/")), target)
+
+    def read_bytes(self, path: str, *, hops: int = 8) -> bytes:
         archive, members = self._archive(path)
         try:
             member = self._root_member(members)
             if member.isdir():
                 raise IsADirectoryError(path)
+            if member.issym():
+                # get_archive() returns the *link* member, never the target's
+                # bytes, so a read has to follow the link itself. The hop
+                # budget bounds symlink loops the same way stat() does.
+                if hops <= 0:
+                    raise OSError("too many symbolic links")
+                resolved = self._link_destination(path, member.linkname)
+                archive.close()
+                archive = None
+                return self.read_bytes(resolved, hops=hops - 1)
             if not member.isfile() and not member.islnk():
                 raise OSError(f"archive member is not a regular file: {path}")
             stream = archive.extractfile(member)
@@ -290,10 +306,16 @@ class ContainerPathBackend:
                 raise OSError(f"archive member has no content: {path}")
             return stream.read()
         finally:
-            archive.close()
+            if archive is not None:
+                archive.close()
 
-    def open_read(self, path: str) -> io.BufferedReader:
-        """Open a Docker archive member as a bounded streaming reader."""
+    def open_read(self, path: str, *, hops: int = 8) -> io.BufferedReader:
+        """Open a Docker archive member as a bounded streaming reader.
+
+        Symlinks are followed lazily -- the link is recognised from its
+        already-streamed member header, so a regular file still costs one
+        archive pull and the stream is never drained up front.
+        """
         try:
             stream, _ = self.container.get_archive(path)
             archive = tarfile.open(fileobj=_ChunkReader(stream), mode="r|*")
@@ -313,6 +335,12 @@ class ContainerPathBackend:
             _safe_name(member.name)
             if member.isdir():
                 raise IsADirectoryError(path)
+            if member.issym():
+                if hops <= 0:
+                    raise OSError("too many symbolic links")
+                resolved = self._link_destination(path, member.linkname)
+                archive.close()
+                return self.open_read(resolved, hops=hops - 1)
             extracted = archive.extractfile(member)
             if extracted is None:
                 raise OSError(f"archive member has no content: {path}")
@@ -320,6 +348,81 @@ class ContainerPathBackend:
         except BaseException:
             archive.close()
             raise
+
+    def readlink(self, path: str) -> str:
+        """Return the raw stored target of a symlink member."""
+        stream = None
+        try:
+            stream, metadata = self.container.get_archive(path)
+            if metadata:
+                link_target = metadata.get("linkTarget")
+                if link_target:
+                    return str(link_target)
+                # Metadata was authoritative and reported no link target.
+                raise OSError(f"not a symbolic link: {path}")
+        except Exception as exc:
+            status = getattr(exc, "status_code", None) or getattr(
+                getattr(exc, "response", None), "status_code", None
+            )
+            if status == 404:
+                raise FileNotFoundError(path) from exc
+            if status == 403:
+                raise PermissionError(path) from exc
+            if isinstance(exc, OSError):
+                raise
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        archive, members = self._archive(path)
+        try:
+            member = self._root_member(members)
+            if not member.issym():
+                raise OSError(f"not a symbolic link: {path}")
+            return member.linkname
+        finally:
+            archive.close()
+
+    def symlink(self, path: str, target: str) -> None:
+        """Create ``path`` as a symlink to ``target`` via a tar member.
+
+        Docker's ``put_archive`` extracts tar members faithfully, and a
+        ``SYMTYPE`` member is the archive representation of a symlink -- so
+        unlike mkdir/unlink/rename this really is expressible through the
+        archive API.
+        """
+        try:
+            self.stat(path, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise FileExistsError(path)
+        parent, name = self._split(path)
+        payload = io.BytesIO()
+        with tarfile.open(fileobj=payload, mode="w") as archive:
+            member = tarfile.TarInfo(name)
+            member.type = tarfile.SYMTYPE
+            member.linkname = target
+            member.size = 0
+            member.mode = 0o777
+            member.mtime = int(datetime.datetime.now().timestamp())
+            archive.addfile(member)
+        try:
+            accepted = self.container.put_archive(parent, payload.getvalue())
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            response = getattr(exc, "response", None)
+            status = status or getattr(response, "status_code", None)
+            if status == 404:
+                raise FileNotFoundError(parent) from exc
+            if status == 403:
+                raise PermissionError(path) from exc
+            raise
+        if not accepted:
+            raise OSError(f"container rejected symlink archive for {path}")
 
     def _split(self, path: str) -> typing.Tuple[str, str]:
         if path.endswith(("/", "\\")):
@@ -469,6 +572,19 @@ class _ContainerPathMixin:
         elif not readable:
             stream.seek(0)
         return stream
+
+    def symlink_to(self, target, target_is_directory: bool = False):
+        """Create this path as a symlink to ``target``.
+
+        ``target_is_directory`` exists only for
+        :meth:`pathlib.Path.symlink_to` signature parity; it is a local
+        Windows filesystem hint with no representation in a tar member, so
+        it is accepted and ignored like every other non-local backend.
+        """
+        self.backend.symlink(str(self), str(target))
+
+    def readlink(self):
+        return self.with_segments(self.backend.readlink(str(self)))
 
     def _mkdir(self, mode: int):
         raise NotImplementedError("Docker archive APIs cannot create directories")
