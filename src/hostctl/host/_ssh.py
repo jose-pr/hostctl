@@ -487,7 +487,9 @@ class SshExecutorProvider(ExecutorProvider):
 
     def __init__(self, transport: _SshTransport):
         self.transport = transport
-        super().__init__("ssh", transport.executor, capabilities=("args",))
+        # SSH receives one finalized command string; argv arguments are
+        # rendered by the host shell before dispatch.
+        super().__init__("ssh", transport.executor)
 
     def probe(self):
         return ProviderProbe("available", capabilities=self.capabilities)
@@ -500,6 +502,11 @@ class SshExecutorProvider(ExecutorProvider):
 
     def info(self):
         return self.transport.info()
+
+    @property
+    def shell_executable(self):
+        resolved = self.transport._resolved_dialect
+        return resolved[2] if resolved is not None else None
 
     def spawn(self, *args, **options):
         return self.transport.spawn(*args, **options)
