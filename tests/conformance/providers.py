@@ -218,7 +218,9 @@ class FakeSshHost:
         dialect = POWERSHELL if os.name == "nt" else POSIX_SHELL
         config = SshConfig("fake", dialect=dialect, known_hosts=None)
         transport = _SshTransport(config)
-        transport._ssh = FakeSshSession("ssh", LocalExecutor())
+        session = FakeSshSession("ssh", LocalExecutor())
+        session.connect()
+        transport._ssh = session
         return PosixHost(
             config,
             executor_providers=(SshExecutorProvider(transport),),
