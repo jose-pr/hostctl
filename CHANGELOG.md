@@ -9,32 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Protocol base `Host` with explicit `LocalHost`, `SshHost`, and `WinRMHost`
-  implementations, normalized `HostInfo`, and capability discovery.
-- `HostConfig` connection identity and lifecycle with `LocalConfig`, `SshConfig`,
-  and `WinRMConfig`, secret-safe extensible URI dispatch, and context-managed
-  connect/close behavior.
-- Explicit POSIX or PowerShell command dialects for SSH, independent of the remote
-  POSIX or Windows path flavor.
-- `pathlib_next.Path` as the shared path contract for local and SFTP-backed paths;
-  WinRM deliberately reports no filesystem capability.
-- Initial extraction from `pytruenas`: command execution and SFTP filesystem access.
-- `LocalExecutor` and native Windows `LocalHost.run()` through PowerShell.
-- Optional positive SSH shell detection with `SshConfig(dialect="auto")`.
-- Current-context native Windows remoting when `WinRMConfig.password` is omitted.
-- `WinRMPath`, a Windows-semantic `pathlib_next.Path` with PowerShell-backed
-  metadata, traversal, mutation, and chunked buffered file I/O.
-- Subprocess-compatible buffered WinRM output handles and normalized SSH/WinRM
-  transport errors.
-- Docker Engine `ContainerHost`, buffered exec provider, inspected POSIX/Windows
-  shell and path selection, and archive-backed `pathlib_next.Path` file access.
-- Persistent SSH and container shell sessions with optional terminal allocation,
-  resizing, stream lifecycle, and shell-aware `send(*cmds, cwd=..., env=...)`.
-- Raw `SerialExecutor`/`SerialProcess` transport foundation with validated UART
-  settings, optional PySerial URLs, exclusive sessions, and break/DTR/RTS controls.
-- `QemuHost` with direct Unix, libvirt, and SSH-tunneled QGA transports,
-  guest discovery, buffered execution, and POSIX/Windows QGA file paths.
-- Explicit raw QEMU serial-console process leases with optional resize support
-  and no inferred login, shell, status, or filesystem semantics.
+- Protocol-agnostic `Host` contracts with secret-safe `HostConfig` URI
+  dispatch, lifecycle management, normalized host information, and explicit
+  capability reporting.
+- Local, SSH, WinRM, Docker Engine container, and QEMU Guest Agent hosts with
+  buffered command execution and `pathlib_next.Path` filesystem backends where
+  the transport supports them. WinRM includes a Windows-semantic PowerShell
+  path backend; container and QEMU paths use archive and guest-agent file RPCs.
+- Explicit and auto-detected shell dialects (POSIX, Bash, Zsh, Fish, CMD, and
+  PowerShell), shared structured quoting, environment/cwd helpers, operators,
+  and persistent SSH/container sessions with optional terminals.
+- Raw serial and QEMU serial-console transports with validated UART settings,
+  exclusive process leases, stream lifecycle controls, and explicit
+  non-shell semantics until a console profile is supplied.
+- Optional native integrations: AsyncSSH/SFTP, pywinrm, Docker SDK, PySerial,
+  and libvirt QGA, each isolated behind a matching package extra.
+- Subprocess-shaped execution options, normalized transport errors, bounded
+  buffered file transfers, and Python 3.9+ typing support (Python 3.14 is the
+  default development interpreter).
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.1.0...HEAD
+<!-- Add the [Unreleased] compare link after the first v0.1.0 tag exists. -->

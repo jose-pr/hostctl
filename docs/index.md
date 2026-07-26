@@ -16,4 +16,5 @@ with SshConfig(host="nas.example.com", username="admin", password="secret") as h
 
 See the guide for [running commands](guide/run.md), [filesystem paths](guide/path.md),
 and [extending `Host`](guide/extending.md) with your own project's transport.
-WinRM provides PowerShell execution but no filesystem path transport.
+WinRM provides PowerShell execution and a Windows-semantic filesystem path
+transport backed by PowerShell.

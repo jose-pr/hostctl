@@ -1,7 +1,7 @@
 [![Version](https://img.shields.io/pypi/v/hostctl.svg)](https://pypi.org/project/hostctl/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://jose-pr.github.io/hostctl/)
-[![CI](https://img.shields.io/github/actions/workflow/status/jose-pr/hostctl/test.yml)](https://github.com/jose-pr/hostctl/actions/workflows/test.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/jose-pr/hostctl/release.yml?label=release%20gate)](https://github.com/jose-pr/hostctl/actions/workflows/release.yml)
 
 A **protocol-agnostic way to run commands and access files on a host**.
 `Host` defines operations; `HostConfig` owns secret-safe connection identity,
@@ -139,6 +139,14 @@ supported compatibility floor and should be selected explicitly with
 This project follows [Semantic Versioning](https://semver.org/) and keeps a
 [`CHANGELOG.md`](CHANGELOG.md). Pushing a tag matching `v*` triggers the release
 workflow: test gate → build → publish → docs deploy.
+
+To prepare a release, update `pyproject.toml` and move the complete
+`[Unreleased]` section to `## [X.Y.Z] - YYYY-MM-DD` in the same commit. Keep
+the package version PEP 440-compatible and use the corresponding SemVer tag
+(`vX.Y.Z`, or `vX.Y.Z-rc.N` for a prerelease). Then push the commit and tag;
+the workflow extracts that changelog section for the GitHub release and
+publishes the built artifacts. Leave a fresh empty `[Unreleased]` section for
+the next cycle.
 
 ## License
 
