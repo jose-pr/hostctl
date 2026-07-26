@@ -123,11 +123,11 @@ def test_started_failure_never_replays_on_next_provider():
     assert calls == ["started"]
 
 
-def test_composite_mutation_selection_trace_marks_pin():
+def test_composite_mutation_selection_trace_marks_pin(tmp_path):
     from hostctl import HostPath
 
     provider = PathProvider("local", lambda *parts: HostPath(*parts))
-    path = PosixHost(path_providers=(provider,)).path("value")
+    path = PosixHost(path_providers=(provider,)).path(tmp_path, "value")
     path.write_bytes(b"payload")
 
     assert path.selection_trace[-1]["pin"] is True

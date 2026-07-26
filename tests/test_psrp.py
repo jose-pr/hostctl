@@ -6,7 +6,13 @@ import types
 
 import pytest
 
-from hostctl import HostConfig, RunspaceSession, WinRMConfig, WindowsHost
+from hostctl import (
+    ExecutorProvider,
+    HostConfig,
+    RunspaceSession,
+    WinRMConfig,
+    WindowsHost,
+)
 from hostctl.executor.psrp import PsrpExecutor, pypsrp_available
 from hostctl.process.psrp import PipelineResult, PipelineStreams
 
@@ -31,11 +37,16 @@ def test_explicit_psrp_has_actionable_error_when_missing(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("state", "had_errors", "returncode"),
-    [("Completed", False, 0), ("Failed", False, 1), ("Stopped", False, 1)],
+    ("state", "had_errors", "normalized_state", "returncode"),
+    [
+        ("Completed", False, "Completed", 0),
+        (4, False, "Completed", 0),
+        ("Failed", False, "Failed", 1),
+        ("Stopped", False, "Stopped", 1),
+    ],
 )
 def test_runspace_preserves_state_and_typed_streams(
-    monkeypatch, state, had_errors, returncode
+    monkeypatch, state, had_errors, normalized_state, returncode
 ):
     class Streams:
         error = ["err"]
@@ -87,6 +98,7 @@ def test_runspace_preserves_state_and_typed_streams(
     assert first.streams.debug == ("debug",)
     assert first.streams.information == ("info",)
     assert first.streams.progress == ("progress",)
+    assert first.state == normalized_state
     assert first.returncode == returncode
     session.close()
 
@@ -161,3 +173,29 @@ def test_psrp_executor_rejects_byte_stream_options():
         executor("x", input=b"x")
     with pytest.raises(NotImplementedError, match="timeout"):
         executor("x", timeout=1)
+
+
+def test_windows_host_dispatches_psrp_as_a_script_without_nested_powershell():
+    scripts = []
+
+    class Session:
+        def invoke(self, script, *, raw=False, capture_exit=False):
+            scripts.append(script)
+            return PipelineResult(
+                ("9000",),
+                PipelineStreams(),
+                "Completed",
+                False,
+                0,
+            )
+
+    executor = PsrpExecutor(lambda: Session())
+    host = WindowsHost(
+        executor_providers=(ExecutorProvider("psrp", executor),),
+    )
+
+    result = host.run("$x='x' * 9000; Write-Output $x.Length")
+
+    assert result.stdout == b"9000\n"
+    assert scripts == ["$x='x' * 9000; Write-Output $x.Length"]
+    assert "powershell.exe" not in scripts[0].casefold()

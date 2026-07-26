@@ -134,7 +134,7 @@ class NativeWinRMSession:
 class WinRMExecutor(Executor[subprocess.CompletedProcess]):
     """Execute finalized PowerShell scripts through a pywinrm session."""
 
-    executor_capabilities = frozenset()
+    executor_capabilities = frozenset((ExecutorCapability.SCRIPT,))
 
     def __init__(
         self,

@@ -40,6 +40,22 @@ def _stream_values(streams: object, name: str) -> tuple[object, ...]:
         return (value,) if value is not None else ()
 
 
+def _pipeline_state_name(value: object) -> str:
+    """Normalize pypsrp's integer states and compatible enum-like doubles."""
+    value = getattr(value, "name", getattr(value, "state", value))
+    if isinstance(value, int):
+        return {
+            0: "NotStarted",
+            1: "Running",
+            2: "Stopping",
+            3: "Stopped",
+            4: "Completed",
+            5: "Failed",
+            6: "Disconnected",
+        }.get(value, f"Unknown({value})")
+    return str(value)
+
+
 class RunspaceSession:
     """A persistent PSRP runspace with typed PowerShell pipeline streams.
 
@@ -163,9 +179,7 @@ class RunspaceSession:
             information=_stream_values(streams_obj, "information"),
             progress=_stream_values(streams_obj, "progress"),
         )
-        state_obj = getattr(pipeline, "state", "Completed")
-        state = getattr(state_obj, "name", state_obj)
-        state = str(state)
+        state = _pipeline_state_name(getattr(pipeline, "state", "Completed"))
         had_errors = bool(getattr(pipeline, "had_errors", bool(streams.error)))
         values = tuple(output or ())
         returncode = 0 if state.casefold() == "completed" and not had_errors else 1

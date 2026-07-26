@@ -133,6 +133,8 @@ class ExecutorCapability(enum.Enum):
     ARGS = "args"
     CWD = "cwd"
     ENV = "env"
+    SCRIPT = "script"
+    MANAGES_STATUS = "manages_status"
 
 
 class ExecutionOptions(typing.TypedDict, total=False):

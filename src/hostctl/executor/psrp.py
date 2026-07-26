@@ -10,6 +10,7 @@ from ._common import (
     CaptureOutput,
     CommandArgument,
     Executor,
+    ExecutorCapability,
     ExecutorCommand,
     FileHandle,
     Input,
@@ -51,7 +52,9 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
 
     # PSRP receives a finalized PowerShell script; cwd/env are embedded by
     # the host shell rather than forwarded as unsupported executor options.
-    executor_capabilities = frozenset()
+    executor_capabilities = frozenset(
+        (ExecutorCapability.SCRIPT, ExecutorCapability.MANAGES_STATUS)
+    )
 
     def __init__(self, session: typing.Callable[[], typing.Any]) -> None:
         self._session = session

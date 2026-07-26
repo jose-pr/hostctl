@@ -585,13 +585,21 @@ class SystemHost(Host):
                 )
             if "args" in provider.capabilities:
                 return provider.execute(command, *args, **options)
-            if not args:
-                return provider.execute(str(command), **options)
-            if self._shell is None and self._shell_resolver is None:
+            if args and self._shell is None and self._shell_resolver is None:
                 raise NotImplementedError(
                     f"executor provider {provider.name!r} does not support argv arguments"
                 )
             flavour = self.shell_flavour
+            if "script" in provider.capabilities:
+                script = flavour.script(
+                    ((command, *args),),
+                    cwd=None if "cwd" in provider.capabilities else cwd,
+                    env=None if "env" in provider.capabilities else env,
+                    for_session="manages_status" in provider.capabilities,
+                )
+                return provider.execute(script, **options)
+            if not args:
+                return provider.execute(str(command), **options)
             shell_executable = getattr(provider, "shell_executable", None)
             rendered = flavour.command(
                 ((command, *args),),
@@ -612,6 +620,19 @@ class SystemHost(Host):
             )
         flavour = self.shell_flavour
         executable = kwargs.get("executable")
+        if "script" in provider.capabilities:
+            if executable is not None:
+                raise NotImplementedError(
+                    f"script executor provider {provider.name!r} "
+                    "does not accept an executable override"
+                )
+            script = flavour.script(
+                cmds,
+                cwd=None if "cwd" in provider.capabilities else cwd,
+                env=None if "env" in provider.capabilities else env,
+                for_session="manages_status" in provider.capabilities,
+            )
+            return provider.execute(script, **options)
         shell_executable = executable or getattr(provider, "shell_executable", None)
         rendered = flavour.command(
             cmds,
