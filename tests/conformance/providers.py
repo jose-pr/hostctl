@@ -61,7 +61,29 @@ class FakeSshSession(_FakeTransport):
     async def run(self, command, **options):
         self.connect()
         if os.name == "nt":
+            import re
+
             script = command.rsplit("-Command", 1)[-1].strip().strip('"')
+            direct = re.match(
+                r"'([^']+)';-c;(.*);([^;]+); exit \$LASTEXITCODE$", script
+            )
+            if direct:
+                result = subprocess.run(
+                    [direct.group(1), "-c", direct.group(2), direct.group(3)],
+                    capture_output=True,
+                    check=False,
+                    env=options.get("env"),
+                    timeout=options.get("timeout"),
+                )
+                return type(
+                    "Result",
+                    (),
+                    {
+                        "returncode": result.returncode,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                    },
+                )()
             parts = [item.strip() for item in script.split(";")]
             executable = parts[0].strip("'\"") if parts else ""
             if executable and os.path.isfile(executable):
