@@ -205,7 +205,10 @@ class SystemHost(Host):
         try:
             value = selected.provider.path(*segments)
             return CompositePath.from_path(
-                value, selected.provider, selected.provider.path, self._path_selector.providers
+                value,
+                selected.provider,
+                selected.provider.path,
+                self._path_selector.providers,
             )
         except OperationNotStarted:
             if backend is not None:
@@ -214,9 +217,16 @@ class SystemHost(Host):
                 exclude=(selected.provider.name,)
             ).provider
             value = fallback.path(*segments)
-            return CompositePath.from_path(value, fallback, fallback.path, self._path_selector.providers)
+            return CompositePath.from_path(
+                value, fallback, fallback.path, self._path_selector.providers
+            )
         value = selected.provider.path(*segments)
-        return CompositePath.from_path(value, selected.provider, selected.provider.path, self._path_selector.providers)
+        return CompositePath.from_path(
+            value,
+            selected.provider,
+            selected.provider.path,
+            self._path_selector.providers,
+        )
 
     def run(
         self,

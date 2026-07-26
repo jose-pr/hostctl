@@ -34,7 +34,9 @@ class CompositePath(LocalPath):
         return self._provider
 
     def via(self, name):
-        selected = next((provider for provider in self._providers if provider.name == name), None)
+        selected = next(
+            (provider for provider in self._providers if provider.name == name), None
+        )
         if selected is None:
             raise ValueError(f"unknown path provider: {name}")
         value = selected.path(*self.parts)
