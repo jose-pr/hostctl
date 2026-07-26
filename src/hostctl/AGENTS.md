@@ -175,7 +175,9 @@ An injected `QemuSerialConsole` adds the `serial` capability and
 
 `WinRMConfig(host, username, password=None, transport="ntlm", port=None,
 ssl=False, server_cert_validation="validate", message_encryption="auto",
-operation_timeout_sec=20, read_timeout_sec=30)`.
+operation_timeout_sec=20, read_timeout_sec=30, provider="auto")`. `auto`
+selects PSRP when `hostctl[psrp]` is installed on Python 3.10+, otherwise
+pywinrm; `provider="psrp"` requires the extra.
 
 `WinRMHost` supports PowerShell `run()` and Windows-semantic `WinRMPath`.
 Password-free configs on Windows use current-context native PowerShell
@@ -184,8 +186,9 @@ and transfers Base64 chunks, writing back on close. WinRM stdin and command
 deadlines remain unsupported. Transport timeouts are not a total command
 deadline. pywinrm Session has no guaranteed close API; hostctl calls `close()`
 only when a provided session exposes it.
-WinRM does not claim persistent sessions. PSRP runspaces are a distinct future
-provider because they expose typed PowerShell streams rather than a TTY.
+PSRP runspaces are exposed separately through `WinRMHost.runspace()` and
+`RunspaceSession.invoke()`. They retain typed PowerShell streams and state, and
+are not advertised as a byte-oriented `spawn`/TTY process.
 
 ## Local and utilities
 

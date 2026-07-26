@@ -39,6 +39,11 @@ from .winrm import (
     WinRMExecutor as WinRMExecutor,
     WinRMSession as WinRMSession,
 )
+from .psrp import (
+    PsrpExecutor as PsrpExecutor,
+    pypsrp_available as pypsrp_available,
+    require_pypsrp as require_pypsrp,
+)
 
 __all__ = [
     "CaptureOutput",
@@ -71,4 +76,7 @@ __all__ = [
     "SshExecutor",
     "WinRMExecutor",
     "WinRMSession",
+    "PsrpExecutor",
+    "pypsrp_available",
+    "require_pypsrp",
 ]

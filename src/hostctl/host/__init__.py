@@ -27,7 +27,11 @@ from .ssh import (
     SshConfig as SshConfig,
     SshHost as SshHost,
 )
-from .winrm import WinRMConfig as WinRMConfig, WinRMHost as WinRMHost
+from .winrm import (
+    WinRMConfig as WinRMConfig,
+    WinRMHost as WinRMHost,
+    WinRMProvider as WinRMProvider,
+)
 from .system import (
     IosConfig as IosConfig,
     IosHost as IosHost,
@@ -67,6 +71,7 @@ __all__ = [
     "SerialHost",
     "WinRMConfig",
     "WinRMHost",
+    "WinRMProvider",
     "WinRMPath",
     "WinRMPathBackend",
     "WindowsContainerPath",

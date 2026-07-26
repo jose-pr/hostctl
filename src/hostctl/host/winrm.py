@@ -8,7 +8,15 @@ import subprocess
 import typing
 from urllib.parse import quote, unquote, urlencode
 
-from ..executor import NativeWinRMSession, WinRMExecutor, WinRMSession
+from ..executor import (
+    NativeWinRMSession,
+    PsrpExecutor,
+    WinRMExecutor,
+    WinRMSession,
+    pypsrp_available,
+    require_pypsrp,
+)
+from ..process import RunspaceSession
 from ._common import (
     _query_int,
     CaptureOutput,
@@ -39,6 +47,7 @@ WinRMTransport = typing.Literal[
 ]
 CertificateValidation = typing.Literal["validate", "ignore"]
 MessageEncryption = typing.Literal["auto", "always", "never"]
+WinRMProvider = typing.Literal["auto", "pywinrm", "psrp"]
 
 
 @dataclasses.dataclass
@@ -55,6 +64,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     message_encryption: MessageEncryption = "auto"
     operation_timeout_sec: int = 20
     read_timeout_sec: int = 30
+    provider: WinRMProvider = "auto"
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
@@ -76,6 +86,8 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             raise ValueError(
                 "read_timeout_sec must be greater than operation_timeout_sec"
             )
+        if self.provider not in typing.get_args(WinRMProvider):
+            raise ValueError("provider must be 'auto', 'pywinrm', or 'psrp'")
 
     @property
     def endpoint(self) -> str:
@@ -98,6 +110,8 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
                 "read_timeout_sec": self.read_timeout_sec,
             }
         )
+        if self.provider != "auto":
+            query += "&" + urlencode({"provider": self.provider})
         port = self.port or (5986 if self.ssl else 5985)
         return (
             f"{self.scheme}://{quote(self.username, safe='')}@"
@@ -115,6 +129,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
                 "message_encryption",
                 "operation_timeout_sec",
                 "read_timeout_sec",
+                "provider",
             },
         )
         if not parsed.hostname or parsed.path not in ("", "/"):
@@ -138,6 +153,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             ),
             operation_timeout_sec=_query_int(query, "operation_timeout_sec", 20),
             read_timeout_sec=_query_int(query, "read_timeout_sec", 30),
+            provider=typing.cast(WinRMProvider, query.get("provider", "auto")),
         )
 
     def _create_host(self) -> WinRMHost:
@@ -150,6 +166,13 @@ class WinRMHost(Host):
     def __init__(self, config: WinRMConfig) -> None:
         self.config = config
         self._session: typing.Optional[WinRMSession] = None
+        self._runspace: typing.Optional[RunspaceSession] = None
+        self._provider = (
+            "psrp"
+            if self.config.provider == "psrp"
+            or (self.config.provider == "auto" and pypsrp_available())
+            else "pywinrm"
+        )
         self._executor = WinRMExecutor(
             lambda: self.session,
             lambda: float(self.config.read_timeout_sec),
@@ -158,14 +181,19 @@ class WinRMHost(Host):
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:
-        return frozenset(("run", "path"))
+        capabilities = {"run", "path"}
+        if self._provider == "psrp":
+            capabilities.add("runspace")
+        return frozenset(capabilities)
 
     @property
     def shell_flavour(self) -> ShellFlavour:
         return POWERSHELL
 
     @property
-    def executor(self) -> WinRMExecutor:
+    def executor(self) -> typing.Any:
+        if self._provider == "psrp":
+            return PsrpExecutor(self.runspace)
         return self._executor
 
     def info(self) -> HostInfo:
@@ -179,6 +207,10 @@ class WinRMHost(Host):
 
     @property
     def session(self) -> WinRMSession:
+        if self._provider == "psrp":
+            raise RuntimeError(
+                "PSRP provider uses runspace(); pywinrm session unavailable"
+            )
         if self._session is None:
             if self.config.password is None:
                 if os.name != "nt":
@@ -232,16 +264,34 @@ class WinRMHost(Host):
             )
         return self._session
 
+    def runspace(self) -> RunspaceSession:
+        """Return a persistent typed PSRP runspace session."""
+        if self._provider != "psrp":
+            if self.config.provider == "psrp":
+                require_pypsrp()
+            raise NotImplementedError(
+                "PSRP runspaces are unavailable; install hostctl[psrp] on Python 3.10+"
+            )
+        if self._runspace is None:
+            self._runspace = RunspaceSession(self.config)
+        self._runspace.connect()
+        return self._runspace
+
     def connect(self) -> None:
-        _ = self.session
+        if self._provider == "psrp":
+            self.runspace()
+        else:
+            _ = self.session
 
     def close(self) -> None:
-        if self._session is None:
-            return
-        session, self._session = self._session, None
-        close = getattr(session, "close", None)
-        if close is not None:
-            close()
+        if self._session is not None:
+            session, self._session = self._session, None
+            close = getattr(session, "close", None)
+            if close is not None:
+                close()
+        if self._runspace is not None:
+            self._runspace.close()
+            self._runspace = None
 
     def path(
         self, *segments: PathLike, backend: typing.Optional[str] = None

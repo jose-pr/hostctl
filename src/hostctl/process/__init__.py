@@ -21,6 +21,11 @@ from .qemu_serial import (
     QemuSerialProcess as QemuSerialProcess,
     normalize_qemu_console_error as normalize_qemu_console_error,
 )
+from .psrp import (
+    PipelineResult as PipelineResult,
+    PipelineStreams as PipelineStreams,
+    RunspaceSession as RunspaceSession,
+)
 
 __all__ = (
     "Process",
@@ -38,4 +43,7 @@ __all__ = (
     "TerminalRequest",
     "terminal_options",
     "normalize_qemu_console_error",
+    "PipelineResult",
+    "PipelineStreams",
+    "RunspaceSession",
 )

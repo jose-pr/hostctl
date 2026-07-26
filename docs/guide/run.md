@@ -51,8 +51,21 @@ The streaming interface deliberately exposes `send()`, `read()`, and
 `read_stderr()` rather than pretending that one read corresponds to one command.
 Command-correlated capture requires a separate framing protocol.
 
-WinRM does not advertise sessions. A future PSRP provider can expose persistent
-PowerShell runspaces, but a runspace is not a TTY and `pywinrm` is buffered.
+WinRM's default provider is `auto`: it selects the optional PSRP provider when
+`hostctl[psrp]` is installed on Python 3.10+, otherwise it falls back to
+`pywinrm`. Select `provider="psrp"` to require PSRP explicitly. PSRP exposes a
+persistent typed runspace rather than a TTY:
+
+```python
+with WinRMConfig("windows.example.com", "admin", "secret", provider="psrp") as host:
+    with host.runspace() as session:
+        session.invoke("$x = 1")
+        result = session.invoke("$x")
+        print(result.output, result.streams.error)
+```
+
+Install `hostctl[psrp]` for Python 3.10+; Python 3.9 remains on the portable
+buffered `pywinrm` provider.
 
 `SerialConfig("serial:///...")` provides an exclusive serial host. Its default
 `RawConsoleProfile` exposes `host.shell.session()` with a merged byte stream,
