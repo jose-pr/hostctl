@@ -643,11 +643,12 @@ def test_shell_default_env_merges_with_the_call_env_per_key():
     assert "TZ=UTC" not in scripts[0]
 
 
-@pytest.mark.parametrize("cleared", [None, False], ids=["none", "false"])
-def test_shell_env_can_opt_out_of_the_shell_defaults(cleared):
+def test_shell_env_can_opt_out_of_the_shell_defaults():
     shell, scripts = _recording_shell(cwd="/srv/app", env={"TZ": "UTC"})
 
-    shell.run("pwd", env=cleared)
+    # `None` declines the shell's defaults. It does not request an empty
+    # environment -- nothing is sent, so the host's own environment stands.
+    shell.run("pwd", env=None)
 
     # The shell's environment is dropped...
     assert "export TZ" not in scripts[0]
@@ -667,7 +668,7 @@ def test_shell_session_env_can_opt_out_of_the_shell_defaults():
     provider = _LifecycleProvider()
     shell = Shell(POSIX_SHELL, provider, cwd="/srv/app", env={"TZ": "UTC"})
 
-    shell.session(env=False)
+    shell.session(env=None)
 
     written = provider.processes[0].written
     assert "export TZ" not in written

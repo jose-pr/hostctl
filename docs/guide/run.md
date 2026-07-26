@@ -81,25 +81,25 @@ each access. Bare `host.shell` carries no defaults.
 ### Opting out of the shell environment
 
 `env` defaults to an empty mapping — merge nothing, inherit the shell's
-environment. Pass `None` or `False` to run without it:
+environment. Pass `None` to run without it:
 
 ```python
 shell = host.shell(cwd="/srv/app", env={"TZ": "UTC"})
 
 shell.run("printenv")             # TZ=UTC applied
 shell.run("printenv", env={})     # same: merges nothing, inherits
-shell.run("printenv", env=None)   # no shell environment
-shell.run("printenv", env=False)  # same as None
+shell.run("printenv", env=None)   # no shell-configured environment
 ```
 
-Clearing `env` says nothing about `cwd`, which still applies. `configure(env=None)`
-returns a copy carrying no environment default, and `session(env=False)` opens a
-session without one.
+`env=None` declines the shell's defaults — it does **not** request an empty
+environment. Nothing is sent to override the target, so the command still runs
+with whatever the host provides on its own: a login profile, rc files, the
+service environment. Declining `env` also says nothing about `cwd`, which still
+applies. `configure(env=None)` returns a copy carrying no environment default,
+and `session(env=None)` opens a session without one.
 
-`None` and `False` mean the same thing today. They may diverge later, with
-`False` dropping the shell's defaults while keeping the ambient environment and
-`None` requesting a genuinely empty one; that needs its own design pass, since
-an empty environment breaks PowerShell on Windows.
+Requesting a genuinely empty environment is a separate capability that does not
+exist yet.
 
 Defaults apply wherever the shell builds a script. `Shell.execute()` used
 directly against an executor with no native `cwd`/`env` support dispatches one

@@ -50,8 +50,10 @@ ShellToken = typing.Union[Command, ShellOperator]
 
 #: What a caller may pass for `env` on a `Shell` call. A mapping merges over
 #: the shell's default per key; the default `{}` merges nothing and therefore
-#: inherits it; `None` or `False` opts out of the shell's defaults entirely.
-EnvironmentSelection = typing.Union[Environment, None, bool]
+#: inherits it; `None` declines the shell's defaults, leaving whatever
+#: environment the host itself provides (login profile, rc files, service
+#: environment) untouched.
+EnvironmentSelection = typing.Optional[Environment]
 
 #: The `env` default: an empty mapping, meaning "merge nothing, inherit the
 #: shell's environment". A module-level immutable value rather than a literal
@@ -379,18 +381,14 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         per key: the call wins for keys it names, and default-only keys
         survive, so one variable can change without restating the rest.
 
-        `None` or `False` opts out of the shell's defaults entirely — the call
-        runs with no shell-configured environment. Both spellings mean the same
-        thing today.
-
-        Future note: these two could diverge, with `False` meaning "drop the
-        shell defaults, keep the ambient environment" and `None` meaning "run
-        with a truly empty environment" (`subprocess`-style `env={}`). That
-        distinction is deliberately not implemented yet — an empty environment
-        breaks PowerShell on Windows, so it needs its own design pass rather
-        than being smuggled in behind a sentinel.
+        `None` declines the shell's configured defaults. It does **not** mean
+        an empty environment: the command still runs with whatever the host
+        provides on its own -- a login profile, rc files, the service
+        environment -- because nothing is sent to override it. Requesting a
+        genuinely empty environment is a separate feature that does not exist
+        yet (see `.agents/plans/env_clear_semantics.md`).
         """
-        if env is None or env is False:
+        if env is None:
             return None
         if self.env is None:
             return dict(env) if env else None
@@ -492,8 +490,8 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         """Build one script from all commands and pass it to the executor.
 
         `env` merges over the shell's default per key; the default merges
-        nothing and so inherits it. Pass `None` or `False` to run without the
-        shell's configured environment.
+        nothing and so inherits it. Pass `None` to run without the shell's
+        configured environment, keeping whatever the host provides itself.
         """
         # Resolve defaults here rather than in `execute`: the script is
         # rendered before dispatch, so an embedded `cd`/env assignment has to
@@ -534,8 +532,9 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         """Open a persistent process using this shell language.
 
         `env` merges over the shell's default per key; the default merges
-        nothing and so inherits it. Pass `None` or `False` to open the session
-        without the shell's configured environment.
+        nothing and so inherits it. Pass `None` to open the session without
+        the shell's configured environment, keeping whatever the host
+        provides itself.
         """
         if self._spawn is None:
             raise NotImplementedError("executor does not provide persistent sessions")
@@ -571,11 +570,10 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         """Return a copy of this shell with additional defaults applied.
 
         `env` merges over this shell's default the same way a per-call `env`
-        does, so configuring twice layers rather than replaces, and `None` or
-        `False` produces a copy carrying no environment default at all. The
-        original shell is left unchanged, which keeps `host.shell` -- a fresh
-        object per access -- safe to configure without surprising another
-        caller.
+        does, so configuring twice layers rather than replaces, and `None`
+        produces a copy carrying no environment default at all. The original
+        shell is left unchanged, which keeps `host.shell` -- a fresh object
+        per access -- safe to configure without surprising another caller.
         """
         clone = copy.copy(self)
         clone._session = None

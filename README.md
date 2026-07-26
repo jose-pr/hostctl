@@ -125,6 +125,9 @@ argument is an error rather than a silent precedence rule. `redact_uri(uri)`
 strips the password and returns a valid, reusable URI — it is removed rather
 than masked, so a rendered form can never round-trip a wrong credential.
 
+Shell `env` defaults merge per key; `env=None` declines them, leaving whatever
+environment the host itself provides.
+
 A password field may also carry extra credentials, one per line after it:
 `parse_credentials("hunter2\notp:123456")` yields `("hunter2", {"otp":
 "123456"})`. A bare name is a flag meaning the same as `name:`. This lets an

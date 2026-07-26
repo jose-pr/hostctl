@@ -141,9 +141,10 @@ corresponding hosts.
   mutating the original.
 - `env` on `run`/`session`/`configure` accepts `EnvironmentSelection`: a
   mapping merges over the shell's default per key, the default empty mapping
-  merges nothing and inherits it, and `None` or `False` runs without the
-  shell's configured environment. Clearing `env` does not affect `cwd`.
-  `None` and `False` are equivalent today.
+  merges nothing and inherits it, and `None` runs without the shell's
+  configured environment -- keeping whatever the host provides on its own,
+  since nothing is sent to override it. `None` does NOT mean an empty
+  environment. Declining `env` does not affect `cwd`.
 - `Shell.session(*cmds, terminal=False, cwd=None, env=None, ...) -> ShellSession`
   opens a persistent provider process. `Shell` is also a context manager:
   `with host.shell as session:` opens a default session and closes it on exit,
