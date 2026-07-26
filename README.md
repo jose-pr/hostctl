@@ -108,10 +108,22 @@ with QemuConfig(
     print(guest.run(["echo", "hello"], encoding="utf-8").stdout)
     print(guest.path("/etc/os-release").read_text())
 
-# Connection URIs contain configuration, never passwords.
+# A canonical connection URI carries configuration, never a password.
 with Host(windows_ssh.connection_uri, password="secret") as same_host:
     same_host.run(["Write-Output", "hello"])
+
+# A `user:password@host` URI is still valid input: the password is extracted
+# and used, and never rendered back out. Use `redact_uri` to display one.
+with Host("ssh://admin:secret@nas.example.com") as same_host:
+    same_host.run("uptime")
 ```
+
+A URI may carry `user:password@host` on the way *in* — it is a valid URI, so
+hostctl accepts it, extracts the password into the credentials, and keeps it
+out of every rendered form. Passing the same password both in the URI and as an
+argument is an error rather than a silent precedence rule. `redact_uri(uri)`
+replaces a password with `***` and leaves the result parseable, for logs and
+error messages.
 
 `str(config)` is the same canonical, secret-free connection string as
 `config.connection_uri`. `HostConfig(str(config), **secrets)` reconstructs the

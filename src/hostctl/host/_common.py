@@ -13,6 +13,8 @@ from pathlib import PurePath as _PurePath
 from urllib.parse import (
     SplitResult as _SplitResult,
     parse_qsl as _parse_qsl,
+    quote as _quote,
+    unquote as _unquote,
     urlsplit as _urlsplit,
 )
 
@@ -103,6 +105,43 @@ def normalize_os_family(value: _ty.Optional[str]) -> _ty.Optional[str]:
 def uri_host(host: str) -> str:
     """Bracket an IPv6 literal for use in a URI authority."""
     return f"[{host}]" if ":" in host and not host.startswith("[") else host
+
+
+#: Stands in for a password wherever a URI is rendered for a human.
+REDACTED = "***"
+
+
+def _rebuild_authority(parsed: _SplitResult, password: _ty.Optional[str]) -> str:
+    """Rebuild a URI authority with `password` in place of the original."""
+    host = uri_host(parsed.hostname or "")
+    if parsed.port is not None:
+        host = f"{host}:{parsed.port}"
+    if not parsed.username:
+        return host
+    userinfo = _quote(parsed.username, safe="")
+    if password is not None:
+        userinfo = f"{userinfo}:{password}"
+    return f"{userinfo}@{host}"
+
+
+def _redacted_authority(parsed: _SplitResult, keep_password: bool) -> _SplitResult:
+    """Return `parsed` with its password removed or replaced by `REDACTED`."""
+    return parsed._replace(
+        netloc=_rebuild_authority(parsed, REDACTED if keep_password else None)
+    )
+
+
+def redact_uri(uri: str) -> str:
+    """Replace any password in `uri` with `REDACTED`, leaving it parseable.
+
+    Use this wherever a connection string reaches a human -- an error message,
+    a log record, a repr. `scheme://user:secret@host` renders as
+    `scheme://user:***@host`; a URI with no password is returned unchanged.
+    """
+    parsed = _urlsplit(uri)
+    if parsed.password is None:
+        return uri
+    return _redacted_authority(parsed, keep_password=True).geturl()
 
 
 class _HostConfigMeta(_abc.ABCMeta):
@@ -199,12 +238,29 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         uri: str,
         **credentials: object,
     ) -> HostConfig:
-        """Dispatch a credential-safe URI to a registered configuration."""
+        """Dispatch a connection URI to a registered configuration.
+
+        A `scheme://user:secret@host` URI is accepted: the password is
+        extracted into the credential arguments and stripped from the parsed
+        authority, so it is never stored where `connection_uri` or `repr()`
+        would render it. Use :func:`redact_uri` before showing a URI that may
+        still carry one.
+        """
         parsed = _urlsplit(uri)
         if parsed.fragment:
             raise ValueError("connection URI fragments are not supported")
         if parsed.password is not None:
-            raise ValueError("passwords must not appear in connection URIs")
+            # `scheme://user:secret@host` is a valid URI, so accept it: extract
+            # the password into the credential arguments and strip it from the
+            # parsed authority. The password therefore never reaches a config
+            # field that `connection_uri`/`repr` render, which is what keeps
+            # the canonical form credential-free.
+            if credentials.get("password") is not None:
+                raise ValueError(
+                    "password given both in the connection URI and as an argument"
+                )
+            credentials["password"] = _unquote(parsed.password)
+            parsed = _redacted_authority(parsed, keep_password=False)
         matches = [
             implementation
             for implementation in cls._uri_implementations(parsed.scheme)

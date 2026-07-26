@@ -77,6 +77,10 @@ without a deprecation cycle.
 ::: hostctl.CompositePosixPath
 ::: hostctl.CompositeWindowsPath
 
+## Connection strings
+
+::: hostctl.redact_uri
+
 ## Transfers and checksums
 
 ::: hostctl.ProgressReader

@@ -68,6 +68,12 @@ that value type; no duplicate command-kind flag is carried.
 - `HostConfig(connection_string, **secrets) -> HostConfig` performs the same
   dispatch without creating a host. `str(config)` is its canonical,
   secret-free connection string and can be passed back to `HostConfig`.
+- A `scheme://user:password@host` URI is valid *input*: the password is
+  extracted into the credential arguments and stripped from the parsed
+  authority, so it never reaches a field that `connection_uri` or `repr()`
+  renders. Supplying a password both in the URI and as an argument raises.
+  `redact_uri(uri)` replaces a password with `***` and returns a still-parseable
+  URI, for logs, reprs, and error messages.
 - `config.connection_uri` never includes passwords or private keys;
   `config.scheme` matches its URI scheme.
 - `with config as host:` and `with config.open() as host:` connect and always

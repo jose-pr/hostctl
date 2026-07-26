@@ -18,6 +18,7 @@ from hostctl import (
     WindowsHost,
     SshConfig,
     WinRMConfig,
+    redact_uri,
 )
 
 
@@ -197,7 +198,6 @@ def test_scheme_matches_connection_uri_and_registered_scheme(host):
     "uri, message",
     [
         ("ftp://host", "unsupported host scheme"),
-        ("ssh://user:secret@host", "passwords must not appear"),
         ("ssh://host?dialect=posix&dialect=powershell", "duplicate"),
         ("ssh://host?guess_os=true", "unknown"),
         ("ssh:///tmp/socket", "requires a host"),
@@ -208,6 +208,50 @@ def test_scheme_matches_connection_uri_and_registered_scheme(host):
 def test_connection_string_rejects_invalid_or_ambiguous_input(uri, message):
     with pytest.raises(ValueError, match=message):
         Host(uri)
+
+
+def test_uri_password_is_extracted_and_kept_out_of_the_canonical_form():
+    config = HostConfig("ssh://admin:hunter2@nas.example.com:22")
+
+    # The password is used...
+    assert config.password == "hunter2"
+    # ...but never rendered back out.
+    assert "hunter2" not in config.connection_uri
+    assert "hunter2" not in repr(config)
+    assert "hunter2" not in str(config)
+    assert config.connection_uri.startswith("ssh://admin@nas.example.com:22")
+
+
+def test_uri_password_is_percent_decoded():
+    config = HostConfig("ssh://admin:p%40ss%3Aword@host")
+
+    assert config.password == "p@ss:word"
+
+
+def test_uri_password_conflicting_with_an_argument_is_rejected():
+    with pytest.raises(ValueError, match="both in the connection URI"):
+        HostConfig("ssh://admin:fromuri@host", password="fromarg")
+
+
+def test_redact_uri_replaces_a_password_but_keeps_the_uri_parseable():
+    redacted = redact_uri("ssh://admin:hunter2@nas.example.com:22?dialect=posix")
+
+    assert "hunter2" not in redacted
+    assert redacted == "ssh://admin:***@nas.example.com:22?dialect=posix"
+    # Still a URI, and still dispatchable once the placeholder is replaced.
+    assert urlsplit(redacted).hostname == "nas.example.com"
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "ssh://admin@host",
+        "local:",
+        "ssh://host?dialect=posix",
+    ],
+)
+def test_redact_uri_leaves_a_password_free_uri_unchanged(uri):
+    assert redact_uri(uri) == uri
 
 
 def test_external_subclass_scheme_and_custom_matcher_dispatch():

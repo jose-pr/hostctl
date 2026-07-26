@@ -5,6 +5,7 @@ from ._common import (
     HostConfig as HostConfig,
     HostInfo as HostInfo,
     HostPath as HostPath,
+    redact_uri as redact_uri,
 )
 from ._local import LocalConfig as LocalConfig, LocalHost as LocalHost
 from .container import (
@@ -53,6 +54,7 @@ __all__ = [
     "Host",
     "HostConfig",
     "HostInfo",
+    "redact_uri",
     "HostPath",
     "ContainerConfig",
     "ContainerHost",
