@@ -7,19 +7,26 @@ The dependency-free CLI entry point is `hostctl._cli:main`. Commands are
 `run`, `ls`, `cat`, `cp`, `info`, and `shell`; passwords come only from
 `HOSTCTL_PASSWORD` or `--ask-password`, never argv values.
 
+`hostctl.__all__` is the stable surface: hosts and configs you construct,
+exceptions you catch, types you annotate with, and the provider/shell contracts
+you implement. Concrete backends, transport adapters, and objects the library
+only hands back (`QgaPathBackend`, `WinRMPathBackend`, `ContainerPathBackend`,
+the `Posix*`/`Windows*` path classes, the concrete `*Executor`s, `*Process`
+classes, and `hostctl.provider.transports`) stay importable from their defining
+module but are **not** exported from `hostctl` and may change without notice.
+
 Host implementations are grouped under `hostctl.host`: shared contracts are
 re-exported from the package, with concrete implementations in private
 modules (`hostctl.host._local`, `._ssh`, and `._winrm`) plus the other provider
-modules. WinRM paths live with `_winrm`; QGA paths live with `qemu`. The same
-public classes are also re-exported from top-level `hostctl`.
+modules. WinRM paths live with `_winrm`; QGA paths live with `qemu`.
 The private `hostctl.executor._qga` module owns QGA framing and its Unix,
 libvirt, and SSH transports; it is consumed by the QEMU executor and host.
 Shell construction is transport-independent under `hostctl.shell`:
 `_common.py` owns shared contracts, while `posix.py` and `powershell.py` own
 their concrete flavours. Executor code follows the same layout under
 `hostctl.executor`: `_common.py` owns contracts and option types; `ssh.py` and
-`winrm.py` own `SshExecutor` and `WinRMExecutor`. Public APIs are re-exported
-from each package and top-level `hostctl`.
+`winrm.py` own `SshExecutor` and `WinRMExecutor`. Each package re-exports its
+own contracts; only the stable subset above reaches top-level `hostctl`.
 `hostctl.sync` adds `stat_checksum(entry)`, `host_checksum(*hosts,
 algorithm="md5", chunk_size=1048576)`, and `ProgressReader`; these plug into
 `pathlib_next.utils.sync.PathSyncer` and the existing path copy machinery.
