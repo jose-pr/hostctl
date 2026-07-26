@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import io
 import os
 import platform
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -193,6 +195,17 @@ class _FakeDockerContainer:
             )
         )
 
+    def get_archive(self, path):
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w") as archive:
+            archive.add(path, arcname=os.path.basename(path) or ".")
+        return stream.getvalue(), {"size": len(stream.getvalue())}
+
+    def put_archive(self, path, data):
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r") as archive:
+            archive.extractall(path)
+        return True
+
 
 class _FakeDockerClient:
     def __init__(self, executor):
@@ -305,7 +318,6 @@ class FakeContainerHost:
         client = _FakeDockerClient(LocalExecutor())
         config = ContainerConfig("fake", client_factory=lambda **_: client)
         host = ContainerHost(config)
-        host.path = lambda *s, **_: HostPath(*s)  # deterministic archive stand-in
         return host
 
 
@@ -359,9 +371,7 @@ def fake_providers() -> tuple[Provider, ...]:
     """
 
     return (
-        Provider(
-            "local", _local, frozenset(("run", "path", "args", "cwd", "env"))
-        ),
+        Provider("local", _local, frozenset(("run", "path", "args", "cwd", "env"))),
         Provider("ssh", lambda: _fake(FakeSshHost), frozenset(("run", "path"))),
         Provider("winrm", lambda: _fake(FakeWinRMHost), frozenset(("run", "path"))),
         Provider(
