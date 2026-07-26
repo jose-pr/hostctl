@@ -872,7 +872,7 @@ class WinRMExecutorProvider(ExecutorProvider):
     def connect(self):
         try:
             self.transport.connect()
-        except ConnectionError as exc:
+        except (ConnectionError, TimeoutError) as exc:
             raise OperationNotStarted(
                 "WinRM connection failed before dispatch", cause=exc
             ) from exc
