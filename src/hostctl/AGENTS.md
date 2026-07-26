@@ -119,7 +119,11 @@ corresponding hosts.
 - `ShellCommand.command` is transport-ready text; `.environment` is the
   environment sent out of band, or `None` when embedded into the script.
 - `Shell.session(*cmds, terminal=False, cwd=None, env=None, ...) -> ShellSession`
-  opens a persistent provider process. `ShellSession.send(*cmds, cwd=None,
+  opens a persistent provider process. `Shell` is also a context manager:
+  `with host.shell as session:` opens a default session and closes it on exit,
+  which is the no-argument shorthand for `with host.shell.session() as ...`.
+  Re-entering a shell whose session is still open raises `RuntimeError`.
+  `ShellSession.send(*cmds, cwd=None,
   env=None)` uses the same command grammar, writes the flavour terminator and
   a line terminator, and mutates the live shell context. This newline is
   required for interactive shells to submit each command.

@@ -299,6 +299,7 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         run = getattr(executor, "run", None)
         spawn = getattr(executor, "spawn", None)
         self._spawn = spawn if callable(spawn) else None
+        self._session: typing.Optional[ShellSession] = None
         if callable(executor):
             self._execute = executor
         elif callable(run):
@@ -470,3 +471,35 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
                 env=env,
             )
         return session
+
+    def __enter__(self) -> ShellSession:
+        """Open a default session, so ``with host.shell as session:`` works.
+
+        The session is closed on exit. `session(...)` remains the way to pass
+        a command, cwd, env, terminal, or encoding; this is the no-argument
+        shorthand. A `Shell` is not reusable as a context manager while a
+        session it opened is still active -- each `with` opens its own.
+        """
+        if self._session is not None:
+            raise RuntimeError("shell already has an active session")
+        session = self.session()
+        try:
+            # Enter the session so the underlying process sees a balanced
+            # __enter__/__exit__ pair; `session.__exit__` delegates to it.
+            session.__enter__()
+        except BaseException:
+            session.close()
+            raise
+        self._session = session
+        return session
+
+    def __exit__(
+        self,
+        exc_type: typing.Optional[typing.Type[BaseException]],
+        exc_value: typing.Optional[BaseException],
+        traceback: typing.Optional[types.TracebackType],
+    ) -> bool:
+        session, self._session = self._session, None
+        if session is None:
+            return False
+        return session.__exit__(exc_type, exc_value, traceback)

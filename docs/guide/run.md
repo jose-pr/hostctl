@@ -42,6 +42,20 @@ with host.shell.session(terminal=True, encoding="utf-8") as session:
     output = session.read()
 ```
 
+When no session options are needed, the shell itself is a context manager
+opening one default session and closing it on exit:
+
+```python
+with host.shell as session:
+    session.send("echo hi")
+    output = session.read()
+```
+
+Both forms yield the same `ShellSession`. Use `session(...)` to pass a starting
+command, `cwd`, `env`, `terminal`, or `encoding`. A shell can be entered again
+after its session closes, but not while one is still open — that raises
+`RuntimeError` rather than silently sharing or leaking a process.
+
 `session.send(*cmds, cwd=..., env=...)` accepts the same raw strings, structured
 argument lists, multiple commands, paths, and `ShellOperator` values as `run()`.
 Changing directory or environment inside the session persists in that shell.

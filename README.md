@@ -18,8 +18,10 @@ capabilities those providers actually support.
   remote SFTP, Windows over WinRM, container archives, or QEMU Guest Agent.
 - **Cross-host copy and sync** — use `Path.copy()`/`PathSyncer` directly;
   `host_checksum()` computes unchanged-file digests beside remote data.
-- **`host.shell.session(...)`** — a persistent shell over SSH or a container,
-  optionally with a TTY; `send(*cmds)` uses the same structured quoting rules.
+- **`with host.shell as session:`** — a persistent shell over SSH or a
+  container, closed on exit; `host.shell.session(...)` takes a starting
+  command, TTY, `cwd`, `env`, or encoding. `send(*cmds)` uses the same
+  structured quoting rules.
 - **Serial console hosts.** `SerialConfig` accepts opaque native/PySerial URLs;
   raw profiles provide exclusive sessions, while an explicitly configured
   prompt profile can add safely framed `run()` results. Serial consoles never

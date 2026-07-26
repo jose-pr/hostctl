@@ -22,6 +22,7 @@ from hostctl import (
     PWSH,
     Shell,
     ShellOperator,
+    ShellSession,
     SshConfig,
     WinRMConfig,
     ZSH,
@@ -509,6 +510,96 @@ def test_shell_session_without_spawn_fails_explicitly():
     shell = Shell(POSIX_SHELL, lambda command: None)
     with pytest.raises(NotImplementedError, match="persistent sessions"):
         shell.session("sh")
+
+
+class _LifecycleProcess:
+    """A process recording the context-manager calls it receives."""
+
+    returncode = None
+
+    def __init__(self):
+        self.written = ""
+        self.entered = False
+        self.exited = False
+        self.closed = False
+
+    def write(self, value):
+        self.written += value
+
+    def close(self):
+        self.closed = True
+
+    def __enter__(self):
+        self.entered = True
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.exited = True
+        self.close()
+        return False
+
+
+class _LifecycleProvider:
+    executor_capabilities = frozenset()
+
+    def __init__(self):
+        self.processes = []
+
+    def __call__(self, command, *args, **options):
+        raise AssertionError("session must not call the executor")
+
+    def spawn(self, *commands, **options):
+        process = _LifecycleProcess()
+        self.processes.append(process)
+        return process
+
+
+def test_shell_is_a_context_manager_opening_and_closing_one_session():
+    provider = _LifecycleProvider()
+    shell = Shell(POSIX_SHELL, provider)
+
+    with shell as session:
+        assert isinstance(session, ShellSession)
+        session.send("echo hi")
+
+    process = provider.processes[0]
+    assert process.entered is True
+    assert process.exited is True
+    assert process.closed is True
+    assert process.written == "echo hi;\n"
+
+
+def test_shell_context_manager_closes_the_session_when_the_body_raises():
+    provider = _LifecycleProvider()
+    shell = Shell(POSIX_SHELL, provider)
+
+    with pytest.raises(ValueError, match="boom"):
+        with shell:
+            raise ValueError("boom")
+
+    assert provider.processes[0].closed is True
+
+
+def test_shell_context_manager_is_reusable_but_not_reentrant():
+    provider = _LifecycleProvider()
+    shell = Shell(POSIX_SHELL, provider)
+
+    with shell:
+        with pytest.raises(RuntimeError, match="active session"):
+            with shell:
+                pass
+
+    # The failed re-entry must not have left the shell unusable.
+    with shell:
+        pass
+    assert len(provider.processes) == 2
+
+
+def test_shell_context_manager_without_spawn_fails_explicitly():
+    shell = Shell(POSIX_SHELL, lambda command: None)
+    with pytest.raises(NotImplementedError, match="persistent sessions"):
+        with shell:
+            pass
 
 
 def test_shell_flavour_accepts_class_and_registered_string():
