@@ -42,14 +42,20 @@ jobs:
             python-version: "3.12"
           - os: ubuntu-latest
             python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.14"
           - os: windows-latest
             python-version: "3.9"
           - os: windows-latest
             python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.14"
           - os: macos-latest
             python-version: "3.9"
           - os: macos-latest
             python-version: "3.13"
+          - os: macos-latest
+            python-version: "3.14"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,7 +64,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package with all extras
-        run: python -m pip install -e ".[dev,ssh,winrm,container,serial]"
+        run: python -m pip install -e ".[dev,ssh,winrm,psrp,container,serial]"
       - name: Run tests
         run: python -m pytest -q -rs
 
@@ -69,7 +75,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
       - name: Start localhost sshd
         run: |
           sudo apt-get update
@@ -83,7 +89,7 @@ jobs:
       - name: Start Docker conformance container
         run: docker run -d --name hostctl-conformance alpine:3.20 sleep 600
       - name: Install package with transport extras
-        run: python -m pip install -e ".[dev,ssh,winrm,container,serial]"
+        run: python -m pip install -e ".[dev,ssh,winrm,psrp,container,serial]"
       - name: Run conformance battery and live gates
         env:
           HOSTCTL_TEST_DOCKER: "1"

@@ -5,8 +5,9 @@
 
 A **protocol-agnostic way to run commands and access files on a host**.
 `Host` defines operations; `HostConfig` owns secret-safe connection identity,
-extensible URI dispatch, and lifecycle. Local, SSH, WinRM, and Docker container
-hosts expose only the capabilities their transports actually support.
+extensible URI dispatch, and lifecycle. Local and application hosts can compose
+SSH, WinRM, serial, container, and QEMU providers while exposing only the
+capabilities those providers actually support.
 
 ## Features
 
@@ -42,6 +43,7 @@ Optional features/extras:
 | --- | --- | --- |
 | `ssh` | `asyncssh`, `pathlib_next[sftp-async]` | `run()`/`path()` over SSH |
 | `winrm` | `pywinrm` | PowerShell `run()` over WinRM |
+| `psrp` | `pypsrp` on Python 3.10+ | persistent typed PowerShell runspaces |
 | `container` | Docker SDK for Python | Docker Engine `run()`/`path()`/sessions |
 | `serial` | PySerial | raw native/RFC 2217/socket serial sessions |
 | `qemu-libvirt` | libvirt Python bindings | local libvirt QGA transport |

@@ -42,7 +42,7 @@ class OperationNotStarted(RuntimeError):
 
 @dataclasses.dataclass(frozen=True)
 class ProviderSelection:
-    provider: typing.Any
+    provider: typing.Union["ExecutorProvider", "PathProvider"]
     trace: tuple[dict[str, object], ...]
 
 
@@ -50,7 +50,7 @@ class ProviderSelection:
 class SessionInitializer:
     """Optional post-connect bootstrap hook for a persistent session."""
 
-    initialize: typing.Callable[..., typing.Any]
+    initialize: typing.Callable[..., object]
     timeout: float | None = None
 
     def __call__(self, session, **options):
@@ -65,7 +65,7 @@ class ExecutorProvider:
     def __init__(
         self,
         name: str,
-        executor: typing.Callable[..., typing.Any],
+        executor: typing.Callable[..., object],
         *,
         capabilities=None,
         probe=None,
