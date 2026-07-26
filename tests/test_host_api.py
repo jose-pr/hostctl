@@ -268,6 +268,13 @@ def test_redact_uri_output_carries_no_credential_back_in():
         ("pw\nurl:https://host:8080/x", ("pw", {"url": "https://host:8080/x"})),
         # Names are casefolded and stripped; blank lines are ignored.
         ("pw\n\n  Otp  :123456", ("pw", {"otp": "123456"})),
+        # Tabs and mixed whitespace around a name are stripped too.
+        ("pw\n\tOtp \t:1", ("pw", {"otp": "1"})),
+        ("pw\n   interactive   ", ("pw", {"interactive": ""})),
+        # Values are NOT trimmed: a secret may legitimately begin or end with
+        # whitespace, and silently stripping it would fail authentication with
+        # no visible cause.
+        ("pw\notp : 123456 ", ("pw", {"otp": " 123456 "})),
         # A bare name is a flag: it means the same as "name:".
         ("pw\ninteractive", ("pw", {"interactive": ""})),
         ("pw\nflag:", ("pw", {"flag": ""})),

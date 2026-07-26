@@ -163,8 +163,12 @@ def parse_credentials(password: str) -> _ty.Tuple[str, _ty.Dict[str, str]]:
     every caller inventing its own encoding. A newline is assumed not to be a
     valid password character, which is the same assumption pytruenas makes.
 
-    Names are casefolded and stripped; a value is everything after the first
-    `:`, so a value may itself contain colons. Blank lines are ignored.
+    Names are casefolded and stripped of surrounding whitespace. A value is
+    everything after the first `:`, taken **verbatim** -- it may contain
+    colons, and its leading and trailing whitespace is preserved, because a
+    secret may legitimately begin or end with a space and silently trimming
+    one would fail authentication with no visible cause. Blank lines are
+    ignored.
     """
     # Split on any line ending: a value pasted from a file or a Windows prompt
     # arrives CRLF-terminated, and a trailing "\r" left on the password would
