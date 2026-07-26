@@ -9,7 +9,10 @@ from ._common import (
 )
 from .ssh import SshProcess as SshProcess
 from .container import ContainerProcess as ContainerProcess
-from .serial import SerialProcess as SerialProcess
+from .serial import (
+    SerialConsoleProcess as SerialConsoleProcess,
+    SerialProcess as SerialProcess,
+)
 from .qemu_serial import (
     ConsoleResize as ConsoleResize,
     ConsoleStreamFactory as ConsoleStreamFactory,
@@ -30,6 +33,7 @@ __all__ = (
     "ContainerProcess",
     "SshProcess",
     "SerialProcess",
+    "SerialConsoleProcess",
     "TerminalOptions",
     "TerminalRequest",
     "terminal_options",

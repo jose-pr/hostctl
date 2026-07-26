@@ -54,10 +54,15 @@ Command-correlated capture requires a separate framing protocol.
 WinRM does not advertise sessions. A future PSRP provider can expose persistent
 PowerShell runspaces, but a runspace is not a TTY and `pywinrm` is buffered.
 
-`SerialExecutor.open()` provides an exclusive raw `SerialProcess`. It is
-byte-oriented, has one merged stream, and exposes serial break, DTR, and RTS.
-It deliberately does not claim shell commands or exit statuses until paired
-with a console protocol that can frame them reliably.
+`SerialConfig("serial:///...")` provides an exclusive serial host. Its default
+`RawConsoleProfile` exposes `host.shell.session()` with a merged byte stream,
+serial break, DTR, and RTS controls, but no filesystem or command status. A
+`PromptConsoleProfile(prompt=..., status_marker=..., reliable_status=True)` can
+opt into framed `host.run()` after defining the device's prompt and completion
+marker. Login steps and credentials are supplied programmatically and are never
+placed in the URI. Device names are opaque (native ports, `loop://`, `socket://`,
+and RFC 2217 URLs are passed to PySerial); RFC 2217 provides no encryption or
+authentication and must be protected by an external secure transport.
 
 ## QEMU guests
 

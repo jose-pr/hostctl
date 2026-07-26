@@ -193,8 +193,11 @@ provider because they expose typed PowerShell streams rather than a TTY.
 `LocalExecutor` provides native argv, cwd, environment, stream, encoding,
 check, and timeout behavior through `subprocess.run`.
 
-`SerialExecutor(SerialSettings(...)).open() -> SerialProcess` provides one
-exclusive raw byte-stream lease. It makes no shell, prompt, stderr, exit-status,
-resize, or filesystem claim. Optional PySerial support is the `serial` extra;
+`SerialConfig`/`SerialHost` provide an opaque `serial:///...` URI and one
+exclusive byte-stream lease. `RawConsoleProfile` supports sessions only;
+`PromptConsoleProfile` adds bounded login/prompt framing and advertises
+`run` only when `reliable_status=True` and a completion marker is configured.
+Streams are merged, PTY/path/status semantics are absent unless the profile
+explicitly supplies them. Optional PySerial support is the `serial` extra and
 injected serial objects remain caller-owned. Break, DTR, and RTS are available
-on `SerialProcess`.
+on `SerialProcess`/`SerialConsoleProcess`; RFC 2217 URLs are not encrypted.

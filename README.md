@@ -17,6 +17,10 @@ hosts expose only the capabilities their transports actually support.
   remote SFTP, Windows over WinRM, container archives, or QEMU Guest Agent.
 - **`host.shell.session(...)`** — a persistent shell over SSH or a container,
   optionally with a TTY; `send(*cmds)` uses the same structured quoting rules.
+- **Serial console hosts.** `SerialConfig` accepts opaque native/PySerial URLs;
+  raw profiles provide exclusive sessions, while an explicitly configured
+  prompt profile can add safely framed `run()` results. Serial consoles never
+  imply a filesystem or PTY and RFC 2217 has no encryption.
 - **Explicit or detected SSH shells.** Use a concrete dialect for deterministic
   behavior or `dialect="auto"` for positive POSIX/Windows probing.
 - **Extensible shell languages.** Select a registered string, a
@@ -121,6 +125,7 @@ exposed until its required certificate/key configuration is part of the API.
 | `hostctl.host.local` | `LocalConfig`, `LocalHost` |
 | `hostctl.host.ssh` | `SshConfig`, `SshHost` |
 | `hostctl.host.winrm` | `WinRMConfig`, `WinRMHost` |
+| `hostctl.host.serial` | `SerialConfig`, `SerialHost` |
 
 ## Development
 

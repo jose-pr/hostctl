@@ -51,7 +51,7 @@ they advertise.
 
 | Provider/operation | Deliberate divergence | Rationale |
 | --- | --- | --- |
-| Serial transport | no shell, status code, or filesystem | A serial byte stream has no portable command protocol; console profiles are a separate layer. |
+| Serial transport | raw profiles expose sessions only; prompt profiles opt into `run` only with explicit status framing; no filesystem | A serial byte stream has no portable command protocol. Profiles own login, prompts, line endings, and completion markers. |
 | WinRM persistent process | `spawn`/TTY unavailable | WinRM's buffered command API does not expose a durable bidirectional stream. |
 | QEMU Guest Agent | timed-out guest processes cannot be cancelled | QGA exposes process IDs and polling but no portable kill operation in the buffered contract. |
 | Container path mutations | unsupported operations raise `NotImplementedError` | Docker archive APIs provide safe file transfer but not all remote filesystem metadata primitives. |

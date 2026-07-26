@@ -31,6 +31,53 @@ class SerialLike(typing.Protocol):
 SerialFactory = typing.Callable[..., SerialLike]
 
 
+class SerialTransport:
+    """Locked byte transport used by protocol profiles and tests."""
+
+    def __init__(
+        self,
+        serial_port: SerialLike,
+        *,
+        lock: typing.Optional[threading.RLock] = None,
+    ) -> None:
+        self.serial = serial_port
+        self.lock = lock or threading.RLock()
+
+    @property
+    def connected(self) -> bool:
+        return bool(self.serial.is_open)
+
+    def read(self, size: int = 4096) -> bytes:
+        if size < 0:
+            raise ValueError("read size must not be negative")
+        with self.lock:
+            return self.serial.read(size)
+
+    def write(self, data: bytes) -> None:
+        offset = 0
+        with self.lock:
+            while offset < len(data):
+                written = self.serial.write(data[offset:])
+                if written <= 0:
+                    raise TimeoutError("serial write made no progress")
+                offset += written
+            self.serial.flush()
+
+    def reset_input_buffer(self) -> None:
+        reset = getattr(self.serial, "reset_input_buffer", None)
+        if callable(reset):
+            with self.lock:
+                reset()
+
+    def send_break(self, duration: float = 0.25) -> None:
+        with self.lock:
+            self.serial.send_break(duration)
+
+    def close(self) -> None:
+        with self.lock:
+            self.serial.close()
+
+
 @dataclasses.dataclass(frozen=True)
 class SerialSettings:
     """Validated settings passed unchanged to ``serial_for_url``."""

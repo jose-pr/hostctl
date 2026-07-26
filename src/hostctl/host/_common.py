@@ -252,11 +252,12 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
                     container as _container,
                     local as _local,
                     qemu as _qemu,
+                    serial as _serial,
                     ssh as _ssh,
                     winrm as _winrm,
                 )
 
-                del _container, _local, _qemu, _ssh, _winrm
+                del _container, _local, _qemu, _serial, _ssh, _winrm
                 while HostConfig._uri_registry_cache is None:
                     generation = HostConfig._uri_registry_generation
                     discovered = list(_recursive_subclasses(HostConfig))

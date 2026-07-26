@@ -20,6 +20,8 @@ from their docstrings.
 ::: hostctl.ContainerHost
 ::: hostctl.QemuConfig
 ::: hostctl.QemuHost
+::: hostctl.SerialConfig
+::: hostctl.SerialHost
 
 ## Executors and processes
 
@@ -35,6 +37,7 @@ from their docstrings.
 ::: hostctl.ContainerProcess
 ::: hostctl.SshProcess
 ::: hostctl.SerialProcess
+::: hostctl.SerialConsoleProcess
 ::: hostctl.QemuSerialProcess
 ::: hostctl.QemuSerialConsole
 ::: hostctl.TerminalOptions
@@ -64,6 +67,11 @@ from their docstrings.
 ::: hostctl.QgaCommandError
 ::: hostctl.QgaProtocolError
 ::: hostctl.SerialSettings
+::: hostctl.SerialTransport
+::: hostctl.RawConsoleProfile
+::: hostctl.PromptConsoleProfile
+::: hostctl.LoginStep
+::: hostctl.ConsoleProtocolError
 
 ## Public aliases and constants
 

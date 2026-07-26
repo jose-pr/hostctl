@@ -27,6 +27,7 @@ from .serial import (
     SerialFactory as SerialFactory,
     SerialLike as SerialLike,
     SerialSettings as SerialSettings,
+    SerialTransport as SerialTransport,
     normalize_serial_error as normalize_serial_error,
 )
 from .qemu import (
@@ -65,6 +66,7 @@ __all__ = [
     "SerialFactory",
     "SerialLike",
     "SerialSettings",
+    "SerialTransport",
     "SshConnection",
     "SshExecutor",
     "WinRMExecutor",

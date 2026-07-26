@@ -143,3 +143,94 @@ class SerialProcess(Process):
     ) -> bool:
         self.close()
         return False
+
+
+class SerialConsoleProcess(Process):
+    """Console-aware wrapper used by :class:`hostctl.host.SerialHost`.
+
+    It keeps the raw process lease while allowing shell sessions to submit
+    text.  Reads remain merged bytes; framing and prompt interpretation belong
+    to the selected profile.
+    """
+
+    def __init__(
+        self, process: SerialProcess, profile: object, encoding: str = "utf-8"
+    ) -> None:
+        self.process = process
+        self.profile = profile
+        self.encoding = encoding
+
+    @property
+    def returncode(self):
+        return self.process.returncode
+
+    def write(self, data: ProcessData) -> None:
+        if isinstance(data, str):
+            data = data.encode(self.encoding)
+        self.process.write(data)
+
+    def read(self, size: int = -1) -> bytes:
+        value = self.process.read(size)
+        return typing.cast(bytes, value)
+
+    def read_stderr(self, size: int = -1) -> bytes:
+        return self.process.read_stderr(size)
+
+    def send_eof(self) -> None:
+        self.process.send_eof()
+
+    def resize(
+        self, columns: int, rows: int, pixel_width: int = 0, pixel_height: int = 0
+    ) -> None:
+        self.process.resize(columns, rows, pixel_width, pixel_height)
+
+    def wait(self, timeout: typing.Optional[float] = None) -> int:
+        return self.process.wait(timeout)
+
+    def terminate(self) -> None:
+        self.process.terminate()
+
+    def kill(self) -> None:
+        self.process.kill()
+
+    def close(self) -> None:
+        self.process.close()
+
+    def send_break(self, duration: float = 0.25) -> None:
+        self.process.send_break(duration)
+
+    @property
+    def dtr(self) -> bool:
+        return self.process.dtr
+
+    @dtr.setter
+    def dtr(self, value: bool) -> None:
+        self.process.dtr = value
+
+    @property
+    def rts(self) -> bool:
+        return self.process.rts
+
+    @rts.setter
+    def rts(self, value: bool) -> None:
+        self.process.rts = value
+
+    def send_command(self, command: str | bytes) -> None:
+        sender = getattr(self.profile, "send", None)
+        if not callable(sender):
+            raise NotImplementedError("console profile cannot send commands")
+        sender(self.process, command)
+
+    def send(self, *commands: str | bytes) -> None:
+        """Submit one or more profile-framed console commands."""
+        if not commands:
+            raise ValueError("send requires at least one command")
+        for command in commands:
+            self.send_command(command)
+
+    def __enter__(self) -> "SerialConsoleProcess":
+        self.process.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        return self.process.__exit__(exc_type, exc_value, traceback)

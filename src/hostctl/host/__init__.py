@@ -28,6 +28,7 @@ from .ssh import (
     SshHost as SshHost,
 )
 from .winrm import WinRMConfig as WinRMConfig, WinRMHost as WinRMHost
+from .serial import SerialConfig as SerialConfig, SerialHost as SerialHost
 from .winrm_path import (
     WinRMPath as WinRMPath,
     WinRMPathBackend as WinRMPathBackend,
@@ -51,6 +52,8 @@ __all__ = [
     "QgaPathBackend",
     "SshConfig",
     "SshHost",
+    "SerialConfig",
+    "SerialHost",
     "WinRMConfig",
     "WinRMHost",
     "WinRMPath",
