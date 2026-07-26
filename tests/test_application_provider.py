@@ -1,6 +1,7 @@
 from hostctl import HostPath, OperationNotStarted, PosixHost
 from hostctl.provider import PathProvider, ProviderProbe
 import pytest
+from pathlib_next.mempath import MemPath, MemPathBackend
 from examples.application_provider import (
     DownloadProvider,
     MetadataProvider,
@@ -23,19 +24,35 @@ def test_application_provider_prefers_sftp_after_rpc_probe_declines():
 
 
 def test_application_provider_operation_selection_and_pinning(tmp_path):
-    content = tmp_path / "payload"
-    content.write_bytes(b"download")
+    metadata_backend = MemPathBackend()
+    download_backend = MemPathBackend()
+    sftp_backend = MemPathBackend()
+
+    def download(*parts):
+        download_backend.setdefault("payload", bytearray(b"download"))
+        return MemPath(*parts, backend=download_backend)
+
+    calls = []
+
+    def sftp(*parts):
+        calls.append("sftp")
+        if len(calls) == 1:
+            raise OperationNotStarted("SFTP preflight unavailable")
+        return MemPath(*parts, backend=sftp_backend)
 
     host = PosixHost(
         path_providers=(
-            MetadataProvider(lambda *parts: HostPath(*parts)),
-            DownloadProvider(lambda *parts: HostPath(*parts)),
-            SftpProvider(lambda *parts: HostPath(*parts)),
+            MetadataProvider(lambda *parts: MemPath(*parts, backend=metadata_backend)),
+            DownloadProvider(download),
+            SftpProvider(sftp),
         )
     )
-    path = host.path(content)
-    assert path.read_bytes() == b"download"
+    path = host.path("payload")
+    assert path.provider.name == "metadata"
+    with pytest.raises(OperationNotStarted):
+        path.via("sftp")
     pinned = path.via("sftp")
     assert pinned.provider.name == "sftp"
+    assert calls == ["sftp", "sftp"]
     with pytest.raises(NotImplementedError):
         path.via("download").write_bytes(b"mutation")
