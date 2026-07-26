@@ -47,11 +47,28 @@ class NativeWinRMSession:
         ssl: bool = False,
         port: typing.Optional[int] = None,
         timeout: typing.Optional[float] = None,
+        transport: str = "ntlm",
+        server_cert_validation: str = "validate",
+        message_encryption: str = "auto",
     ) -> None:
         self.host = host
         self.ssl = ssl
         self.port = port
         self.timeout = timeout
+        if transport not in {"ntlm", "kerberos"}:
+            raise NotImplementedError(
+                "native WinRM supports only current-context Negotiate (ntlm/kerberos)"
+            )
+        if message_encryption not in {"auto", "always", "never"}:
+            raise ValueError("invalid message_encryption")
+        if server_cert_validation not in {"validate", "ignore"}:
+            raise ValueError("invalid server_cert_validation")
+        if ssl and server_cert_validation == "ignore":
+            # PowerShell remoting can skip certificate checks, but only when
+            # explicitly requested; keep this visible in the generated options.
+            self._skip_ca_check = True
+        else:
+            self._skip_ca_check = False
 
     def run_ps(self, script: str) -> _NativeResponse:
         host = base64.b64encode(self.host.encode("utf-8")).decode("ascii")
@@ -68,12 +85,23 @@ class NativeWinRMSession:
             f"UseSSL=${str(self.ssl).lower()}"
             + (f";Port={self.port}" if self.port is not None else "")
             + "};"
-            "try{Invoke-Command @o -ScriptBlock ([ScriptBlock]::Create($s))}"
+            "try{$global:LASTEXITCODE=0;"
+            "$r=Invoke-Command @o -ScriptBlock ([ScriptBlock]::Create($s));"
+            "$r;exit ([int]$global:LASTEXITCODE)}"
             "catch{$c=[string]$_.CategoryInfo.Category;"
             "$m=[Convert]::ToBase64String("
             "[Text.Encoding]::UTF8.GetBytes($_.Exception.Message));"
             "[Console]::Error.Write('HOSTCTL_NATIVE_ERROR:'+$c+':'+$m);exit 1}"
         )
+        if self._skip_ca_check:
+            wrapper = wrapper.replace(
+                ";Port=" + str(self.port) if self.port is not None else ";};",
+                (
+                    ";SkipCACheck=$true;Port=" + str(self.port)
+                    if self.port is not None
+                    else ";SkipCACheck=$true;};"
+                ),
+            )
         try:
             result = subprocess.run(
                 (
@@ -89,15 +117,9 @@ class NativeWinRMSession:
                 check=False,
                 timeout=self.timeout,
             )
-        except subprocess.TimeoutExpired:
-            raise
-        marker = b"HOSTCTL_NATIVE_ERROR:"
-        if result.returncode and result.stderr.startswith(marker):
-            _, category, encoded = result.stderr.decode("ascii").split(":", 2)
-            message = base64.b64decode(encoded).decode("utf-8", "replace")
-            if category in ("AuthenticationError", "PermissionDenied"):
-                raise PermissionError(message)
-            raise ConnectionError(message)
+        except subprocess.TimeoutExpired as exc:
+            # Never expose the local powershell argv as the remote command.
+            raise subprocess.TimeoutExpired(self.host, self.timeout) from exc
         return _NativeResponse(result.returncode, result.stdout, result.stderr)
 
     def close(self) -> None:
@@ -155,6 +177,20 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
             raise normalized from exc
         out = result.std_out
         err = result.std_err
+        marker = b"HOSTCTL_NATIVE_ERROR:"
+        if result.status_code and err.startswith(marker):
+            try:
+                _, category, encoded = err.decode("ascii").split(":", 2)
+                detail = base64.b64decode(encoded).decode("utf-8", "replace")
+            except Exception:
+                category, detail = "transport", err.decode("utf-8", "replace")
+            if category in ("AuthenticationError", "PermissionDenied"):
+                raise PermissionError(detail)
+            if category not in ("RemoteError", "Remote"):
+                raise ConnectionError(detail)
+            # Remote errors are represented as a normal non-zero completion;
+            # check=False must be able to inspect them.
+            err = detail.encode(encoding or "utf-8", errors or "replace")
         if text or encoding is not None or errors is not None:
             codec = encoding or "utf-8"
             out = out.decode(codec, errors or "strict")

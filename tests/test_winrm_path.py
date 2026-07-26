@@ -1,12 +1,14 @@
 """Windows path semantics and pathlib operations over a fake WinRM backend."""
 
 import stat
+import subprocess
 
 import pytest
 from pathlib_next import Path
 from pathlib_next.utils.stat import FileStat
 
 from hostctl import WinRMPath
+from hostctl.host.winrm_path import WinRMPathBackend
 
 
 class _MemoryBackend:
@@ -129,3 +131,21 @@ def test_winrm_path_closes_buffer_when_writeback_fails():
         stream.close()
 
     assert stream.closed
+
+
+def test_winrm_backend_prelude_and_command_budget_for_large_write():
+    scripts = []
+
+    def run(script, **kwargs):
+        scripts.append(script)
+        return subprocess.CompletedProcess(script, 0, "", "")
+
+    backend = WinRMPathBackend(run)
+    backend.write_bytes(r"C:\large.bin", b"x" * (1024 * 1024))
+    assert scripts
+    assert all(
+        len(script.encode("utf-8")) <= backend.max_script_bytes for script in scripts
+    )
+    assert all("OutputEncoding" in script for script in scripts)
+    # Multiple chunks are grouped into a single PowerShell invocation.
+    assert len(scripts) < 1024

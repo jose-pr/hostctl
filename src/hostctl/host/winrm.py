@@ -180,21 +180,38 @@ class WinRMHost(Host):
     @property
     def session(self) -> WinRMSession:
         if self._session is None:
-            if self.config.password is None and os.name == "nt":
-                current = (
-                    os.environ.get("USERDOMAIN", "")
-                    + "\\"
-                    + os.environ.get("USERNAME", "")
-                ).strip("\\")
-                if current and self.config.username.casefold() != current.casefold():
+            if self.config.password is None:
+                if os.name != "nt":
+                    raise ValueError(
+                        "current-context WinRM requires a Windows client; pass password="
+                    )
+                domain = os.environ.get("USERDOMAIN", "").strip()
+                username = os.environ.get("USERNAME", "").strip()
+                if not username:
+                    raise ValueError(
+                        "current-context WinRM requires USERNAME/USERDOMAIN; pass password="
+                    )
+                configured = self.config.username.casefold()
+                candidates = {username.casefold()}
+                if domain:
+                    candidates.add(f"{domain}\\{username}".casefold())
+                    candidates.add(f"{username}@{domain}".casefold())
+                if configured not in candidates:
                     raise ValueError(
                         "password-free native WinRM requires the current Windows user"
+                    )
+                if self.config.transport not in {"ntlm", "kerberos"}:
+                    raise NotImplementedError(
+                        "native current-context WinRM supports ntlm/kerberos only"
                     )
                 self._session = NativeWinRMSession(
                     self.config.host,
                     ssl=self.config.ssl,
                     port=self.config.port,
-                    timeout=float(self.config.read_timeout_sec),
+                    timeout=None,
+                    transport=self.config.transport,
+                    server_cert_validation=self.config.server_cert_validation,
+                    message_encryption=self.config.message_encryption,
                 )
                 return self._session
             try:

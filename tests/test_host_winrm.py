@@ -11,6 +11,7 @@ import pytest
 
 from pathlib_next import Path as NextPath
 from hostctl import WinRMConfig, WinRMHost, WinRMPath
+from hostctl.executor.winrm import NativeWinRMSession
 
 
 class _Response:
@@ -156,6 +157,34 @@ def test_winrm_config_exposes_secure_transport_settings():
     assert config.endpoint == "https://host:5986/wsman"
     assert config.server_cert_validation == "validate"
     assert config.message_encryption == "always"
+
+
+def test_native_winrm_timeout_names_remote_host(monkeypatch):
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(kwargs.get("input", "remote"), 1)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(subprocess.TimeoutExpired) as exc:
+        NativeWinRMSession("server.example", timeout=1).run_ps("Write-Output x")
+    assert exc.value.cmd == "server.example"
+
+
+def test_native_winrm_remote_marker_is_checkable(monkeypatch):
+    marker = b"HOSTCTL_NATIVE_ERROR:RemoteError:" + __import__("base64").b64encode(
+        b"remote failed"
+    )
+
+    class Result:
+        returncode = 5
+        stdout = b""
+        stderr = marker
+
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: Result())
+    host = WinRMHost(WinRMConfig("server.example", "user", "secret"))
+    host._session = NativeWinRMSession("server.example")
+    result = host.run("Write-Output x", check=False)
+    assert result.returncode == 5
+    assert result.stderr == b"remote failed"
 
 
 @pytest.mark.parametrize(

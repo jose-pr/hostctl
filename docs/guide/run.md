@@ -19,10 +19,12 @@ print(result.stdout)
   `False`.
 - SSH `input=`, `cwd=`, `env=`, `check=`, `timeout=`, and
   `encoding=`/`errors=` follow the subprocess-shaped contract.
-- WinRM buffers output to caller-owned file handles. It cannot stream stdin,
-  select another executable, or turn
-  its transport operation/read timeouts into a total command deadline. Those
-  requests raise `NotImplementedError`.
+- WinRM buffers output to caller-owned file handles. It cannot stream stdin or
+  select another executable. `read_timeout_sec` is a transport-read setting,
+  not a total command deadline; native current-context remoting does not kill
+  a remote command when that read window elapses. Remote exit codes are
+  preserved, while transport/authentication failures are normalized to
+  `ConnectionError`/`PermissionError`.
 - SSH command dialect may be explicit (`POSIX_SHELL`, `POWERSHELL`, etc.) or
   positively detected with `SshConfig(dialect="auto")`. Structured commands,
   environment variables, and working directories use dialect-specific quoting.

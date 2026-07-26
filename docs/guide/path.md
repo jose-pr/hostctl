@@ -29,8 +29,12 @@ listing, rename, removal, and permissions require a positively probed helper;
 unavailable operations raise `NotImplementedError`.
 
 `WinRMPath.open()` is buffered: reads and close-time write-back transfer binary
-chunks through PowerShell. Windows read-only attributes provide the supported
-`chmod()` subset; ownership and general POSIX permission semantics do not apply.
+chunks through PowerShell. Write-back happens only on an explicit `close()` (or
+the context-manager exit); `flush()` does not commit, and an abandoned writable
+stream is discarded with a `ResourceWarning`. Windows read-only attributes
+provide the supported `chmod()` subset; ownership and general POSIX permission
+semantics do not apply. Reparse points are reported as symlink-style metadata;
+following one resolves its target once and raises `OSError` when unresolved.
 
 For SSH, `SshConfig.path_flavor` explicitly selects
 the `PosixPathname` or `WindowsPathname` constructor; it is independent of the
