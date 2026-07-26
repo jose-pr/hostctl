@@ -258,6 +258,17 @@ def test_powershell_doubles_all_tokenizer_smart_quotes():
     assert POWERSHELL.quote("it's ‘smart’‚safe‛") == "'it''s ‘‘smart’’‚‚safe‛‛'"
 
 
+def test_shell_command_paths_use_target_path_syntax():
+    from pathlib import PurePosixPath, PureWindowsPath
+
+    assert POSIX_SHELL.command_path("/bin/sh") == PurePosixPath("/bin/sh")
+    assert FISH.command_path("/usr/bin/fish") == PurePosixPath("/usr/bin/fish")
+    assert POWERSHELL.command_path(r"C:\Tools\pwsh.exe") == PureWindowsPath(
+        r"C:\Tools\pwsh.exe"
+    )
+    assert CMD.command_path(r"C:\Tools\cmd.exe") == PureWindowsPath(r"C:\Tools\cmd.exe")
+
+
 def test_shell_environment_invalid_bytes_key_is_value_error():
     with pytest.raises(ValueError, match="invalid environment"):
         POSIX_SHELL.environment_script({b"\xff": "value"})

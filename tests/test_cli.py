@@ -1,6 +1,8 @@
 import io
 import json
+import subprocess
 import types
+from pathlib import PurePosixPath
 
 import pytest
 
@@ -32,6 +34,30 @@ def test_run_propagates_status_and_streams():
     assert code == 7
     assert stdout.getvalue().strip() == b"out"
     assert stderr.getvalue().strip() == b"err"
+
+
+def test_run_marks_direct_command_with_target_shell_path_flavour(monkeypatch):
+    seen = []
+
+    class _Host:
+        from hostctl import POSIX_SHELL
+
+        shell_flavour = POSIX_SHELL
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def run(self, *cmds, **options):
+            seen.append(cmds)
+            return subprocess.CompletedProcess(cmds, 0, b"", b"")
+
+    monkeypatch.setattr("hostctl._cli.Host", lambda *args, **kwargs: _Host())
+
+    assert main(["run", "ssh://host", "--", "/bin/sh", "-c", "true"]) == 0
+    assert seen == [(PurePosixPath("/bin/sh"), "-c", "true")]
 
 
 def test_cat_ls_cp_and_info(tmp_path):

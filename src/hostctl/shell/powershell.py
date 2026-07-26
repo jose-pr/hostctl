@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import typing
+from pathlib import PureWindowsPath
 
 from ..executor import Environment, PathLike
 from ._common import ShellCommand, ShellFlavour, ShellOperator, ShellToken
@@ -30,6 +31,7 @@ class PowerShellFlavour(ShellFlavour):
     context_order = ("cwd", "env", "command")
     execution_epilogue = "; exit $LASTEXITCODE"
     structured_command_prefix = "& "
+    path_flavor = PureWindowsPath
     info_script = (
         'Write-Output ("hostname=" + [Environment]::MachineName);'
         'Write-Output ("os_family=" + [Environment]::OSVersion.Platform);'

@@ -20,6 +20,7 @@ class FishShellFlavour(ShellFlavour):
         "echo os_family=(uname -s);"
         "echo architecture=(uname -m)"
     )
+    path_flavor = PurePosixPath
 
     def quote(self, value: object) -> str:
         if isinstance(value, (PurePath, Path)):

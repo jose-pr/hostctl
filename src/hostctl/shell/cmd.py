@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import typing
+from pathlib import PureWindowsPath
 
 from ..executor import Environment, PathLike
 from ._common import ShellCommand, ShellFlavour, ShellOperator, ShellToken
@@ -43,6 +44,7 @@ class CmdShellFlavour(ShellFlavour):
     name = "cmd"
     default_executable = "cmd.exe"
     command_separator = "&"
+    path_flavor = PureWindowsPath
     info_script = (
         "echo hostname=%COMPUTERNAME%&"
         "echo os_family=windows&"

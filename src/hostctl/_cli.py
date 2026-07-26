@@ -77,8 +77,12 @@ def _command_run(args: argparse.Namespace, stdout, stderr) -> int:
     if not command:
         raise ValueError("run requires a command after --")
     with Host(args.uri, **_credentials(args)) as host:
+        try:
+            command_path = host.shell_flavour.command_path(command[0])
+        except NotImplementedError:
+            command_path = PurePath(command[0])
         result = host.run(
-            PurePath(command[0]),
+            command_path,
             *command[1:],
             check=False,
             capture_output=True,

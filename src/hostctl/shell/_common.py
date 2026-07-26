@@ -137,6 +137,11 @@ class ShellFlavour(abc.ABC):
     line_terminator: str = "\n"
     context_order = ("env", "cwd", "command")
     structured_command_prefix = ""
+    path_flavor: type[PurePath] = PurePath
+
+    def command_path(self, value: PathLike) -> PurePath:
+        """Return a direct-command marker using the target shell's path syntax."""
+        return self.path_flavor(value)
 
     @staticmethod
     def _text(value: object) -> str:

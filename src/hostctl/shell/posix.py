@@ -23,6 +23,7 @@ class PosixShellFlavour(ShellFlavour):
         "printf 'os_version=%s\\n' \"$VERSION_ID\"; fi;"
         "printf 'architecture=%s\\n' \"$(uname -m 2>/dev/null)\""
     )
+    path_flavor = PurePosixPath
 
     def quote(self, value: object) -> str:
         if isinstance(value, (PurePath, Path)):
@@ -43,7 +44,7 @@ class PosixShellFlavour(ShellFlavour):
         return f"export {key}={self.quote(value)}"
 
     def change_directory(self, cwd: PathLike) -> str:
-        return f"cd {self.quote(PurePosixPath(cwd).as_posix())}"
+        return f"cd -- {self.quote(PurePosixPath(cwd).as_posix())}"
 
     def command(
         self,
