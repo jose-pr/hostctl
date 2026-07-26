@@ -75,11 +75,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes openssh-server
           sudo mkdir -p /run/sshd
+          mkdir -p "$HOME/.ssh"
+          ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/hostctl_conformance"
+          cat "$HOME/.ssh/hostctl_conformance.pub" >> "$HOME/.ssh/authorized_keys"
+          chmod 600 "$HOME/.ssh/authorized_keys"
           sudo service ssh start
+      - name: Start Docker conformance container
+        run: docker run -d --name hostctl-conformance alpine:3.20 sleep 600
       - name: Install package with transport extras
         run: python -m pip install -e ".[dev,ssh,winrm,container,serial]"
       - name: Run conformance battery and live gates
         env:
           HOSTCTL_TEST_DOCKER: "1"
           HOSTCTL_TEST_SSH_LOCAL: "1"
+          HOSTCTL_TEST_SSH_USER: runner
+          HOSTCTL_TEST_SSH_KEY: /home/runner/.ssh/hostctl_conformance
+          HOSTCTL_TEST_DOCKER_CONTAINER: hostctl-conformance
         run: python -m pytest -q -rs tests/conformance

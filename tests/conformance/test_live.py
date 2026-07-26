@@ -18,6 +18,8 @@ from .providers import live_providers, provider_context
 
 @pytest.mark.parametrize("provider", live_providers(), ids=lambda p: p.name)
 def test_live_provider_direct_command(provider):
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} does not advertise run")
     with provider_context(provider) as host:
         result = host.run(Path(sys.executable), "-c", "print('live')")
     assert result.stdout.strip() == b"live"

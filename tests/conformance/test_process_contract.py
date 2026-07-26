@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import io
+import pytest
 
 from hostctl.process import Process
+from .providers import fake_providers
 
 
 class _MemoryProcess:
@@ -55,7 +57,8 @@ class _MemoryProcess:
         return False
 
 
-def test_process_protocol_runtime_shape_and_lifecycle():
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_process_protocol_runtime_shape_and_lifecycle(provider):
     process = _MemoryProcess()
     assert isinstance(process, Process)
     assert process.read(1) == b"h"
@@ -67,5 +70,16 @@ def test_process_protocol_runtime_shape_and_lifecycle():
     assert process.wait() == 0
     assert process.wait() == 0
     process.close()
+    process.close()
+    assert process.closed
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_process_eof_and_context_are_idempotent(provider):
+    process = _MemoryProcess()
+    with process as current:
+        assert current is process
+        process.send_eof()
+        assert process.wait() == 0
     process.close()
     assert process.closed

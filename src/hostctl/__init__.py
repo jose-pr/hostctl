@@ -84,6 +84,7 @@ from .provider import (
     ProviderProbe as ProviderProbe,
     ProviderSelection as ProviderSelection,
     ProviderSelector as ProviderSelector,
+    SessionInitializer as SessionInitializer,
 )
 from .executor._qga import (
     GuestAgentTransport as GuestAgentTransport,
@@ -251,6 +252,7 @@ __all__ = [
     "ProviderProbe",
     "ProviderSelection",
     "ProviderSelector",
+    "SessionInitializer",
     "UnixSocketGuestAgentTransport",
     "__version__",
 ]

@@ -13,29 +13,32 @@ class CompositePath(LocalPath):
     normal pathlib syntax and preserves the pin for descendants.
     """
 
-    __slots__ = ("_provider", "_backend_path", "_factory")
+    __slots__ = ("_provider", "_backend_path", "_factory", "_providers")
 
-    def __new__(cls, backend_path, provider, factory):
+    def __new__(cls, backend_path, provider, factory, providers=()):
         return super().__new__(cls, os.fspath(backend_path))
 
-    def __init__(self, backend_path, provider, factory):
+    def __init__(self, backend_path, provider, factory, providers=()):
         super().__init__(os.fspath(backend_path))
         self._provider = provider
         self._backend_path = backend_path
         self._factory = factory
+        self._providers = tuple(providers) or (provider,)
 
     @classmethod
-    def from_path(cls, backend_path, provider, factory):
-        return cls(backend_path, provider, factory)
+    def from_path(cls, backend_path, provider, factory, providers=()):
+        return cls(backend_path, provider, factory, providers)
 
     @property
     def provider(self):
         return self._provider
 
     def via(self, name):
-        if name != self._provider.name:
-            raise ValueError(f"path is pinned to provider {self._provider.name!r}")
-        return self
+        selected = next((provider for provider in self._providers if provider.name == name), None)
+        if selected is None:
+            raise ValueError(f"unknown path provider: {name}")
+        value = selected.path(*self.parts)
+        return type(self)(value, selected, selected.path)
 
     def with_segments(self, *segments):
         return type(self)(self._factory(*segments), self._provider, self._factory)

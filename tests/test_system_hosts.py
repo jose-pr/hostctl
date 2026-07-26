@@ -9,6 +9,7 @@ from hostctl import (
     ProviderProbe,
     ExecutorProvider,
     WindowsHost,
+    ProviderSelector,
 )
 from hostctl.executor import LocalExecutor
 from hostctl.host import HostPath
@@ -63,3 +64,19 @@ def test_ios_host_without_shell_requires_direct_provider():
     host = IosHost(executor_providers=(ExecutorProvider("raw", lambda *a, **k: None),))
     with pytest.raises(NotImplementedError):
         host.run("show version")
+
+
+def test_provider_probe_is_cached_until_invalidation():
+    calls = []
+    provider = ExecutorProvider(
+        "cached",
+        lambda *a, **k: None,
+        probe=lambda: calls.append(1) or ProviderProbe("available"),
+    )
+    selector = ProviderSelector((provider,))
+    selector.select()
+    selector.select()
+    assert len(calls) == 1
+    selector.invalidate()
+    selector.select()
+    assert len(calls) == 2

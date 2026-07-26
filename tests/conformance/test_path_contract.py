@@ -40,3 +40,29 @@ def test_path_error_types(provider, tmp_path):
         file_path.write_bytes(b"x")
         with pytest.raises(NotADirectoryError):
             list(file_path.iterdir())
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_path_empty_text_and_metadata_roundtrip(provider, tmp_path):
+    with provider_context(provider) as host:
+        empty = host.path(tmp_path, "empty.bin")
+        empty.write_bytes(b"")
+        assert empty.read_bytes() == b""
+        text = host.path(tmp_path, "text.txt")
+        text.write_text("héllo", encoding="utf-8")
+        assert text.read_text(encoding="utf-8") == "héllo"
+        assert text.stat().st_size == len("héllo".encode())
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_path_dangling_symlink_exists_is_boolean(provider, tmp_path):
+    if not hasattr(os, "symlink"):
+        pytest.skip("symlink unavailable")
+    with provider_context(provider) as host:
+        target = host.path(tmp_path, "missing-target")
+        link = host.path(tmp_path, "dangling")
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"symlink unavailable: {exc}")
+        assert link.exists() is False

@@ -8,6 +8,7 @@ safety.
 from __future__ import annotations
 
 import dataclasses
+import re
 import typing
 
 from pathlib_next import Path
@@ -43,6 +44,19 @@ class OperationNotStarted(RuntimeError):
 class ProviderSelection:
     provider: typing.Any
     trace: tuple[dict[str, object], ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class SessionInitializer:
+    """Optional post-connect bootstrap hook for a persistent session."""
+
+    initialize: typing.Callable[..., typing.Any]
+    timeout: float | None = None
+
+    def __call__(self, session, **options):
+        if self.timeout is not None:
+            options.setdefault("timeout", self.timeout)
+        return self.initialize(session, **options)
 
 
 class ExecutorProvider:
@@ -137,6 +151,15 @@ class ProviderSelector:
         if any(not getattr(p, "name", "") for p in self.providers):
             raise ValueError("providers must have names")
         self.last_selection: ProviderSelection | None = None
+        self._probe_cache: dict[str, ProviderProbe] = {}
+        self._generation = 0
+
+    @staticmethod
+    def _safe_name(value: object) -> str:
+        text = str(value)
+        return re.sub(
+            r"(?i)(password|secret|token|key)=([^&\s]+)", r"\1=<redacted>", text
+        )
 
     def select(
         self, *, capability: str | None = None, exclude: typing.Iterable[str] = ()
@@ -146,10 +169,14 @@ class ProviderSelector:
         for provider in self.providers:
             if provider.name in excluded:
                 continue
-            try:
-                probe = provider.probe()
-            except Exception as exc:
-                probe = ProviderProbe("unavailable", type(exc).__name__)
+            if provider.name in self._probe_cache:
+                probe = self._probe_cache[provider.name]
+            else:
+                try:
+                    probe = provider.probe()
+                except Exception as exc:
+                    probe = ProviderProbe("unavailable", type(exc).__name__)
+                self._probe_cache[provider.name] = probe
             allowed = probe.usable and (
                 capability is None
                 or capability in (probe.capabilities | provider.capabilities)
@@ -159,7 +186,7 @@ class ProviderSelector:
             )
             trace.append(
                 {
-                    "provider": provider.name,
+                    "provider": self._safe_name(provider.name),
                     "availability": probe.availability,
                     "reason": probe.reason,
                     "capabilities": tuple(sorted(capabilities)),
@@ -174,3 +201,5 @@ class ProviderSelector:
 
     def invalidate(self) -> None:
         self.last_selection = None
+        self._probe_cache.clear()
+        self._generation += 1

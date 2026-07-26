@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -59,3 +60,36 @@ def test_silent_capture_is_empty_bytes(provider):
         result = host.run(Path(sys.executable), "-c", "pass")
     assert result.stdout == b""
     assert result.stderr == b""
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_shell_command_shapes_and_operators_remain_explicit(provider):
+    with provider_context(provider) as host:
+        invocation = host.shell_flavour.invocation("echo first")
+        if shutil.which(invocation[0]) is None:
+            pytest.skip(f"shell executable {invocation[0]!r} is unavailable")
+        # Sequence syntax is portable to POSIX sh and Windows PowerShell 5;
+        # raw strings remain shell source rather than argv data.
+        raw = host.run("echo first; echo second")
+        argv = host.run(("echo", "a & b"))
+        joined = host.run(("echo", "one"), ("echo", "two"))
+    assert b"first" in raw.stdout and b"second" in raw.stdout
+    assert b"a & b" in argv.stdout
+    assert b"one" in joined.stdout and b"two" in joined.stdout
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_timeout_and_input_are_subprocess_compatible(provider):
+    with provider_context(provider) as host:
+        result = host.run(
+            Path(sys.executable),
+            "-c",
+            "import sys; print(sys.stdin.read())",
+            input="payload",
+            text=True,
+        )
+        assert result.stdout.strip() == "payload"
+        with pytest.raises(subprocess.TimeoutExpired):
+            host.run(
+                Path(sys.executable), "-c", "import time; time.sleep(2)", timeout=0.01
+            )

@@ -1,6 +1,7 @@
 """Public shell construction API and built-in shell flavours."""
 
 import typing
+from importlib import metadata as _metadata
 
 from ._common import (
     Shell as Shell,
@@ -70,6 +71,26 @@ def shell_flavour(value: ShellFlavourSelection) -> ShellFlavour:
     try:
         return _SHELLS[value]
     except (KeyError, TypeError) as exc:
+        if isinstance(value, str):
+            try:
+                entries = _metadata.entry_points()
+                selected = (
+                    entries.select(group="hostctl.shell_flavours", name=value)
+                    if hasattr(entries, "select")
+                    else [
+                        item
+                        for item in entries.get("hostctl.shell_flavours", ())
+                        if item.name == value
+                    ]
+                )
+                if selected:
+                    loaded = selected[0].load()
+                    register_shell_flavour(loaded, name=value)
+                    return _SHELLS[value]
+            except Exception as plugin_error:
+                raise ValueError(
+                    f"invalid shell flavour plugin {value!r}: {plugin_error}"
+                ) from plugin_error
         supported = ", ".join(sorted(_SHELLS))
         raise ValueError(
             f"unsupported shell flavour; choose one of: {supported}"

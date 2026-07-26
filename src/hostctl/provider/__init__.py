@@ -7,6 +7,7 @@ from ._common import (
     ProviderProbe,
     ProviderSelection,
     ProviderSelector,
+    SessionInitializer,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "ProviderProbe",
     "ProviderSelection",
     "ProviderSelector",
+    "SessionInitializer",
 ]
