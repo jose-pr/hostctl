@@ -61,3 +61,25 @@ jobs:
         run: python -m pip install -e ".[dev,ssh,winrm,container,serial]"
       - name: Run tests
         run: python -m pytest -q -rs
+
+  conformance-live:
+    name: Cross-transport conformance (live Linux legs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Start localhost sshd
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes openssh-server
+          sudo mkdir -p /run/sshd
+          sudo service ssh start
+      - name: Install package with transport extras
+        run: python -m pip install -e ".[dev,ssh,winrm,container,serial]"
+      - name: Run conformance battery and live gates
+        env:
+          HOSTCTL_TEST_DOCKER: "1"
+          HOSTCTL_TEST_SSH_LOCAL: "1"
+        run: python -m pytest -q -rs tests/conformance

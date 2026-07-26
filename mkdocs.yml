@@ -31,6 +31,7 @@ nav:
   - Guide:
       - Running commands: guide/run.md
       - Filesystem paths: guide/path.md
+      - Cross-transport contracts: guide/contracts.md
       - Extending Host: guide/extending.md
   - API Reference:
       - Overview: api/reference.md
