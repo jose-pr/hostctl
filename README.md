@@ -142,7 +142,10 @@ print(path.provider.name)
 ```
 
 Application-specific adapters can follow the SFTP/RPC/download pattern in
-[`examples/application_provider.py`](examples/application_provider.py).
+[`examples/application_provider.py`](examples/application_provider.py). The
+[Systems and providers](https://jose-pr.github.io/hostctl/guide/providers/)
+guide covers selection traces, backend pinning, per-operation capabilities,
+provider authoring, and the no-replay safety rule in full.
 
 Existing transport URIs remain compatible.  To opt into system semantics while
 retaining those URI/configuration objects, compose them explicitly:

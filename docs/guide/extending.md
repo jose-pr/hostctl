@@ -46,6 +46,11 @@ usable operations in `capabilities`; unsupported base `run()` and `path()` calls
 raise `NotImplementedError`. Connection URIs never contain secrets—pass those
 separately to `Host(connection_string, **options)`.
 
+To add a new access mechanism rather than new host behavior, write an
+`ExecutorProvider` or `PathProvider` instead of subclassing a host — see
+[Systems and providers](providers.md) for the authoring contract, per-operation
+capabilities, and the no-replay safety rule.
+
 Both `with config as host:` and `with config.open() as host:` connect the
 transport and guarantee `close()` on normal exit or exceptions. Hosts also
 support their own context manager, `connect()`, and `close()` lifecycle.

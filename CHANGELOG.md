@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   progress-reader recipe.
 - Transport-independent POSIX, Windows, and IOS host semantics with ordered
   executor/path provider selection and capability-safe fallback behavior.
+  Providers declare per-operation capabilities, so a read-only backend rejects
+  a mutation explicitly instead of falling through to another provider.
+  Selection traces record the candidates, probe result, chosen provider,
+  generation, policy, and pin, with credential-like values redacted. Composite
+  paths keep their provider collection and optional `.via()` pin through `/`,
+  `joinpath`, `parent`/`parents`, `with_name`/`with_suffix`, `iterdir`,
+  `glob`/`rglob`/`walk`, and open streams. See the "Systems and providers"
+  guide for the no-replay safety rule and provider-authoring contract.
 - Subprocess-shaped execution options, normalized transport errors, bounded
   buffered file transfers, and Python 3.9+ typing support (Python 3.14 is the
   default development interpreter).
@@ -53,5 +61,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   processes use incremental text decoding and the common `read(-1)` contract
   (up to 64 KiB available data); serial ownership and QEMU URI/lifecycle edge
   cases are normalized consistently.
+
+### Fixed
+
+- Composite host paths kept their provider, selector, and pin through
+  `pathlib.PurePath` derivations (`parents`, `with_name`, `with_suffix`,
+  `relative_to`). Those results were previously built without any routing
+  state, which made `glob()`, `rglob()`, and `walk()` fail outright.
+- A path provider that declined before dispatch is remembered for the
+  connection generation instead of being re-attempted by every later
+  operation; `invalidate()` clears the record along with cached probes.
 
 <!-- Add the [Unreleased] compare link after the first v0.1.0 tag exists. -->
