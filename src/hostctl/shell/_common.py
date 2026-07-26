@@ -48,6 +48,16 @@ class ShellOperator(enum.Enum):
 
 ShellToken = typing.Union[Command, ShellOperator]
 
+#: What a caller may pass for `env` on a `Shell` call. A mapping merges over
+#: the shell's default per key; the default `{}` merges nothing and therefore
+#: inherits it; `None` or `False` opts out of the shell's defaults entirely.
+EnvironmentSelection = typing.Union[Environment, None, bool]
+
+#: The `env` default: an empty mapping, meaning "merge nothing, inherit the
+#: shell's environment". A module-level immutable value rather than a literal
+#: `{}` in each signature, so the default can never be mutated by a caller.
+_INHERIT_ENV: Environment = types.MappingProxyType({})
+
 
 @dataclasses.dataclass(frozen=True)
 class ShellCommand:
@@ -361,20 +371,29 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
             inspect.Parameter.KEYWORD_ONLY,
         )
 
-    def _resolve_env(
-        self, env: typing.Optional[Environment]
-    ) -> typing.Optional[Environment]:
+    def _resolve_env(self, env: EnvironmentSelection) -> typing.Optional[Environment]:
         """Merge a per-call environment over this shell's default.
 
-        Per-call keys win; keys present only in the default survive, so a
-        caller can change one variable without restating the others. Returns
-        `None` when neither side supplies anything, leaving the executor's own
-        inherited environment untouched.
+        The default `{}` merges nothing, so a call that says nothing about the
+        environment inherits the shell's. A mapping merges over that default
+        per key: the call wins for keys it names, and default-only keys
+        survive, so one variable can change without restating the rest.
+
+        `None` or `False` opts out of the shell's defaults entirely — the call
+        runs with no shell-configured environment. Both spellings mean the same
+        thing today.
+
+        Future note: these two could diverge, with `False` meaning "drop the
+        shell defaults, keep the ambient environment" and `None` meaning "run
+        with a truly empty environment" (`subprocess`-style `env={}`). That
+        distinction is deliberately not implemented yet — an empty environment
+        breaks PowerShell on Windows, so it needs its own design pass rather
+        than being smuggled in behind a sentinel.
         """
+        if env is None or env is False:
+            return None
         if self.env is None:
-            return env
-        if env is None:
-            return dict(self.env)
+            return dict(env) if env else None
         merged = dict(self.env)
         merged.update(env)
         return merged
@@ -461,7 +480,7 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         stdout: typing.Optional[FileHandle] = None,
         stderr: typing.Optional[FileHandle] = None,
         cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        env: EnvironmentSelection = _INHERIT_ENV,
         capture_output: typing.Optional[CaptureOutput] = None,
         check: typing.Optional[bool] = None,
         encoding: typing.Optional[str] = None,
@@ -470,10 +489,15 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> _Result:
-        """Build one script from all commands and pass it to the executor."""
-        # Resolve defaults here as well as in `execute`: the script is rendered
-        # before dispatch, so an embedded `cd`/env assignment has to see the
-        # shell's defaults too. `execute` resolving again is idempotent.
+        """Build one script from all commands and pass it to the executor.
+
+        `env` merges over the shell's default per key; the default merges
+        nothing and so inherits it. Pass `None` or `False` to run without the
+        shell's configured environment.
+        """
+        # Resolve defaults here rather than in `execute`: the script is
+        # rendered before dispatch, so an embedded `cd`/env assignment has to
+        # see the shell's defaults too.
         cwd = self._resolve_cwd(cwd)
         env = self._resolve_env(env)
         script = self.flavour.script(
@@ -502,12 +526,17 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         *cmds: ShellToken,
         executable: typing.Optional[str] = None,
         cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        env: EnvironmentSelection = _INHERIT_ENV,
         terminal: TerminalRequest = None,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
     ) -> ShellSession:
-        """Open a persistent process using this shell language."""
+        """Open a persistent process using this shell language.
+
+        `env` merges over the shell's default per key; the default merges
+        nothing and so inherits it. Pass `None` or `False` to open the session
+        without the shell's configured environment.
+        """
         if self._spawn is None:
             raise NotImplementedError("executor does not provide persistent sessions")
         cwd = self._resolve_cwd(cwd)
@@ -535,16 +564,18 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         self,
         *,
         cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        env: EnvironmentSelection = _INHERIT_ENV,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
     ) -> "Shell[_Result]":
         """Return a copy of this shell with additional defaults applied.
 
         `env` merges over this shell's default the same way a per-call `env`
-        does, so configuring twice layers rather than replaces. The original
-        shell is left unchanged, which keeps `host.shell` -- a fresh object per
-        access -- safe to configure without surprising another caller.
+        does, so configuring twice layers rather than replaces, and `None` or
+        `False` produces a copy carrying no environment default at all. The
+        original shell is left unchanged, which keeps `host.shell` -- a fresh
+        object per access -- safe to configure without surprising another
+        caller.
         """
         clone = copy.copy(self)
         clone._session = None

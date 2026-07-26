@@ -643,6 +643,47 @@ def test_shell_default_env_merges_with_the_call_env_per_key():
     assert "TZ=UTC" not in scripts[0]
 
 
+@pytest.mark.parametrize("cleared", [None, False], ids=["none", "false"])
+def test_shell_env_can_opt_out_of_the_shell_defaults(cleared):
+    shell, scripts = _recording_shell(cwd="/srv/app", env={"TZ": "UTC"})
+
+    shell.run("pwd", env=cleared)
+
+    # The shell's environment is dropped...
+    assert "export TZ" not in scripts[0]
+    # ...but clearing env says nothing about cwd, which still applies.
+    assert "cd -- /srv/app&&" in scripts[0]
+
+
+def test_shell_empty_env_mapping_merges_nothing_and_inherits_the_default():
+    shell, scripts = _recording_shell(env={"TZ": "UTC"})
+
+    shell.run("pwd", env={})
+
+    assert "export TZ=UTC" in scripts[0]
+
+
+def test_shell_session_env_can_opt_out_of_the_shell_defaults():
+    provider = _LifecycleProvider()
+    shell = Shell(POSIX_SHELL, provider, cwd="/srv/app", env={"TZ": "UTC"})
+
+    shell.session(env=False)
+
+    written = provider.processes[0].written
+    assert "export TZ" not in written
+    assert "cd -- /srv/app" in written
+
+
+def test_shell_configure_env_none_drops_the_inherited_default():
+    shell, _ = _recording_shell(cwd="/srv/app", env={"TZ": "UTC"})
+
+    derived = shell.configure(env=None)
+
+    assert derived.env is None
+    assert derived.cwd == "/srv/app"
+    assert shell.env == {"TZ": "UTC"}
+
+
 def test_shell_configure_layers_defaults_without_mutating_the_original():
     shell, _ = _recording_shell(cwd="/srv/app", env={"TZ": "UTC"})
 

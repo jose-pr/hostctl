@@ -78,6 +78,29 @@ rest. `configure(...)` returns a further-configured copy and leaves the
 original untouched, which matters because `host.shell` builds a new shell on
 each access. Bare `host.shell` carries no defaults.
 
+### Opting out of the shell environment
+
+`env` defaults to an empty mapping — merge nothing, inherit the shell's
+environment. Pass `None` or `False` to run without it:
+
+```python
+shell = host.shell(cwd="/srv/app", env={"TZ": "UTC"})
+
+shell.run("printenv")             # TZ=UTC applied
+shell.run("printenv", env={})     # same: merges nothing, inherits
+shell.run("printenv", env=None)   # no shell environment
+shell.run("printenv", env=False)  # same as None
+```
+
+Clearing `env` says nothing about `cwd`, which still applies. `configure(env=None)`
+returns a copy carrying no environment default, and `session(env=False)` opens a
+session without one.
+
+`None` and `False` mean the same thing today. They may diverge later, with
+`False` dropping the shell's defaults while keeping the ambient environment and
+`None` requesting a genuinely empty one; that needs its own design pass, since
+an empty environment breaks PowerShell on Windows.
+
 Defaults apply wherever the shell builds a script. `Shell.execute()` used
 directly against an executor with no native `cwd`/`env` support dispatches one
 opaque command and does not receive them.
