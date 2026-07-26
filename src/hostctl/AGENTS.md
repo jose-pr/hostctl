@@ -20,6 +20,9 @@ their concrete flavours. Executor code follows the same layout under
 `hostctl.executor`: `_common.py` owns contracts and option types; `ssh.py` and
 `winrm.py` own `SshExecutor` and `WinRMExecutor`. Public APIs are re-exported
 from each package and top-level `hostctl`.
+`hostctl.sync` adds `stat_checksum(entry)`, `host_checksum(*hosts,
+algorithm="md5", chunk_size=1048576)`, and `ProgressReader`; these plug into
+`pathlib_next.utils.sync.PathSyncer` and the existing path copy machinery.
 
 `Executor(command, *, stdin=None, stdout=None, stderr=None, cwd=None, env=None,
 capture_output=None, check=None, encoding=None, errors=None, input=None,
@@ -188,8 +191,9 @@ pywinrm; `provider="psrp"` requires the extra.
 
 `WinRMHost` supports PowerShell `run()` and Windows-semantic `WinRMPath`.
 Password-free configs on Windows use current-context native PowerShell
-remoting; explicit credentials use pywinrm. `WinRMPath.open()` buffers content
-and transfers Base64 chunks, writing back on close. WinRM stdin and command
+remoting; explicit credentials use pywinrm. `WinRMPath.open("rb")` fetches
+bounded ranges; writable modes stage content and transfer Base64 chunks on
+close. WinRM stdin and command
 deadlines remain unsupported. Transport timeouts are not a total command
 deadline. pywinrm Session has no guaranteed close API; hostctl calls `close()`
 only when a provided session exposes it.

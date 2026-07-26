@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   from the environment or a hidden prompt.
 - Optional native integrations: AsyncSSH/SFTP, pywinrm, Docker SDK, PySerial,
   pypsrp, and libvirt QGA, each isolated behind a matching package extra.
+- Cross-host `pathlib_next.Path.copy()`/`PathSyncer` support with streaming
+  remote readers, executor-side checksums, fast stat checksums, and an explicit
+  progress-reader recipe.
 - Transport-independent POSIX, Windows, and IOS host semantics with ordered
   executor/path provider selection and capability-safe fallback behavior.
 - Subprocess-shaped execution options, normalized transport errors, bounded

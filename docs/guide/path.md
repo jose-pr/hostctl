@@ -18,7 +18,7 @@ for entry in host.path("/etc").iterdir():
 host.path("/tmp/example.txt").write_text("hello")
 ```
 
-Container archive paths support metadata, traversal, buffered reads, and
+Container archive paths support metadata, traversal, streaming reads, and
 buffered write/append/exclusive-create without requiring a shell in the image.
 Docker's archive API cannot remove, rename, chmod, or create an empty directory;
 those operations raise `NotImplementedError` explicitly.
@@ -28,13 +28,14 @@ always close remote handles. Content access needs no in-guest shell. Metadata,
 listing, rename, removal, and permissions require a positively probed helper;
 unavailable operations raise `NotImplementedError`.
 
-`WinRMPath.open()` is buffered: reads and close-time write-back transfer binary
-chunks through PowerShell. Write-back happens only on an explicit `close()` (or
-the context-manager exit); `flush()` does not commit, and an abandoned writable
-stream is discarded with a `ResourceWarning`. Windows read-only attributes
-provide the supported `chmod()` subset; ownership and general POSIX permission
-semantics do not apply. Reparse points are reported as symlink-style metadata;
-following one resolves its target once and raises `OSError` when unresolved.
+`WinRMPath.open("rb")` fetches bounded binary ranges through PowerShell.
+Writable modes stage data for close-time chunked write-back. Write-back happens
+only on an explicit `close()` (or the context-manager exit); `flush()` does not
+commit, and an abandoned writable stream is discarded with a
+`ResourceWarning`. Windows read-only attributes provide the supported
+`chmod()` subset; ownership and general POSIX permission semantics do not
+apply. Reparse points are reported as symlink-style metadata; following one
+resolves its target once and raises `OSError` when unresolved.
 
 For SSH, `SshConfig.path_flavor` explicitly selects
 the `PosixPathname` or `WindowsPathname` constructor; it is independent of the

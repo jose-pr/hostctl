@@ -31,6 +31,7 @@ nav:
   - Guide:
       - Running commands: guide/run.md
       - Filesystem paths: guide/path.md
+      - Copying and synchronization: guide/transfer.md
       - Cross-transport contracts: guide/contracts.md
       - Command-line interface: guide/cli.md
       - Extending Host: guide/extending.md

@@ -15,6 +15,8 @@ hosts expose only the capabilities their transports actually support.
   options raise `NotImplementedError`.
 - **`Host.path(...)`** — a `pathlib_next.Path` filesystem view: local,
   remote SFTP, Windows over WinRM, container archives, or QEMU Guest Agent.
+- **Cross-host copy and sync** — use `Path.copy()`/`PathSyncer` directly;
+  `host_checksum()` computes unchanged-file digests beside remote data.
 - **`host.shell.session(...)`** — a persistent shell over SSH or a container,
   optionally with a TTY; `send(*cmds)` uses the same structured quoting rules.
 - **Serial console hosts.** `SerialConfig` accepts opaque native/PySerial URLs;
@@ -166,6 +168,7 @@ and exit statuses.
 | `hostctl.provider` | Ordered executor/path provider composition |
 | `hostctl.executor` | Transport-specific command executors |
 | `hostctl.shell` | Shell flavours and persistent sessions |
+| `hostctl.sync` | Remote checksum and byte-progress helpers for `pathlib_next` |
 | `hostctl._cli` | Dependency-free command-line entry point |
 
 ## Development

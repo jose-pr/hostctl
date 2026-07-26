@@ -74,6 +74,9 @@ from their docstrings.
 
 ## Paths and guest-agent transports
 
+::: hostctl.ProgressReader
+::: hostctl.host_checksum
+::: hostctl.stat_checksum
 ::: hostctl.GuestAgentTransport
 ::: hostctl.UnixSocketGuestAgentTransport
 ::: hostctl.LibvirtGuestAgentTransport
