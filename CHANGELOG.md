@@ -26,7 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   host-info, and interactive shell subcommands; passwords are accepted only
   from the environment or a hidden prompt.
 - Optional native integrations: AsyncSSH/SFTP, pywinrm, Docker SDK, PySerial,
-  and libvirt QGA, each isolated behind a matching package extra.
+  pypsrp, and libvirt QGA, each isolated behind a matching package extra.
+- Transport-independent POSIX, Windows, and IOS host semantics with ordered
+  executor/path provider selection and capability-safe fallback behavior.
 - Subprocess-shaped execution options, normalized transport errors, bounded
   buffered file transfers, and Python 3.9+ typing support (Python 3.14 is the
   default development interpreter).

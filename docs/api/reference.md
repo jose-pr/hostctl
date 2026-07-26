@@ -22,6 +22,14 @@ from their docstrings.
 ::: hostctl.QemuHost
 ::: hostctl.SerialConfig
 ::: hostctl.SerialHost
+::: hostctl.SystemConfig
+::: hostctl.SystemHost
+::: hostctl.PosixConfig
+::: hostctl.PosixHost
+::: hostctl.WindowsConfig
+::: hostctl.WindowsHost
+::: hostctl.IosConfig
+::: hostctl.IosHost
 
 ## Executors and processes
 
@@ -30,9 +38,12 @@ from their docstrings.
 ::: hostctl.LocalExecutor
 ::: hostctl.SshExecutor
 ::: hostctl.WinRMExecutor
+::: hostctl.NativeWinRMSession
+::: hostctl.WinRMProvider
 ::: hostctl.ContainerExecutor
 ::: hostctl.QemuExecutor
 ::: hostctl.SerialExecutor
+::: hostctl.PsrpExecutor
 ::: hostctl.Process
 ::: hostctl.ContainerProcess
 ::: hostctl.SshProcess
@@ -41,6 +52,9 @@ from their docstrings.
 ::: hostctl.QemuSerialProcess
 ::: hostctl.QemuSerialConsole
 ::: hostctl.TerminalOptions
+::: hostctl.RunspaceSession
+::: hostctl.PipelineResult
+::: hostctl.PipelineStreams
 
 ## Shells and sessions
 
@@ -72,6 +86,16 @@ from their docstrings.
 ::: hostctl.PromptConsoleProfile
 ::: hostctl.LoginStep
 ::: hostctl.ConsoleProtocolError
+
+## Provider composition
+
+::: hostctl.ExecutorProvider
+::: hostctl.PathProvider
+::: hostctl.ProviderProbe
+::: hostctl.ProviderSelection
+::: hostctl.ProviderSelector
+::: hostctl.SessionInitializer
+::: hostctl.CompositePath
 
 ## Public aliases and constants
 

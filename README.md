@@ -160,12 +160,13 @@ and exit statuses.
 | Module | Purpose |
 | --- | --- |
 | `hostctl.host` | Shared contracts and built-in host providers |
-| `hostctl` | `ContainerConfig`, `ContainerHost` |
-| `hostctl` | `QemuConfig`, `QemuHost` |
-| `hostctl` | `LocalConfig`, `LocalHost` |
-| `hostctl` | `SshConfig`, `SshHost` |
-| `hostctl` | `WinRMConfig`, `WinRMHost` |
-| `hostctl` | `SerialConfig`, `SerialHost` |
+| `hostctl.host.container` | `ContainerConfig`, `ContainerHost` |
+| `hostctl.host.qemu` | `QemuConfig`, `QemuHost` |
+| `hostctl.host.serial` | `SerialConfig`, `SerialHost` |
+| `hostctl.provider` | Ordered executor/path provider composition |
+| `hostctl.executor` | Transport-specific command executors |
+| `hostctl.shell` | Shell flavours and persistent sessions |
+| `hostctl._cli` | Dependency-free command-line entry point |
 
 ## Development
 
