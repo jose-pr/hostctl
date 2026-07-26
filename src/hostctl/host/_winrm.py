@@ -17,6 +17,7 @@ from ..executor import (
     require_pypsrp,
 )
 from ..process import RunspaceSession
+from ..provider import ExecutorProvider, PathProvider, ProviderProbe
 from ._common import (
     _query_int,
     CaptureOutput,
@@ -51,7 +52,7 @@ WinRMProvider = typing.Literal["auto", "pywinrm", "psrp"]
 
 @dataclasses.dataclass
 class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
-    """Connection and transport settings accepted by :class:`WinRMHost`."""
+    """Connection and transport settings for the Windows provider."""
 
     host: str
     username: str
@@ -155,11 +156,18 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             provider=typing.cast(WinRMProvider, query.get("provider", "auto")),
         )
 
-    def _create_host(self) -> WinRMHost:
-        return WinRMHost(self)
+    def _create_host(self):
+        from .system import WindowsHost
+
+        transport = _WinRMTransport(self)
+        return WindowsHost(
+            self,
+            executor_providers=(WinRMExecutorProvider(transport),),
+            path_providers=(WinRMPathProvider(transport),),
+        )
 
 
-class WinRMHost(Host):
+class _WinRMTransport(Host):
     """A Windows host reached through PowerShell over WinRM."""
 
     def __init__(self, config: WinRMConfig) -> None:
@@ -199,7 +207,7 @@ class WinRMHost(Host):
         return POWERSHELL
 
     @property
-    def executor(self) -> typing.Any:
+    def executor(self) -> typing.Union[WinRMExecutor, PsrpExecutor]:
         if self._provider == "psrp":
             return PsrpExecutor(self.runspace)
         return self._executor
@@ -305,7 +313,7 @@ class WinRMHost(Host):
         self, *segments: PathLike, backend: typing.Optional[str] = None
     ) -> WinRMPath:
         if backend not in (None, "winrm"):
-            raise ValueError("WinRMHost path backend must be 'winrm'")
+            raise ValueError("WinRM path backend must be 'winrm'")
         if (
             len(segments) > 1
             and isinstance(segments[0], str)
@@ -335,7 +343,7 @@ class WinRMHost(Host):
     ) -> subprocess.CompletedProcess:
         if executable is not None:
             raise NotImplementedError(
-                "WinRMHost.run supports PowerShell only and does not accept executable"
+                "WinRM provider run supports PowerShell only and does not accept executable"
             )
         direct = starts_direct_command(cmds)
         if direct is not None:
@@ -828,3 +836,38 @@ class WinRMPath(WindowsPathname, Path):
             raise ValueError("cannot rename across WinRM path backends")
         self.backend.rename(str(self), str(target))
         return target
+
+
+class WinRMExecutorProvider(ExecutorProvider):
+    """Lifecycle-owning WinRM/PSRP executor provider."""
+
+    def __init__(self, transport: _WinRMTransport):
+        self.transport = transport
+        super().__init__(
+            "winrm", transport.executor, capabilities=transport.executor_capabilities
+        )
+
+    def probe(self):
+        return ProviderProbe("available", capabilities=self.capabilities)
+
+    def connect(self):
+        self.transport.connect()
+
+    def close(self):
+        self.transport.close()
+
+    def info(self):
+        return self.transport.info()
+
+    def spawn(self, *args, **options):
+        return self.transport.spawn(*args, **options)
+
+
+class WinRMPathProvider(PathProvider):
+    """Windows-semantic WinRM path provider sharing the executor transport."""
+
+    def __init__(self, transport: _WinRMTransport):
+        self.transport = transport
+        super().__init__(
+            "winrm", lambda *segments: transport.path(*segments), capabilities=("path",)
+        )

@@ -14,6 +14,7 @@ from urllib.parse import quote, unquote, urlencode
 from pathlib_next import Pathname, PosixPathname, WindowsPathname
 
 from ..executor import SshConnection, SshExecutor
+from ..provider import ExecutorProvider, PathProvider, ProviderProbe
 from ..process import Process, SshProcess, TerminalRequest
 from ._common import (
     CaptureOutput,
@@ -155,11 +156,26 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             ),
         )
 
-    def _create_host(self) -> SshHost:
-        return SshHost(self)
+    def _create_host(self):
+        from .system import PosixHost, WindowsHost
+
+        transport = _SshTransport(self)
+        host_type = (
+            WindowsHost if issubclass(self.path_flavor, PureWindowsPath) else PosixHost
+        )
+        return host_type(
+            self,
+            executor_providers=(SshExecutorProvider(transport),),
+            path_providers=(SftpPathProvider(transport),),
+            shell=(
+                self.dialect
+                if self.dialect != "auto"
+                else (lambda: transport.shell_flavour)
+            ),
+        )
 
 
-class SshHost(Host):
+class _SshTransport(Host):
     """A host reached over SSH, with an explicitly configured command dialect."""
 
     def __init__(self, config: SshConfig) -> None:
@@ -442,7 +458,7 @@ class SshHost(Host):
         from ..process import terminal_options
 
         selected_terminal = terminal_options(terminal)
-        options: typing.Dict[str, object] = {"env": remote_env}
+        options: typing.Dict[str, object] = {"env": remote_env, "encoding": encoding}
         if encoding is not None or errors is not None:
             options["encoding"] = encoding or "utf-8"
         if errors is not None:
@@ -464,3 +480,38 @@ class SshHost(Host):
                 raise
             raise normalized from exc
         return SshProcess(typing.cast(typing.Any, process), command)
+
+
+class SshExecutorProvider(ExecutorProvider):
+    """Lifecycle-owning SSH command provider used by :class:`PosixHost`."""
+
+    def __init__(self, transport: _SshTransport):
+        self.transport = transport
+        super().__init__("ssh", transport.executor, capabilities=("args",))
+
+    def probe(self):
+        return ProviderProbe("available", capabilities=self.capabilities)
+
+    def connect(self):
+        self.transport.connect()
+
+    def close(self):
+        self.transport.close()
+
+    def info(self):
+        return self.transport.info()
+
+    def spawn(self, *args, **options):
+        return self.transport.spawn(*args, **options)
+
+
+class SftpPathProvider(PathProvider):
+    """SFTP path provider sharing the SSH transport lifecycle."""
+
+    def __init__(self, transport: _SshTransport):
+        self.transport = transport
+        super().__init__(
+            "sftp", lambda *segments: transport.path(*segments), capabilities=("path",)
+        )
+
+    # Lifecycle is owned by SshExecutorProvider for the shared transport.

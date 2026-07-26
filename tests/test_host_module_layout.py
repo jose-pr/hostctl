@@ -1,4 +1,4 @@
-"""Host implementations remain private modules with top-level exports."""
+"""Transport implementations remain private; system hosts are public."""
 
 import importlib.util
 
@@ -19,6 +19,8 @@ def test_transport_implementations_are_not_public_module_shims():
 
 def test_transport_classes_remain_available_from_supported_surface():
     assert hostctl.LocalHost
-    assert hostctl.SshHost
-    assert hostctl.WinRMHost
+    assert hostctl.PosixHost
+    assert hostctl.WindowsHost
+    assert not hasattr(hostctl, "SshHost")
+    assert not hasattr(hostctl, "WinRMHost")
     assert hostctl.WinRMPath

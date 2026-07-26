@@ -152,8 +152,8 @@ posix = PosixHost.from_ssh(SshConfig("server.example", username="root"))
 windows = WindowsHost.from_winrm(WinRMConfig("server.example", "admin"))
 ```
 
-`SshHost` and `WinRMHost` remain supported public facades; QEMU's SSH tunnel
-continues to consume `SshConfig` directly.
+SSH and WinRM transport implementations are private providers; QEMU's SSH
+tunnel continues to consume `SshConfig` directly.
 
 ## Command line
 

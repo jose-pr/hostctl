@@ -1,4 +1,4 @@
-"""WinRMHost behavior with an injected fake pywinrm session."""
+"""WinRM provider behavior with an injected fake pywinrm session."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from pathlib import PureWindowsPath
 import pytest
 
 from pathlib_next import Path as NextPath
-from hostctl import WinRMConfig, WinRMHost, WinRMPath
+from hostctl import WinRMConfig, WinRMPath
+from hostctl.host._winrm import _WinRMTransport
 from hostctl.executor.winrm import NativeWinRMSession
 
 
@@ -36,7 +37,7 @@ class _Session:
 
 
 def _host(response=None):
-    host = WinRMHost(WinRMConfig("windows.example.com", "admin", "secret"))
+    host = _WinRMTransport(WinRMConfig("windows.example.com", "admin", "secret"))
     session = _Session(response)
     host._session = session
     return host, session
@@ -137,7 +138,7 @@ def test_winrm_validates_environment_keys_and_builds_windows_path():
 
 
 def test_winrm_missing_dependency_is_lazy(monkeypatch):
-    host = WinRMHost(WinRMConfig("host", "user", "password"))
+    host = _WinRMTransport(WinRMConfig("host", "user", "password"))
     monkeypatch.setitem(sys.modules, "winrm", None)
     with pytest.raises(ImportError, match=r"hostctl\[winrm\]"):
         _ = host.session
@@ -161,10 +162,10 @@ def test_winrm_config_exposes_secure_transport_settings():
 
 def test_winrm_path_budget_tracks_provider(monkeypatch):
     monkeypatch.setattr("hostctl.host._winrm.pypsrp_available", lambda: False)
-    pywinrm = WinRMHost(WinRMConfig("host", "user", "secret", provider="pywinrm"))
+    pywinrm = _WinRMTransport(WinRMConfig("host", "user", "secret", provider="pywinrm"))
     assert pywinrm._path_backend.max_script_bytes == 6000
     monkeypatch.setattr("hostctl.host._winrm.pypsrp_available", lambda: True)
-    psrp = WinRMHost(WinRMConfig("host", "user", "secret", provider="psrp"))
+    psrp = _WinRMTransport(WinRMConfig("host", "user", "secret", provider="psrp"))
     assert psrp._path_backend.max_script_bytes == 256000
 
 
@@ -189,7 +190,7 @@ def test_native_winrm_remote_marker_is_checkable(monkeypatch):
         stderr = marker
 
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: Result())
-    host = WinRMHost(WinRMConfig("server.example", "user", "secret"))
+    host = _WinRMTransport(WinRMConfig("server.example", "user", "secret"))
     host._session = NativeWinRMSession("server.example")
     result = host.run("Write-Output x", check=False)
     assert result.returncode == 5

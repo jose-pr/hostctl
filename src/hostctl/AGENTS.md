@@ -28,7 +28,7 @@ algorithm="md5", chunk_size=1048576)`, and `ProgressReader`; these plug into
 providers. `PosixHost.from_ssh(SshConfig(...))` and
 `WindowsHost.from_winrm(WinRMConfig(...))` retain the original connection URI
 and lifecycle while exposing transport operations through provider adapters;
-`SshHost` and `WinRMHost` remain public compatibility facades.
+transport implementations remain private.
 
 `Executor(command, *, stdin=None, stdout=None, stderr=None, cwd=None, env=None,
 capture_output=None, check=None, encoding=None, errors=None, input=None,
@@ -123,8 +123,8 @@ corresponding hosts.
   `host.shell` builds `Shell(host.shell_flavour, host)`. SSH uses its configured
   or positively detected flavour, WinRM uses PowerShell, and local execution
   selects POSIX sh or Windows PowerShell from the local platform.
-- `SshHost.run()` renders through its shell flavour and delegates the finalized
-  command to `SshExecutor`; `WinRMHost.run()` delegates its finalized
+- SSH provider run renders through its shell flavour and delegates the finalized
+  command to `SshExecutor`; WinRM provider run delegates its finalized
   PowerShell script to `WinRMExecutor`.
 - `HostInfo` fields are optional; unknown system values remain `None`.
 - A usable `path()` returns `HostPath` (`pathlib_next.Path`).
@@ -146,14 +146,14 @@ SFTP path flavor. `dialect` is a `ShellFlavour` strategy. `path_flavor` is a con
 `pathlib_next.Pathname` or `pathlib.PurePath` subclass; bare `PurePath` is
 rejected because it would infer the local OS. SSH implies neither an OS nor a
 shell. `dialect="auto"` performs positive cached probing and raises rather than
-guessing. `SshHost` closes its AsyncSSH connection and waits for closure.
+guessing. The SSH executor provider closes its AsyncSSH connection and waits for closure.
 AsyncSSH authentication failures are exposed as `PermissionError`; SSH
 host-key, key-exchange, disconnect, connection-loss, protocol, and channel
 failures are exposed as `ConnectionError`. The original AsyncSSH exception is
 retained as `__cause__`.
-`SshHost.path()` reuses one `AsyncsshSftpBackend` per host and invalidates its
+The SFTP path provider reuses one `AsyncsshSftpBackend` per host and invalidates its
 cached sources during `close()`; each path call does not create another SFTP
-connection. `SshHost.close()` performs all AsyncSSH operations through the
+connection. Provider close performs all AsyncSSH operations through the
 shared bridge. Omitted `run()` stdin is an explicit EOF stream, `bufsize=0` is
 rejected, and a missing remote exit status is reported as return code `-1`.
 Timeouts raise `subprocess.TimeoutExpired` with an `orphaned` flag indicating
@@ -195,7 +195,7 @@ operation_timeout_sec=20, read_timeout_sec=30, provider="auto")`. `auto`
 selects PSRP when `hostctl[psrp]` is installed on Python 3.10+, otherwise
 pywinrm; `provider="psrp"` requires the extra.
 
-`WinRMHost` supports PowerShell `run()` and Windows-semantic `WinRMPath`.
+The WinRM executor provider supports PowerShell `run()` and Windows-semantic `WinRMPath`.
 Password-free configs on Windows use current-context native PowerShell
 remoting; explicit credentials use pywinrm. `WinRMPath.open("rb")` fetches
 bounded ranges; writable modes stage content and transfer Base64 chunks on
@@ -203,7 +203,7 @@ close. WinRM stdin and command
 deadlines remain unsupported. Transport timeouts are not a total command
 deadline. pywinrm Session has no guaranteed close API; hostctl calls `close()`
 only when a provided session exposes it.
-PSRP runspaces are exposed separately through `WinRMHost.runspace()` and
+PSRP runspaces are exposed separately through the WinRM transport provider and
 `RunspaceSession.invoke()`. They retain typed PowerShell streams and state, and
 are not advertised as a byte-oriented `spawn`/TTY process.
 

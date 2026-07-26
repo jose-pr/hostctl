@@ -23,14 +23,14 @@ from hostctl import (
     ShellOperator,
     SshConfig,
     SshExecutor,
-    SshHost,
     WinRMConfig,
     WinRMExecutor,
-    WinRMHost,
     ZSH,
     register_shell_flavour,
     shell_flavour,
 )
+from hostctl.host._ssh import _SshTransport
+from hostctl.host._winrm import _WinRMTransport
 from hostctl.executor import Executor as ModuleExecutor
 
 
@@ -405,8 +405,8 @@ def test_fish_uses_native_environment_and_boolean_syntax():
 
 
 def test_host_builds_shell_from_its_flavour_and_executor():
-    ssh = SshHost(SshConfig("host", dialect="powershell"))
-    winrm = WinRMHost(WinRMConfig("host", "user"))
+    ssh = _SshTransport(SshConfig("host", dialect="powershell"))
+    winrm = _WinRMTransport(WinRMConfig("host", "user"))
 
     assert ssh.shell.flavour is POWERSHELL
     assert winrm.shell.flavour is POWERSHELL

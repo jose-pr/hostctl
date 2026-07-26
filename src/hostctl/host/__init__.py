@@ -26,11 +26,9 @@ from .qemu import (
 from ._ssh import (
     PathnameConstructor as PathnameConstructor,
     SshConfig as SshConfig,
-    SshHost as SshHost,
 )
 from ._winrm import (
     WinRMConfig as WinRMConfig,
-    WinRMHost as WinRMHost,
     WinRMPath as WinRMPath,
     WinRMPathBackend as WinRMPathBackend,
     WinRMProvider as WinRMProvider,
@@ -65,11 +63,9 @@ __all__ = [
     "QemuHost",
     "QgaPathBackend",
     "SshConfig",
-    "SshHost",
     "SerialConfig",
     "SerialHost",
     "WinRMConfig",
-    "WinRMHost",
     "WinRMProvider",
     "WinRMPath",
     "WinRMPathBackend",

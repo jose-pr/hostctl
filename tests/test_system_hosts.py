@@ -94,6 +94,14 @@ def test_transport_configs_compose_system_hosts_without_uri_changes():
     windows = WindowsHost.from_winrm(winrm_config)
     assert windows.connection_uri == winrm_config.connection_uri
     assert windows.scheme == "winrm"
+    assert all(
+        type(provider).__name__ != "_HostExecutorProvider"
+        for provider in posix._executor_selector.providers
+    )
+    assert all(
+        type(provider).__name__ != "_HostExecutorProvider"
+        for provider in windows._executor_selector.providers
+    )
 
 
 def test_composite_path_accepts_path_protocol_and_retains_alternates():

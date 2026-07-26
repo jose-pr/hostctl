@@ -14,10 +14,10 @@ from hostctl import (
     HostInfo,
     LocalConfig,
     LocalHost,
+    PosixHost,
+    WindowsHost,
     SshConfig,
-    SshHost,
     WinRMConfig,
-    WinRMHost,
 )
 
 
@@ -104,7 +104,7 @@ def test_config_reentry_is_guarded_and_connect_failure_cleans_up():
 
 
 def test_ssh_uri_round_trip_keeps_secrets_separate():
-    source = SshHost(
+    source = PosixHost.from_ssh(
         SshConfig(
             "windows.example.com",
             port=2222,
@@ -118,7 +118,7 @@ def test_ssh_uri_round_trip_keeps_secrets_separate():
     uri = source.connection_uri
     assert "top-secret" not in uri
     restored = Host(uri, password="top-secret", known_hosts=None)
-    assert isinstance(restored, SshHost)
+    assert isinstance(restored, WindowsHost)
     assert restored.config.password == "top-secret"
     assert restored.config.dialect is POWERSHELL
     assert restored.config.path_flavor is WindowsPathname
@@ -130,7 +130,7 @@ def test_ssh_uri_round_trip_keeps_secrets_separate():
 
 
 def test_winrms_uri_round_trip_keeps_secrets_separate():
-    source = WinRMHost(
+    source = WindowsHost.from_winrm(
         WinRMConfig(
             "windows.example.com",
             "domain user",
@@ -145,7 +145,7 @@ def test_winrms_uri_round_trip_keeps_secrets_separate():
     uri = source.connection_uri
     assert "top-secret" not in uri
     restored = Host(uri, password="top-secret")
-    assert isinstance(restored, WinRMHost)
+    assert isinstance(restored, WindowsHost)
     assert restored.scheme == "winrms"
     assert restored.config.username == "domain user"
     assert restored.config.password == "top-secret"
@@ -155,13 +155,35 @@ def test_winrms_uri_round_trip_keeps_secrets_separate():
     assert str(restored_config) == uri
 
 
+def test_ssh_path_flavor_selects_system_semantics_without_changing_dialect():
+    windows = Host(
+        str(
+            SshConfig(
+                "windows.example", path_flavor=WindowsPathname, dialect="powershell"
+            )
+        )
+    )
+    assert isinstance(windows, WindowsHost)
+    assert windows.shell_flavour is POWERSHELL
+    posix_pwsh = Host(str(SshConfig("posix.example", dialect="powershell")))
+    assert isinstance(posix_pwsh, PosixHost)
+    assert posix_pwsh.shell_flavour is POWERSHELL
+
+
+def test_transport_system_hosts_have_safe_info_fallback_without_connection():
+    ssh = Host("ssh://root@example.com")
+    winrm = Host("winrm://user@example.com")
+    assert ssh.info().hostname == "example.com"
+    assert winrm.info().hostname == "example.com"
+
+
 @pytest.mark.parametrize(
     "host",
     [
         LocalHost(),
-        SshHost(SshConfig("host")),
-        WinRMHost(WinRMConfig("host", "user")),
-        WinRMHost(WinRMConfig("host", "user", ssl=True)),
+        PosixHost.from_ssh(SshConfig("host")),
+        WindowsHost.from_winrm(WinRMConfig("host", "user")),
+        WindowsHost.from_winrm(WinRMConfig("host", "user", ssl=True)),
     ],
 )
 def test_scheme_matches_connection_uri_and_registered_scheme(host):
@@ -242,12 +264,12 @@ def test_repr_redacts_credentials():
 
 
 def test_capabilities_are_explicit():
-    assert SshHost(SshConfig("host")).capabilities == frozenset(
-        ("run", "path", "spawn", "tty")
-    )
-    assert WinRMHost(WinRMConfig("host", "user", "secret")).capabilities == frozenset(
+    assert PosixHost.from_ssh(SshConfig("host")).capabilities == frozenset(
         ("run", "path")
     )
+    assert WindowsHost.from_winrm(
+        WinRMConfig("host", "user", "secret")
+    ).capabilities == frozenset(("run", "path"))
 
 
 def test_base_unsupported_operations_fail_immediately():

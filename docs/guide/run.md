@@ -2,7 +2,8 @@
 
 Concrete hosts implement `Host.run(...)` where their transport can support it:
 `LocalHost` uses POSIX sh or Windows PowerShell according to the local platform,
-`SshHost` uses `asyncssh`, and `WinRMHost` uses PowerShell through `pywinrm` or
+`PosixHost.from_ssh(SshConfig(...))` uses `asyncssh`, and
+`WindowsHost.from_winrm(WinRMConfig(...))` uses PowerShell through `pywinrm` or
 the current Windows security context. `ContainerHost` uses Docker Engine exec,
 and `QemuHost` uses QEMU Guest Agent `guest-exec`.
 

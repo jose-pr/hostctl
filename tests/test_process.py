@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from hostctl import SshConfig, SshHost
+from hostctl import SshConfig
+from hostctl.host._ssh import _SshTransport
 from hostctl.process import Process, SshProcess, TerminalOptions
 
 
@@ -95,7 +96,7 @@ def test_terminal_options_validate_and_publish_asyncssh_size():
 
 
 def test_ssh_spawn_renders_command_and_requests_terminal():
-    host = SshHost(SshConfig("host"))
+    host = _SshTransport(SshConfig("host"))
     ssh = _SSH()
     host._ssh = ssh
 
@@ -119,7 +120,7 @@ def test_ssh_spawn_renders_command_and_requests_terminal():
 
 
 def test_ssh_spawn_without_command_opens_default_shell():
-    host = SshHost(SshConfig("host"))
+    host = _SshTransport(SshConfig("host"))
     ssh = _SSH()
     host._ssh = ssh
 

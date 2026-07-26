@@ -29,10 +29,10 @@ Subclass a concrete host only when the machine itself has additional transport
 behavior—for example, a management WebSocket filesystem fallback:
 
 ```python
-from hostctl import SshHost
+from hostctl import PosixHost, SshConfig
 
 
-class ManagedHost(SshHost):
+class ManagedHost(PosixHost):
     def path(self, *segments, backend=None):
         if backend in (None, "sftp"):
             return super().path(*segments, backend=backend)

@@ -13,9 +13,7 @@ from their docstrings.
 ::: hostctl.LocalConfig
 ::: hostctl.LocalHost
 ::: hostctl.SshConfig
-::: hostctl.SshHost
 ::: hostctl.WinRMConfig
-::: hostctl.WinRMHost
 ::: hostctl.ContainerConfig
 ::: hostctl.ContainerHost
 ::: hostctl.QemuConfig

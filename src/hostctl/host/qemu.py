@@ -43,7 +43,8 @@ from ._common import (
     strict_uri_query,
     uri_host,
 )
-from ._ssh import SshConfig, SshHost
+from ._ssh import SshConfig
+from .system import PosixHost
 
 QemuTransport = typing.Literal["libvirt", "unix", "ssh"]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
@@ -241,7 +242,7 @@ class QemuHost(Host):
     def __init__(self, config: QemuConfig) -> None:
         self.config = config
         self._transport: typing.Optional[GuestAgentTransport] = None
-        self._ssh_host: typing.Optional[SshHost] = None
+        self._ssh_host: typing.Optional[PosixHost] = None
         self._commands: typing.Optional[typing.FrozenSet[str]] = None
         self._os_info: typing.Mapping[str, object] = {}
         self._hostname: typing.Optional[str] = None
@@ -265,7 +266,7 @@ class QemuHost(Host):
                     timeout=self.config.agent_timeout,
                 )
             else:
-                ssh_host = SshHost(typing.cast(SshConfig, self.config.ssh))
+                ssh_host = typing.cast(SshConfig, self.config.ssh)._create_host()
                 try:
                     ssh_host.connect()
                 except Exception:
@@ -275,12 +276,13 @@ class QemuHost(Host):
                         pass
                     raise
                 self._ssh_host = ssh_host
+                ssh_provider = ssh_host._executor_selector.providers[0]
                 socket_path = self.config.socket_path or (
                     f"/run/qemu-server/{self.config.domain}.qga"
                 )
                 self._transport = SshUnixGuestAgentTransport(
                     socket_path,
-                    lambda: self._ssh_host.ssh,
+                    lambda: ssh_provider.transport.ssh,
                     timeout=self.config.agent_timeout,
                 )
         return self._transport

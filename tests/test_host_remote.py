@@ -1,4 +1,4 @@
-"""SshHost command construction without a live SSH endpoint."""
+"""SSH provider command construction without a live endpoint."""
 
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from hostctl import (
     HostConfig,
     PowerShellFlavour,
     SshConfig,
-    SshHost,
 )
+from hostctl.host._ssh import _SshTransport
 
 
 class _Result:
@@ -56,7 +56,7 @@ class _TimeoutSSH(_StubSSH):
 
 
 def _host(shell=None, result=None):
-    host = SshHost(
+    host = _SshTransport(
         shell or SshConfig("nas.example.com", username="admin", password="secret")
     )
     stub = _StubSSH(result)
@@ -150,7 +150,7 @@ def test_ssh_check_is_applied_after_completed_process_conversion():
 
 
 def test_ssh_timeout_uses_subprocess_exception_contract():
-    host = SshHost(SshConfig("host"))
+    host = _SshTransport(SshConfig("host"))
     host._ssh = _TimeoutSSH()
 
     with pytest.raises(subprocess.TimeoutExpired) as raised:
@@ -278,7 +278,7 @@ def test_ssh_auto_detects_windows_shell_in_probe_order(responses, expected):
             returncode, stdout = responses[len(self.calls) - 1]
             return _Result(returncode=returncode, stdout=stdout, stderr="")
 
-    host = SshHost(SshConfig("host", dialect="auto", path_flavor=PureWindowsPath))
+    host = _SshTransport(SshConfig("host", dialect="auto", path_flavor=PureWindowsPath))
     stub = _ProbeSSH()
     host._ssh = stub
 
@@ -298,8 +298,10 @@ def test_ssh_path_flavor_requires_a_concrete_pure_path_constructor():
 
 def test_sftp_path_styles_when_ssh_extra_is_available():
     pytest.importorskip("asyncssh")
-    posix = SshHost(SshConfig("host")).path("/etc")
-    windows = SshHost(SshConfig("host", path_flavor=WindowsPathname)).path(r"C:\Temp")
+    posix = _SshTransport(SshConfig("host")).path("/etc")
+    windows = _SshTransport(SshConfig("host", path_flavor=WindowsPathname)).path(
+        r"C:\Temp"
+    )
     assert str(posix) == "sftp://host:22/etc"
     assert str(windows) == "sftp://host:22/C:/Temp"
     assert isinstance(posix, NextPath)

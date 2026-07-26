@@ -6,7 +6,8 @@ import types
 
 import pytest
 
-from hostctl import HostConfig, RunspaceSession, WinRMConfig, WinRMHost
+from hostctl import HostConfig, RunspaceSession, WinRMConfig
+from hostctl.host._winrm import _WinRMTransport
 from hostctl.executor.psrp import PsrpExecutor, pypsrp_available
 from hostctl.process.psrp import PipelineResult, PipelineStreams
 
@@ -20,7 +21,7 @@ def test_provider_uri_roundtrip_and_secret_safety():
 
 def test_explicit_psrp_has_actionable_error_when_missing(monkeypatch):
     monkeypatch.setattr("hostctl.host._winrm.pypsrp_available", lambda: False)
-    host = WinRMHost(WinRMConfig("host", "user", provider="psrp"))
+    host = _WinRMTransport(WinRMConfig("host", "user", provider="psrp"))
     with pytest.raises(ImportError, match="Python 3.10|psrp"):
         host.runspace()
 

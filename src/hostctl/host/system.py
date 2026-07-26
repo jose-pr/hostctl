@@ -17,7 +17,6 @@ from ..provider import (
     PathProvider,
     ProviderSelector,
     ProviderSelection,
-    ProviderProbe,
 )
 from ..shell import CMD, POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ._common import (
@@ -34,25 +33,6 @@ from ._common import (
     normalize_os_family,
 )
 from .composite_path import CompositePath
-
-
-class _HostExecutorProvider(ExecutorProvider):
-    """Adapter which exposes an existing transport host as a provider."""
-
-    def __init__(self, host: Host, name: str):
-        self._host = host
-        super().__init__(name, host.executor, capabilities=host.executor_capabilities)
-
-    def probe(self):
-        return ProviderProbe("available", capabilities=self.capabilities)
-
-
-class _HostPathProvider(PathProvider):
-    def __init__(self, host: Host, name: str):
-        self._host = host
-        super().__init__(
-            name, lambda *segments: host.path(*segments), capabilities=("path",)
-        )
 
 
 class SystemConfig(HostConfig):
@@ -124,39 +104,17 @@ class SystemHost(Host):
         info: HostInfo | None = None,
     ):
         self.config = config or SystemConfig()
-        self._legacy_host = None
-        if not executor_providers and not path_providers:
-            # Transport configs remain public compatibility entry points while
-            # their operational legs are exposed through provider adapters.
-            config_type = type(self.config).__name__
-            if config_type == "SshConfig":
-                from ._ssh import SshHost
-
-                self._legacy_host = SshHost(self.config)
-                executor_providers = (_HostExecutorProvider(self._legacy_host, "ssh"),)
-                path_providers = (_HostPathProvider(self._legacy_host, "sftp"),)
-                if shell is None:
-                    shell = getattr(self.config, "dialect", None)
-                    if shell == "auto":
-                        shell = self.default_shell
-            elif config_type == "WinRMConfig":
-                from ._winrm import WinRMHost
-
-                self._legacy_host = WinRMHost(self.config)
-                executor_providers = (
-                    _HostExecutorProvider(self._legacy_host, "winrm"),
-                )
-                path_providers = (_HostPathProvider(self._legacy_host, "winrm"),)
-                if shell is None:
-                    shell = self.default_shell
         self._executor_selector = ProviderSelector(executor_providers)
         self._path_selector = ProviderSelector(path_providers)
+        self._shell_resolver = (
+            shell if callable(shell) and not isinstance(shell, type) else None
+        )
         self._shell = (
             shell_flavour(shell)
-            if shell is not None
+            if shell is not None and self._shell_resolver is None
             else (
-                shell_flavour(self.config.shell)
-                if self.config.shell
+                shell_flavour(getattr(self.config, "shell", None))
+                if getattr(self.config, "shell", None)
                 else self.default_shell
             )
         )
@@ -165,6 +123,8 @@ class SystemHost(Host):
 
     @property
     def shell_flavour(self):
+        if self._shell is None and self._shell_resolver is not None:
+            self._shell = shell_flavour(self._shell_resolver())
         if self._shell is None:
             raise NotImplementedError(
                 f"{type(self).__name__} does not configure a shell"
@@ -193,16 +153,25 @@ class SystemHost(Host):
         return selected.provider
 
     def connect(self):
+        if self._connected:
+            return
+        connected = []
+        try:
+            for provider in (
+                *self._executor_selector.providers,
+                *self._path_selector.providers,
+            ):
+                connect = getattr(provider, "connect", None)
+                if connect:
+                    connect()
+                connected.append(provider)
+        except BaseException:
+            for provider in reversed(connected):
+                close = getattr(provider, "close", None)
+                if close:
+                    close()
+            raise
         self._connected = True
-        if self._legacy_host is not None:
-            self._legacy_host.connect()
-        for provider in (
-            *self._executor_selector.providers,
-            *self._path_selector.providers,
-        ):
-            connect = getattr(provider, "connect", None)
-            if connect:
-                connect()
 
     def close(self):
         if not self._connected:
@@ -213,18 +182,24 @@ class SystemHost(Host):
             close = getattr(provider, "close", None)
             if close:
                 close()
-        if self._legacy_host is not None:
-            self._legacy_host.close()
         self._connected = False
         self._executor_selector.invalidate()
         self._path_selector.invalidate()
 
     def info(self) -> HostInfo:
-        if self._legacy_host is not None:
-            return self._legacy_host.info()
         if self._info is not None:
             return self._info
-        return HostInfo(hostname=self.config.authority, os_family=self.system_family)
+        try:
+            provider = self._executor_selector.select().provider
+            callback = getattr(provider, "info", None)
+            if callback is not None:
+                return callback()
+        except Exception:
+            pass
+        hostname = getattr(self.config, "authority", None) or getattr(
+            self.config, "host", None
+        )
+        return HostInfo(hostname=hostname, os_family=self.system_family)
 
     def path(self, *segments: PathLike, backend: str | None = None) -> Path:
         if backend is None:
@@ -271,13 +246,6 @@ class SystemHost(Host):
             return CompositePath.from_path(
                 value, fallback, fallback.path, self._path_selector.providers
             )
-        value = selected.provider.path(*segments)
-        return CompositePath.from_path(
-            value,
-            selected.provider,
-            selected.provider.path,
-            self._path_selector.providers,
-        )
 
     def run(
         self,
@@ -305,8 +273,6 @@ class SystemHost(Host):
             stdin=stdin,
             stdout=stdout,
             stderr=stderr,
-            cwd=cwd,
-            env=env,
             capture_output=capture_output,
             check=check,
             encoding=encoding,
@@ -315,6 +281,10 @@ class SystemHost(Host):
             timeout=timeout,
             text=text,
         )
+        if cwd is not None and "cwd" in provider.capabilities:
+            options["cwd"] = cwd
+        if env is not None and "env" in provider.capabilities:
+            options["env"] = env
         if direct is not None:
             command, args = direct
             if executable is not None:
@@ -322,9 +292,17 @@ class SystemHost(Host):
                     "executable cannot be combined with a direct command"
                 )
             if "args" not in provider.capabilities and args:
-                raise NotImplementedError(
-                    f"executor provider {provider.name!r} does not support argv arguments"
+                if self._shell is None:
+                    raise NotImplementedError(
+                        f"executor provider {provider.name!r} does not support argv arguments"
+                    )
+                command = self.shell_flavour.command(
+                    cmds,
+                    executable=executable,
+                    cwd=None if "cwd" in provider.capabilities else cwd,
+                    env=None if "env" in provider.capabilities else env,
                 )
+                return provider.execute(command.command, **options)
             try:
                 return provider.execute(command, *args, **options)
             except OperationNotStarted:
@@ -338,13 +316,36 @@ class SystemHost(Host):
             raise NotImplementedError(
                 "buffered run requires a shell or a direct executable"
             )
-        script = self._shell.script(cmds, cwd=None, env=None)
-        invocation = self._shell.invocation(script, executable=executable)
+        native_cwd = cwd if "cwd" in provider.capabilities else None
+        native_env = env if "env" in provider.capabilities else None
+        flavour = self.shell_flavour
+        command = flavour.command(
+            cmds,
+            executable=executable,
+            cwd=None if native_cwd is not None else cwd,
+            env=None if native_env is not None else env,
+        )
+        if native_cwd is not None:
+            options["cwd"] = native_cwd
+        if native_env is not None:
+            options["env"] = native_env
+        if "args" not in provider.capabilities:
+            return provider.execute(command.command, **options)
+        invocation = flavour.invocation(command.command, executable=executable)
         try:
             return provider.execute(invocation[0], *invocation[1:], **options)
         except OperationNotStarted:
             fallback = self._executor_selector.select(exclude=(provider.name,)).provider
             return fallback.execute(invocation[0], *invocation[1:], **options)
+
+    def spawn(self, *cmds, **options):
+        provider = self._executor_selector.select().provider
+        spawn = getattr(provider, "spawn", None)
+        if spawn is None:
+            raise NotImplementedError(
+                f"executor provider {provider.name!r} does not support sessions"
+            )
+        return spawn(*cmds, **options)
 
 
 class PosixHost(SystemHost):
@@ -354,7 +355,7 @@ class PosixHost(SystemHost):
     @classmethod
     def from_ssh(cls, config):
         """Compose POSIX semantics over an existing :class:`SshConfig`."""
-        return cls(config)
+        return config._create_host()
 
 
 class WindowsHost(SystemHost):
@@ -364,7 +365,7 @@ class WindowsHost(SystemHost):
     @classmethod
     def from_winrm(cls, config):
         """Compose Windows semantics over an existing :class:`WinRMConfig`."""
-        return cls(config)
+        return config._create_host()
 
 
 class IosHost(SystemHost):
