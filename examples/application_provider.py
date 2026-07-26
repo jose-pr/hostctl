@@ -33,7 +33,20 @@ class MetadataProvider(ApplicationPathProvider):
             "metadata",
             factory,
             available=available,
-            capabilities=("stat", "scandir", "read", "open_read", "write"),
+            capabilities=(
+                "stat",
+                "scandir",
+                "exists",
+                "is_file",
+                "is_dir",
+                "write",
+                "open_write",
+                "mkdir",
+                "chmod",
+                "unlink",
+                "rmdir",
+                "rename",
+            ),
         )
 
 
@@ -61,13 +74,13 @@ class SftpProvider(ApplicationPathProvider):
         )
 
 
-def providers(*, rpc, sftp, download=None):
-    """Return an ordered RPC/SFTP/download provider collection.
+def providers(*, metadata, sftp, download=None):
+    """Return an ordered metadata/SFTP/download provider collection.
 
-    ``rpc`` is preferred for metadata and mutations; SFTP and download
-    providers can be supplied as fallbacks by the caller.
+    ``metadata`` is preferred for metadata and mutations. SFTP is the preferred
+    content channel, with the read-only download provider as its fallback.
     """
-    result = [rpc, sftp]
+    result = [metadata, sftp]
     if download is not None:
         result.append(download)
     return tuple(result)

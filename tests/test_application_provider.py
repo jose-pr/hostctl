@@ -23,22 +23,22 @@ def test_application_provider_prefers_sftp_after_rpc_probe_declines():
     assert path.via("sftp").provider.name == "sftp"
 
 
-def test_application_provider_operation_selection_and_pinning(tmp_path):
+def test_application_provider_operation_selection_and_pinning():
     metadata_backend = MemPathBackend()
     download_backend = MemPathBackend()
     sftp_backend = MemPathBackend()
-
-    def download(*parts):
-        download_backend.setdefault("payload", bytearray(b"download"))
-        return MemPath(*parts, backend=download_backend)
+    MemPath("payload", backend=download_backend).write_bytes(b"download")
+    MemPath("payload", backend=sftp_backend).write_bytes(b"sftp")
 
     calls = []
 
     def sftp(*parts):
         calls.append("sftp")
-        if len(calls) == 1:
-            raise OperationNotStarted("SFTP preflight unavailable")
-        return MemPath(*parts, backend=sftp_backend)
+        raise OperationNotStarted("SFTP preflight unavailable")
+
+    def download(*parts):
+        calls.append("download")
+        return MemPath(*parts, backend=download_backend)
 
     host = PosixHost(
         path_providers=(
@@ -49,10 +49,52 @@ def test_application_provider_operation_selection_and_pinning(tmp_path):
     )
     path = host.path("payload")
     assert path.provider.name == "metadata"
-    with pytest.raises(OperationNotStarted):
-        path.via("sftp")
-    pinned = path.via("sftp")
+    # Reorder only this example instance so SFTP is attempted before the
+    # read-only download leg. The declared operation capabilities cause the
+    # metadata provider to be skipped for content reads.
+    host = PosixHost(
+        path_providers=(
+            MetadataProvider(lambda *parts: MemPath(*parts, backend=metadata_backend)),
+            SftpProvider(sftp),
+            DownloadProvider(download),
+        )
+    )
+    assert host.path("payload").read_bytes() == b"download"
+    assert calls == ["sftp", "download"]
+
+    available = PosixHost(
+        path_providers=(
+            MetadataProvider(lambda *parts: MemPath(*parts, backend=metadata_backend)),
+            SftpProvider(lambda *parts: MemPath(*parts, backend=sftp_backend)),
+            DownloadProvider(download),
+        )
+    )
+    pinned = available.path("payload").via("sftp")
     assert pinned.provider.name == "sftp"
-    assert calls == ["sftp", "sftp"]
+    assert pinned.read_bytes() == b"sftp"
     with pytest.raises(NotImplementedError):
-        path.via("download").write_bytes(b"mutation")
+        available.path("payload").via("download").write_bytes(b"mutation")
+
+
+def test_application_provider_does_not_replay_a_started_failure():
+    calls = []
+
+    def started(*parts):
+        calls.append("sftp")
+        raise RuntimeError("content operation may have started")
+
+    def fallback(*parts):
+        calls.append("download")
+        return MemPath(*parts, backend=MemPathBackend())
+
+    host = PosixHost(
+        path_providers=(
+            MetadataProvider(lambda *parts: MemPath(*parts, backend=MemPathBackend())),
+            SftpProvider(started),
+            DownloadProvider(fallback),
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="may have started"):
+        host.path("payload").read_bytes()
+    assert calls == ["sftp"]
