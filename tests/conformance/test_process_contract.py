@@ -6,7 +6,7 @@ import io
 import pytest
 
 from hostctl.process import Process
-from .providers import fake_providers
+from .providers import fake_providers, provider_context
 
 
 class _MemoryProcess:
@@ -83,3 +83,15 @@ def test_process_eof_and_context_are_idempotent(provider):
         assert process.wait() == 0
     process.close()
     assert process.closed
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_provider_process_uses_transport_spawn_when_available(provider):
+    if "spawn" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no spawn capability")
+    with provider_context(provider) as host:
+        process = host.spawn("echo process")
+        try:
+            assert process.wait(timeout=5) == 0
+        finally:
+            process.close()
