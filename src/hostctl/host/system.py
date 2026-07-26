@@ -267,39 +267,34 @@ class SystemHost(Host):
     def executor_capabilities(self):
         values = set()
         for provider in self._executor_selector.providers:
-            if self._provider_probe(provider).usable:
+            if self._provider_probe(self._executor_selector, provider).usable:
                 values.update(provider.capabilities)
         return frozenset(values)
 
     @staticmethod
-    def _provider_probe(provider):
-        try:
-            result = provider.probe()
-        except Exception as exc:
-            from ..provider import ProviderProbe
-
-            return ProviderProbe("unavailable", type(exc).__name__)
-        return result
+    def _provider_probe(selector, provider):
+        return selector.probe(provider)
 
     @property
     def provider_details(self):
         """Return deterministic, non-dispatching provider availability details."""
         details = []
-        for kind, providers in (
-            ("executor", self._executor_selector.providers),
-            ("path", self._path_selector.providers),
+        for kind, selector in (
+            ("executor", self._executor_selector),
+            ("path", self._path_selector),
         ):
-            for provider in providers:
-                probe = self._provider_probe(provider)
+            for provider in selector.providers:
+                probe = self._provider_probe(selector, provider)
                 capabilities = probe.capabilities or provider.capabilities
                 details.append(
                     {
                         "kind": kind,
-                        "name": provider.name,
+                        "name": ProviderSelector.redact(provider.name),
                         "availability": probe.availability,
-                        "reason": probe.reason,
+                        "reason": ProviderSelector.redact(probe.reason),
                         "capabilities": tuple(sorted(capabilities)),
                         "system_hint": probe.system_hint,
+                        "policy": "ordered",
                     }
                 )
         return tuple(details)
@@ -308,11 +303,11 @@ class SystemHost(Host):
     def capabilities(self):
         values = set()
         executor_probes = [
-            (provider, self._provider_probe(provider))
+            (provider, self._provider_probe(self._executor_selector, provider))
             for provider in self._executor_selector.providers
         ]
         path_probes = [
-            (provider, self._provider_probe(provider))
+            (provider, self._provider_probe(self._path_selector, provider))
             for provider in self._path_selector.providers
         ]
         if any(probe.usable for _, probe in executor_probes):
@@ -427,7 +422,7 @@ class SystemHost(Host):
                 }
             )
         for provider in self._executor_selector.providers:
-            if not self._provider_probe(provider).usable:
+            if not self._provider_probe(self._executor_selector, provider).usable:
                 continue
             callback = getattr(provider, "info", None)
             if callback is None:
@@ -449,9 +444,7 @@ class SystemHost(Host):
         )
         if fields["hostname"] is None:
             fields["hostname"] = hostname
-        if self.system_family != "generic":
-            fields["os_family"] = self.system_family
-        elif fields["os_family"] is None:
+        if fields["os_family"] is None:
             fields["os_family"] = self.system_family
         return HostInfo(**fields)
 

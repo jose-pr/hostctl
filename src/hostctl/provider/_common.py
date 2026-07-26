@@ -191,6 +191,23 @@ class ProviderSelector:
             r"(?i)(password|secret|token|key)=([^&\s]+)", r"\1=<redacted>", text
         )
 
+    @classmethod
+    def redact(cls, value: object) -> str:
+        """Return a diagnostic string with credential-like values removed."""
+        return cls._safe_name(value)
+
+    def probe(self, provider) -> ProviderProbe:
+        """Return a provider probe cached for this selector generation."""
+        name = provider.name
+        if name in self._probe_cache:
+            return self._probe_cache[name]
+        try:
+            result = provider.probe()
+        except Exception as exc:
+            result = ProviderProbe("unavailable", type(exc).__name__)
+        self._probe_cache[name] = result
+        return result
+
     def select(
         self,
         *,
@@ -204,14 +221,7 @@ class ProviderSelector:
         for provider in self.providers:
             if provider.name in excluded:
                 continue
-            if provider.name in self._probe_cache:
-                probe = self._probe_cache[provider.name]
-            else:
-                try:
-                    probe = provider.probe()
-                except Exception as exc:
-                    probe = ProviderProbe("unavailable", type(exc).__name__)
-                self._probe_cache[provider.name] = probe
+            probe = self.probe(provider)
             allowed = probe.usable and (
                 capability is None
                 or capability in (probe.capabilities | provider.capabilities)

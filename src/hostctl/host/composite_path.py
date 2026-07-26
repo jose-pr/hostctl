@@ -96,7 +96,7 @@ class _CompositePathMixin:
         if pinned:
             self._pinned = True
 
-    def _providers_in_order(self, operation: PathOperation):
+    def _providers_in_order(self, operation: PathOperation, *, pin: bool = False):
         if self._pinned:
             if self._provider is None or not _supports(self._provider, operation):
                 raise NotImplementedError(
@@ -114,7 +114,7 @@ class _CompositePathMixin:
                     # agnostic; ``path`` is a wildcard only for this path
                     # operation layer, so select in order and apply the
                     # operation check locally.
-                    selected = self._selector.select(exclude=excluded)
+                    selected = self._selector.select(exclude=excluded, pin=pin)
                 except OperationNotStarted:
                     return
                 self._selection_trace = selected.trace
@@ -142,7 +142,7 @@ class _CompositePathMixin:
         pin: bool = False,
         with_provider: bool = False,
     ):
-        candidates = self._providers_in_order(operation)
+        candidates = self._providers_in_order(operation, pin=pin)
         attempted = False
         for provider in candidates:
             attempted = True

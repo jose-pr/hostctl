@@ -7,6 +7,7 @@ from hostctl import (
     HostConfig,
     HostInfo,
     OperationNotStarted,
+    PathProvider,
     PosixHost,
     ProviderProbe,
     ProviderSelector,
@@ -37,15 +38,24 @@ def test_selection_trace_has_generation_policy_pin_and_redaction():
 
 def test_provider_details_probe_without_dispatch_and_capabilities_filter():
     calls = []
+    probes = []
 
     def execute(*args, **kwargs):
         calls.append((args, kwargs))
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     unavailable = ExecutorProvider(
-        "offline", execute, probe=lambda: ProviderProbe("unavailable", "offline")
+        "offline",
+        execute,
+        probe=lambda: probes.append("offline")
+        or ProviderProbe("unavailable", "offline"),
     )
-    available = ExecutorProvider("online", execute, capabilities=("args",))
+    available = ExecutorProvider(
+        "online",
+        execute,
+        capabilities=("args",),
+        probe=lambda: probes.append("online") or ProviderProbe("available"),
+    )
     host = PosixHost(executor_providers=(unavailable, available))
 
     details = host.provider_details
@@ -54,6 +64,7 @@ def test_provider_details_probe_without_dispatch_and_capabilities_filter():
     assert host.capabilities == frozenset(("run",))
     assert host.executor_capabilities == frozenset(("args",))
     assert calls == []
+    assert probes == ["offline", "online"]
 
 
 def test_system_config_roundtrip_accepts_constructor_only_provider_options():
@@ -76,14 +87,14 @@ def test_system_config_roundtrip_accepts_constructor_only_provider_options():
 
 def test_info_merges_first_non_none_fields_and_preserves_system_family():
     first = ExecutorProvider("first", lambda *args, **kwargs: None)
-    first.info = lambda: HostInfo(hostname="remote", os_name="Linux")
+    first.info = lambda: HostInfo(hostname="remote", os_family="linux", os_name="Linux")
     second = ExecutorProvider("second", lambda *args, **kwargs: None)
     second.info = lambda: HostInfo(os_version="6.8", architecture="x86_64")
     host = PosixHost(executor_providers=(first, second))
 
     assert host.info() == HostInfo(
         hostname="remote",
-        os_family="posix",
+        os_family="linux",
         os_name="Linux",
         os_version="6.8",
         architecture="x86_64",
@@ -110,3 +121,13 @@ def test_started_failure_never_replays_on_next_provider():
     with pytest.raises(RuntimeError, match="started"):
         host.run("echo hi", check=False)
     assert calls == ["started"]
+
+
+def test_composite_mutation_selection_trace_marks_pin():
+    from hostctl import HostPath
+
+    provider = PathProvider("local", lambda *parts: HostPath(*parts))
+    path = PosixHost(path_providers=(provider,)).path("value")
+    path.write_bytes(b"payload")
+
+    assert path.selection_trace[-1]["pin"] is True
