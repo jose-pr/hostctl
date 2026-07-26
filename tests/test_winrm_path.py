@@ -210,3 +210,18 @@ def test_winrm_backend_write_chunk_boundaries_stay_within_budget(size):
     assert all(
         len(script.encode("utf-8")) <= backend.max_script_bytes for script in scripts
     )
+
+
+def test_winrm_open_read_uses_lazy_range_requests():
+    scripts = []
+
+    def run(script, **kwargs):
+        scripts.append(script)
+        payload = __import__("base64").b64encode(b"ab").decode("ascii")
+        return subprocess.CompletedProcess(script, 0, payload, "")
+
+    backend = WinRMPathBackend(run)
+    with backend.open_read(r"C:\large.bin") as stream:
+        assert stream.read(2) == b"ab"
+    assert len(scripts) == 1
+    assert "Seek(0" in scripts[0]

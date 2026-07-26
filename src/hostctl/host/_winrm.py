@@ -535,6 +535,21 @@ class WinRMPathBackend:
             if line
         )
 
+    def read_range(self, path: str, offset: int, count: int) -> bytes:
+        """Read one bounded byte range through PowerShell."""
+        if offset < 0 or count < 0:
+            raise ValueError("offset and count must be non-negative")
+        body = (
+            "$s=[IO.File]::OpenRead($p);try{$s.Seek(%d,[IO.SeekOrigin]::Begin)|Out-Null;"
+            "$b=New-Object byte[] %d;$n=$s.Read($b,0,$b.Length);"
+            "[Convert]::ToBase64String($b,0,$n)}finally{$s.Dispose()}" % (offset, count)
+        )
+        output = self._execute(path, body)
+        return b"".join(base64.b64decode(line) for line in output.splitlines() if line)
+
+    def open_read(self, path: str) -> io.BufferedReader:
+        return io.BufferedReader(_WinRMReadStream(self, path))
+
     def write_bytes(self, path: str, value: bytes, *, exclusive: bool = False) -> None:
         temporary = path + ".hostctl-" + uuid.uuid4().hex
         try:
@@ -676,6 +691,28 @@ class _WriteBackBytesIO(io.BytesIO):
             pass
 
 
+class _WinRMReadStream(io.RawIOBase):
+    """Lazy bounded reader backed by independent WinRM range requests."""
+
+    def __init__(self, backend: WinRMPathBackend, path: str) -> None:
+        self._backend = backend
+        self._path = path
+        self._offset = 0
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, target: bytearray) -> int:
+        if not target:
+            return 0
+        data = self._backend.read_range(self._path, self._offset, len(target))
+        if not data:
+            return 0
+        target[: len(data)] = data
+        self._offset += len(data)
+        return len(data)
+
+
 class WinRMPath(WindowsPathname, Path):
     """A Windows path whose I/O executes through a WinRM host."""
 
@@ -740,6 +777,8 @@ class WinRMPath(WindowsPathname, Path):
             raise ValueError(f"invalid mode: {mode!r}")
         readable = "r" in mode or "+" in mode
         writable = any(value in mode for value in "wax+")
+        if "r" in mode and not writable and hasattr(self.backend, "open_read"):
+            return self.backend.open_read(str(self))
         if "r" in mode or "a" in mode:
             try:
                 value = self.backend.read_bytes(str(self))

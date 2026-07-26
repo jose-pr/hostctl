@@ -68,6 +68,43 @@ class _Container:
         return True
 
 
+def test_container_open_read_is_lazy_and_bounded():
+    container = _Container()
+    payload = _tar((("data.bin", b"x" * (1024 * 1024)),))
+    pulls = []
+
+    def get_archive(path):
+        if path != "/data.bin":
+            raise FileNotFoundError(path)
+
+        def chunks():
+            for offset in range(0, len(payload), 1024):
+                pulls.append(offset)
+                yield payload[offset : offset + 1024]
+
+        return chunks(), {}
+
+    container.get_archive = get_archive
+    path = PosixContainerPath("/data.bin", backend=ContainerPathBackend(container))
+    with path.open("rb") as stream:
+        assert stream.read(1) == b"x"
+        assert len(pulls) < len(payload) // 1024
+
+
+def test_container_path_copy_to_local_path(tmp_path):
+    container = _Container()
+    container.archives["/data.bin"] = _tar((("data.bin", b"cross-host"),))
+    source = PosixContainerPath(
+        "/data.bin",
+        backend=ContainerPathBackend(container),
+    )
+    target = Path(tmp_path / "copy.bin")
+    source.copy(target)
+    assert target.read_bytes() == b"cross-host"
+    with pytest.raises(FileExistsError):
+        source.copy(target)
+
+
 def test_posix_path_contract_backend_propagation_and_archive_reads():
     container = _Container()
     container.archives["/srv"] = _tar(

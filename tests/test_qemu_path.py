@@ -143,6 +143,24 @@ def test_bounded_binary_transfer_retries_partial_writes_and_closes_handles():
     assert len(write_calls) > 3
 
 
+def test_qga_open_read_fetches_incrementally():
+    transport = _Transport()
+    transport.files["/large"] = bytearray(b"x" * 64)
+    backend = QgaPathBackend(
+        transport,
+        supported_commands=FILE_COMMANDS,
+        chunk_size=4,
+    )
+    path = PosixQemuPath("/large", backend=backend)
+    with path.open("rb") as stream:
+        assert stream.read(1) == b"x"
+        reads = [
+            call for call, _ in transport.calls if call["execute"] == "guest-file-read"
+        ]
+        assert len(reads) == 1
+        assert reads[0]["arguments"]["count"] == 4
+
+
 def test_read_error_is_normalized_and_handle_is_closed():
     transport = _Transport()
     transport.files["/secret"] = bytearray(b"value")

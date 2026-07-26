@@ -695,6 +695,37 @@ class QgaPathBackend:
                     raise
         return b"".join(chunks)
 
+    def read_handle(
+        self, handle: int, count: int, *, path: str
+    ) -> typing.Tuple[bytes, bool]:
+        if count <= 0:
+            return b"", True
+        value = self._execute(
+            "guest-file-read",
+            {"handle": handle, "count": count},
+            path=path,
+        )
+        if not isinstance(value, dict):
+            raise OSError("QGA guest-file-read returned invalid data")
+        encoded = value.get("buf-b64", "")
+        if not isinstance(encoded, str):
+            raise OSError("QGA guest-file-read returned invalid content")
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise OSError("QGA guest-file-read returned invalid Base64") from exc
+        actual = value.get("count", len(data))
+        eof = value.get("eof", False)
+        if not isinstance(actual, int) or actual != len(data):
+            raise OSError("QGA guest-file-read returned an invalid count")
+        if not isinstance(eof, bool):
+            raise OSError("QGA guest-file-read returned an invalid EOF flag")
+        return data, eof or not data
+
+    def open_read(self, path: str) -> io.BufferedReader:
+        self._require(self._READ_COMMANDS)
+        return io.BufferedReader(_QgaReadStream(self, path))
+
     def _write_direct(self, path: str, value: bytes) -> None:
         self._require(self._WRITE_COMMANDS)
         handle = self._open(path, "wb")
@@ -796,6 +827,39 @@ class _WriteBackBytesIO(io.BytesIO):
             super().close()
 
 
+class _QgaReadStream(io.RawIOBase):
+    """Lazy QGA guest-file-read stream with one bounded request per fill."""
+
+    def __init__(self, backend: QgaPathBackend, path: str) -> None:
+        self._backend = backend
+        self._path = path
+        self._handle = backend._open(path, "rb")
+        self._eof = False
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, target: bytearray) -> int:
+        if self._eof or not target:
+            return 0
+        data, eof = self._backend.read_handle(
+            self._handle,
+            min(len(target), self._backend.chunk_size),
+            path=self._path,
+        )
+        if data:
+            target[: len(data)] = data
+        self._eof = eof
+        return len(data)
+
+    def close(self) -> None:
+        if not self.closed:
+            try:
+                self._backend._close(self._handle, self._path)
+            finally:
+                super().close()
+
+
 class _QgaPathMixin:
     __slots__ = ()
 
@@ -836,6 +900,8 @@ class _QgaPathMixin:
             raise ValueError(f"invalid mode: {mode!r}")
         readable = "r" in mode or "+" in mode
         writable = any(value in mode for value in "wax+")
+        if "r" in mode and not writable:
+            return self.backend.open_read(str(self))
         if "r" in mode or "a" in mode:
             try:
                 value = self.backend.read_bytes(str(self))

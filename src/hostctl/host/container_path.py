@@ -48,6 +48,32 @@ class _ChunkReader(io.RawIOBase):
         return count
 
 
+class _ArchiveReadStream(io.RawIOBase):
+    """Close an extracted tar member and its streaming archive together."""
+
+    def __init__(self, member: typing.BinaryIO, archive: tarfile.TarFile) -> None:
+        self._member = member
+        self._archive = archive
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, target: bytearray) -> int:
+        data = self._member.read(len(target))
+        if not data:
+            return 0
+        target[: len(data)] = data
+        return len(data)
+
+    def close(self) -> None:
+        if not self.closed:
+            try:
+                self._member.close()
+            finally:
+                self._archive.close()
+        super().close()
+
+
 def _safe_name(name: str) -> typing.Tuple[str, ...]:
     """Return safe POSIX tar components, rejecting archive traversal."""
     normalized = name.replace("\\", "/")
@@ -253,6 +279,35 @@ class ContainerPathBackend:
         finally:
             archive.close()
 
+    def open_read(self, path: str) -> io.BufferedReader:
+        """Open a Docker archive member as a bounded streaming reader."""
+        try:
+            stream, _ = self.container.get_archive(path)
+            archive = tarfile.open(fileobj=_ChunkReader(stream), mode="r|*")
+        except Exception as exc:
+            status = getattr(exc, "status_code", None) or getattr(
+                getattr(exc, "response", None), "status_code", None
+            )
+            if status == 404:
+                raise FileNotFoundError(path) from exc
+            if status == 403:
+                raise PermissionError(path) from exc
+            raise
+        try:
+            member = archive.next()
+            if member is None:
+                raise FileNotFoundError(path)
+            _safe_name(member.name)
+            if member.isdir():
+                raise IsADirectoryError(path)
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                raise OSError(f"archive member has no content: {path}")
+            return io.BufferedReader(_ArchiveReadStream(extracted, archive))
+        except BaseException:
+            archive.close()
+            raise
+
     def _split(self, path: str) -> typing.Tuple[str, str]:
         if path.endswith(("/", "\\")):
             raise IsADirectoryError(path)
@@ -358,6 +413,8 @@ class _ContainerPathMixin:
             raise ValueError(f"invalid mode: {mode!r}")
         readable = "r" in mode or "+" in mode
         writable = any(value in mode for value in "wax+")
+        if "r" in mode and not writable:
+            return self.backend.open_read(str(self))
         if "r" in mode or "a" in mode:
             try:
                 value = self.backend.read_bytes(str(self))
