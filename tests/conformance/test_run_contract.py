@@ -20,6 +20,8 @@ def test_live_provider_registry_is_env_gated():
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_direct_argv_and_capture(provider):
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
     with provider_context(provider) as host:
         result = host.run(
             Path(sys.executable),
@@ -34,6 +36,8 @@ def test_direct_argv_and_capture(provider):
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_text_env_cwd_and_nonzero_check(provider, tmp_path):
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
     code = "import os, pathlib; print(os.environ['HOSTCTL_CONFORMANCE']); print(pathlib.Path.cwd())"
     with provider_context(provider) as host:
         result = host.run(
@@ -56,6 +60,8 @@ def test_text_env_cwd_and_nonzero_check(provider, tmp_path):
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_silent_capture_is_empty_bytes(provider):
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
     with provider_context(provider) as host:
         result = host.run(Path(sys.executable), "-c", "pass")
     assert result.stdout == b""
@@ -64,6 +70,8 @@ def test_silent_capture_is_empty_bytes(provider):
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_shell_command_shapes_and_operators_remain_explicit(provider):
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
     with provider_context(provider) as host:
         invocation = host.shell_flavour.invocation("echo first")
         if shutil.which(invocation[0]) is None:
@@ -80,6 +88,8 @@ def test_shell_command_shapes_and_operators_remain_explicit(provider):
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_timeout_and_input_are_subprocess_compatible(provider):
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
     with provider_context(provider) as host:
         result = host.run(
             Path(sys.executable),

@@ -13,6 +13,8 @@ from .providers import fake_providers, provider_context
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_path_round_trip_and_type(provider, tmp_path):
+    if "path" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no path capability")
     with provider_context(provider) as host:
         path = host.path(tmp_path, "payload.txt")
         assert isinstance(path, NextPath)
@@ -25,6 +27,8 @@ def test_path_round_trip_and_type(provider, tmp_path):
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_path_error_types(provider, tmp_path):
+    if "path" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no path capability")
     with provider_context(provider) as host:
         missing = host.path(tmp_path, "missing")
         with pytest.raises(FileNotFoundError):
@@ -44,6 +48,8 @@ def test_path_error_types(provider, tmp_path):
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_path_empty_text_and_metadata_roundtrip(provider, tmp_path):
+    if "path" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no path capability")
     with provider_context(provider) as host:
         empty = host.path(tmp_path, "empty.bin")
         empty.write_bytes(b"")
@@ -56,6 +62,8 @@ def test_path_empty_text_and_metadata_roundtrip(provider, tmp_path):
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_path_dangling_symlink_exists_is_boolean(provider, tmp_path):
+    if "path" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no path capability")
     if not hasattr(os, "symlink"):
         pytest.skip("symlink unavailable")
     with provider_context(provider) as host:
