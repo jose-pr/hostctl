@@ -358,12 +358,11 @@ class SystemHost(Host):
         self._connected_providers = connected
         if self._initializer is not None and not self._initializer_generation:
             try:
-                target = connected[0] if connected else self
                 initializer = self._initializer
                 if isinstance(initializer, SessionInitializer):
-                    initializer(target)
+                    initializer(self)
                 else:
-                    initializer(target)
+                    initializer(self)
                 self._initializer_generation = True
             except BaseException:
                 for provider in reversed(connected):

@@ -51,15 +51,15 @@ class ProviderSelection:
 
 @dataclasses.dataclass(frozen=True)
 class SessionInitializer:
-    """Optional post-connect bootstrap hook for a persistent session."""
+    """Optional post-connect bootstrap hook receiving the connected system host."""
 
     initialize: typing.Callable[..., object]
     timeout: float | None = None
 
-    def __call__(self, session, **options):
+    def __call__(self, host, **options):
         if self.timeout is not None:
             options.setdefault("timeout", self.timeout)
-        return self.initialize(session, **options)
+        return self.initialize(host, **options)
 
 
 class ExecutorProvider:

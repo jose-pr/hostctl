@@ -58,22 +58,30 @@ def test_system_uri_roundtrip_and_ordered_providers():
 def test_system_initializer_default_and_generation_timeout_and_override():
     provider = _InitProvider()
     calls = []
-    config = PosixConfig("node", initializer=lambda session: calls.append(session))
+    config_calls = []
+    config = PosixConfig("node", initializer=lambda host: config_calls.append(host))
     host = PosixHost(
-        config, executor_providers=(provider,), initializer=lambda s: calls.append(s)
+        config,
+        executor_providers=(provider,),
+        initializer=lambda connected_host: calls.append(connected_host),
     )
     host.connect()
     host.connect()
-    assert len(calls) == 1 and calls[0] is provider
+    assert calls == [host]
+    assert config_calls == []
     host.close()
     host.connect()
-    assert len(calls) == 2
+    assert calls == [host, host]
     captured = []
     timeout_init = SessionInitializer(
-        lambda session, **opts: captured.append(opts), timeout=3
+        lambda connected_host, **opts: captured.append((connected_host, opts)),
+        timeout=3,
     )
-    PosixHost(executor_providers=(provider,), initializer=timeout_init).connect()
-    assert captured == [{"timeout": 3}]
+    initialized = PosixHost(
+        executor_providers=(_InitProvider(),), initializer=timeout_init
+    )
+    initialized.connect()
+    assert captured == [(initialized, {"timeout": 3})]
 
 
 def test_system_initializer_failure_cleans_up_without_replay():
