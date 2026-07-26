@@ -60,7 +60,10 @@ def normalize_asyncssh_error(
                 output=getattr(exc, "stdout", None),
                 stderr=getattr(exc, "stderr", None),
             )
-        return exc
+        # Connection/open timeouts have no subprocess command to attach, but
+        # must still cross the public boundary as a builtin timeout rather
+        # than leaking an AsyncSSH-specific exception.
+        return TimeoutError(str(exc))
     if isinstance(exc, module.PermissionDenied):
         return PermissionError(str(exc))
     if isinstance(exc, module.ProcessError):

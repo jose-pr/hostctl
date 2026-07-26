@@ -304,3 +304,26 @@ def test_sftp_path_styles_when_ssh_extra_is_available():
     assert str(windows) == "sftp://host:22/C:/Temp"
     assert isinstance(posix, NextPath)
     assert isinstance(windows, NextPath)
+
+
+def test_sftp_backend_is_reused_and_invalidated_on_close():
+    host, stub = _host()
+    first = host.path("/etc")
+    second = host.path("/var")
+    assert first.backend is second.backend
+    backend = first.backend
+    host.close()
+    assert host._sftp_backend is None
+    assert stub.closed and stub.waited
+    # A later path call gets a fresh backend after lifecycle close.
+    assert host.path("/tmp").backend is not backend
+
+
+def test_auto_posix_probe_preserves_shell_executable():
+    host, stub = _host(
+        SshConfig("host", dialect="auto"),
+        result=_Result(stdout="/usr/local/bin/bash\n", stderr=""),
+    )
+    host.run("echo hello")
+    command, _ = stub.calls[-1]
+    assert "/usr/local/bin/bash" in command

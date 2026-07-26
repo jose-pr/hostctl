@@ -27,5 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Subprocess-shaped execution options, normalized transport errors, bounded
   buffered file transfers, and Python 3.9+ typing support (Python 3.14 is the
   default development interpreter).
+- SSH execution now sends EOF for omitted stdin, rejects unsupported zero
+  buffering, normalizes missing exit statuses to `-1`, performs best-effort
+  timeout cleanup (with `TimeoutExpired.orphaned`), and normalizes persistent
+  process I/O failures. SFTP backends are reused per host and invalidated on
+  close; auto-dialect probes preserve the discovered shell executable.
 
 <!-- Add the [Unreleased] compare link after the first v0.1.0 tag exists. -->

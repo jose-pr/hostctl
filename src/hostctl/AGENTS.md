@@ -135,6 +135,16 @@ AsyncSSH authentication failures are exposed as `PermissionError`; SSH
 host-key, key-exchange, disconnect, connection-loss, protocol, and channel
 failures are exposed as `ConnectionError`. The original AsyncSSH exception is
 retained as `__cause__`.
+`SshHost.path()` reuses one `AsyncsshSftpBackend` per host and invalidates its
+cached sources during `close()`; each path call does not create another SFTP
+connection. `SshHost.close()` performs all AsyncSSH operations through the
+shared bridge. Omitted `run()` stdin is an explicit EOF stream, `bufsize=0` is
+rejected, and a missing remote exit status is reported as return code `-1`.
+Timeouts raise `subprocess.TimeoutExpired` with an `orphaned` flag indicating
+whether a process/channel termination hook was available. `dialect="auto"`
+retains the executable path reported by the successful probe. Persistent SSH
+process reads, writes, EOF, and close operations use the same transport-error
+normalization as `wait()`.
 
 ## Containers
 

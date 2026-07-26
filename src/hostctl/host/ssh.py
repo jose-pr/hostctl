@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import os
 import subprocess
+import threading
 import typing
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from urllib.parse import quote, unquote, urlencode
@@ -163,10 +165,13 @@ class SshHost(Host):
     def __init__(self, config: SshConfig) -> None:
         self.config = config
         self._ssh: typing.Optional[SshConnection] = None
+        self._ssh_lock = threading.RLock()
         self._executor = SshExecutor(lambda: self.ssh)
         self._resolved_dialect: typing.Optional[
-            typing.Tuple[typing.Tuple[object, ...], ShellFlavour]
+            typing.Tuple[typing.Tuple[object, ...], ShellFlavour, typing.Optional[str]]
         ] = None
+        self._sftp_backend: typing.Optional[object] = None
+        self._sftp_sources: typing.Set[object] = set()
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:
@@ -178,17 +183,18 @@ class SshHost(Host):
         if selection != "auto":
             return typing.cast(ShellFlavour, selection)
         key = (selection, self.config.path_flavor, self.config.executable)
-        if self._resolved_dialect is not None and self._resolved_dialect[0] == key:
-            return self._resolved_dialect[1]
-        resolved = (
-            self._detect_windows_shell()
-            if issubclass(self.config.path_flavor, PureWindowsPath)
-            else self._detect_posix_shell()
-        )
-        self._resolved_dialect = (key, resolved)
-        return resolved
+        with self._ssh_lock:
+            if self._resolved_dialect is not None and self._resolved_dialect[0] == key:
+                return self._resolved_dialect[1]
+            resolved, executable = (
+                self._detect_windows_shell()
+                if issubclass(self.config.path_flavor, PureWindowsPath)
+                else self._detect_posix_shell()
+            )
+            self._resolved_dialect = (key, resolved, executable)
+            return resolved
 
-    def _detect_posix_shell(self) -> ShellFlavour:
+    def _detect_posix_shell(self) -> typing.Tuple[ShellFlavour, str]:
         result = self.executor(
             "printf '%s\\n' \"$SHELL\"",
             check=False,
@@ -198,6 +204,7 @@ class SshHost(Host):
         if result.returncode:
             raise RuntimeError("unable to detect the remote POSIX login shell")
         name = (result.stdout or "").strip().replace("\\", "/").rsplit("/", 1)[-1]
+        executable = (result.stdout or "").strip()
         try:
             return {
                 "sh": POSIX_SHELL,
@@ -205,13 +212,13 @@ class SshHost(Host):
                 "bash": BASH,
                 "zsh": ZSH,
                 "fish": FISH,
-            }[name.casefold()]
+            }[name.casefold()], executable
         except KeyError as exc:
             raise RuntimeError(
                 f"unsupported or undetected remote POSIX shell: {name or '<empty>'}"
             ) from exc
 
-    def _detect_windows_shell(self) -> ShellFlavour:
+    def _detect_windows_shell(self) -> typing.Tuple[ShellFlavour, str]:
         probes = (
             (
                 PWSH,
@@ -238,7 +245,12 @@ class SshHost(Host):
             except subprocess.TimeoutExpired:
                 continue
             if result.returncode == 0 and (result.stdout or "").strip() == marker:
-                return flavour
+                executable = {
+                    PWSH: "pwsh",
+                    POWERSHELL: "powershell.exe",
+                    CMD: "cmd.exe",
+                }[flavour]
+                return flavour, executable
         raise RuntimeError("unable to detect a supported remote Windows shell")
 
     @property
@@ -257,51 +269,89 @@ class SshHost(Host):
     @property
     def ssh(self) -> SshConnection:
         """The lazily opened and reused asyncssh connection."""
-        if self._ssh is None or self._ssh.is_closed():
-            from .. import _async
+        with self._ssh_lock:
+            if self._ssh is None or self._ssh.is_closed():
+                from .. import _async
 
-            try:
-                self._ssh = _async.async_to_sync(
-                    _async.asyncssh().connect(
-                        self.config.host,
-                        port=self.config.port or 22,
-                        **self.config.connect_opts(),
+                try:
+                    self._ssh = _async.async_to_sync(
+                        _async.asyncssh().connect(
+                            self.config.host,
+                            port=self.config.port or 22,
+                            **self.config.connect_opts(),
+                        )
                     )
-                )
-            except Exception as exc:
-                normalized = _async.normalize_asyncssh_error(exc)
-                if normalized is exc:
-                    raise
-                raise normalized from exc
-        return self._ssh
+                except Exception as exc:
+                    normalized = _async.normalize_asyncssh_error(exc)
+                    if normalized is exc:
+                        raise
+                    raise normalized from exc
+            return self._ssh
 
     def connect(self) -> None:
         _ = self.ssh
 
     def close(self) -> None:
-        if self._ssh is None:
-            return
-        connection, self._ssh = self._ssh, None
-        connection.close()
-        wait_closed = getattr(connection, "wait_closed", None)
-        if wait_closed is not None:
+        with self._ssh_lock:
+            self._invalidate_sftp()
+            if self._ssh is None:
+                return
+            connection, self._ssh = self._ssh, None
             from .. import _async
 
-            _async.async_to_sync(wait_closed())
+            async def close_connection() -> None:
+                connection.close()
+                await connection.wait_closed()
 
-    def path(
-        self, *segments: PathLike, backend: typing.Optional[str] = None
-    ) -> HostPath:
+            try:
+                _async.async_to_sync(close_connection())
+            except Exception as exc:
+                normalized = _async.normalize_asyncssh_error(exc)
+                if normalized is exc:
+                    raise
+                raise normalized from exc
+
+    def _invalidate_sftp(self) -> None:
+        backend, sources = self._sftp_backend, tuple(self._sftp_sources)
+        self._sftp_backend = None
+        self._sftp_sources.clear()
+        if backend is None:
+            return
+        invalidate = getattr(backend, "invalidate", None)
+        if callable(invalidate):
+            for source in sources:
+                invalidate(source)
+            return
+        # pathlib_next 0.8.x exposes cache invalidation internally while its
+        # public backend API remains intentionally small. Use that hook when
+        # available; dropping our backend reference is the safe fallback.
+        try:
+            module = importlib.import_module("pathlib_next.uri.schemes.sftp._asyncssh")
+            cache = getattr(module, "_CACHE", None)
+            invalidate_cache = getattr(cache, "invalidate", None)
+            if callable(invalidate_cache):
+                for source in sources:
+                    invalidate_cache((backend, source))
+        except (ImportError, AttributeError):
+            pass
+
+    def path(self, *segments: PathLike) -> HostPath:
         from pathlib_next.uri.schemes.sftp import AsyncsshSftpBackend, SftpPath
 
         remote_path = self.config.path_flavor(*segments).as_posix()
         if not remote_path.startswith("/"):
             remote_path = "/" + remote_path
-        sftp_backend = AsyncsshSftpBackend(connect_opts=self.config.connect_opts())
-        return SftpPath(
-            f"sftp://{self.config.host}:{self.config.port or 22}{remote_path}",
-            backend=sftp_backend,
-        )
+        with self._ssh_lock:
+            if self._sftp_backend is None:
+                self._sftp_backend = AsyncsshSftpBackend(
+                    connect_opts=self.config.connect_opts()
+                )
+            path = SftpPath(
+                f"sftp://{uri_host(self.config.host)}:{self.config.port or 22}{remote_path}",
+                backend=self._sftp_backend,
+            )
+            self._sftp_sources.add(path.source)
+            return path
 
     def run(
         self,
@@ -328,9 +378,14 @@ class SshHost(Host):
             cmds = ((command, *args),)
         if text and encoding is None:
             encoding = "utf-8"
-        shell_command = self.shell_flavour.command(
+        selected_flavour = self.shell_flavour
+        selected_executable = executable or self.config.executable
+        if self.config.dialect == "auto" and selected_executable is None:
+            assert self._resolved_dialect is not None
+            selected_executable = self._resolved_dialect[2]
+        shell_command = selected_flavour.command(
             cmds,
-            executable=executable or self.config.executable,
+            executable=selected_executable,
             cwd=cwd,
             env=env,
         )
@@ -365,9 +420,14 @@ class SshHost(Host):
     ) -> Process:
         """Start a persistent SSH process, optionally allocating a PTY."""
         if cmds:
-            shell_command = self.shell_flavour.command(
+            selected_flavour = self.shell_flavour
+            selected_executable = executable or self.config.executable
+            if self.config.dialect == "auto" and selected_executable is None:
+                assert self._resolved_dialect is not None
+                selected_executable = self._resolved_dialect[2]
+            shell_command = selected_flavour.command(
                 cmds,
-                executable=executable or self.config.executable,
+                executable=selected_executable,
                 cwd=cwd,
                 env=env,
             )

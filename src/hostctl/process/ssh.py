@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import types
 import typing
+import inspect
 
 from ._common import Process, ProcessData
 
@@ -65,29 +66,32 @@ class SshProcess(Process):
         from .. import _async
 
         async def invoke() -> object:
-            return function()
+            result = function()
+            if inspect.isawaitable(result):
+                return await result
+            return result
 
-        return _async.async_to_sync(invoke())
+        try:
+            return _async.async_to_sync(invoke())
+        except Exception as exc:
+            normalized = _async.normalize_asyncssh_error(exc, command=self._command)
+            if normalized is exc:
+                raise
+            raise normalized from exc
 
     def write(self, data: ProcessData) -> None:
-        from .. import _async
-
         async def operation() -> None:
             writer = self._process.stdin
             writer.write(data)
             await writer.drain()
 
-        _async.async_to_sync(operation())
+        self._call(operation)
 
     def read(self, size: int = -1) -> ProcessData:
-        from .. import _async
-
-        return _async.async_to_sync(self._process.stdout.read(size))
+        return self._call(lambda: self._process.stdout.read(size))
 
     def read_stderr(self, size: int = -1) -> ProcessData:
-        from .. import _async
-
-        return _async.async_to_sync(self._process.stderr.read(size))
+        return self._call(lambda: self._process.stderr.read(size))
 
     def send_eof(self) -> None:
         def operation() -> None:
@@ -113,9 +117,9 @@ class SshProcess(Process):
         )
 
     def wait(self, timeout: typing.Optional[float] = None) -> int:
-        from .. import _async
-
         try:
+            from .. import _async
+
             result = _async.async_to_sync(
                 self._process.wait(check=False, timeout=timeout)
             )
@@ -126,7 +130,7 @@ class SshProcess(Process):
             if normalized is exc:
                 raise
             raise normalized from exc
-        return result.returncode
+        return -1 if result.returncode is None else result.returncode
 
     def terminate(self) -> None:
         self._call(self._process.terminate)
@@ -137,11 +141,16 @@ class SshProcess(Process):
     def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
-        self._call(self._process.close)
         from .. import _async
 
-        _async.async_to_sync(self._process.wait_closed())
+        try:
+            self._call(self._process.close)
+            self._call(lambda: self._process.wait_closed())
+        except Exception:
+            # A failed close remains retryable; callers must not lose the
+            # channel reference merely because the first close attempt failed.
+            raise
+        self._closed = True
 
     def __enter__(self) -> SshProcess:
         return self

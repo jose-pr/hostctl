@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import inspect
 import os
 import subprocess
 import typing
@@ -71,6 +72,44 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
     def __init__(self, connection: typing.Callable[[], SshConnection]) -> None:
         self._connection = connection
 
+    @staticmethod
+    def _terminate_timeout(connection: SshConnection, error: BaseException) -> bool:
+        """Best-effort termination for a timed-out AsyncSSH process.
+
+        ``SSHClientConnection.run()`` does not expose the process it creates,
+        so AsyncSSH versions and test doubles may expose it on the exception or
+        connection.  Probe those documented/duck-typed hooks and report
+        whether termination was attempted; the timeout remains marked
+        ``orphaned`` when no channel can be recovered.
+        """
+        targets = [
+            getattr(error, "process", None),
+            getattr(error, "channel", None),
+            getattr(connection, "process", None),
+            getattr(connection, "last_process", None),
+        ]
+        target = next((item for item in targets if item is not None), None)
+        if target is None:
+            return False
+
+        from .. import _async
+
+        async def terminate() -> None:
+            for name in ("terminate", "close"):
+                method = getattr(target, name, None)
+                if method is None:
+                    continue
+                result = method()
+                if inspect.isawaitable(result):
+                    await result
+                return
+
+        try:
+            _async.async_to_sync(terminate())
+        except Exception:
+            return False
+        return True
+
     def __call__(
         self,
         command: ExecutorCommand,
@@ -93,6 +132,8 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             raise TypeError(f"unsupported SSH executor option: {sorted(options)[0]}")
         if args:
             raise NotImplementedError("SshExecutor does not support native arguments")
+        if bufsize == 0:
+            raise ValueError("bufsize=0 is unsupported by the buffered SSH executor")
         command = str(command)
         reject_stdin_conflict(input, stdin)
         if text and encoding is None:
@@ -109,7 +150,16 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
                 else input.encode(encoding or "utf-8", errors or "strict")
             )
             stdin = io.BytesIO(value)
-        elif stdin is not None:
+        elif stdin is None:
+            # AsyncSSH leaves a command's stdin open when no stream is passed.
+            # Supplying an empty in-memory stream sends EOF and matches
+            # subprocess.run()'s non-interactive default.
+            stdin = _input_buffer(
+                subprocess.DEVNULL,
+                encoding=encoding,
+                errors=errors,
+            )
+        else:
             stdin = _input_buffer(
                 stdin,
                 encoding=encoding,
@@ -142,6 +192,9 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
                 command=command,
                 timeout=timeout,
             )
+            if isinstance(normalized, subprocess.TimeoutExpired):
+                terminated = self._terminate_timeout(self._connection(), exc)
+                normalized.orphaned = not terminated
             if normalized is exc:
                 raise
             raise normalized from exc
@@ -157,9 +210,12 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             errors=errors,
         )
 
+        returncode = result.returncode
+        if returncode is None:
+            returncode = -1
         completed = subprocess.CompletedProcess(
             args=command,
-            returncode=result.returncode,
+            returncode=returncode,
             stdout=result_stdout,
             stderr=result_stderr,
         )
