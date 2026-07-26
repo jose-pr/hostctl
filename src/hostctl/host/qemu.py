@@ -43,8 +43,7 @@ from ._common import (
     strict_uri_query,
     uri_host,
 )
-from ._ssh import SshConfig
-from .system import PosixHost
+from ._ssh import SshConfig, _SshTransport
 
 QemuTransport = typing.Literal["libvirt", "unix", "ssh"]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
@@ -242,7 +241,7 @@ class QemuHost(Host):
     def __init__(self, config: QemuConfig) -> None:
         self.config = config
         self._transport: typing.Optional[GuestAgentTransport] = None
-        self._ssh_host: typing.Optional[PosixHost] = None
+        self._ssh_transport: typing.Optional[_SshTransport] = None
         self._commands: typing.Optional[typing.FrozenSet[str]] = None
         self._os_info: typing.Mapping[str, object] = {}
         self._hostname: typing.Optional[str] = None
@@ -266,23 +265,24 @@ class QemuHost(Host):
                     timeout=self.config.agent_timeout,
                 )
             else:
-                ssh_host = typing.cast(SshConfig, self.config.ssh)._create_host()
+                ssh_transport = typing.cast(
+                    SshConfig, self.config.ssh
+                )._create_transport()
                 try:
-                    ssh_host.connect()
+                    ssh_transport.connect()
                 except Exception:
                     try:
-                        ssh_host.close()
+                        ssh_transport.close()
                     except Exception:
                         pass
                     raise
-                self._ssh_host = ssh_host
-                ssh_provider = ssh_host._executor_selector.providers[0]
+                self._ssh_transport = ssh_transport
                 socket_path = self.config.socket_path or (
                     f"/run/qemu-server/{self.config.domain}.qga"
                 )
                 self._transport = SshUnixGuestAgentTransport(
                     socket_path,
-                    lambda: ssh_provider.transport.ssh,
+                    lambda: ssh_transport.ssh,
                     timeout=self.config.agent_timeout,
                 )
         return self._transport
@@ -356,7 +356,7 @@ class QemuHost(Host):
         self._hostname = None
         self._path_backend = None
         transport, self._transport = self._transport, None
-        ssh, self._ssh_host = self._ssh_host, None
+        ssh, self._ssh_transport = self._ssh_transport, None
         try:
             if transport is not None:
                 transport.close()

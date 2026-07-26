@@ -163,7 +163,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
     def _create_host(self):
         from .system import PosixHost, WindowsHost
 
-        transport = _SshTransport(self)
+        transport = self._create_transport()
         host_type = (
             WindowsHost if issubclass(self.path_flavor, PureWindowsPath) else PosixHost
         )
@@ -177,6 +177,10 @@ class SshConfig(HostConfig, schemes=("ssh",)):
                 else (lambda: transport.shell_flavour)
             ),
         )
+
+    def _create_transport(self) -> _SshTransport:
+        """Create the private SSH service shared by executor/path providers."""
+        return _SshTransport(self)
 
 
 class _SshTransport:
