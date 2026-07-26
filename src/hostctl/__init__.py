@@ -73,7 +73,6 @@ from .host import (
     WindowsHost as WindowsHost,
     IosConfig as IosConfig,
     IosHost as IosHost,
-    CompositePath as CompositePath,
     CompositePosixPath as CompositePosixPath,
     CompositeWindowsPath as CompositeWindowsPath,
 )
@@ -251,7 +250,6 @@ __all__ = [
     "WindowsHost",
     "IosConfig",
     "IosHost",
-    "CompositePath",
     "CompositePosixPath",
     "CompositeWindowsPath",
     "ExecutorProvider",

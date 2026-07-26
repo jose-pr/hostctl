@@ -49,7 +49,9 @@ def require_pypsrp() -> typing.Any:
 class PsrpExecutor(Executor[subprocess.CompletedProcess]):
     """Execute finalized PowerShell scripts in fresh PSRP pipelines."""
 
-    executor_capabilities = frozenset(("env", "cwd"))
+    # PSRP receives a finalized PowerShell script; cwd/env are embedded by
+    # the host shell rather than forwarded as unsupported executor options.
+    executor_capabilities = frozenset()
 
     def __init__(self, session: typing.Callable[[], typing.Any]) -> None:
         self._session = session

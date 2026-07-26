@@ -843,9 +843,10 @@ class WinRMExecutorProvider(ExecutorProvider):
 
     def __init__(self, transport: _WinRMTransport):
         self.transport = transport
-        super().__init__(
-            "winrm", transport.executor, capabilities=transport.executor_capabilities
-        )
+        capabilities = set(transport.executor.executor_capabilities)
+        if "runspace" in transport.capabilities:
+            capabilities.add("runspace")
+        super().__init__("winrm", transport.executor, capabilities=capabilities)
 
     def probe(self):
         return ProviderProbe("available", capabilities=self.capabilities)
@@ -861,6 +862,11 @@ class WinRMExecutorProvider(ExecutorProvider):
 
     def spawn(self, *args, **options):
         return self.transport.spawn(*args, **options)
+
+    def runspace(self):
+        if "runspace" not in self.capabilities:
+            raise NotImplementedError("WinRM provider does not support PSRP runspaces")
+        return self.transport.runspace()
 
 
 class WinRMPathProvider(PathProvider):

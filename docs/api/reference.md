@@ -96,7 +96,8 @@ from their docstrings.
 ::: hostctl.ProviderSelection
 ::: hostctl.ProviderSelector
 ::: hostctl.SessionInitializer
-::: hostctl.CompositePath
+::: hostctl.CompositePosixPath
+::: hostctl.CompositeWindowsPath
 
 ## Public aliases and constants
 

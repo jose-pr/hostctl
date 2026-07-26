@@ -32,11 +32,13 @@ from ._common import (
     starts_direct_command,
     normalize_os_family,
 )
-from .composite_path import CompositePath, CompositePosixPath, CompositeWindowsPath
+from .composite_path import CompositePosixPath, CompositeWindowsPath
 
 
 class SystemConfig(HostConfig):
     """Configuration for a logical system with one or more providers."""
+
+    scheme = "system"
 
     def __init__(
         self,
@@ -104,22 +106,30 @@ class SystemHost(Host):
         info: HostInfo | None = None,
     ):
         self.config = config or SystemConfig()
+        if config is None and self.system_family != "generic":
+            self.config.scheme = self.system_family
         self._executor_selector = ProviderSelector(executor_providers)
         self._path_selector = ProviderSelector(path_providers)
         self._shell_resolver = (
             shell if callable(shell) and not isinstance(shell, type) else None
         )
         self._shell = (
-            shell_flavour(shell)
-            if shell is not None and self._shell_resolver is None
+            None
+            if self._shell_resolver is not None
             else (
-                shell_flavour(getattr(self.config, "shell", None))
-                if getattr(self.config, "shell", None)
-                else self.default_shell
+                shell_flavour(shell)
+                if shell is not None
+                else (
+                    shell_flavour(getattr(self.config, "shell", None))
+                    if getattr(self.config, "shell", None)
+                    else self.default_shell
+                )
             )
         )
         self._info = info
         self._connected = False
+        self._connected_providers = []
+        self._closed_targets = set()
 
     @property
     def shell_flavour(self):
@@ -143,6 +153,11 @@ class SystemHost(Host):
         values = set()
         if self._executor_selector.providers:
             values.add("run")
+        if any(
+            "runspace" in provider.capabilities
+            for provider in self._executor_selector.providers
+        ):
+            values.add("runspace")
         if self._path_selector.providers:
             values.add("path")
         return frozenset(values)
@@ -157,13 +172,16 @@ class SystemHost(Host):
             return
         connected = []
         try:
-            for provider in (
-                *self._executor_selector.providers,
-                *self._path_selector.providers,
-            ):
+            for selector in (self._executor_selector, self._path_selector):
+                try:
+                    provider = selector.select().provider
+                except OperationNotStarted:
+                    continue
                 connect = getattr(provider, "connect", None)
                 if connect:
                     connect()
+                target = getattr(provider, "transport", provider)
+                self._closed_targets.discard(id(target))
                 connected.append(provider)
         except BaseException:
             for provider in reversed(connected):
@@ -171,20 +189,32 @@ class SystemHost(Host):
                 if close:
                     close()
             raise
+        self._connected_providers = connected
         self._connected = True
 
     def close(self):
-        if not self._connected:
-            return
-        for provider in reversed(
-            (*self._executor_selector.providers, *self._path_selector.providers)
+        targets = []
+        for provider in (
+            *self._connected_providers,
+            *self._executor_selector.providers,
+            *self._path_selector.providers,
         ):
-            close = getattr(provider, "close", None)
+            target = getattr(provider, "transport", provider)
+            if target not in targets:
+                targets.append(target)
+        for target in reversed(targets):
+            if id(target) in self._closed_targets:
+                continue
+            close = getattr(target, "close", None)
             if close:
                 close()
+            self._closed_targets.add(id(target))
         self._connected = False
+        self._connected_providers = []
         self._executor_selector.invalidate()
         self._path_selector.invalidate()
+        if self._shell_resolver is not None:
+            self._shell = None
 
     def info(self) -> HostInfo:
         if self._info is not None:
@@ -192,6 +222,7 @@ class SystemHost(Host):
         if self._connected:
             try:
                 provider = self._executor_selector.select().provider
+                self._ensure_provider_connected(provider)
                 callback = getattr(provider, "info", None)
                 if callback is not None:
                     return callback()
@@ -245,6 +276,8 @@ class SystemHost(Host):
                 selected.provider,
                 selected.provider.path,
                 self._path_selector.providers,
+                self._path_selector,
+                logical_segments=segments,
             )
         except OperationNotStarted:
             if backend is not None:
@@ -259,7 +292,12 @@ class SystemHost(Host):
                 else CompositePosixPath
             )
             return path_type.from_path(
-                value, fallback, fallback.path, self._path_selector.providers
+                value,
+                fallback,
+                fallback.path,
+                self._path_selector.providers,
+                self._path_selector,
+                logical_segments=segments,
             )
 
     def run(
@@ -284,80 +322,102 @@ class SystemHost(Host):
             raise NotImplementedError(
                 f"{type(self).__name__} does not provide the 'run' capability"
             )
-        selected = self._executor_selector.select()
-        provider = selected.provider
-        direct = starts_direct_command(cmds)
-        options = dict(
-            bufsize=bufsize,
-            stdin=stdin,
-            stdout=stdout,
-            stderr=stderr,
-            capture_output=capture_output,
-            check=check,
-            encoding=encoding,
-            errors=errors,
-            input=input,
-            timeout=timeout,
-            text=text,
-        )
+        excluded: list[str] = []
+        while True:
+            provider = self._executor_selector.select(exclude=excluded).provider
+            try:
+                return self._run_with_provider(
+                    provider,
+                    cmds,
+                    bufsize=bufsize,
+                    executable=executable,
+                    stdin=stdin,
+                    stdout=stdout,
+                    stderr=stderr,
+                    cwd=cwd,
+                    env=env,
+                    capture_output=capture_output,
+                    check=check,
+                    encoding=encoding,
+                    errors=errors,
+                    input=input,
+                    timeout=timeout,
+                    text=text,
+                )
+            except OperationNotStarted:
+                # Providers may be retried only when they prove no operation
+                # was dispatched; planning is repeated for the next provider.
+                excluded.append(provider.name)
+
+    def _run_with_provider(self, provider, cmds, **kwargs):
+        self._ensure_provider_connected(provider)
+        cwd = kwargs.get("cwd")
+        env = kwargs.get("env")
+        options = dict(kwargs)
+        options.pop("executable", None)
+        options.pop("cwd", None)
+        options.pop("env", None)
         if cwd is not None and "cwd" in provider.capabilities:
             options["cwd"] = cwd
         if env is not None and "env" in provider.capabilities:
             options["env"] = env
+        direct = starts_direct_command(cmds)
         if direct is not None:
             command, args = direct
-            if executable is not None:
+            if kwargs.get("executable") is not None:
                 raise NotImplementedError(
                     "executable cannot be combined with a direct command"
                 )
-            if "args" not in provider.capabilities and args:
-                if self._shell is None:
-                    raise NotImplementedError(
-                        f"executor provider {provider.name!r} does not support argv arguments"
-                    )
-                command = self.shell_flavour.command(
-                    cmds,
-                    executable=executable
-                    or getattr(provider, "shell_executable", None),
-                    cwd=None if "cwd" in provider.capabilities else cwd,
-                    env=None if "env" in provider.capabilities else env,
-                )
-                return provider.execute(command.command, **options)
-            try:
+            if "args" in provider.capabilities:
                 return provider.execute(command, *args, **options)
-            except OperationNotStarted:
-                # This is the sole safe replay point: the provider guarantees
-                # that no remote operation was dispatched.
-                fallback = self._executor_selector.select(
-                    exclude=(provider.name,)
-                ).provider
-                return fallback.execute(command, *args, **options)
-        if self._shell is None:
+            if not args:
+                return provider.execute(str(command), **options)
+            if self._shell is None and self._shell_resolver is None:
+                raise NotImplementedError(
+                    f"executor provider {provider.name!r} does not support argv arguments"
+                )
+            flavour = self.shell_flavour
+            shell_executable = getattr(provider, "shell_executable", None)
+            rendered = flavour.command(
+                ((command, *args),),
+                executable=shell_executable,
+                cwd=None if "cwd" in provider.capabilities else cwd,
+                env=None if "env" in provider.capabilities else env,
+            )
+            if "args" not in provider.capabilities:
+                return provider.execute(rendered.command, **options)
+            invocation = flavour.invocation(
+                rendered.command, executable=shell_executable
+            )
+            return provider.execute(invocation[0], *invocation[1:], **options)
+
+        if self._shell is None and self._shell_resolver is None:
             raise NotImplementedError(
                 "buffered run requires a shell or a direct executable"
             )
-        native_cwd = cwd if "cwd" in provider.capabilities else None
-        native_env = env if "env" in provider.capabilities else None
         flavour = self.shell_flavour
+        executable = kwargs.get("executable")
         shell_executable = executable or getattr(provider, "shell_executable", None)
-        command = flavour.command(
+        rendered = flavour.command(
             cmds,
             executable=shell_executable,
-            cwd=None if native_cwd is not None else cwd,
-            env=None if native_env is not None else env,
+            cwd=None if "cwd" in provider.capabilities else cwd,
+            env=None if "env" in provider.capabilities else env,
         )
-        if native_cwd is not None:
-            options["cwd"] = native_cwd
-        if native_env is not None:
-            options["env"] = native_env
         if "args" not in provider.capabilities:
-            return provider.execute(command.command, **options)
-        invocation = flavour.invocation(command.command, executable=shell_executable)
-        try:
-            return provider.execute(invocation[0], *invocation[1:], **options)
-        except OperationNotStarted:
-            fallback = self._executor_selector.select(exclude=(provider.name,)).provider
-            return fallback.execute(invocation[0], *invocation[1:], **options)
+            return provider.execute(rendered.command, **options)
+        invocation = flavour.invocation(rendered.command, executable=shell_executable)
+        return provider.execute(invocation[0], *invocation[1:], **options)
+
+    def _ensure_provider_connected(self, provider):
+        if provider in self._connected_providers:
+            return
+        connect = getattr(provider, "connect", None)
+        if connect is not None:
+            connect()
+        target = getattr(provider, "transport", provider)
+        self._closed_targets.discard(id(target))
+        self._connected_providers.append(provider)
 
     def spawn(self, *cmds, **options):
         provider = self._executor_selector.select().provider
@@ -367,6 +427,17 @@ class SystemHost(Host):
                 f"executor provider {provider.name!r} does not support sessions"
             )
         return spawn(*cmds, **options)
+
+    def runspace(self):
+        """Return a provider-owned typed runspace when one is available."""
+        selected = self._executor_selector.select(capability="runspace")
+        provider = selected.provider
+        method = getattr(provider, "runspace", None)
+        if method is None:
+            raise NotImplementedError(
+                f"executor provider {provider.name!r} does not support runspaces"
+            )
+        return method()
 
 
 class PosixHost(SystemHost):

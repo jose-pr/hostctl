@@ -267,9 +267,10 @@ def test_capabilities_are_explicit():
     assert PosixHost.from_ssh(SshConfig("host")).capabilities == frozenset(
         ("run", "path")
     )
-    assert WindowsHost.from_winrm(
+    windows_capabilities = WindowsHost.from_winrm(
         WinRMConfig("host", "user", "secret")
-    ).capabilities == frozenset(("run", "path"))
+    ).capabilities
+    assert {"run", "path"}.issubset(windows_capabilities)
 
 
 def test_base_unsupported_operations_fail_immediately():

@@ -67,14 +67,18 @@ class ExecutorProvider:
         name: str,
         executor: typing.Callable[..., typing.Any],
         *,
-        capabilities=(),
+        capabilities=None,
         probe=None,
     ):
         if not name:
             raise ValueError("provider name must not be empty")
         self.name = name
         self.executor = executor
-        raw = capabilities or getattr(executor, "executor_capabilities", ())
+        raw = (
+            getattr(executor, "executor_capabilities", ())
+            if capabilities is None
+            else capabilities
+        )
         self.capabilities = frozenset(getattr(item, "value", item) for item in raw)
         self._probe = probe
 
@@ -102,20 +106,43 @@ class ExecutorProvider:
 class PathProvider:
     """Named path factory.  ``path`` must return a pathlib_next.Path."""
 
+    DEFAULT_CAPABILITIES = frozenset(
+        (
+            "stat",
+            "scandir",
+            "open",
+            "open_read",
+            "open_write",
+            "read",
+            "write",
+            "exists",
+            "is_file",
+            "is_dir",
+            "mkdir",
+            "chmod",
+            "unlink",
+            "rmdir",
+            "rename",
+        )
+    )
+
     def __init__(
         self,
         name: str,
         factory: typing.Callable[..., Path],
         *,
-        capabilities=(),
+        capabilities=None,
         probe=None,
     ):
         if not name:
             raise ValueError("provider name must not be empty")
         self.name = name
         self.factory = factory
+        raw_capabilities = (
+            self.DEFAULT_CAPABILITIES if capabilities is None else capabilities
+        )
         self.capabilities = frozenset(
-            getattr(item, "value", item) for item in capabilities
+            getattr(item, "value", item) for item in raw_capabilities
         )
         self._probe = probe
 
@@ -188,7 +215,7 @@ class ProviderSelector:
                 {
                     "provider": self._safe_name(provider.name),
                     "availability": probe.availability,
-                    "reason": probe.reason,
+                    "reason": self._safe_name(probe.reason),
                     "capabilities": tuple(sorted(capabilities)),
                     "chosen": allowed,
                 }
