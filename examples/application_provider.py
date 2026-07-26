@@ -25,6 +25,42 @@ class ApplicationPathProvider(PathProvider):
         )
 
 
+class MetadataProvider(ApplicationPathProvider):
+    """Metadata/RPC provider; mutations may decline before dispatch."""
+
+    def __init__(self, factory, *, available=True):
+        super().__init__(
+            "metadata",
+            factory,
+            available=available,
+            capabilities=("stat", "scandir", "read", "open_read", "write"),
+        )
+
+
+class DownloadProvider(ApplicationPathProvider):
+    """Read-only content download provider."""
+
+    def __init__(self, factory, *, available=True):
+        super().__init__(
+            "download",
+            factory,
+            available=available,
+            capabilities=("stat", "read", "open_read"),
+        )
+
+
+class SftpProvider(ApplicationPathProvider):
+    """Ordered SFTP fallback provider."""
+
+    def __init__(self, factory, *, available=True):
+        super().__init__(
+            "sftp",
+            factory,
+            available=available,
+            capabilities=("stat", "scandir", "read", "open_read", "write"),
+        )
+
+
 def providers(*, rpc, sftp, download=None):
     """Return an ordered RPC/SFTP/download provider collection.
 
