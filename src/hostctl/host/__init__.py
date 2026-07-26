@@ -28,11 +28,22 @@ from .ssh import (
     SshHost as SshHost,
 )
 from .winrm import WinRMConfig as WinRMConfig, WinRMHost as WinRMHost
+from .system import (
+    IosConfig as IosConfig,
+    IosHost as IosHost,
+    PosixConfig as PosixConfig,
+    PosixHost as PosixHost,
+    SystemConfig as SystemConfig,
+    SystemHost as SystemHost,
+    WindowsConfig as WindowsConfig,
+    WindowsHost as WindowsHost,
+)
 from .serial import SerialConfig as SerialConfig, SerialHost as SerialHost
 from .winrm_path import (
     WinRMPath as WinRMPath,
     WinRMPathBackend as WinRMPathBackend,
 )
+from .composite_path import CompositePath as CompositePath
 
 __all__ = [
     "Host",
@@ -60,4 +71,13 @@ __all__ = [
     "WinRMPathBackend",
     "WindowsContainerPath",
     "WindowsQemuPath",
+    "SystemConfig",
+    "SystemHost",
+    "PosixConfig",
+    "PosixHost",
+    "WindowsConfig",
+    "WindowsHost",
+    "IosConfig",
+    "IosHost",
+    "CompositePath",
 ]

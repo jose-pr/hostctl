@@ -115,6 +115,31 @@ Install `hostctl[winrm-kerberos]` or `hostctl[winrm-credssp]` when selecting
 those WinRM authentication transports. Certificate authentication is not
 exposed until its required certificate/key configuration is part of the API.
 
+### Composable system hosts
+
+Use `PosixHost`, `WindowsHost`, or `IosHost` when system semantics should be
+independent of the transport. Providers are tried in declaration order during
+preflight; a provider may be retried only when it raises
+`OperationNotStarted`, which guarantees that no remote operation was sent.
+Paths retain their selected provider and expose it through `.provider` and
+`.via(name)`:
+
+```python
+from hostctl import ExecutorProvider, PathProvider, PosixHost, LocalExecutor, HostPath
+
+host = PosixHost(
+    executor_providers=(ExecutorProvider("ssh", ssh_executor),
+                        ExecutorProvider("local", LocalExecutor())),
+    path_providers=(PathProvider("sftp", sftp_path),
+                    PathProvider("rpc", lambda *p: HostPath(*p))),
+)
+path = host.path("etc", "hosts")
+print(path.provider.name)
+```
+
+Application-specific adapters can follow the SFTP/RPC/download pattern in
+[`examples/application_provider.py`](examples/application_provider.py).
+
 ## API overview
 
 | Module | Purpose |
