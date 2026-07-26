@@ -24,6 +24,12 @@ from each package and top-level `hostctl`.
 algorithm="md5", chunk_size=1048576)`, and `ProgressReader`; these plug into
 `pathlib_next.utils.sync.PathSyncer` and the existing path copy machinery.
 
+`SystemHost`, `PosixHost`, and `WindowsHost` compose ordered executor/path
+providers. `PosixHost.from_ssh(SshConfig(...))` and
+`WindowsHost.from_winrm(WinRMConfig(...))` retain the original connection URI
+and lifecycle while exposing transport operations through provider adapters;
+`SshHost` and `WinRMHost` remain public compatibility facades.
+
 `Executor(command, *, stdin=None, stdout=None, stderr=None, cwd=None, env=None,
 capture_output=None, check=None, encoding=None, errors=None, input=None,
 timeout=None, text=None, **options)` defines the shared shell-agnostic option

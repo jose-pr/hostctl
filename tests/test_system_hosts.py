@@ -83,6 +83,19 @@ def test_provider_probe_is_cached_until_invalidation():
     assert len(calls) == 2
 
 
+def test_transport_configs_compose_system_hosts_without_uri_changes():
+    from hostctl import PosixHost, SshConfig, WindowsHost, WinRMConfig
+
+    ssh_config = SshConfig("example", username="root")
+    posix = PosixHost.from_ssh(ssh_config)
+    assert posix.connection_uri == ssh_config.connection_uri
+    assert posix.scheme == "ssh"
+    winrm_config = WinRMConfig("example", "admin", password="secret")
+    windows = WindowsHost.from_winrm(winrm_config)
+    assert windows.connection_uri == winrm_config.connection_uri
+    assert windows.scheme == "winrm"
+
+
 def test_composite_path_accepts_path_protocol_and_retains_alternates():
     from hostctl import PosixHost
 

@@ -142,6 +142,19 @@ print(path.provider.name)
 Application-specific adapters can follow the SFTP/RPC/download pattern in
 [`examples/application_provider.py`](examples/application_provider.py).
 
+Existing transport URIs remain compatible.  To opt into system semantics while
+retaining those URI/configuration objects, compose them explicitly:
+
+```python
+from hostctl import PosixHost, SshConfig, WindowsHost, WinRMConfig
+
+posix = PosixHost.from_ssh(SshConfig("server.example", username="root"))
+windows = WindowsHost.from_winrm(WinRMConfig("server.example", "admin"))
+```
+
+`SshHost` and `WinRMHost` remain supported public facades; QEMU's SSH tunnel
+continues to consume `SshConfig` directly.
+
 ## Command line
 
 The installed `hostctl` command is a thin wrapper over the library:

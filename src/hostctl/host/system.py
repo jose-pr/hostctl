@@ -17,6 +17,7 @@ from ..provider import (
     PathProvider,
     ProviderSelector,
     ProviderSelection,
+    ProviderProbe,
 )
 from ..shell import CMD, POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ._common import (
@@ -33,6 +34,25 @@ from ._common import (
     normalize_os_family,
 )
 from .composite_path import CompositePath
+
+
+class _HostExecutorProvider(ExecutorProvider):
+    """Adapter which exposes an existing transport host as a provider."""
+
+    def __init__(self, host: Host, name: str):
+        self._host = host
+        super().__init__(name, host.executor, capabilities=host.executor_capabilities)
+
+    def probe(self):
+        return ProviderProbe("available", capabilities=self.capabilities)
+
+
+class _HostPathProvider(PathProvider):
+    def __init__(self, host: Host, name: str):
+        self._host = host
+        super().__init__(
+            name, lambda *segments: host.path(*segments), capabilities=("path",)
+        )
 
 
 class SystemConfig(HostConfig):
@@ -104,6 +124,31 @@ class SystemHost(Host):
         info: HostInfo | None = None,
     ):
         self.config = config or SystemConfig()
+        self._legacy_host = None
+        if not executor_providers and not path_providers:
+            # Transport configs remain public compatibility entry points while
+            # their operational legs are exposed through provider adapters.
+            config_type = type(self.config).__name__
+            if config_type == "SshConfig":
+                from ._ssh import SshHost
+
+                self._legacy_host = SshHost(self.config)
+                executor_providers = (_HostExecutorProvider(self._legacy_host, "ssh"),)
+                path_providers = (_HostPathProvider(self._legacy_host, "sftp"),)
+                if shell is None:
+                    shell = getattr(self.config, "dialect", None)
+                    if shell == "auto":
+                        shell = self.default_shell
+            elif config_type == "WinRMConfig":
+                from ._winrm import WinRMHost
+
+                self._legacy_host = WinRMHost(self.config)
+                executor_providers = (
+                    _HostExecutorProvider(self._legacy_host, "winrm"),
+                )
+                path_providers = (_HostPathProvider(self._legacy_host, "winrm"),)
+                if shell is None:
+                    shell = self.default_shell
         self._executor_selector = ProviderSelector(executor_providers)
         self._path_selector = ProviderSelector(path_providers)
         self._shell = (
@@ -149,6 +194,8 @@ class SystemHost(Host):
 
     def connect(self):
         self._connected = True
+        if self._legacy_host is not None:
+            self._legacy_host.connect()
         for provider in (
             *self._executor_selector.providers,
             *self._path_selector.providers,
@@ -166,11 +213,15 @@ class SystemHost(Host):
             close = getattr(provider, "close", None)
             if close:
                 close()
+        if self._legacy_host is not None:
+            self._legacy_host.close()
         self._connected = False
         self._executor_selector.invalidate()
         self._path_selector.invalidate()
 
     def info(self) -> HostInfo:
+        if self._legacy_host is not None:
+            return self._legacy_host.info()
         if self._info is not None:
             return self._info
         return HostInfo(hostname=self.config.authority, os_family=self.system_family)
@@ -300,10 +351,20 @@ class PosixHost(SystemHost):
     system_family = "posix"
     default_shell = POSIX_SHELL
 
+    @classmethod
+    def from_ssh(cls, config):
+        """Compose POSIX semantics over an existing :class:`SshConfig`."""
+        return cls(config)
+
 
 class WindowsHost(SystemHost):
     system_family = "windows"
     default_shell = POWERSHELL
+
+    @classmethod
+    def from_winrm(cls, config):
+        """Compose Windows semantics over an existing :class:`WinRMConfig`."""
+        return cls(config)
 
 
 class IosHost(SystemHost):
