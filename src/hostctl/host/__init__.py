@@ -16,8 +16,9 @@ from .container_path import (
     PosixContainerPath as PosixContainerPath,
     WindowsContainerPath as WindowsContainerPath,
 )
-from .qemu import QemuConfig as QemuConfig, QemuHost as QemuHost
-from .qemu_path import (
+from .qemu import (
+    QemuConfig as QemuConfig,
+    QemuHost as QemuHost,
     PosixQemuPath as PosixQemuPath,
     QgaPathBackend as QgaPathBackend,
     WindowsQemuPath as WindowsQemuPath,
@@ -30,6 +31,8 @@ from ._ssh import (
 from ._winrm import (
     WinRMConfig as WinRMConfig,
     WinRMHost as WinRMHost,
+    WinRMPath as WinRMPath,
+    WinRMPathBackend as WinRMPathBackend,
     WinRMProvider as WinRMProvider,
 )
 from .system import (
@@ -43,10 +46,6 @@ from .system import (
     WindowsHost as WindowsHost,
 )
 from .serial import SerialConfig as SerialConfig, SerialHost as SerialHost
-from ._winrm_path import (
-    WinRMPath as WinRMPath,
-    WinRMPathBackend as WinRMPathBackend,
-)
 from .composite_path import CompositePath as CompositePath
 
 __all__ = [

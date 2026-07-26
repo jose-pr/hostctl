@@ -5,9 +5,11 @@ Protocol-independent host execution and filesystem paths. Core requires
 
 Host implementations are grouped under `hostctl.host`: shared contracts are
 re-exported from the package, with concrete implementations in private
-modules (`hostctl.host._local`, `._ssh`, `._winrm`, and `._winrm_path`) plus
-the other provider modules. The same
+modules (`hostctl.host._local`, `._ssh`, and `._winrm`) plus the other provider
+modules. WinRM paths live with `_winrm`; QGA paths live with `qemu`. The same
 public classes are also re-exported from top-level `hostctl`.
+The private `hostctl.executor._qga` module owns QGA framing and its Unix,
+libvirt, and SSH transports; it is consumed by the QEMU executor and host.
 Shell construction is transport-independent under `hostctl.shell`:
 `_common.py` owns shared contracts, while `posix.py` and `powershell.py` own
 their concrete flavours. Executor code follows the same layout under

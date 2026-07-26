@@ -6,8 +6,11 @@ import json
 
 import pytest
 
-from hostctl.qga._common import QgaCommandError, QgaProtocolError
-from hostctl.qga.ssh import SshUnixGuestAgentTransport
+from hostctl.executor._qga import (
+    QgaCommandError,
+    QgaProtocolError,
+    SshUnixGuestAgentTransport,
+)
 
 
 def _frame(value):

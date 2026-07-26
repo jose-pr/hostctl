@@ -11,6 +11,8 @@ def test_transport_implementations_are_not_public_module_shims():
         "hostctl.host.ssh",
         "hostctl.host.winrm",
         "hostctl.host.winrm_path",
+        "hostctl.host._winrm_path",
+        "hostctl.host.qemu_path",
     ):
         assert importlib.util.find_spec(name) is None
 

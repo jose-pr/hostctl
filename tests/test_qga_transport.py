@@ -7,7 +7,7 @@ import socket
 
 import pytest
 
-from hostctl.qga import (
+from hostctl.executor._qga import (
     LibvirtGuestAgentTransport,
     QgaCommandError,
     QgaProtocolError,

@@ -85,7 +85,7 @@ from .provider import (
     ProviderSelection as ProviderSelection,
     ProviderSelector as ProviderSelector,
 )
-from .qga import (
+from .executor._qga import (
     GuestAgentTransport as GuestAgentTransport,
     LibvirtGuestAgentTransport as LibvirtGuestAgentTransport,
     QgaCommandError as QgaCommandError,

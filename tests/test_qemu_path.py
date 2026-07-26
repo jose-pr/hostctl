@@ -6,12 +6,12 @@ import pytest
 from pathlib_next import Path
 from pathlib_next.utils.stat import FileStat
 
-from hostctl.host.qemu_path import (
+from hostctl import (
     PosixQemuPath,
     QgaPathBackend,
     WindowsQemuPath,
 )
-from hostctl.qga._common import QgaCommandError
+from hostctl.executor._qga import QgaCommandError
 
 FILE_COMMANDS = {
     "guest-file-open",

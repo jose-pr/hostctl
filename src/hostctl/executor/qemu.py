@@ -8,7 +8,7 @@ import subprocess
 import time
 import typing
 
-from ..qga._common import GuestAgentTransport, QgaProtocolError
+from ._qga import GuestAgentTransport, QgaProtocolError
 from ._common import (
     CaptureOutput,
     CommandArgument,
