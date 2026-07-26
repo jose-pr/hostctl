@@ -3,6 +3,10 @@
 Protocol-independent host execution and filesystem paths. Core requires
 `pathlib_next`; transport integrations are optional extras.
 
+The dependency-free CLI entry point is `hostctl._cli:main`. Commands are
+`run`, `ls`, `cat`, `cp`, `info`, and `shell`; passwords come only from
+`HOSTCTL_PASSWORD` or `--ask-password`, never argv values.
+
 Host implementations are grouped under `hostctl.host`: shared contracts are
 re-exported from the package, with concrete implementations in private
 modules (`hostctl.host._local`, `._ssh`, and `._winrm`) plus the other provider

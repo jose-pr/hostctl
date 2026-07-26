@@ -140,6 +140,21 @@ print(path.provider.name)
 Application-specific adapters can follow the SFTP/RPC/download pattern in
 [`examples/application_provider.py`](examples/application_provider.py).
 
+## Command line
+
+The installed `hostctl` command is a thin wrapper over the library:
+
+```console
+hostctl run local: -- python -c "print('hello')"
+hostctl info ssh://server
+hostctl cp ./artifact ssh://server:/tmp/artifact
+```
+
+Secrets never belong in argv. Use `HOSTCTL_PASSWORD` or the subcommand's
+`--ask-password` option. See the
+[CLI guide](https://jose-pr.github.io/hostctl/guide/cli/) for all subcommands
+and exit statuses.
+
 ## API overview
 
 | Module | Purpose |

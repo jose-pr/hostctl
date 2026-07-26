@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Raw serial and QEMU serial-console transports with validated UART settings,
   exclusive process leases, stream lifecycle controls, and explicit
   non-shell semantics until a console profile is supplied.
+- A dependency-free `hostctl` command with run, path inspection/copy,
+  host-info, and interactive shell subcommands; passwords are accepted only
+  from the environment or a hidden prompt.
 - Optional native integrations: AsyncSSH/SFTP, pywinrm, Docker SDK, PySerial,
   and libvirt QGA, each isolated behind a matching package extra.
 - Subprocess-shaped execution options, normalized transport errors, bounded
