@@ -150,11 +150,16 @@ class _CompositePathMixin:
                     # undo this and try the next provider.
                     self._adopt(provider, backend_path, pinned=True)
                 result = callback(backend_path)
-            except OperationNotStarted:
+            except OperationNotStarted as exc:
                 if pin:
                     self._provider, self._backend_path, self._factory, self._pinned = (
                         old
                     )
+                if self._selector is not None:
+                    # The provider proved nothing started, so remember the
+                    # refusal for this generation instead of re-attempting it
+                    # on every later operation.
+                    self._selector.decline(provider.name, str(exc))
                 continue
             if not pin and provider is not self._provider:
                 # Reads are intentionally not pinned, but retain the selected

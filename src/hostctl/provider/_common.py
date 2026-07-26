@@ -185,7 +185,23 @@ class ProviderSelector:
             raise ValueError("provider names must be unique within a selector")
         self.last_selection: ProviderSelection | None = None
         self._probe_cache: dict[str, ProviderProbe] = {}
+        self._declined: dict[str, str] = {}
         self._generation = 0
+
+    @property
+    def generation(self) -> int:
+        """The current connection generation; probes are cached per value."""
+        return self._generation
+
+    def decline(self, name: str, reason: str = "declined before dispatch") -> None:
+        """Record that a provider refused *before* dispatch this generation.
+
+        A provider which raised ``OperationNotStarted`` proved that nothing
+        started, so it is safe to skip it for the rest of this generation
+        rather than re-attempting it on every later operation.  The record is
+        cleared by :meth:`invalidate` along with the probe cache.
+        """
+        self._declined[str(name)] = str(reason)
 
     @staticmethod
     def _safe_name(value: object) -> str:
@@ -224,6 +240,21 @@ class ProviderSelector:
         for provider in self.providers:
             if provider.name in excluded:
                 continue
+            declined = self._declined.get(provider.name)
+            if declined is not None:
+                trace.append(
+                    {
+                        "provider": self._safe_name(provider.name),
+                        "availability": "unavailable",
+                        "reason": self._safe_name(declined),
+                        "capabilities": (),
+                        "chosen": False,
+                        "generation": self._generation,
+                        "policy": self._safe_name(policy),
+                        "pin": bool(pin),
+                    }
+                )
+                continue
             probe = self.probe(provider)
             allowed = probe.usable and (
                 capability is None
@@ -257,6 +288,8 @@ class ProviderSelector:
         raise OperationNotStarted("no provider is available")
 
     def invalidate(self) -> None:
+        """Start a new generation, dropping cached probes and declines."""
         self.last_selection = None
         self._probe_cache.clear()
+        self._declined.clear()
         self._generation += 1

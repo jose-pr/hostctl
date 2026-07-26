@@ -486,9 +486,10 @@ class SystemHost(Host):
                 self._path_selector,
                 logical_segments=segments,
             )
-        except OperationNotStarted:
+        except OperationNotStarted as exc:
             if backend is not None:
                 raise
+            self._path_selector.decline(selected.provider.name, str(exc))
             fallback = self._path_selector.select(
                 exclude=(selected.provider.name,)
             ).provider
@@ -551,9 +552,10 @@ class SystemHost(Host):
                     timeout=timeout,
                     text=text,
                 )
-            except OperationNotStarted:
+            except OperationNotStarted as exc:
                 # Providers may be retried only when they prove no operation
                 # was dispatched; planning is repeated for the next provider.
+                self._executor_selector.decline(provider.name, str(exc))
                 excluded.append(provider.name)
 
     def _run_with_provider(self, provider, cmds, **kwargs):
