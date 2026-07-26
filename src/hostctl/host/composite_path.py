@@ -82,11 +82,6 @@ class _CompositePathMixin:
     def selection_trace(self):
         return self._selection_trace
 
-    def _provider_path(self, provider: PathProvider) -> Path:
-        if provider is self._provider and self._backend_path is not None:
-            return self._backend_path
-        return provider.path(str(self))
-
     def _adopt(
         self, provider: PathProvider, backend_path: Path, *, pinned: bool
     ) -> None:
@@ -203,6 +198,59 @@ class _CompositePathMixin:
             logical_segments=segments,
         )
 
+    def _adopt_state_from(self, other: "_CompositePathMixin") -> None:
+        """Copy provider routing state onto a path built by pure-path code.
+
+        ``pathlib.PurePath`` derivations (``parents``, ``with_name``,
+        ``with_suffix``, ``relative_to``) build instances with
+        ``object.__new__``, which skips ``__new__`` and therefore leaves every
+        composite slot unset.  Re-seeding the routing state here keeps the
+        provider collection, selector, and pin attached to the derived path
+        instead of raising ``AttributeError`` on the next operation.
+        """
+        self._provider = other._provider
+        self._providers = other._providers
+        self._selector = other._selector
+        self._factory = other._factory
+        self._pinned = other._pinned
+        self._selection_trace = other._selection_trace
+        # The logical name changed, so the cached backend path no longer
+        # describes this path; it is re-derived lazily from the factory.
+        self._backend_path = None
+
+    def _provider_path(self, provider: PathProvider) -> Path:
+        if (
+            provider is self._provider
+            and getattr(self, "_backend_path", None) is not None
+        ):
+            return self._backend_path
+        return provider.path(str(self))
+
+    def _derive(self, factory, *args, **kwargs):
+        """Run a pure-path derivation and re-attach routing state."""
+        derived = factory(*args, **kwargs)
+        if isinstance(derived, _CompositePathMixin):
+            derived._adopt_state_from(self)
+        return derived
+
+    @property
+    def parents(self):
+        return tuple(
+            self._child(str(item)) for item in tuple(super().parents)  # type: ignore[misc]
+        )
+
+    def with_name(self, name):
+        return self._derive(super().with_name, name)
+
+    def with_stem(self, stem):
+        return self._derive(super().with_stem, stem)
+
+    def with_suffix(self, suffix):
+        return self._derive(super().with_suffix, suffix)
+
+    def relative_to(self, *other, **kwargs):
+        return self._derive(super().relative_to, *other, **kwargs)
+
     def with_segments(self, *segments: str):
         return self._child(*segments)
 
@@ -221,15 +269,32 @@ class _CompositePathMixin:
             "stat", lambda path: path.stat(follow_symlinks=follow_symlinks)
         )
 
-    def _scandir(self):
+    def _scan_with_provider(self):
         # The provider's iterator is returned only after the pre-dispatch
         # operation has succeeded; errors after that point are terminal.
         return self._dispatch(
             "scandir", lambda path: iter(path.iterdir()), with_provider=True
         )
 
+    def _scandir(self):
+        """Yield ``(name, stat)`` pairs for ``walk()``/``glob()``.
+
+        ``pathlib_next.Path._scandir`` is a listing hook with a fixed shape;
+        overriding it with a different return type silently breaks every
+        caller.  Provider selection still happens once, in
+        ``_scan_with_provider``.
+        """
+        from pathlib_next.path import FileStat
+
+        for entry in self.iterdir():
+            try:
+                stat = FileStat.from_path(entry, follow_symlink=False)
+            except OSError:
+                stat = None
+            yield entry.name, stat
+
     def iterdir(self):
-        children, provider = self._scandir()
+        children, provider = self._scan_with_provider()
         for child in children:
             yield type(self).from_path(
                 child,
