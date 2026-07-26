@@ -36,6 +36,13 @@ def test_selection_trace_has_generation_policy_pin_and_redaction():
     assert selector.select().generation == 1
 
 
+def test_provider_selector_rejects_ambiguous_duplicate_names():
+    first = ExecutorProvider("duplicate", lambda *args, **kwargs: None)
+    second = ExecutorProvider("duplicate", lambda *args, **kwargs: None)
+    with pytest.raises(ValueError, match="unique"):
+        ProviderSelector((first, second))
+
+
 def test_provider_details_probe_without_dispatch_and_capabilities_filter():
     calls = []
     probes = []

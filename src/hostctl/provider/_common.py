@@ -180,6 +180,9 @@ class ProviderSelector:
         self.providers = tuple(providers)
         if any(not getattr(p, "name", "") for p in self.providers):
             raise ValueError("providers must have names")
+        names = tuple(provider.name for provider in self.providers)
+        if len(set(names)) != len(names):
+            raise ValueError("provider names must be unique within a selector")
         self.last_selection: ProviderSelection | None = None
         self._probe_cache: dict[str, ProviderProbe] = {}
         self._generation = 0
