@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import subprocess
+import threading
 import typing
 from urllib.parse import parse_qsl, quote, urlencode
 
@@ -107,9 +108,25 @@ register_system_provider("winrm", _winrm_provider)
 
 
 class SystemConfig(HostConfig):
-    """Configuration for a logical system with one or more providers."""
+    """Base configuration for a logical system with one or more providers.
 
-    scheme = "system"
+    Abstract: concrete system families are :class:`PosixConfig`,
+    :class:`WindowsConfig`, and :class:`IosConfig`.  Each binds ``host_type``
+    and ``uri_scheme``; this class binds neither and cannot be instantiated
+    into a host on its own.
+    """
+
+    #: Class-level URI scheme used to *build* :attr:`connection_uri`.  This is
+    #: deliberately not named ``scheme``: ``HostConfig.scheme`` is a property
+    #: derived by parsing the built URI, and shadowing it with a plain string
+    #: broke that contract for every subclass here.  The two now flow one way
+    #: -- ``uri_scheme`` builds the URI, ``scheme`` reads it back -- so they
+    #: cannot disagree.
+    uri_scheme: typing.ClassVar[str] = ""
+
+    #: Concrete `SystemHost` subclass this configuration creates.  Bound by
+    #: each concrete config; ``None`` marks this base class as abstract.
+    host_type: typing.ClassVar[typing.Optional[typing.Type["SystemHost"]]] = None
 
     def __init__(
         self,
@@ -146,11 +163,20 @@ class SystemConfig(HostConfig):
 
     @property
     def connection_uri(self) -> str:
+        if not self.uri_scheme:
+            # The abstract base registers no URI scheme, so it has no
+            # round-trippable URI to advertise.  It previously claimed
+            # "system://", which `HostConfig(...)` then rejected as an
+            # unsupported scheme -- advertising a URI that cannot be parsed
+            # back is worse than declining to produce one.
+            raise NotImplementedError(
+                f"{type(self).__name__} is abstract and has no connection URI"
+            )
         query: list[tuple[str, str]] = [("executor", value) for value in self.executors]
         query += [("path", value) for value in self.paths]
         if self.shell is not None:
             query.append(("shell", getattr(self.shell, "name", str(self.shell))))
-        return f"{self.scheme}://{quote(self.authority, safe='')}" + (
+        return f"{self.uri_scheme}://{quote(self.authority, safe='')}" + (
             f"?{urlencode(query)}" if query else ""
         )
 
@@ -184,6 +210,14 @@ class SystemConfig(HostConfig):
         )
 
     def _create_host(self):
+        if self.host_type is None:
+            names = ", ".join(
+                item.__name__ for item in (PosixConfig, WindowsConfig, IosConfig)
+            )
+            raise TypeError(
+                f"{type(self).__name__} is abstract and creates no host; "
+                f"use a concrete system configuration ({names})"
+            )
         return self.host_type(
             self,
             executor_providers=self._build_providers("executor"),
@@ -196,6 +230,9 @@ class SystemHost(Host):
 
     system_family = "generic"
     default_shell: ShellFlavour | None = None
+    #: Configuration class used when a host is constructed without one.
+    #: Bound by each concrete family below, once those classes exist.
+    config_type: typing.ClassVar[typing.Type[SystemConfig]]
 
     def __init__(
         self,
@@ -207,9 +244,13 @@ class SystemHost(Host):
         info: HostInfo | None = None,
         initializer=None,
     ):
-        self.config = config or SystemConfig()
-        if config is None and self.system_family != "generic":
-            self.config.scheme = self.system_family
+        # A config-less host builds the configuration matching its own system
+        # family.  Previously this made a bare `SystemConfig` and then
+        # assigned to `config.scheme` -- writing to what `HostConfig` defines
+        # as a read-only computed property, which only worked because
+        # `SystemConfig` shadowed that property with a plain string.  Picking
+        # the right config type instead keeps `scheme` derived from the URI.
+        self.config = config if config is not None else self.config_type()
         self._executor_selector = ProviderSelector(executor_providers)
         self._path_selector = ProviderSelector(path_providers)
         self._shell_resolver = (
@@ -245,6 +286,29 @@ class SystemHost(Host):
         self._connected = False
         self._connected_providers = []
         self._closed_targets = set()
+        # Serializes this host's connection *bookkeeping*: `_connected`,
+        # `_connected_providers`, `_closed_targets`, and `_initializer_
+        # generation`.  Without it, concurrent `run()` calls race the
+        # check-then-append in `_ensure_provider_connected` and each append a
+        # duplicate entry for the same provider, so the list grows without
+        # bound and every racing caller repeats the connect round-trip.
+        #
+        # RLock, not Lock: these paths nest.  `connect()` runs the session
+        # initializer, which is handed this same host and legitimately calls
+        # `run()` -> `_ensure_provider_connected`; a plain Lock would deadlock
+        # on that re-entry.
+        #
+        # Scope: the lock deliberately spans the provider `connect()` call.
+        # Connecting is the operation being deduplicated, so releasing the
+        # lock around it would reintroduce the very race it exists to close --
+        # two callers would both observe "not connected" and both dial out.
+        # Providers already own the slow part behind their own locks
+        # (`_SshTransport._ssh_lock`), and a `SystemHost` is one logical
+        # target whose providers are ordered fallbacks for that same target,
+        # not independent endpoints to be dialed in parallel.  Command
+        # dispatch itself -- `run()`, `path()`, `spawn()` -- stays outside the
+        # lock, so this never serializes actual remote work.
+        self._lifecycle_lock = threading.RLock()
 
     @property
     def shell_flavour(self):
@@ -320,6 +384,10 @@ class SystemHost(Host):
         return selected.provider
 
     def connect(self):
+        with self._lifecycle_lock:
+            self._connect_locked()
+
+    def _connect_locked(self):
         if self._connected:
             return
         connected = []
@@ -372,6 +440,10 @@ class SystemHost(Host):
         self._connected = True
 
     def close(self):
+        with self._lifecycle_lock:
+            self._close_locked()
+
+    def _close_locked(self):
         targets = []
         # Dedupe by identity, matching the `id(target)` check below. Value
         # equality would collapse two distinct transports that compare equal
@@ -646,14 +718,18 @@ class SystemHost(Host):
         return provider.execute(invocation[0], *invocation[1:], **options)
 
     def _ensure_provider_connected(self, provider):
-        if provider in self._connected_providers:
-            return
-        connect = getattr(provider, "connect", None)
-        if connect is not None:
-            connect()
-        target = getattr(provider, "transport", provider)
-        self._closed_targets.discard(id(target))
-        self._connected_providers.append(provider)
+        # The check and the append must be one atomic step; see the lock's
+        # rationale in __init__.  Membership is tested by identity because a
+        # provider is a live object, not a value.
+        with self._lifecycle_lock:
+            if any(item is provider for item in self._connected_providers):
+                return
+            connect = getattr(provider, "connect", None)
+            if connect is not None:
+                connect()
+            target = getattr(provider, "transport", provider)
+            self._closed_targets.discard(id(target))
+            self._connected_providers.append(provider)
 
     def spawn(self, *cmds, **options):
         provider = self._executor_selector.select().provider
@@ -711,20 +787,23 @@ class IosHost(SystemHost):
     default_shell = None
 
 
-for _cls, _scheme in ((PosixHost, "posix"), (WindowsHost, "windows"), (IosHost, "ios")):
-    _cls.__name__  # keep lint tools from treating the loop as accidental
-
-
 class PosixConfig(SystemConfig, schemes=("posix", "posix+ssh")):
     host_type = PosixHost
-    scheme = "posix"
+    uri_scheme = "posix"
 
 
 class WindowsConfig(SystemConfig, schemes=("windows", "windows+winrm")):
     host_type = WindowsHost
-    scheme = "windows"
+    uri_scheme = "windows"
 
 
 class IosConfig(SystemConfig, schemes=("ios",)):
     host_type = IosHost
-    scheme = "ios"
+    uri_scheme = "ios"
+
+
+# Each host family and its configuration are mutually referential, so the
+# host -> config direction is bound here, once both sides are defined.
+PosixHost.config_type = PosixConfig
+WindowsHost.config_type = WindowsConfig
+IosHost.config_type = IosConfig
