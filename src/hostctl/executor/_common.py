@@ -129,7 +129,22 @@ def dispatch_output(
     return stdout, stderr
 
 
-class ExecutorCapability(enum.Enum):
+class ExecutorCapability(str, enum.Enum):
+    """Native executor features, spelled as strings.
+
+    There is exactly one capability vocabulary in hostctl: **strings**.  These
+    members subclass :class:`str` so ``ExecutorCapability.CWD == "cwd"`` and
+    both hash alike -- a set of members and a set of their spellings are
+    interchangeable, with no conversion step at any boundary.
+
+    Strings are the vocabulary rather than opaque enum members because
+    provider capability sets legitimately carry transport-specific tokens with
+    no member here ("runspace", plus whatever a third-party provider
+    declares).  An enum-only vocabulary could not express those; a mixed one
+    would need coercion at every comparison, which is precisely the bug this
+    shape removes.  `str, enum.Enum` (not `enum.StrEnum`) keeps the 3.9 floor.
+    """
+
     ARGS = "args"
     CWD = "cwd"
     ENV = "env"

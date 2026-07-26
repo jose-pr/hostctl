@@ -23,9 +23,7 @@ from hostctl import (
     Shell,
     ShellOperator,
     SshConfig,
-    SshExecutor,
     WinRMConfig,
-    WinRMExecutor,
     ZSH,
     register_shell_flavour,
     shell_flavour,
@@ -34,6 +32,7 @@ from hostctl.host._ssh import _SshTransport
 from hostctl.host._winrm import _WinRMTransport
 from hostctl.executor.psrp import PsrpExecutor
 from hostctl.executor import Executor as ModuleExecutor
+from hostctl.executor import SshExecutor, WinRMExecutor
 
 
 def test_shell_callable_executor_receives_one_script():
@@ -520,3 +519,78 @@ def test_shell_flavour_accepts_class_and_registered_string():
     assert isinstance(constructed, _Custom)
     registered = register_shell_flavour(constructed)
     assert shell_flavour("test-custom-shell") is registered
+
+
+def test_host_bound_shell_detects_native_cwd_and_env_support():
+    """A host-bound Shell must see through the provider's string vocabulary.
+
+    `ExecutorProvider` flattens capability enums to their string values, so
+    `Shell` comparing `ExecutorCapability.CWD in ...` against that set was
+    always False: the double-render guard never fired and a host with native
+    cwd/env still got a rendered `cd`/`export` prefix in the script.
+    """
+    from hostctl import ExecutorProvider, PosixHost
+
+    seen = []
+
+    def execute(command, *args, **options):
+        seen.append((command, args, options))
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    host = PosixHost(
+        executor_providers=(
+            ExecutorProvider("native", execute, capabilities=("args", "cwd", "env")),
+        ),
+        shell=POSIX_SHELL,
+    )
+    shell = host.shell
+
+    # The vocabularies now agree, so the guard is live.
+    assert shell.executor_capabilities == frozenset(("args", "cwd", "env"))
+    assert shell._executor_accepts_cwd is True
+    assert shell._executor_accepts_env is True
+
+    shell.run(["echo", "hi"], cwd="/tmp/target", env={"K": "V"})
+    command, args, options = seen[-1]
+
+    # Native context is forwarded rather than swallowed...
+    assert options["cwd"] == "/tmp/target"
+    assert options["env"] == {"K": "V"}
+    # ...and therefore must not also be rendered into the script text.
+    rendered = " ".join([str(command), *(str(item) for item in args)])
+    assert "cd " not in rendered
+    assert "K=V" not in rendered
+
+
+def test_shell_capability_vocabulary_is_strings_and_keeps_provider_tokens():
+    """Enum members and strings normalize to one string vocabulary.
+
+    Provider-specific tokens with no `ExecutorCapability` member must survive
+    the normalization -- flattening toward the enum instead would drop them.
+    """
+
+    class _EnumExecutor:
+        executor_capabilities = frozenset(
+            (ExecutorCapability.ARGS, ExecutorCapability.CWD)
+        )
+
+        def __call__(self, command, *args, **options):
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    class _StringExecutor:
+        executor_capabilities = frozenset(("args", "cwd", "runspace", "manages_status"))
+
+        def __call__(self, command, *args, **options):
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    enum_shell = Shell(POSIX_SHELL, _EnumExecutor())
+    string_shell = Shell(POSIX_SHELL, _StringExecutor())
+
+    assert enum_shell.executor_capabilities == frozenset(("args", "cwd"))
+    assert all(isinstance(item, str) for item in string_shell.executor_capabilities)
+    # Non-enum provider tokens are preserved verbatim.
+    assert {"runspace", "manages_status"} <= string_shell.executor_capabilities
+    # Both vocabularies reach the same conclusion about native cwd.
+    assert enum_shell._executor_accepts_cwd is True
+    assert string_shell._executor_accepts_cwd is True
+    assert enum_shell._executor_accepts_env is False

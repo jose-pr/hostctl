@@ -326,6 +326,11 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
             ):
                 inferred.add(ExecutorCapability.ARGS)
             published = frozenset(inferred)
+        # One capability vocabulary, strings -- see `ExecutorCapability`.
+        # Its members subclass `str`, so a set published as enum members by a
+        # raw `Executor` and one published as plain strings by a `Host` (via
+        # `ExecutorProvider`) compare and hash identically.  No conversion
+        # happens here, and none is needed at any other boundary.
         self.executor_capabilities = frozenset(published)
         self._executor_accepts_cwd = (
             ExecutorCapability.CWD in self.executor_capabilities
