@@ -1,3 +1,4 @@
+import os
 import subprocess
 
 import pytest
@@ -145,6 +146,10 @@ def test_provider_selector_rejects_unavailable_without_replay():
     assert calls == ["selected"]
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="WindowsHost renders PowerShell, whose executable exists only on Windows",
+)
 def test_windows_system_host_runs_with_local_executor_and_path():
     host = WindowsHost(
         executor_providers=(ExecutorProvider("local", LocalExecutor()),),

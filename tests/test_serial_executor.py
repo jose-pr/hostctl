@@ -234,8 +234,13 @@ def test_serial_transport_applies_deadlines_to_blocking_backend_calls():
     transport.write(b"x", timeout=0.25)
 
     assert serial_port.seen_read_timeouts
-    assert all(0 <= value <= 0.03 for value in serial_port.seen_read_timeouts)
-    assert serial_port.seen_write_timeouts[0] <= 0.25
+    # The per-call timeout is the deadline's remaining budget, so it is never
+    # negative and never exceeds the caller's window. Compare with a small
+    # epsilon: the value is computed from monotonic-clock arithmetic, and an
+    # exact bound turns float representation into a flaky failure on a loaded
+    # CI runner.
+    assert all(0 <= value <= 0.03 + 1e-6 for value in serial_port.seen_read_timeouts)
+    assert serial_port.seen_write_timeouts[0] <= 0.25 + 1e-6
     assert serial_port.timeout is None
     assert serial_port.write_timeout is None
 

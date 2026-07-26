@@ -30,7 +30,7 @@ classifiers = [
 ]
 # pathlib_next supplies the common local/remote path return type. Transport
 # implementations remain extras, so importing hostctl never requires them.
-dependencies = ["pathlib_next>=0.8.4,<0.9"]
+dependencies = ["pathlib_next>=0.8.6,<0.9"]
 
 [project.optional-dependencies]
 # SSH-backed run()/path(): asyncssh for shell exec, pathlib_next's SftpPath
