@@ -1,6 +1,7 @@
 import subprocess
 
 import pytest
+from pathlib_next.mempath import MemPath, MemPathBackend
 
 from hostctl import (
     HostConfig,
@@ -80,3 +81,21 @@ def test_provider_probe_is_cached_until_invalidation():
     selector.invalidate()
     selector.select()
     assert len(calls) == 2
+
+
+def test_composite_path_accepts_path_protocol_and_retains_alternates():
+    from hostctl import PosixHost
+
+    first_backend = MemPathBackend()
+    second_backend = MemPathBackend()
+    first = PathProvider("first", lambda *parts: MemPath(*parts, backend=first_backend))
+    second = PathProvider(
+        "second", lambda *parts: MemPath(*parts, backend=second_backend)
+    )
+    host = PosixHost(path_providers=(first, second))
+
+    child = host.path("root") / "child"
+    alternate = child.via("second")
+
+    assert str(alternate).replace("\\", "/").endswith("root/child")
+    assert alternate.provider is second

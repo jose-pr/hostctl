@@ -116,6 +116,11 @@ from .serial import (
     RawConsoleProfile as RawConsoleProfile,
     SerialConsoleProtocol as SerialConsoleProtocol,
 )
+from .sync import (
+    ProgressReader as ProgressReader,
+    host_checksum as host_checksum,
+    stat_checksum as stat_checksum,
+)
 from .shell import (
     BASH as BASH,
     CMD as CMD,
@@ -208,6 +213,7 @@ __all__ = [
     "SerialConsoleProtocol",
     "RawConsoleProfile",
     "PromptConsoleProfile",
+    "ProgressReader",
     "LoginStep",
     "ConsoleProtocolError",
     "SerialSettings",
@@ -224,6 +230,8 @@ __all__ = [
     "ZshShellFlavour",
     "register_shell_flavour",
     "shell_flavour",
+    "host_checksum",
+    "stat_checksum",
     "SshConfig",
     "SshHost",
     "SshProcess",

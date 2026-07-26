@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import os
+from pathlib import PurePath
+
 from pathlib_next.fspath import LocalPath
 
 
@@ -16,10 +17,11 @@ class CompositePath(LocalPath):
     __slots__ = ("_provider", "_backend_path", "_factory", "_providers")
 
     def __new__(cls, backend_path, provider, factory, providers=()):
-        return super().__new__(cls, os.fspath(backend_path))
+        return super().__new__(cls, str(backend_path))
 
     def __init__(self, backend_path, provider, factory, providers=()):
-        super().__init__(os.fspath(backend_path))
+        if PurePath.__init__ is not object.__init__:
+            super().__init__(str(backend_path))
         self._provider = provider
         self._backend_path = backend_path
         self._factory = factory
@@ -40,13 +42,18 @@ class CompositePath(LocalPath):
         if selected is None:
             raise ValueError(f"unknown path provider: {name}")
         value = selected.path(*self.parts)
-        return type(self)(value, selected, selected.path)
+        return type(self)(value, selected, selected.path, self._providers)
 
     def with_segments(self, *segments):
-        return type(self)(self._factory(*segments), self._provider, self._factory)
+        return type(self)(
+            self._factory(*segments),
+            self._provider,
+            self._factory,
+            self._providers,
+        )
 
     def __truediv__(self, key):
-        return self.with_segments(*(tuple(self.parts) + (os.fspath(key),)))
+        return self.with_segments(*(tuple(self.parts) + (str(key),)))
 
     def joinpath(self, *args):
         result = self
@@ -83,4 +90,4 @@ class CompositePath(LocalPath):
 
     def iterdir(self):
         for child in self._backend_path.iterdir():
-            yield type(self)(child, self._provider, self._factory)
+            yield type(self)(child, self._provider, self._factory, self._providers)
