@@ -60,9 +60,35 @@ class FakeSshSession(_FakeTransport):
 
     async def run(self, command, **options):
         self.connect()
+        if os.name == "nt":
+            script = command.rsplit("-Command", 1)[-1].strip().strip('"')
+            parts = [item.strip() for item in script.split(";")]
+            executable = parts[0].strip("'\"") if parts else ""
+            if executable and os.path.isfile(executable):
+                result = subprocess.run(
+                    [executable, *parts[1:]],
+                    capture_output=True,
+                    check=False,
+                    env=options.get("env"),
+                    timeout=options.get("timeout"),
+                )
+                return type(
+                    "Result",
+                    (),
+                    {
+                        "returncode": result.returncode,
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                    },
+                )()
+        invocation = (
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command]
+            if os.name == "nt"
+            else command
+        )
         result = subprocess.run(
-            command,
-            shell=True,
+            invocation,
+            shell=os.name != "nt",
             capture_output=True,
             check=False,
             env=options.get("env"),
@@ -211,7 +237,7 @@ class FakeSshHost:
     transport = "ssh"
 
     def __new__(cls):
-        from hostctl import HostPath, PosixConfig, PosixHost, SshConfig
+        from hostctl import HostPath, PosixHost, SshConfig
         from hostctl.host._ssh import SshExecutorProvider, _SshTransport
         from hostctl.provider import PathProvider
 
@@ -233,7 +259,7 @@ class FakeWinRMHost:
     transport = "winrm"
 
     def __new__(cls):
-        from hostctl import HostPath, WindowsConfig, WindowsHost, WinRMConfig
+        from hostctl import HostPath, WindowsHost, WinRMConfig
         from hostctl.host._winrm import WinRMExecutorProvider, _WinRMTransport
         from hostctl.provider import PathProvider
 
@@ -298,7 +324,7 @@ def _local() -> tuple[object, Callable[[], None]]:
     return LocalHost(), lambda: None
 
 
-def _fake(host_type: type[_TransportFakeHost]) -> tuple[object, Callable[[], None]]:
+def _fake(host_type: Callable[[], object]) -> tuple[object, Callable[[], None]]:
     return host_type(), lambda: None
 
 
@@ -370,11 +396,14 @@ def _uri_live(uri: str) -> tuple[object, Callable[[], None]]:
     from hostctl import HostConfig
 
     options = {}
+    scheme = uri.split(":", 1)[0].casefold()
     if os.environ.get("HOSTCTL_TEST_PASSWORD"):
         options["password"] = os.environ["HOSTCTL_TEST_PASSWORD"]
-    if os.environ.get("HOSTCTL_TEST_SSH_KEY"):
-        options["client_keys"] = os.environ["HOSTCTL_TEST_SSH_KEY"]
-    options["known_hosts"] = os.environ.get("HOSTCTL_TEST_KNOWN_HOSTS", None)
+    if scheme.startswith(("ssh", "qga+")):
+        if os.environ.get("HOSTCTL_TEST_SSH_KEY"):
+            options["client_keys"] = os.environ["HOSTCTL_TEST_SSH_KEY"]
+        if os.environ.get("HOSTCTL_TEST_KNOWN_HOSTS"):
+            options["known_hosts"] = os.environ["HOSTCTL_TEST_KNOWN_HOSTS"]
     config = HostConfig(uri, **options)
     host = config._create_host()
     host.connect()

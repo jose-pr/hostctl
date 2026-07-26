@@ -21,7 +21,15 @@ def test_live_provider_direct_command(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} does not advertise run")
     with provider_context(provider) as host:
-        result = host.run(Path(sys.executable), "-c", "print('live')")
+        if provider.name == "local":
+            result = host.run(Path(sys.executable), "-c", "print('live')")
+        else:
+            command = (
+                "Write-Output live"
+                if getattr(host.shell_flavour, "name", "") == "powershell"
+                else "printf '%s\\n' live"
+            )
+            result = host.run(command)
     assert result.stdout.strip() == b"live"
 
 
