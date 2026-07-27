@@ -264,6 +264,13 @@ class _HostConfigMeta(_abc.ABCMeta):
 class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
     """Secret-safe connection configuration and extensible URI dispatch."""
 
+    #: Credential names `HostConfig(uri, **credentials)` may pass to this
+    #: config. Declaring it makes dispatch reject anything else *before*
+    #: construction, so a typo (`passwrd=`) fails loudly instead of silently
+    #: producing a config with no password. `None` (the default) skips the
+    #: check, for configs that validate credentials themselves.
+    uri_credentials: _ty.ClassVar[_ty.Optional[_ty.Tuple[str, ...]]] = None
+
     _uri_schemes: _ty.ClassVar[_ty.Tuple[str, ...]] = ()
     _uri_registry_cache: _ty.ClassVar[
         _ty.Optional[_ty.Tuple[_ty.Type["HostConfig"], ...]]
@@ -395,7 +402,15 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         if len(matches) > 1:
             names = ", ".join(item.__name__ for item in matches)
             raise ValueError(f"ambiguous host URI matched: {names}")
-        return matches[0]._from_parsed_uri(parsed, **credentials)
+        implementation = matches[0]
+        # Fail closed on an unknown credential *here*, so a config gets the
+        # safe behaviour by declaring `uri_credentials` rather than by
+        # remembering to call a helper. A typo like `passwrd=` would otherwise
+        # build a config with no password and no complaint, surfacing much
+        # later as an unexplained authentication failure.
+        if implementation.uri_credentials is not None:
+            strict_uri_credentials(credentials, implementation.uri_credentials)
+        return implementation._from_parsed_uri(parsed, **credentials)
 
     @classmethod
     def _matches_uri(cls, parsed: _SplitResult) -> bool:

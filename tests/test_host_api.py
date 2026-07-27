@@ -344,6 +344,48 @@ def test_redact_uri_handles_a_raw_newline_without_raising():
     )
 
 
+def test_uri_credentials_declaration_rejects_an_unknown_credential():
+    class _Declared(HostConfig, schemes=("declared-strict",)):
+        uri_credentials = ("password",)
+
+        def __init__(self, host, password=None):
+            super().__init__()
+            self.host = host
+            self.password = password
+
+        @property
+        def connection_uri(self):
+            return f"declared-strict://{self.host}"
+
+        @classmethod
+        def _from_parsed_uri(cls, parsed, **credentials):
+            return cls(parsed.hostname, **credentials)
+
+        def _create_host(self):
+            raise NotImplementedError
+
+    assert HostConfig("declared-strict://h", password="x").password == "x"
+
+    # A typo must fail loudly here rather than building a config with no
+    # password, which would surface later as an unexplained auth failure.
+    with pytest.raises(ValueError, match="passwrd"):
+        HostConfig("declared-strict://h", passwrd="x")
+
+
+def test_uri_helpers_are_public_for_custom_configs():
+    # A config implementing the documented extension point must be able to
+    # follow the same pattern hostctl's own configs use, without private
+    # imports.
+    from hostctl import strict_uri_credentials, strict_uri_query, uri_host
+
+    assert uri_host("::1") == "[::1]"
+    assert uri_host("host") == "host"
+    strict_uri_credentials({"password": "x"}, ("password",))
+    with pytest.raises(ValueError, match="unknown credential"):
+        strict_uri_credentials({"nope": "x"}, ("password",))
+    assert callable(strict_uri_query)
+
+
 def test_ssh_providers_share_one_transport_for_composition():
     from hostctl import ssh_providers
     from hostctl.provider import ExecutorProvider, PathProvider

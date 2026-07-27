@@ -147,6 +147,12 @@ corresponding hosts.
   none. `cwd`/`encoding`/`errors` are replaced by a per-call value, `env`
   merges per key, and `Shell.configure(...)` returns a configured copy without
   mutating the original.
+- A custom `HostConfig` should declare `uri_credentials = ("password", ...)`.
+  Dispatch then rejects any other credential BEFORE construction, so a typo
+  (`passwrd=`) fails loudly instead of silently building a config with no
+  password. `None` (default) skips the check for configs that validate
+  themselves. `strict_uri_credentials`, `strict_uri_query`, and `uri_host`
+  are public for configs writing `_from_parsed_uri` by hand.
 - `ssh_providers(SshConfig)` and `winrm_providers(WinRMConfig)` return an
   `(executor_provider, path_provider)` pair sharing ONE transport, for
   composing a transport into a host you assemble yourself rather than taking

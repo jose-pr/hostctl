@@ -7,6 +7,9 @@ from ._common import (
     HostPath as HostPath,
     parse_credentials as parse_credentials,
     redact_uri as redact_uri,
+    strict_uri_credentials as strict_uri_credentials,
+    strict_uri_query as strict_uri_query,
+    uri_host as uri_host,
 )
 from ._ssh import ssh_providers as ssh_providers
 from ._winrm import winrm_providers as winrm_providers
@@ -60,6 +63,9 @@ __all__ = [
     "parse_credentials",
     "redact_uri",
     "ssh_providers",
+    "strict_uri_credentials",
+    "strict_uri_query",
+    "uri_host",
     "winrm_providers",
     "HostPath",
     "ContainerConfig",

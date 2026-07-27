@@ -81,6 +81,9 @@ without a deprecation cycle.
 
 ::: hostctl.redact_uri
 ::: hostctl.parse_credentials
+::: hostctl.strict_uri_credentials
+::: hostctl.strict_uri_query
+::: hostctl.uri_host
 
 ## Composing transports
 
