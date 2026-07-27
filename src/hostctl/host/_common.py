@@ -107,6 +107,59 @@ def uri_host(host: str) -> str:
     return f"[{host}]" if ":" in host and not host.startswith("[") else host
 
 
+#: Characters `urllib.parse` deletes from a URI before parsing it (WHATWG
+#: requires the removal, and CPython adopted it for CVE-2022-0391). They are
+#: removed *silently*, which is what makes them dangerous unencoded.
+_URI_STRIPPED_CHARACTERS = {"\t": "%09", "\n": "%0A", "\r": "%0D"}
+
+
+def _encode_stripped_characters(uri: str) -> str:
+    """Percent-encode the characters `urlsplit` would silently delete.
+
+    A raw tab, CR, or LF never survives `urlsplit`: it is removed before
+    parsing, which changes what the URI means rather than failing. That is
+    dangerous in two different ways, and they need different answers.
+
+    In the **userinfo** it swallows data the caller meant to pass:
+    `ssh://user:pw<LF>otp:1@host` would authenticate as `pwotp:1`, losing the
+    credential extras. Writing the separator raw is the natural thing to do --
+    a password read from a file or a prompt arrives with a real newline in it
+    -- so encode it here and let it through.
+
+    In the **authority** the same deletion rewrites the target:
+    `ssh://host<LF>.other.example/` would resolve to `host.other.example`. No
+    encoding makes that safe, because the caller cannot have meant a hostname
+    containing a newline. `_reject_authority_control_characters` refuses those
+    after parsing, once the userinfo has been separated out.
+
+    Encoding happens before `urlsplit` sees the string, so the characters are
+    preserved as data and `unquote` restores them when the password is read.
+    """
+    for character, encoded in _URI_STRIPPED_CHARACTERS.items():
+        if character in uri:
+            uri = uri.replace(character, encoded)
+    return uri
+
+
+def _reject_authority_control_characters(parsed: _SplitResult) -> None:
+    """Refuse control characters in the host portion of an authority.
+
+    These arrive percent-encoded (see `_encode_stripped_characters`), so the
+    check is against the encoded spelling -- `urlsplit` leaves `%0A` in the
+    hostname verbatim. A hostname cannot legitimately contain one, and
+    allowing it would let a URI that reads as one target resolve to another.
+    """
+    host = parsed.hostname or ""
+    if not host:
+        return
+    upper = host.upper()
+    if any(encoded in upper for encoded in _URI_STRIPPED_CHARACTERS.values()):
+        raise ValueError(
+            "connection URI host contains a control character; only the "
+            "userinfo may carry one"
+        )
+
+
 def _rebuild_authority(parsed: _SplitResult, password: _ty.Optional[str]) -> str:
     """Rebuild a URI authority with `password` in place of the original."""
     host = uri_host(parsed.hostname or "")
@@ -136,8 +189,14 @@ def redact_uri(uri: str) -> str:
     hand back to `HostConfig`.
 
     A URI with no password is returned unchanged.
+
+    This never raises. It is meant for error messages and log records, where
+    failing to render a diagnostic would be worse than rendering an odd one.
+    Characters `urlsplit` would delete (tab, CR, LF) are percent-encoded first,
+    the same as during dispatch, so a password written with a raw newline is
+    still recognized and removed rather than partly surviving into the output.
     """
-    parsed = _urlsplit(uri)
+    parsed = _urlsplit(_encode_stripped_characters(uri))
     if parsed.password is None:
         return uri
     return _without_password(parsed).geturl()
@@ -295,9 +354,13 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
 
         The password field is parsed by :func:`parse_credentials`, so a newline
         separates trailing `key:value` extras -- an OTP or other second factor
-        travels through the same field.
+        travels through the same field. The newline may be written raw: it is
+        percent-encoded before parsing (`urlsplit` would otherwise delete it),
+        and decoded again when the password is read. A control character in the
+        *host* is still refused, because no encoding makes that meaningful.
         """
-        parsed = _urlsplit(uri)
+        parsed = _urlsplit(_encode_stripped_characters(uri))
+        _reject_authority_control_characters(parsed)
         if parsed.fragment:
             raise ValueError("connection URI fragments are not supported")
         if parsed.password is not None:

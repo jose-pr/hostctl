@@ -21,6 +21,7 @@ from hostctl import (
     parse_credentials,
     redact_uri,
 )
+from hostctl.host._common import _encode_stripped_characters
 
 
 class _UnsupportedHost(Host):
@@ -289,6 +290,58 @@ def test_parse_credentials_splits_extras_after_the_password(value, expected):
 def test_parse_credentials_rejects_an_empty_extra_name():
     with pytest.raises(ValueError, match="must not be empty"):
         parse_credentials("pw\n:novalue")
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        # A deleted character in the authority rewrites the target, so a URI
+        # that reads as one host would connect to another. No encoding makes
+        # that meaningful, so it is refused.
+        "ssh://admin:pw@evil.example\n.trusted.example/",
+        "ssh://admin:pw@evil.example\r.trusted.example/",
+        "ssh://admin:pw@evil\t.example/",
+    ],
+)
+def test_uri_rejects_control_characters_in_the_host(uri):
+    with pytest.raises(ValueError, match="host contains a control character"):
+        HostConfig(uri)
+
+
+def test_uri_password_may_contain_a_raw_newline():
+    # `urlsplit` would delete a raw newline, silently turning the credential
+    # extras into part of the password ("pw\notp:1" -> "pwotp:1"). Encoding it
+    # before parsing means a caller can write the separator naturally -- a
+    # password read from a file or a prompt carries a real newline.
+    raw = "ssh://admin:hunter2\notp:123456@nas.example.com"
+
+    # The extra reaches the config by name rather than being swallowed.
+    with pytest.raises(ValueError, match="otp"):
+        HostConfig(raw)
+
+    # The host is untouched by the encoding.
+    assert urlsplit(_encode_stripped_characters(raw)).hostname == "nas.example.com"
+
+
+def test_uri_password_raw_and_encoded_newlines_parse_identically():
+    raw = "ssh://admin:hunter2\notp:1@host"
+    encoded = "ssh://admin:hunter2%0Aotp:1@host"
+
+    assert _encode_stripped_characters(raw) == encoded
+    # Both spellings yield the same password field, so a caller may use either.
+    assert (
+        urlsplit(_encode_stripped_characters(raw)).password
+        == urlsplit(encoded).password
+    )
+
+
+def test_redact_uri_handles_a_raw_newline_without_raising():
+    # Redaction is used in log records and error messages, where refusing to
+    # render a diagnostic would be worse than rendering an odd one.
+    assert (
+        redact_uri("ssh://admin:pw\notp:1@nas.example.com")
+        == "ssh://admin@nas.example.com"
+    )
 
 
 def test_uri_password_field_carries_credential_extras():

@@ -75,6 +75,14 @@ that value type; no duplicate command-kind flag is carried.
   `redact_uri(uri)` STRIPS a password and returns a valid, reusable URI (not a
   masked one, so a rendered form can never round-trip a wrong credential), for
   logs, reprs, and error messages.
+- A connection URI may carry a raw tab, CR, or LF in its **userinfo**: those
+  are percent-encoded before `urlsplit` sees them, which would otherwise
+  delete them silently (`ssh://u:pw<LF>otp:1@host` would authenticate with
+  `pwotp:1`). So the credential-extras separator can be written naturally.
+  A control character in the **host** is REJECTED -- deletion there rewrites
+  the target (`ssh://host<LF>.other.example/` would resolve to
+  `host.other.example`), and no encoding makes it meaningful.
+  `redact_uri` never raises on either -- it is for diagnostics.
 - `parse_credentials(password) -> (password, extras)` splits a password field
   on a newline: the first line is the password, each later line is a
   credential extra. `name:value` sets a value, a bare `name` is a flag

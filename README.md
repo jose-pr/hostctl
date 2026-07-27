@@ -133,7 +133,11 @@ A password field may also carry extra credentials, one per line after it:
 "123456"})`. A bare name is a flag meaning the same as `name:`. This lets an
 OTP or other second factor reach a transport through a single field — a URI's
 userinfo, an environment variable, a prompt — without each caller inventing an
-encoding.
+encoding. Inside a URI the separator may be written raw — hostctl encodes it
+before parsing, since `urlsplit` would otherwise delete it and silently merge
+the extras into the password. A control character in the *host* is still
+rejected: no encoding makes a hostname containing one meaningful, and allowing
+it would let a URI that reads as one target resolve to another.
 
 `str(config)` is the same canonical, secret-free connection string as
 `config.connection_uri`. `HostConfig(str(config), **secrets)` reconstructs the
