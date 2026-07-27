@@ -344,6 +344,33 @@ def test_redact_uri_handles_a_raw_newline_without_raising():
     )
 
 
+def test_ssh_providers_share_one_transport_for_composition():
+    from hostctl import ssh_providers
+    from hostctl.provider import ExecutorProvider, PathProvider
+
+    executor, path = ssh_providers(SshConfig("nas.example.com", username="root"))
+
+    assert isinstance(executor, ExecutorProvider)
+    assert isinstance(path, PathProvider)
+    # Sharing the transport is the invariant this factory exists to enforce:
+    # assembling the pair by hand can silently open two connections, only one
+    # of which is ever closed.
+    assert executor.transport is path.transport
+
+
+def test_winrm_providers_share_one_transport_for_composition():
+    from hostctl import winrm_providers
+    from hostctl.provider import ExecutorProvider, PathProvider
+
+    executor, path = winrm_providers(
+        WinRMConfig("win.example.com", "admin", password="x")
+    )
+
+    assert isinstance(executor, ExecutorProvider)
+    assert isinstance(path, PathProvider)
+    assert executor.transport is path.transport
+
+
 def test_uri_password_field_carries_credential_extras():
     quoted = quote("hunter2\notp:123456", safe="")
 

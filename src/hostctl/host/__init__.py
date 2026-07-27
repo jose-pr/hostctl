@@ -8,6 +8,8 @@ from ._common import (
     parse_credentials as parse_credentials,
     redact_uri as redact_uri,
 )
+from ._ssh import ssh_providers as ssh_providers
+from ._winrm import winrm_providers as winrm_providers
 from ._local import LocalConfig as LocalConfig, LocalHost as LocalHost
 from .container import (
     ContainerConfig as ContainerConfig,
@@ -57,6 +59,8 @@ __all__ = [
     "HostInfo",
     "parse_credentials",
     "redact_uri",
+    "ssh_providers",
+    "winrm_providers",
     "HostPath",
     "ContainerConfig",
     "ContainerHost",

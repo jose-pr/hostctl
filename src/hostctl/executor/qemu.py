@@ -21,6 +21,7 @@ from ._common import (
     PathLike,
     dispatch_output,
     normalize_environment,
+    normalize_input,
     capture_streams,
     reject_stdin_conflict,
 )
@@ -139,12 +140,13 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
                 f"{key}={value}" for key, value in normalized_env.items()
             ]
         if input is not None:
-            payload = (
-                input.encode(encoding or "utf-8", errors or "strict")
-                if isinstance(input, str)
-                else input
+            # QGA carries stdin base64-encoded, so this leg is always binary.
+            payload = normalize_input(
+                input, text_mode=False, encoding=encoding, errors=errors
             )
-            arguments["input-data"] = base64.b64encode(payload).decode("ascii")
+            arguments["input-data"] = base64.b64encode(
+                typing.cast(bytes, payload)
+            ).decode("ascii")
         elif stdin is not None:
             payload = _read_input(
                 stdin,

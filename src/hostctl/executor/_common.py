@@ -55,6 +55,45 @@ def reject_stdin_conflict(input: Input, stdin: typing.Optional[FileHandle]) -> N
         raise ValueError("stdin and input arguments may not both be used")
 
 
+def normalize_input(
+    input: Input,
+    *,
+    text_mode: bool,
+    encoding: typing.Optional[str] = None,
+    errors: typing.Optional[str] = None,
+) -> Input:
+    """Match `input` to the stream mode the executor is about to use.
+
+    A mismatch here is not a clean error. `subprocess` writes `input` on a
+    daemon writer thread; handing `bytes` to a text-mode stdin raises
+    `TypeError` *inside that thread*, which dies without closing the pipe, so
+    the child never sees EOF and the call blocks forever -- `timeout=` does not
+    fire, because nothing is waiting on the child. Verified on CPython 3.14;
+    3.9 happens to surface the `TypeError` instead, so the failure mode is
+    interpreter-dependent, which is worse than either outcome alone.
+
+    Every executor needs this, not just the local one, and they must agree:
+    a `SystemHost` can dispatch the same call through different providers on
+    different attempts, so a caller cannot write one correct invocation if
+    each provider normalizes differently. `text_mode` is a parameter rather
+    than inferred because the sinks differ -- `subprocess` wants `str` under a
+    text mode, AsyncSSH wants `bytes` when given no encoding.
+
+    Passing `bytes` under a text mode decodes them; passing `str` under a
+    binary mode encodes them. `encoding`/`errors` default to UTF-8/strict,
+    matching `subprocess`.
+    """
+    if input is None or isinstance(input, (int,)):
+        return input
+    if text_mode:
+        if isinstance(input, bytes):
+            return input.decode(encoding or "utf-8", errors or "strict")
+        return input
+    if isinstance(input, str):
+        return input.encode(encoding or "utf-8", errors or "strict")
+    return input
+
+
 def normalize_environment(
     env: typing.Optional[Environment],
 ) -> typing.Optional[typing.Dict[str, str]]:

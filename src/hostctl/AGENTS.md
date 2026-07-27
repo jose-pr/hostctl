@@ -147,6 +147,19 @@ corresponding hosts.
   none. `cwd`/`encoding`/`errors` are replaced by a per-call value, `env`
   merges per key, and `Shell.configure(...)` returns a configured copy without
   mutating the original.
+- `ssh_providers(SshConfig)` and `winrm_providers(WinRMConfig)` return an
+  `(executor_provider, path_provider)` pair sharing ONE transport, for
+  composing a transport into a host you assemble yourself rather than taking
+  the finished host `_create_host()` builds. They return a pair instead of
+  exposing the transport because both providers must share it -- building them
+  separately silently opens two connections, only one of which is closed.
+- `input=` is normalized to the stream mode every executor is about to use, by
+  `executor/_common.normalize_input`. Under a text mode (`encoding`/`errors`/
+  `text`) bytes are decoded; under a binary mode str is encoded. This is not
+  cosmetic: handing bytes to a text-mode `subprocess` stdin kills its writer
+  thread, and the call then blocks forever because the child never sees EOF --
+  `timeout=` does not fire. All executors share the helper so the same call
+  behaves identically whichever provider a `SystemHost` selects.
 - `env` on `run`/`session`/`configure` accepts `EnvironmentSelection`: a
   mapping merges over the shell's default per key, the default empty mapping
   merges nothing and inherits it, and `None` runs without the shell's

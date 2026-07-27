@@ -16,6 +16,7 @@ from ._common import (
     FileHandle,
     Input,
     normalize_environment,
+    normalize_input,
     capture_streams,
     reject_stdin_conflict,
 )
@@ -77,7 +78,14 @@ class LocalExecutor(Executor[subprocess.CompletedProcess]):
             check=check,
             encoding=encoding,
             errors=errors,
-            input=input,
+            # `encoding`/`errors`/`text` put subprocess's stdin in text mode,
+            # where bytes would kill the writer thread and hang the call.
+            input=normalize_input(
+                input,
+                text_mode=bool(encoding or errors or text),
+                encoding=encoding,
+                errors=errors,
+            ),
             timeout=timeout,
             text=text,
         )

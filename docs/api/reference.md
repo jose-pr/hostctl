@@ -82,6 +82,11 @@ without a deprecation cycle.
 ::: hostctl.redact_uri
 ::: hostctl.parse_credentials
 
+## Composing transports
+
+::: hostctl.ssh_providers
+::: hostctl.winrm_providers
+
 ## Transfers and checksums
 
 ::: hostctl.ProgressReader

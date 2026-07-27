@@ -561,3 +561,27 @@ class SftpPathProvider(PathProvider):
         )
 
     # Lifecycle is owned by SshExecutorProvider for the shared transport.
+
+
+def ssh_providers(
+    config: SshConfig,
+) -> typing.Tuple[SshExecutorProvider, SftpPathProvider]:
+    """Build an executor and path provider sharing one SSH transport.
+
+    This is the supported way to compose SSH into a host you assemble
+    yourself, rather than taking the finished `PosixHost` that
+    `SshConfig._create_host()` returns:
+
+        executors, paths = [], []
+        run_provider, path_provider = ssh_providers(config.ssh)
+        executors.append(run_provider)
+        paths.append(path_provider)
+
+    Both providers **must** share one transport: that is what makes them share
+    a connection and a lifecycle, and `SshExecutorProvider` is the one that
+    owns close. Assembling them by hand from two transports type-checks and
+    silently opens two connections, only one of which is ever closed -- which
+    is precisely why this returns a pair instead of exposing the transport.
+    """
+    transport = _SshTransport(config)
+    return SshExecutorProvider(transport), SftpPathProvider(transport)

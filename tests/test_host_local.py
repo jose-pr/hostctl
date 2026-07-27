@@ -53,6 +53,65 @@ def test_local_run_text_input_and_check():
         LocalHost().run("exit 1")
 
 
+@pytest.mark.parametrize(
+    "value, encoding, expected",
+    [
+        # The reported failure: bytes with a text encoding used to kill
+        # subprocess's writer thread and then block forever -- `timeout=` does
+        # not fire, because nothing is waiting on the child. On 3.9 the same
+        # call raised TypeError instead, so the behaviour was also
+        # interpreter-dependent.
+        (b"zz", "utf-8", "zz"),
+        ("zz", "utf-8", "zz"),
+        (b"zz", None, b"zz"),
+        ("zz", None, b"zz"),
+    ],
+    ids=["bytes-text", "str-text", "bytes-binary", "str-binary"],
+)
+def test_local_input_is_normalized_to_the_stream_mode(value, encoding, expected):
+    from hostctl.executor import LocalExecutor
+
+    result = LocalExecutor()(
+        sys.executable,
+        "-c",
+        "import sys; sys.stdout.write(sys.stdin.read())",
+        input=value,
+        encoding=encoding,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == expected
+
+
+@pytest.mark.parametrize(
+    "value, text_mode, expected",
+    [
+        (b"zz", True, "zz"),
+        ("zz", True, "zz"),
+        (b"zz", False, b"zz"),
+        ("zz", False, b"zz"),
+        (None, True, None),
+        (None, False, None),
+        # An int is a file descriptor, not payload, and must pass through.
+        (subprocess.DEVNULL, True, subprocess.DEVNULL),
+    ],
+)
+def test_normalize_input_matches_the_requested_mode(value, text_mode, expected):
+    from hostctl.executor._common import normalize_input
+
+    assert normalize_input(value, text_mode=text_mode) == expected
+
+
+def test_normalize_input_honours_encoding_and_errors():
+    from hostctl.executor._common import normalize_input
+
+    # Undecodable bytes would raise under strict; the caller's policy applies.
+    assert normalize_input(b"\xff", text_mode=True, errors="replace") == "�"
+    assert normalize_input("é", text_mode=False, encoding="latin-1") == b"\xe9"
+
+
 def test_local_shell_execute_path_preserves_native_arguments():
     result = LocalHost().shell.execute(
         Path(sys.executable),

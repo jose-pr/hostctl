@@ -19,6 +19,7 @@ from ._common import (
     Input,
     dispatch_output,
     normalize_environment,
+    normalize_input,
     capture_streams,
     reject_stdin_conflict,
 )
@@ -144,12 +145,13 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
 
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         if input is not None:
-            value = (
-                input
-                if isinstance(input, bytes)
-                else input.encode(encoding or "utf-8", errors or "strict")
+            # The sink is a BytesIO, so this leg is always binary regardless of
+            # the command's text encoding -- `text_mode=False` encodes str and
+            # passes bytes through.
+            value = normalize_input(
+                input, text_mode=False, encoding=encoding, errors=errors
             )
-            stdin = io.BytesIO(value)
+            stdin = io.BytesIO(typing.cast(bytes, value))
         elif stdin is None:
             # AsyncSSH leaves a command's stdin open when no stream is passed.
             # Supplying an empty in-memory stream sends EOF and matches

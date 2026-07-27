@@ -987,3 +987,16 @@ class WinRMPathProvider(PathProvider):
         super().__init__(
             "winrm", lambda *segments: transport.path(*segments), capabilities=("path",)
         )
+
+
+def winrm_providers(
+    config: WinRMConfig,
+) -> typing.Tuple[WinRMExecutorProvider, WinRMPathProvider]:
+    """Build an executor and path provider sharing one WinRM transport.
+
+    The SSH counterpart, `hostctl.host.ssh_providers`, documents why this
+    returns a pair rather than exposing the transport: both providers must
+    share one, and building them separately silently opens two.
+    """
+    transport = _WinRMTransport(config)
+    return WinRMExecutorProvider(transport), WinRMPathProvider(transport)
