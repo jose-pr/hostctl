@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-27
+
+First release. Alpha: the public surface is deliberately small (66 exported
+names) and may still change, but everything documented here is covered by the
+test suite on Python 3.9 through 3.14.
+
 ### Added
 
 - Protocol-agnostic `Host` contracts with secret-safe `HostConfig` URI
@@ -54,6 +60,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Subprocess-shaped execution options, normalized transport errors, bounded
   buffered file transfers, and Python 3.9+ typing support (Python 3.14 is the
   default development interpreter).
+- `Shell` is a context manager: `with host.shell as session:` opens one
+  default session and closes it on exit, the no-argument shorthand for
+  `shell.session()`. Re-entering a shell whose session is still open raises
+  rather than sharing or leaking a process.
+- `Shell` carries defaults. `host.shell(cwd=..., env=..., encoding=...,
+  errors=...)` returns a shell applying them to every later `run`/`session`
+  that omits its own value; `configure(...)` derives a further-configured copy
+  without mutating the original. `cwd`/`encoding`/`errors` are replaced by a
+  per-call value, `env` merges per key so one variable can change without
+  restating the rest, and `env=None` declines the shell's environment while
+  keeping whatever the host itself provides.
+- Connection URIs may carry credentials. `scheme://user:password@host` is
+  accepted: the password is extracted into the credential arguments and
+  stripped from the parsed authority, so it never reaches a field that
+  `connection_uri` or `repr()` renders. `redact_uri()` removes a password and
+  returns a valid, reusable URI rather than masking it, so a rendered form can
+  never round-trip a wrong credential.
+- `parse_credentials()` splits a password field on a newline into the password
+  and trailing `key:value` extras, so an OTP or other second factor travels
+  through a single field. A bare name is a flag equivalent to `name:`. Inside
+  a URI the separator may be written raw — tab, CR, and LF are percent-encoded
+  before parsing, since `urlsplit` deletes them silently. A control character
+  in the *host* is rejected, because deletion there rewrites the target.
+- `ssh_providers()` and `winrm_providers()` return an executor/path provider
+  pair sharing one transport, for composing a transport into a host you
+  assemble yourself. `strict_uri_credentials`, `strict_uri_query`, and
+  `uri_host` are public for configs implementing `_from_parsed_uri`.
+- A `HostConfig` subclass may declare `uri_credentials`; dispatch then rejects
+  any other credential before construction, so a typo fails loudly instead of
+  silently producing a config with no password.
 - SSH execution now sends EOF for omitted stdin, rejects unsupported zero
   buffering, normalizes missing exit statuses to `-1`, performs best-effort
   timeout cleanup (with `TimeoutExpired.orphaned`), and normalizes persistent
@@ -75,6 +111,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `run(input=<bytes>, encoding=...)` no longer hangs. Handing bytes to a
+  text-mode `subprocess` stdin killed its writer thread, and the call then
+  blocked forever because the child never saw EOF — `timeout=` did not fire.
+  `input` is now normalized to the stream mode each executor uses, by a helper
+  the local, SSH, and QGA executors share, so the same call behaves
+  identically whichever provider a `SystemHost` selects.
 - Composite host paths kept their provider, selector, and pin through
   `pathlib.PurePath` derivations (`parents`, `with_name`, `with_suffix`,
   `relative_to`). Those results were previously built without any routing
@@ -102,4 +144,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-<!-- Add the [Unreleased] compare link after the first v0.1.0 tag exists. -->
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jose-pr/hostctl/releases/tag/v0.1.0

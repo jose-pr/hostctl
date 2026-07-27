@@ -69,7 +69,9 @@ exclude = ["/.*"]
 packages = ["src/hostctl"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"README.md" = "README.md"
+# Inside the package, so an installed consumer can read it through
+# importlib.resources rather than only from a checkout.
+"README.md" = "hostctl/README.md"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
