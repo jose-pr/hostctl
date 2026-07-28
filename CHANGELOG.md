@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-28
+
 ### Fixed
 
 - `redact_uri()` no longer case-folds the hostname. Only the branch that
@@ -154,5 +156,6 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/jose-pr/hostctl/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/jose-pr/hostctl/releases/tag/v0.1.0
