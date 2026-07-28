@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `uri_hostname(parsed)` returns the host as it was written in a URI, rather
+  than the case-folded spelling `urlsplit().hostname` produces. Use it in
+  `_from_parsed_uri` wherever a host is stored; presence checks can keep using
+  `.hostname`, since emptiness does not depend on case.
+
+### Changed
+
+- A config built from a URI now stores the hostname as typed, so
+  `HostConfig("ssh://nasA")` keeps `nasA` in `.host`, in `connection_uri`, and
+  in the `HostInfo.hostname` a system host reports without connecting. It
+  previously stored `urlsplit`'s lowercased form, which meant the library
+  echoed a spelling the operator never wrote and left downstream code to
+  recover the original from the URI itself.
+
+  Consequently `.host` is the spelling that was given, not a canonical form:
+  `HostConfig("ssh://nasA")` and `HostConfig("ssh://nasa")` no longer compare
+  equal, so code using a config or its host as a dict key or for
+  deduplication should casefold explicitly. Resolution is unaffected — DNS,
+  SSH, and WinRM all treat the two spellings as one name.
+
 ## [0.1.1] - 2026-07-28
 
 ### Fixed

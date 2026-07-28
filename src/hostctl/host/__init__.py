@@ -10,6 +10,7 @@ from ._common import (
     strict_uri_credentials as strict_uri_credentials,
     strict_uri_query as strict_uri_query,
     uri_host as uri_host,
+    uri_hostname as uri_hostname,
 )
 from ._ssh import ssh_providers as ssh_providers
 from ._winrm import winrm_providers as winrm_providers
