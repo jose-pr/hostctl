@@ -116,11 +116,8 @@ with ProgressReader(source_path.open("rb"), report, total=size) as reader:
   though their read sides stream.
 
 Three gaps are tracked as `pathlib_next` requests rather than hostctl features,
-because each one lives inside machinery hostctl deliberately does not fork.
-Drafts are kept in the repository under `.agents/upstream/`:
+because each one lives inside machinery hostctl deliberately does not fork:
 
-| Request | Draft |
-| --- | --- |
-| Byte-progress hook in `BinaryOpen.copy` / `Path.copy()` | `pathlib_next-copy-progress-hook.md` |
-| Symlink handling in `PathSyncer` (plus its unreachable `ignore_error`) | `pathlib_next-symlink-sync.md` |
-| Optional backend-native checksum protocol | `pathlib_next-backend-checksum-protocol.md` |
+- Byte-progress hook in `BinaryOpen.copy` / `Path.copy()`
+- Symlink handling in `PathSyncer` (plus its unreachable `ignore_error`)
+- Optional backend-native checksum protocol

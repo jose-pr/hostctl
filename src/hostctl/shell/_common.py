@@ -386,7 +386,7 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         provides on its own -- a login profile, rc files, the service
         environment -- because nothing is sent to override it. Requesting a
         genuinely empty environment is a separate feature that does not exist
-        yet (see `.agents/plans/env_clear_semantics.md`).
+        yet.
         """
         if env is None:
             return None

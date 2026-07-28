@@ -1,4 +1,4 @@
-"""Provider/pin retention across every path derivation (plan Phase 3).
+"""Provider/pin retention across every path derivation.
 
 ``pathlib.PurePath`` builds several derivations with ``object.__new__``, which
 bypasses the composite constructor entirely.  Any derivation that loses the
