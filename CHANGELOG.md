@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `redact_uri()` no longer case-folds the hostname. Only the branch that
+  rebuilt the authority — the one taken when a password was present — adopted
+  `urlsplit`'s lowercased `hostname`, so `nasA` rendered as `nasa` with a
+  credential and as `nasA` without one. The same host now renders one way
+  whichever branch runs, and log records stay greppable by the name the
+  operator typed. Redaction removes a credential; normalizing a host is a
+  separate concern and is left to the transport that resolves it.
+
 ## [0.1.0] - 2026-07-27
 
 First release. Alpha: the public surface is deliberately small (66 exported

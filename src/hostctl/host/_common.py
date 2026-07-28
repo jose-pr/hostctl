@@ -160,9 +160,30 @@ def _reject_authority_control_characters(parsed: _SplitResult) -> None:
         )
 
 
+def _original_host(parsed: _SplitResult) -> str:
+    """The host as it was written, not as `urlsplit` case-folded it.
+
+    `urlsplit().hostname` is lowercased by design -- DNS is case-insensitive,
+    so folding is right for *resolution*. It is wrong for text we hand back to
+    a caller: rebuilding an authority from it would adopt the folded spelling
+    as the new URI, and `nasA` would render as `nasa` only on the branch that
+    rebuilds. The same host must not render two ways depending on whether a
+    password happened to be present.
+
+    `hostname` is a case-folded substring of the authority (after any
+    userinfo), so locating it recovers the original text.
+    """
+    hostname = parsed.hostname or ""
+    authority = parsed.netloc.rpartition("@")[2]
+    index = authority.casefold().find(hostname)
+    if index < 0:
+        return hostname
+    return authority[index : index + len(hostname)]
+
+
 def _rebuild_authority(parsed: _SplitResult, password: _ty.Optional[str]) -> str:
     """Rebuild a URI authority with `password` in place of the original."""
-    host = uri_host(parsed.hostname or "")
+    host = uri_host(_original_host(parsed))
     if parsed.port is not None:
         host = f"{host}:{parsed.port}"
     if not parsed.username:
