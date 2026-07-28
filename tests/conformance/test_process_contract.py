@@ -136,7 +136,13 @@ def test_provider_spawn_runs_a_real_process(provider):
                 # closed, which is exactly what the contract promises.
                 assert process.returncode is None
             else:
-                assert process.wait(timeout=10) == 0
+                # Generous because this waits on a real interpreter starting
+                # cold: `powershell.exe -NoProfile` on a Windows CI runner has
+                # taken over 10s. The timeout is a hang guard, not a
+                # performance assertion -- a working adapter exits in well
+                # under a second, so a larger bound costs nothing and a
+                # smaller one fails on runner startup rather than on a defect.
+                assert process.wait(timeout=60) == 0
                 assert process.returncode == 0
         finally:
             process.close()

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-28
+
+Supersedes 0.1.1, which was tagged but never published: a release-gate test
+timed out on the Windows/Python 3.14 runner, so nothing reached PyPI. There is
+no 0.1.1 release; its fix is included here.
+
 ### Added
 
 - `uri_hostname(parsed)` returns the host as it was written in a URI, rather
@@ -29,8 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   deduplication should casefold explicitly. Resolution is unaffected — DNS,
   SSH, and WinRM all treat the two spellings as one name.
 
-## [0.1.1] - 2026-07-28
-
 ### Fixed
 
 - `redact_uri()` no longer case-folds the hostname. Only the branch that
@@ -40,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   whichever branch runs, and log records stay greppable by the name the
   operator typed. Redaction removes a credential; normalizing a host is a
   separate concern and is left to the transport that resolves it.
+- The spawn conformance test no longer fails on a slow runner. It waited 10s
+  for a real `powershell.exe -NoProfile` to start, exit, and be reaped, which
+  a cold Windows CI runner can exceed. The wait is a hang guard rather than a
+  performance assertion, so it is now 60s. Test-only; no library change.
 
 ## [0.1.0] - 2026-07-27
 
@@ -178,6 +186,6 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/jose-pr/hostctl/compare/v0.1.0...v0.1.1
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/jose-pr/hostctl/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/jose-pr/hostctl/releases/tag/v0.1.0
