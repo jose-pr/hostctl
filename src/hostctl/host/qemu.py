@@ -48,6 +48,7 @@ from ._common import (
     strict_uri_credentials,
     strict_uri_query,
     uri_host,
+    uri_hostname,
 )
 from ._ssh import SshConfig, _SshTransport
 
@@ -222,7 +223,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         if not parsed.hostname or not parsed.username or not parsed.path.strip("/"):
             raise ValueError("SSH QGA URI requires user, host, and domain")
         ssh = SshConfig(
-            parsed.hostname,
+            uri_hostname(parsed),
             port=parsed.port or 22,
             username=unquote(parsed.username),
             password=typing.cast(typing.Optional[str], credentials.get("password")),

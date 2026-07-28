@@ -50,6 +50,7 @@ from ._common import (
     strict_uri_credentials,
     strict_uri_query,
     uri_host,
+    uri_hostname,
 )
 from ..shell import POWERSHELL, ShellFlavour
 
@@ -155,7 +156,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
         if not parsed.username:
             raise ValueError("WinRM URI requires a username")
         return cls(
-            host=parsed.hostname,
+            host=uri_hostname(parsed),
             username=unquote(parsed.username),
             password=typing.cast(typing.Optional[str], credentials.get("password")),
             port=parsed.port,

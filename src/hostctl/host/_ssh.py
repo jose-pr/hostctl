@@ -40,6 +40,7 @@ from ._common import (
     strict_uri_credentials,
     strict_uri_query,
     uri_host,
+    uri_hostname,
     reject_stdin_conflict,
 )
 from ..shell import (
@@ -147,7 +148,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         if not parsed.hostname or parsed.path not in ("", "/"):
             raise ValueError("SSH URI requires a host and no path")
         return cls(
-            host=parsed.hostname,
+            host=uri_hostname(parsed),
             port=parsed.port or 22,
             username=unquote(parsed.username or "") or "root",
             password=typing.cast(typing.Optional[str], credentials.get("password")),

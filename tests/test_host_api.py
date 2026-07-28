@@ -20,6 +20,7 @@ from hostctl import (
     WinRMConfig,
     parse_credentials,
     redact_uri,
+    uri_hostname,
 )
 from hostctl.host._common import _encode_stripped_characters
 
@@ -257,6 +258,33 @@ def test_redact_uri_preserves_hostname_case():
     assert redact_uri("wss://root:pw@nasA:8443/api") == "wss://root@nasA:8443/api"
     assert redact_uri("wss://root@nasA") == "wss://root@nasA"
     assert redact_uri("wss://nasA") == "wss://nasA"
+
+
+def test_config_from_uri_keeps_the_hostname_as_written():
+    # A config renders its host back out through connection_uri, so storing
+    # urlsplit's folded `hostname` would echo a spelling nobody typed.
+    config = HostConfig("ssh://admin@nasA.example.com")
+
+    assert config.host == "nasA.example.com"
+    assert "nasA.example.com" in config.connection_uri
+    # ...on the credentialed path too, which rebuilds the authority.
+    assert HostConfig("ssh://admin:pw@nasA.example.com").host == "nasA.example.com"
+
+
+def test_config_host_case_is_preserved_not_canonicalized():
+    # The deliberate trade-off: `host` is the spelling the operator typed, not
+    # a canonical form, so two spellings of one machine are not equal configs.
+    # Resolution is unaffected -- DNS, SSH, and WinRM treat them as one name.
+    assert HostConfig("ssh://nasA").host != HostConfig("ssh://nasa").host
+
+
+def test_uri_hostname_recovers_the_written_spelling():
+    assert (
+        uri_hostname(urlsplit("ssh://user@NasA.Example.COM:22")) == "NasA.Example.COM"
+    )
+    # No host, and an IPv6 literal (returned unbracketed, as .hostname is).
+    assert uri_hostname(urlsplit("local:")) == ""
+    assert uri_hostname(urlsplit("ssh://u:p@[2001:DB8::1]:22")) == "2001:DB8::1"
 
 
 def test_redact_uri_output_carries_no_credential_back_in():
