@@ -248,6 +248,17 @@ def test_redact_uri_strips_the_password_leaving_a_reusable_uri():
     assert HostConfig(redacted).username == "admin"
 
 
+def test_redact_uri_preserves_hostname_case():
+    # Redaction removes a credential; it must not also normalize the host.
+    # The branch that rebuilds the authority used to adopt urlsplit's
+    # case-folded hostname, so one host rendered two ways depending on whether
+    # a password was supplied -- which breaks log correlation by the name the
+    # operator typed.
+    assert redact_uri("wss://root:pw@nasA:8443/api") == "wss://root@nasA:8443/api"
+    assert redact_uri("wss://root@nasA") == "wss://root@nasA"
+    assert redact_uri("wss://nasA") == "wss://nasA"
+
+
 def test_redact_uri_output_carries_no_credential_back_in():
     config = HostConfig(redact_uri("ssh://admin:hunter2@nas.example.com"))
 
