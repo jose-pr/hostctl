@@ -10,12 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - `ConnectionString` parses a connection target from whatever a user typed.
-  `ConnectionString("nas", default_scheme="wss")` and
-  `ConnectionString("nas:8443", ...)` parse, because a bare host is not an
-  invalid URI — it is a URI with the scheme left off, which is what people
-  type on a command line. A `default_ports` mapping fills a missing port
-  (`ws`/`wss` are the case in point: no system services database knows them);
-  an explicit port always wins.
+  `ConnectionString("nas", scheme="wss")` and `ConnectionString("nas:8443",
+  ...)` parse, because a bare host is not an invalid URI — it is a URI with
+  the scheme left off, which is what people type on a command line.
+
+  Every field can be supplied directly, and three layers decide each one: an
+  explicit argument wins, then whatever the string carried, then `defaults`.
+  `scheme=`/`port=`/`host=`/… are therefore *overrides* — `scheme="ssh"`
+  beats a `wss://` in the string — while `defaults` (a mapping, or another
+  `ConnectionString` used as a profile) fills only what nothing else
+  supplied. `default_ports` maps a scheme to its port and applies last
+  (`ws`/`wss` are the case in point: no system services database knows them).
 
   Credentials are parsed but never rendered. `str()` and `repr()` both emit
   the redacted form, with the password **removed rather than masked**, so the
