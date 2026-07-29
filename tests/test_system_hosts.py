@@ -5,6 +5,7 @@ import pytest
 from pathlib_next.mempath import MemPath, MemPathBackend
 
 from hostctl import (
+    Exec,
     HostConfig,
     OperationNotStarted,
     PathProvider,
@@ -168,7 +169,7 @@ def test_direct_path_command_without_argv_capability_renders_one_quoted_command(
         return subprocess.CompletedProcess((command, *args), 0, b"ok", b"")
 
     host = PosixHost(executor_providers=(ExecutorProvider("shell", execute),))
-    host.run(HostPath("printf"), "a & b", check=False)
+    host.run(Exec("printf", "a & b"), check=False)
 
     assert len(calls) == 1
     rendered, args = calls[0]
@@ -191,7 +192,7 @@ def test_executor_fallback_replans_capabilities_before_retrying():
     first = ExecutorProvider("first", declined, capabilities=("args", "cwd"))
     second = ExecutorProvider("second", selected)
     host = PosixHost(executor_providers=(first, second))
-    host.run(HostPath("printf"), "a & b", cwd="/tmp", check=False)
+    host.run(Exec("printf", "a & b"), cwd="/tmp", check=False)
 
     assert calls[0][0] == "first"
     assert calls[1][0] == "second"

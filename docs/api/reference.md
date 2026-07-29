@@ -39,6 +39,7 @@ without a deprecation cycle.
 
 ## Executors and processes
 
+::: hostctl.Exec
 ::: hostctl.Executor
 ::: hostctl.ExecutionOptions
 ::: hostctl.LocalExecutor

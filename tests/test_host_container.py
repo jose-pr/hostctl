@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 
 import pytest
 
+from hostctl import Exec
 from hostctl.host._common import HostConfig
 from hostctl.executor.container import normalize_container_error
 from hostctl.host.container import ContainerConfig, ContainerHost
@@ -124,8 +125,7 @@ def test_container_auto_shell_uses_inspected_os(os_name, flavour):
 def test_container_direct_argv_preserves_arguments_and_context():
     host, _, container = _host(user="1000", workdir="/default")
     result = host.run(
-        PurePosixPath("/opt/my tool"),
-        "value with spaces",
+        Exec(PurePosixPath("/opt/my tool"), "value with spaces"),
         cwd="/override",
         env={"COUNT": 3},
         text=True,

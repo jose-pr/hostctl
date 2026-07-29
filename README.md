@@ -127,9 +127,10 @@ host.run(["chmod", "755", target], ["chown", "u", target])  # two commands
 host.run("chmod", "755", target)                            # WRONG: three commands
 ```
 
-A raw string is verbatim shell text, and a **leading** path is direct
-execution — that file plus argv, with no shell layer. A `ShellOperator` between
-two commands joins them conditionally. See the
+A raw string is verbatim shell text, and `Exec(program, *args)` is direct
+execution — one program plus argv, with no shell layer, where the program may
+be an absolute path or a bare name resolved through the target's `PATH`. A
+`ShellOperator` between two commands joins them conditionally. See the
 [running commands guide](https://jose-pr.github.io/hostctl/guide/run/) for the
 full rules.
 

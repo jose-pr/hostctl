@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from hostctl import Exec
+
 from .providers import fake_providers, live_providers, provider_context
 
 
@@ -24,10 +26,12 @@ def test_direct_argv_and_capture(provider):
         pytest.skip(f"{provider.name} has no run capability")
     with provider_context(provider) as host:
         result = host.run(
-            Path(sys.executable),
-            "-c",
-            "import sys; print(sys.argv[1]); print('err', file=sys.stderr)",
-            "a & b",
+            Exec(
+                sys.executable,
+                "-c",
+                "import sys; print(sys.argv[1]); print('err', file=sys.stderr)",
+                "a & b",
+            )
         )
     assert result.returncode == 0
     assert result.stdout == b"a & b\r\n" if os.name == "nt" else b"a & b\n"
@@ -48,19 +52,17 @@ def test_text_env_and_nonzero_check(provider):
         environment["SystemRoot"] = os.environ["SystemRoot"]
     with provider_context(provider) as host:
         result = host.run(
-            Path(sys.executable),
-            "-c",
-            code,
+            Exec(sys.executable, "-c", code),
             env=environment,
             text=True,
         )
         assert result.stdout.splitlines()[0] == "42"
         failed = host.run(
-            Path(sys.executable), "-c", "raise SystemExit(3)", check=False
+            Exec(sys.executable, "-c", "raise SystemExit(3)"), check=False
         )
         assert failed.returncode == 3
         with pytest.raises(subprocess.CalledProcessError):
-            host.run(Path(sys.executable), "-c", "raise SystemExit(4)")
+            host.run(Exec(sys.executable, "-c", "raise SystemExit(4)"))
 
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
@@ -71,9 +73,7 @@ def test_cwd_is_applied_only_when_supported(provider, tmp_path):
         pytest.skip(f"{provider.name} does not support cwd")
     with provider_context(provider) as host:
         result = host.run(
-            Path(sys.executable),
-            "-c",
-            "import pathlib; print(pathlib.Path.cwd())",
+            Exec(sys.executable, "-c", "import pathlib; print(pathlib.Path.cwd())"),
             cwd=tmp_path,
             text=True,
         )
@@ -85,7 +85,7 @@ def test_silent_capture_is_empty_bytes(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
     with provider_context(provider) as host:
-        result = host.run(Path(sys.executable), "-c", "pass")
+        result = host.run(Exec(sys.executable, "-c", "pass"))
     assert result.stdout == b""
     assert result.stderr == b""
 
@@ -118,14 +118,12 @@ def test_timeout_and_input_are_subprocess_compatible(provider):
         pytest.skip(f"{provider.name} does not support {', '.join(sorted(missing))}")
     with provider_context(provider) as host:
         result = host.run(
-            Path(sys.executable),
-            "-c",
-            "import sys; print(sys.stdin.read())",
+            Exec(sys.executable, "-c", "import sys; print(sys.stdin.read())"),
             input="payload",
             text=True,
         )
         assert result.stdout.strip() == "payload"
         with pytest.raises(subprocess.TimeoutExpired):
             host.run(
-                Path(sys.executable), "-c", "import time; time.sleep(2)", timeout=0.01
+                Exec(sys.executable, "-c", "import time; time.sleep(2)"), timeout=0.01
             )

@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-28
+
+### Added
+
+- `Exec(program, *args)` marks one command for direct execution: the program
+  runs with that argv and no shell layer renders. The program and every
+  argument may be a `str`, `bytes`, or a path object — all reach the transport
+  as text, so the spelling records how the caller held the value rather than
+  changing what runs. A **bare program name is now possible**
+  (`Exec("ls", "-l")`), resolved through the target's `PATH`; it previously had
+  no spelling at all, because a plain string command is always shell text.
+- The full `run()` command syntax is documented in the "Running commands"
+  guide: the varargs rule, the three command forms, operators, validation, and
+  the PowerShell rendering.
+
+### Changed
+
+- **Breaking.** Direct execution is marked by `Exec`, not by position. A path
+  in the first argument used to mean "this is the executable, the rest is
+  argv"; a path is now an ordinary value that stringifies wherever it appears.
+
+  ```python
+  host.run(Path("/bin/ls"), "-l")   # before: direct execution
+  host.run(Exec("/bin/ls", "-l"))   # now
+  ```
+
+  This is a **silent** change for the old spelling: `run(Path(...), *args)`
+  still succeeds, but the values become several `;`-joined shell commands
+  instead of one program and its argv, so arguments are subject to shell
+  quoting and word-splitting. Anything passing a leading path must be updated;
+  there is no deprecation shim.
+
+  What it buys, both unspellable before: several path commands in one call
+  (`run(p1, p2)` is two commands), and direct execution of a `PATH`-resolved
+  name.
+
+  An `Exec` cannot be combined with other commands in one call — there is no
+  shell to join them with, and running only one would silently drop the rest.
+  It raises `TypeError` rather than choosing.
+- `hostctl run` passes its operand as a single `Exec`, so the program is used
+  verbatim. It no longer converts the operand through the target shell's path
+  flavour, which means a bare name now resolves through the target's `PATH`
+  instead of being treated as a relative path.
+
 ## [0.1.2] - 2026-07-28
 
 Supersedes 0.1.1, which was tagged but never published: a release-gate test
@@ -186,6 +230,7 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jose-pr/hostctl/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/jose-pr/hostctl/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/jose-pr/hostctl/releases/tag/v0.1.0

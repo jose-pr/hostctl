@@ -8,7 +8,6 @@ import dataclasses
 import getpass
 import json
 import os
-from pathlib import PurePath
 import re
 import subprocess
 import sys
@@ -17,7 +16,7 @@ import typing
 
 from pathlib_next import Path as NextPath
 
-from .host import Host, HostPath
+from .host import Exec, Host, HostPath
 
 _URI_OPERAND = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
@@ -81,13 +80,11 @@ def _command_run(args: argparse.Namespace, stdout, stderr) -> int:
     if not command:
         raise ValueError("run requires a command after --")
     with Host(args.uri, **_credentials(args)) as host:
-        try:
-            command_path = host.shell_flavour.command_path(command[0])
-        except NotImplementedError:
-            command_path = PurePath(command[0])
+        # `Exec` marks direct execution and takes the program verbatim, so the
+        # operand needs no path flavour: a bare name resolves through the
+        # target's PATH and an absolute path is used as given.
         result = host.run(
-            command_path,
-            *command[1:],
+            Exec(command[0], *command[1:]),
             check=False,
             capture_output=True,
         )
