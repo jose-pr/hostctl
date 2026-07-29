@@ -15,7 +15,12 @@ def test_a_bare_host_parses_with_a_supplied_scheme():
 
     assert target.scheme == "wss"
     assert target.host == "nas"
-    assert str(target) == "wss://nas"
+    # netimps resolves the scheme's conventional port.
+    assert str(target) == "wss://nas:443"
+    # A scheme with no conventional port simply has none.
+    assert (
+        str(ConnectionString("nas", scheme="no-such-scheme")) == "no-such-scheme://nas"
+    )
 
 
 def test_a_bare_host_and_port_parses():
@@ -40,16 +45,73 @@ def test_scheme_is_an_override_not_a_default():
     assert ConnectionString("nas", defaults={"scheme": "ssh"}).scheme == "ssh"
 
 
-def test_default_ports_fill_only_a_missing_port():
+def test_a_port_may_be_an_int_a_mapping_or_a_callable():
+    # The port value carries its own resolution strategy; there is no second
+    # parameter to learn.
+    assert ConnectionString("nas", scheme="wss", port=8443).port == 8443
+    assert (
+        ConnectionString("nas", scheme="wss", port={"ws": 80, "wss": 443}).port == 443
+    )
+    assert (
+        ConnectionString(
+            "nas", scheme="ssh", port=lambda s: 2222 if s == "ssh" else None
+        ).port
+        == 2222
+    )
+
+
+def test_false_means_no_port_and_no_lookup():
+    # Distinct from None, which means "nothing supplied here" and lets the
+    # next layer -- ultimately netimps -- decide.
+    assert ConnectionString("nas", scheme="wss", port=False).port is None
+    assert str(ConnectionString("nas", scheme="wss", port=False)) == "wss://nas"
+    assert ConnectionString("nas", scheme="wss", defaults={"port": False}).port is None
+    # A resolver may decline the fallback the same way.
+    assert ConnectionString("nas", scheme="wss", port=lambda s: False).port is None
+    assert ConnectionString("nas", scheme="wss", port={"wss": False}).port is None
+
+
+def test_a_table_that_does_not_know_the_scheme_falls_back_to_netimps():
+    # Not an error -- it means "no conventional port for this one", so the
+    # default resolver still gets its turn.
+    assert ConnectionString("nas", scheme="https", port={"ws": 80}).port == 443
+    assert ConnectionString("nas", scheme="https", port=lambda s: None).port == 443
+
+
+def test_the_same_strategies_work_through_defaults():
     ports = {"wss": 443, "ws": 80}
 
-    assert ConnectionString("nas", scheme="wss", default_ports=ports).port == 443
-    # A port in the string wins over the table.
-    assert ConnectionString("nas:9", scheme="wss", default_ports=ports).port == 9
-    # ...as does an explicit `port=`.
-    assert ConnectionString("nas", scheme="wss", port=9, default_ports=ports).port == 9
-    # No table, no invention.
-    assert ConnectionString("nas", scheme="wss").port is None
+    assert ConnectionString("nas", scheme="wss", defaults={"port": ports}).port == 443
+    # A port in the string still wins over a default.
+    assert ConnectionString("nas:9", scheme="wss", defaults={"port": ports}).port == 9
+    # ...and an explicit argument wins over both.
+    assert (
+        ConnectionString("nas", scheme="wss", port=1, defaults={"port": ports}).port
+        == 1
+    )
+
+
+def test_the_default_resolver_is_netimps():
+    import netimps
+
+    assert ConnectionString("nas", scheme="https").port == 443
+    # The case netimps exists for: no services database knows `wss`, so
+    # `getservbyname` raises rather than answering.
+    assert ConnectionString("nas", scheme="wss").port == 443
+    assert ConnectionString("nas", scheme="ssh").port == netimps.get_default_port("ssh")
+
+
+def test_a_scheme_registered_with_netimps_is_picked_up():
+    # An application extends the table with `netimps.register_port`, and
+    # `ConnectionString` sees it because it asks netimps at parse time rather
+    # than snapshotting a table. netimps has no public unregister, so this
+    # registers a name nothing else uses instead of mutating a real scheme.
+    import netimps
+
+    scheme = "hostctl-conformance-scheme"
+    netimps.register_port(scheme, 4242)
+
+    assert ConnectionString("nas", scheme=scheme).port == 4242
 
 
 def test_the_host_keeps_the_spelling_it_was_given():
@@ -189,7 +251,7 @@ def test_defaults_accept_a_connection_string_as_a_profile():
 
 
 def test_a_scheme_from_defaults_also_lets_a_bare_host_parse():
-    assert str(ConnectionString("nas", defaults={"scheme": "wss"})) == "wss://nas"
+    assert str(ConnectionString("nas", defaults={"scheme": "wss"})) == "wss://nas:443"
 
 
 def test_an_unknown_default_field_is_rejected():

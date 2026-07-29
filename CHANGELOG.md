@@ -19,8 +19,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `scheme=`/`port=`/`host=`/… are therefore *overrides* — `scheme="ssh"`
   beats a `wss://` in the string — while `defaults` (a mapping, or another
   `ConnectionString` used as a profile) fills only what nothing else
-  supplied. `default_ports` maps a scheme to its port and applies last
-  (`ws`/`wss` are the case in point: no system services database knows them).
+  supplied.
+
+  A port carries its own resolution strategy wherever one is accepted: an
+  `int`, a callable `scheme -> port | None`, or anything indexable by scheme
+  (a plain mapping), so a caller passes its whole table without pre-selecting
+  an entry. When no layer supplies one, `netimps.get_default_port` resolves
+  the scheme — it knows schemes no system services database does (`ws`/`wss`,
+  `socks5`), and an application can register more with
+  `netimps.register_port`.
+
+  `is_local` answers an address literal through `netimps.is_local_address`,
+  so an address actually assigned to this machine counts as local, not just
+  loopback. It still resolves nothing: a name is only compared against the
+  loopback spellings, because deciding more about a name needs a lookup.
+
+### Changed
+
+- `netimps` is now a required dependency, supplying scheme/port and address
+  semantics rather than hostctl reimplementing them.
 
   Credentials are parsed but never rendered. `str()` and `repr()` both emit
   the redacted form, with the password **removed rather than masked**, so the
