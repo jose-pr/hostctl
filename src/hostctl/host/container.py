@@ -529,13 +529,7 @@ class ContainerHost(Host):
         direct = starts_direct_command(cmds)
         if direct is not None:
             command, args = direct
-            invocation = [
-                str(command),
-                *[
-                    value.decode() if isinstance(value, bytes) else str(value)
-                    for value in args
-                ],
-            ]
+            invocation = [command_text(command), *(command_text(v) for v in args)]
             environment = normalize_environment(env)
         elif cmds:
             script = self.shell_flavour.script(cmds, cwd=None, env=None)

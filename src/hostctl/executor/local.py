@@ -8,6 +8,7 @@ import typing
 
 from ._common import (
     CaptureOutput,
+    command_text,
     CommandArgument,
     Environment,
     Executor,
@@ -52,21 +53,7 @@ class LocalExecutor(Executor[subprocess.CompletedProcess]):
             raise TypeError(f"unsupported local executor option: {sorted(options)[0]}")
         reject_stdin_conflict(input, stdin)
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
-        argv = [
-            os.fspath(command),
-            *[
-                (
-                    value.decode()
-                    if isinstance(value, bytes)
-                    else (
-                        os.fspath(value)
-                        if isinstance(value, os.PathLike)
-                        else str(value)
-                    )
-                )
-                for value in args
-            ],
-        ]
+        argv = [command_text(command), *(command_text(value) for value in args)]
         return subprocess.run(
             argv,
             bufsize=bufsize,

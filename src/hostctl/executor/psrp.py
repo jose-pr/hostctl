@@ -9,6 +9,7 @@ import types
 
 from ._common import (
     CaptureOutput,
+    command_text,
     CommandArgument,
     Executor,
     ExecutorCapability,
@@ -92,7 +93,9 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
                 "PSRP pipeline timeout is unsupported; configure WinRM timeouts"
             )
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
-        result = self._session().invoke(str(command), raw=False, capture_exit=True)
+        result = self._session().invoke(
+            command_text(command), raw=False, capture_exit=True
+        )
         codec = encoding or "utf-8"
         # Preserve PowerShell's object-pipeline line orientation when
         # projecting objects to subprocess-compatible text.
@@ -135,7 +138,7 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
             errors=errors,
         )
         completed = subprocess.CompletedProcess(
-            args=str(command),
+            args=command_text(command),
             returncode=returncode,
             stdout=out,
             stderr=err,

@@ -11,6 +11,7 @@ import typing
 from ._qga import GuestAgentTransport, QgaProtocolError
 from ._common import (
     CaptureOutput,
+    command_text,
     CommandArgument,
     Environment,
     Executor,
@@ -113,7 +114,8 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
                 "QGA guest-exec has no native working-directory support"
             )
         reject_stdin_conflict(input, stdin)
-        if not str(command):
+        program = command_text(command)
+        if not program:
             raise ValueError("QGA guest-exec path must not be empty")
         if timeout is not None and timeout < 0:
             raise ValueError("timeout must not be negative")
@@ -122,15 +124,11 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
 
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         argv = [
-            (
-                value.decode(encoding or "utf-8", errors or "strict")
-                if isinstance(value, bytes)
-                else str(value)
-            )
+            command_text(value, encoding=encoding or "utf-8", errors=errors or "strict")
             for value in args
         ]
         arguments: typing.Dict[str, object] = {
-            "path": str(command),
+            "path": program,
             "arg": argv,
             "capture-output": True,
         }
@@ -156,7 +154,7 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
             arguments["input-data"] = base64.b64encode(payload).decode("ascii")
 
         deadline = None if timeout is None else self._clock() + timeout
-        command_display = [str(command), *argv]
+        command_display = [program, *argv]
         started = self._execute(
             {"execute": "guest-exec", "arguments": arguments},
             deadline,

@@ -671,7 +671,7 @@ class SystemHost(Host):
                 )
                 return provider.execute(script, **options)
             if not args:
-                return provider.execute(str(command), **options)
+                return provider.execute(command_text(command), **options)
             shell_executable = getattr(provider, "shell_executable", None)
             rendered = flavour.command(
                 ((command, *args),),

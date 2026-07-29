@@ -160,9 +160,19 @@ class ShellFlavour(abc.ABC):
     @staticmethod
     def _text(value: object) -> str:
         """Normalize values and reject shell control characters."""
-        if isinstance(value, os.PathLike):
-            value = os.fspath(value)
-        elif isinstance(value, bytes):
+        # `__fspath__` first, and by attribute rather than `isinstance`, so a
+        # duck-typed path that never registered with `os.PathLike` still
+        # renders as its filesystem representation. See
+        # `executor._common.command_text`, which follows the same rule.
+        fspath = getattr(value, "__fspath__", None)
+        if callable(fspath):
+            try:
+                resolved = fspath()
+            except Exception:
+                resolved = None
+            if isinstance(resolved, (str, bytes)):
+                value = resolved
+        if isinstance(value, bytes):
             value = value.decode("utf-8", "surrogateescape")
         text = str(value)
         if any(ord(char) < 32 or ord(char) == 127 for char in text):

@@ -10,6 +10,7 @@ import pytest
 from pathlib_next import PosixPathname
 
 from hostctl import Exec, LocalHost, POSIX_SHELL, POWERSHELL
+from hostctl.executor._common import command_text
 from hostctl.host._common import starts_direct_command
 
 
@@ -112,6 +113,52 @@ def test_local_exec_reports_status_like_subprocess():
 
     with pytest.raises(subprocess.CalledProcessError):
         LocalHost().run(Exec(sys.executable, "-c", "raise SystemExit(4)"))
+
+
+class _Duck:
+    """A path that never registered with `os.PathLike`."""
+
+    def __fspath__(self):
+        return "/real/path"
+
+    def __str__(self):
+        return "<Duck object>"
+
+
+class _BadPath:
+    def __fspath__(self):
+        raise RuntimeError("boom")
+
+    def __str__(self):
+        return "/fallback"
+
+
+class _NonStrPath:
+    def __fspath__(self):
+        return 42
+
+    def __str__(self):
+        return "/fallback"
+
+
+def test_command_text_prefers_fspath_over_str():
+    # `str()` matches `__fspath__` for the path types shipped here, but that
+    # is a coincidence of their `__str__`, not a contract. A transport needs
+    # the filesystem representation.
+    assert command_text(_Duck()) == "/real/path"
+    assert command_text(PurePosixPath("/a b")) == "/a b"
+    assert command_text(b"/a b") == "/a b"
+    assert command_text(42) == "42"
+
+
+def test_command_text_falls_back_to_str_for_an_unusable_fspath():
+    # A broken `__fspath__` should not fail the whole command.
+    assert command_text(_BadPath()) == "/fallback"
+    assert command_text(_NonStrPath()) == "/fallback"
+
+
+def test_shell_values_also_prefer_fspath():
+    assert POSIX_SHELL.script([["echo", _Duck()]]) == "echo /real/path"
 
 
 def test_powershell_structured_command_still_renders_through_the_call_operator():
