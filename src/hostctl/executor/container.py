@@ -7,6 +7,7 @@ import typing
 
 from ._common import (
     CaptureOutput,
+    command_text,
     CommandArgument,
     Environment,
     Executor,
@@ -79,10 +80,8 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
             )
 
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
-        argv = [str(command)]
-        argv.extend(
-            value.decode() if isinstance(value, bytes) else str(value) for value in args
-        )
+        argv = [command_text(command)]
+        argv.extend(command_text(value) for value in args)
         merge_stderr = stderr is subprocess.STDOUT
         exec_options: typing.Dict[str, object] = {
             "stdout": True,

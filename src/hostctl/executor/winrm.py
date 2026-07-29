@@ -9,6 +9,7 @@ import typing
 
 from ._common import (
     CaptureOutput,
+    command_text,
     CommandArgument,
     Executor,
     ExecutorCommand,
@@ -165,7 +166,7 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
             raise TypeError(f"unsupported WinRM executor option: {sorted(options)[0]}")
         if args:
             raise NotImplementedError("WinRMExecutor does not support native arguments")
-        command = str(command)
+        command = command_text(command)
         if timeout is not None:
             raise NotImplementedError(
                 "WinRMExecutor timeout is unsupported; configure transport timeouts"

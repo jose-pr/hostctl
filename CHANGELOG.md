@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A path in a command is rendered through `__fspath__` rather than `str()`.
+  Every transport now shares one `command_text` helper — the SSH, WinRM,
+  container, QGA, and PSRP executors each stringified with `str()`, so only
+  the local executor asked for the filesystem representation. `__fspath__` is
+  tried by attribute rather than by `isinstance(value, os.PathLike)`, so a
+  duck-typed path that never registered with the ABC is honoured too, and an
+  object whose `__fspath__` raises or returns a non-string falls back to
+  `str()` rather than failing the command. The shell layer follows the same
+  rule. No shipped path type changes behaviour — `str()` and `__fspath__`
+  agree for all of them — but the contract now matches what a path promises.
+
 ## [0.2.0] - 2026-07-28
 
 ### Added

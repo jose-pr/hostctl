@@ -94,6 +94,39 @@ def normalize_input(
     return input
 
 
+def command_text(
+    value: object, *, encoding: str = "utf-8", errors: str = "strict"
+) -> str:
+    """Render one command or argv value as the text a transport sends.
+
+    Anything offering `__fspath__` is asked for it first: that is the
+    filesystem representation a path promises, and it is what a transport
+    needs. `str()` happens to match for the path types shipped here, but that
+    is a coincidence of their `__str__` rather than a contract -- a path type
+    whose `repr`-ish `__str__` differs would otherwise send the wrong text.
+
+    `__fspath__` is tried directly rather than through
+    `isinstance(value, os.PathLike)`, so a duck-typed path that never
+    registered with the ABC is still honoured. A object whose `__fspath__`
+    raises or returns a non-string falls back to `str()` rather than failing
+    the command.
+
+    Bytes -- returned by `__fspath__` or passed directly -- are decoded;
+    everything else is stringified.
+    """
+    fspath = getattr(value, "__fspath__", None)
+    if callable(fspath):
+        try:
+            resolved = fspath()
+        except Exception:
+            resolved = None
+        if isinstance(resolved, (str, bytes)):
+            value = resolved
+    if isinstance(value, bytes):
+        return value.decode(encoding, errors)
+    return str(value)
+
+
 def normalize_environment(
     env: typing.Optional[Environment],
 ) -> typing.Optional[typing.Dict[str, str]]:

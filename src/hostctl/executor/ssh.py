@@ -10,6 +10,7 @@ import typing
 
 from ._common import (
     CaptureOutput,
+    command_text,
     CommandArgument,
     Environment,
     Executor,
@@ -135,7 +136,7 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             raise NotImplementedError("SshExecutor does not support native arguments")
         if bufsize == 0:
             raise ValueError("bufsize=0 is unsupported by the buffered SSH executor")
-        command = str(command)
+        command = command_text(command)
         reject_stdin_conflict(input, stdin)
         if text and encoding is None:
             encoding = "utf-8"
