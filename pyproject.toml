@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hostctl"
-version = "0.2.1"
+version = "0.2.2"
 authors = [{ name = "Jose A." }]
 description = "Run commands and access files on a host, local or remote, protocol-agnostic"
 readme = "README.md"
@@ -33,12 +33,17 @@ classifiers = [
 # services database knows (ws/wss, socks5) -- so hostctl does not reimplement
 # them. Transport implementations remain extras, so importing hostctl never
 # requires them.
-dependencies = ["pathlib_next>=0.8.6,<0.9", "netimps>=0.1,<0.2"]
+#
+# Both ranges span two minors deliberately: hostctl uses no API added in
+# pathlib_next 0.9 or netimps 0.2, so raising the floor would exclude working
+# installs for nothing. The ceilings stay at the next major-ish boundary
+# because both projects are pre-1.0, where a minor may break.
+dependencies = ["pathlib_next>=0.8.6,<0.10", "netimps>=0.1,<0.3"]
 
 [project.optional-dependencies]
 # SSH-backed run()/path(): asyncssh for shell exec, pathlib_next's SftpPath
 # (asyncssh-only since 0.8.2) for the remote path backend.
-ssh = ["asyncssh", "pathlib_next[sftp-async]>=0.8.4,<0.9"]
+ssh = ["asyncssh", "pathlib_next[sftp-async]>=0.8.4,<0.10"]
 # Windows Remote Management command execution.
 winrm = ["pywinrm>=0.5.0,<0.6"]
 # PowerShell Remoting Protocol runspaces (Python 3.10+ only).  The marker

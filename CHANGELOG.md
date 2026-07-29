@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-07-29
+
+### Changed
+
+- Dependency ranges widened to admit `pathlib_next` 0.9 and `netimps` 0.2:
+  `pathlib_next>=0.8.6,<0.10` and `netimps>=0.1,<0.3`, with the `ssh` extra's
+  `pathlib_next[sftp-async]` bound moved to `<0.10` alongside it. The
+  previous `netimps<0.2` also conflicted with `pathlib_next` 0.9's own `uri`
+  extra, which requires `netimps>=0.2.0`.
+
+  The floors stay where they were rather than rising to the new minors:
+  hostctl uses no API added in either release — its three netimps functions
+  (`get_default_port`, `is_local_address`, `try_parse`) all exist in 0.1, and
+  `ProgressReader` is hostctl's own wrapper, unrelated to pathlib_next 0.9's
+  native `copy(progress=)`. A floor demanding versions the code does not need
+  would exclude working installs for nothing. The ceilings span two minors
+  because both projects are pre-1.0, where a minor may break.
+
+  Verified against both ends of the range: the suite passes with
+  `pathlib_next` 0.8.6 and 0.9.0, each alongside `netimps` 0.2.0.
+
 ## [0.2.1] - 2026-07-29
 
 ### Added
@@ -292,7 +313,8 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/jose-pr/hostctl/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/jose-pr/hostctl/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jose-pr/hostctl/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/jose-pr/hostctl/compare/v0.1.0...v0.1.2
