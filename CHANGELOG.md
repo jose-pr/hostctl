@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-29
+
 ### Added
 
 - `ConnectionString` parses a connection target from whatever a user typed.
@@ -29,15 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `socks5`), and an application can register more with
   `netimps.register_port`.
 
-  `is_local` answers an address literal through `netimps.is_local_address`,
-  so an address actually assigned to this machine counts as local, not just
-  loopback. It still resolves nothing: a name is only compared against the
-  loopback spellings, because deciding more about a name needs a lookup.
-
-### Changed
-
-- `netimps` is now a required dependency, supplying scheme/port and address
-  semantics rather than hostctl reimplementing them.
+  `False` stops the search outright: no port, and no lookup.
 
   Credentials are parsed but never rendered. `str()` and `repr()` both emit
   the redacted form, with the password **removed rather than masked**, so the
@@ -46,11 +40,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   cannot leak one. A password may carry `key:value` extras after a newline,
   as `parse_credentials` describes, written raw.
 
-  The host keeps the spelling it was given, and `is_local` is a string check
-  that resolves nothing — it is called while a configuration is built, which
-  is network-free, and resolving would both block and raise on a name that
-  does not resolve. `qsl` and `query_val()` read the query; `replace()`
-  returns a changed copy.
+  The host keeps the spelling it was given. `is_local` resolves nothing — it
+  is called while a configuration is built, which is network-free, and
+  resolving would both block and raise on a name that does not resolve. An
+  address literal is answered by `netimps.is_local_address`, so an address
+  actually assigned to this machine counts as local and not just loopback,
+  while a name is compared against the loopback spellings. `qsl` and
+  `query_val()` read the query; `replace()` returns a changed copy.
+
+### Changed
+
+- **`netimps` is now a required dependency**, supplying scheme/port and
+  address semantics rather than hostctl reimplementing them. Note this
+  arrives in a patch release: an existing install pinned within `0.2.x` gains
+  a new requirement, so a locked or offline environment needs `netimps`
+  available before upgrading.
 
 ### Fixed
 
@@ -288,7 +292,8 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/jose-pr/hostctl/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jose-pr/hostctl/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/jose-pr/hostctl/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/jose-pr/hostctl/releases/tag/v0.1.0
