@@ -1,6 +1,7 @@
 """Host contracts and built-in host implementations."""
 
 from ._common import (
+    Exec as Exec,
     Host as Host,
     HostConfig as HostConfig,
     HostInfo as HostInfo,

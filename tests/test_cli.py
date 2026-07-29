@@ -2,10 +2,9 @@ import io
 import json
 import subprocess
 import types
-from pathlib import PurePosixPath
-
 import pytest
 
+from hostctl import Exec
 from hostctl._cli import _parser, main
 
 
@@ -36,7 +35,7 @@ def test_run_propagates_status_and_streams():
     assert stderr.getvalue().strip() == b"err"
 
 
-def test_run_marks_direct_command_with_target_shell_path_flavour(monkeypatch):
+def test_run_marks_the_operand_as_one_direct_command(monkeypatch):
     seen = []
 
     class _Host:
@@ -56,8 +55,11 @@ def test_run_marks_direct_command_with_target_shell_path_flavour(monkeypatch):
 
     monkeypatch.setattr("hostctl._cli.Host", lambda *args, **kwargs: _Host())
 
+    # One `Exec`, not a leading path plus positionals: the operand is a single
+    # direct command, and the program is passed verbatim so a bare name
+    # resolves through the target's PATH.
     assert main(["run", "ssh://host", "--", "/bin/sh", "-c", "true"]) == 0
-    assert seen == [(PurePosixPath("/bin/sh"), "-c", "true")]
+    assert seen == [(Exec("/bin/sh", "-c", "true"),)]
 
 
 def test_cat_ls_cp_and_info(tmp_path):

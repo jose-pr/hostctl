@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from hostctl import Exec
+
 from .providers import live_providers, provider_context
 
 
@@ -22,7 +24,7 @@ def test_live_provider_direct_command(provider):
         pytest.skip(f"{provider.name} does not advertise run")
     with provider_context(provider) as host:
         if provider.name == "local":
-            result = host.run(Path(sys.executable), "-c", "print('live')")
+            result = host.run(Exec(sys.executable, "-c", "print('live')"))
         else:
             command = (
                 "Write-Output live"

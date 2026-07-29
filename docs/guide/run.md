@@ -43,7 +43,7 @@ host.run("chmod", "755", target)       # WRONG: runs chmod;755;/path
 | --- | --- | --- |
 | Structured `list`/`tuple` | `["chmod", "755", p]` | `chmod 755 '/tmp/a b'` — every element quoted as data |
 | Raw `str` | `"echo $HOME"` | verbatim shell text; globs, pipes, and `$VAR` are interpreted |
-| Path-led | `Path("/bin/ls"), "-l", p` | direct execution: one executable plus argv, no shell |
+| `Exec(...)` | `Exec("/bin/ls", "-l", p)` | direct execution: one program plus argv, no shell |
 
 Prefer the structured form. It quotes each element, so a value containing a
 space, quote, `$`, or `;` is passed as data instead of changing the command.
@@ -69,22 +69,37 @@ host.run(["test", "-f", target], ShellOperator.AND, ["rm", target])
 raises `ValueError`, and a flavour may reject one it cannot represent
 portably — PowerShell 5 rejects `AND`/`OR`, while PowerShell 7 accepts them.
 
-### Path-led commands are direct execution
+### `Exec` is direct execution
 
-A path in the **first** position marks direct execution: the file is the
-executable and every trailing value is an argv argument, with no shell layer
-rendered. Trailing values must be scalars — a nested list raises `TypeError`
-rather than silently mixing argv and shell semantics.
-
-A path elsewhere is just a value. In `["chmod", "755", Path("/srv/app")]` the
-path is a quoted argument, because `chmod` is the program.
-
-Because the first path claims the call, several paths in one call are one
-command plus arguments, not several commands:
+`Exec(program, *args)` runs one program with an argv, with no shell layer
+rendered — nothing quotes, splits, or interprets the values:
 
 ```python
-host.run(Path("/bin/a"), Path("/bin/b"))    # /bin/a with argv ["/bin/b"]
-host.run([Path("/bin/a")], [Path("/bin/b")])  # two separate commands
+from hostctl import Exec
+
+host.run(Exec("/bin/ls", "-l", target))   # absolute path
+host.run(Exec("ls", "-l"))                # resolved through the target's PATH
+```
+
+The program and each argument may be a `str`, `bytes`, or a path object. All
+of them reach the transport as text, so the spelling records how you happened
+to hold the value rather than changing what runs. A bare name is only possible
+here: a plain string command is always shell text.
+
+Arguments are argv values, never nested commands — a list or tuple raises
+`TypeError` rather than blurring the two.
+
+Direct execution replaces the whole call, so an `Exec` cannot be combined with
+other commands: there is no shell to join them with, and running just one
+would silently drop the rest. Give each its own call, or use structured
+commands if you want them joined.
+
+Everything else is an ordinary value. A path is just a value that
+stringifies, wherever it appears:
+
+```python
+host.run(["chmod", "755", Path("/srv/app")])   # a quoted argument
+host.run(Path("/bin/a"), Path("/bin/b"))       # two shell commands
 ```
 
 ### Validation

@@ -24,6 +24,7 @@ from ..host._common import (
     CaptureOutput,
     Command,
     Environment,
+    Exec,
     FileHandle,
     Input,
     PathLike,
@@ -197,6 +198,15 @@ class ShellFlavour(abc.ABC):
         return self.command_separator.join(assignments)
 
     def command_text(self, value: Command) -> str:
+        if isinstance(value, Exec):
+            # Direct execution bypasses the shell entirely, so an `Exec` that
+            # reaches here means a transport did not take its direct branch.
+            # Rendering it as a quoted argv would silently reintroduce the
+            # shell layer the caller asked to skip.
+            raise TypeError(
+                "Exec is executed directly and cannot be rendered into a shell "
+                "script; this host does not support direct execution"
+            )
         if isinstance(value, (bytes, PurePath, Path, os.PathLike)):
             return self.quote(value)
         if isinstance(value, str):
@@ -340,6 +350,24 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
             item.kind is inspect.Parameter.VAR_KEYWORD
             for item in self._executor_parameters.values()
         )
+        # A host `run(*cmds)` takes several *commands*; an executor
+        # `__call__(command, *args)` takes one command and its argv. Only the
+        # former needs the program and argv bundled into one `Exec`, since
+        # otherwise each argument would become a separate command. The shapes
+        # differ in their first parameter: VAR_POSITIONAL vs a named one.
+        positional = [
+            item
+            for item in self._executor_parameters.values()
+            if item.kind
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.VAR_POSITIONAL,
+            )
+        ]
+        self._execute_takes_commands = bool(positional) and (
+            positional[0].kind is inspect.Parameter.VAR_POSITIONAL
+        )
         published = getattr(executor, "executor_capabilities", None)
         if published is None:
             inferred = set()
@@ -467,6 +495,14 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         ]
         if unsupported:
             raise TypeError(f"executor does not accept {sorted(unsupported)[0]}")
+        if executor_args and self._execute_takes_commands:
+            # A host `run(*cmds)` treats several positionals as several
+            # commands, so a program and its argv must arrive as one `Exec`
+            # rather than relying on position to mark direct execution.
+            # Only when there *are* argv values: `Shell.run` renders every
+            # command into one script and dispatches it here with no args, and
+            # that script is shell text to interpret, not a program to exec.
+            return self._execute(Exec(command, *executor_args), **options)
         return self._execute(command, *executor_args, **options)
 
     __call__ = execute

@@ -34,6 +34,7 @@ from .executor import (
 from .host import (
     ContainerConfig as ContainerConfig,
     ContainerHost as ContainerHost,
+    Exec as Exec,
     Host as Host,
     HostConfig as HostConfig,
     HostInfo as HostInfo,
@@ -146,6 +147,7 @@ __all__ = [
     "IosConfig",
     "IosHost",
     # Executors and processes
+    "Exec",
     "Executor",
     "ExecutionOptions",
     "ExecutorCapability",

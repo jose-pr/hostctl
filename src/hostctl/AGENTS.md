@@ -57,9 +57,20 @@ shared protocol implementations can be added once; `Shell.__call__` delegates
 to `Shell.execute()`.
 `Host` itself supplies the multi-command `run()` provider contract; there is no
 duplicate host-executor protocol or unused host-options wrapper.
-`Shell.execute(path_like)` preserves the path, while string input remains a
-string. Executors and hosts distinguish direct commands from shell scripts by
-that value type; no duplicate command-kind flag is carried.
+`Exec(program, *args)` is the direct-execution marker for `Host.run()`: one
+program plus argv, no shell layer. The program may be a `str`, `bytes`, or a
+path — all reach the transport as text, so a bare name resolves through the
+target's `PATH`. Direct execution replaces the whole call, so an `Exec`
+combined with any other command raises. Everything else is an ordinary value:
+a path is a value that stringifies wherever it appears, so `run(p1, p2)` is two
+shell commands. `Exec` is a deliberately non-iterable frozen dataclass --
+`ShellFlavour.command_text` dispatches structured commands on `Iterable`, and
+an iterable marker would be quoted into an argv instead of taking the direct
+branch; `command_text` raises if an `Exec` reaches it.
+`Shell.execute(command, *args)` keeps its own program-plus-argv signature and
+wraps into an `Exec` only when dispatching to a host `run(*cmds)` and only when
+argv values are present -- `Shell.run` renders every command into one script
+and dispatches it with no args, and that script is shell text, not a program.
 
 ## Configuration and lifecycle
 
