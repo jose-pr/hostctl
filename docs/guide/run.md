@@ -12,10 +12,98 @@ result = host.run("echo hello")
 print(result.stdout)
 ```
 
+## Command syntax
+
+`run(*cmds, **options)` takes **one positional argument per command** — it is
+varargs, not a list of commands. This is the distinction to get right:
+
+```python
+host.run(["chmod", "755", target])                      # ONE command
+host.run(["chmod", "755", target], ["chown", "u", target])  # TWO commands
+```
+
+A list is *one* command whose elements are quoted individually. Wrapping
+commands in an outer list does not produce several commands — the inner lists
+are stringified into a single nonsensical argument:
+
+```python
+host.run([["chmod", "755", target]])   # WRONG: one command, mangled
+```
+
+The mirror mistake is passing an argv as separate positionals, which makes each
+element its own command:
+
+```python
+host.run("chmod", "755", target)       # WRONG: runs chmod;755;/path
+```
+
+### The three forms a command may take
+
+| Form | Example | Result |
+| --- | --- | --- |
+| Structured `list`/`tuple` | `["chmod", "755", p]` | `chmod 755 '/tmp/a b'` — every element quoted as data |
+| Raw `str` | `"echo $HOME"` | verbatim shell text; globs, pipes, and `$VAR` are interpreted |
+| Path-led | `Path("/bin/ls"), "-l", p` | direct execution: one executable plus argv, no shell |
+
+Prefer the structured form. It quotes each element, so a value containing a
+space, quote, `$`, or `;` is passed as data instead of changing the command.
+Use a raw string only when you want the shell to interpret the text.
+
+Elements may be `str`, `bytes`, `int`, or path objects; all are normalized and
+quoted. `["echo", 42, b"by", PurePosixPath("/p q")]` renders as
+`echo 42 by '/p q'`.
+
+### Joining and operators
+
+Commands are joined with the flavour's separator (`;` on POSIX). Pass a
+`ShellOperator` *between* two commands to join them conditionally instead:
+
+```python
+from hostctl import ShellOperator
+
+host.run(["test", "-f", target], ShellOperator.AND, ["rm", target])
+```
+
+`ShellOperator` provides `AND`, `OR`, `PIPE`, `REDIRECT`, `APPEND`, and
+`SEQUENCE`. An operator that is leading, trailing, or adjacent to another
+raises `ValueError`, and a flavour may reject one it cannot represent
+portably — PowerShell 5 rejects `AND`/`OR`, while PowerShell 7 accepts them.
+
+### Path-led commands are direct execution
+
+A path in the **first** position marks direct execution: the file is the
+executable and every trailing value is an argv argument, with no shell layer
+rendered. Trailing values must be scalars — a nested list raises `TypeError`
+rather than silently mixing argv and shell semantics.
+
+A path elsewhere is just a value. In `["chmod", "755", Path("/srv/app")]` the
+path is a quoted argument, because `chmod` is the program.
+
+Because the first path claims the call, several paths in one call are one
+command plus arguments, not several commands:
+
+```python
+host.run(Path("/bin/a"), Path("/bin/b"))    # /bin/a with argv ["/bin/b"]
+host.run([Path("/bin/a")], [Path("/bin/b")])  # two separate commands
+```
+
+### Validation
+
+An empty structured command and any control character (including a newline
+inside a value, which could otherwise smuggle in a second command) raise
+`ValueError`. An empty raw string is skipped when joining.
+
+### PowerShell targets
+
+PowerShell flavours render a structured command through the `&` call operator
+and append `; exit $LASTEXITCODE` so the remote status propagates:
+
+```
+& 'Get-Item' 'C:/a b'; exit $LASTEXITCODE
+```
+
 `run()` returns a `subprocess.CompletedProcess`. Highlights:
 
-- Multiple positional commands are joined with `;`. A command given as a
-  `list`/`tuple` is shell-quoted piece by piece.
 - `capture_output` may be `True` (both streams), `"stdout"`, `"stderr"`, or
   `False`.
 - SSH `input=`, `cwd=`, `env=`, `check=`, `timeout=`, and
