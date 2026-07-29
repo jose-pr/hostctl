@@ -118,6 +118,21 @@ with Host("ssh://admin:secret@nas.example.com") as same_host:
     same_host.run("uptime")
 ```
 
+`run()` takes one positional argument per command, so a `list` is a single
+command whose elements are each quoted, not a list of commands:
+
+```python
+host.run(["chmod", "755", target])                          # one command
+host.run(["chmod", "755", target], ["chown", "u", target])  # two commands
+host.run("chmod", "755", target)                            # WRONG: three commands
+```
+
+A raw string is verbatim shell text, and a **leading** path is direct
+execution — that file plus argv, with no shell layer. A `ShellOperator` between
+two commands joins them conditionally. See the
+[running commands guide](https://jose-pr.github.io/hostctl/guide/run/) for the
+full rules.
+
 A URI may carry `user:password@host` on the way *in* — it is a valid URI, so
 hostctl accepts it, extracts the password into the credentials, and keeps it
 out of every rendered form. Passing the same password both in the URI and as an
