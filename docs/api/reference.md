@@ -80,6 +80,7 @@ without a deprecation cycle.
 
 ## Connection strings
 
+::: hostctl.ConnectionString
 ::: hostctl.redact_uri
 ::: hostctl.parse_credentials
 ::: hostctl.strict_uri_credentials

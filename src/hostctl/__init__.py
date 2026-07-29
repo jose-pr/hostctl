@@ -33,6 +33,7 @@ from .executor import (
 )
 from .host import (
     ContainerConfig as ContainerConfig,
+    ConnectionString as ConnectionString,
     ContainerHost as ContainerHost,
     Exec as Exec,
     Host as Host,
@@ -126,6 +127,7 @@ __all__ = [
     "ssh_providers",
     "strict_uri_credentials",
     "strict_uri_query",
+    "ConnectionString",
     "uri_host",
     "uri_hostname",
     "winrm_providers",
