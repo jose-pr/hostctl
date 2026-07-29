@@ -13,6 +13,7 @@ from ._common import (
     uri_host as uri_host,
     uri_hostname as uri_hostname,
 )
+from ._connection import ConnectionString as ConnectionString
 from ._ssh import ssh_providers as ssh_providers
 from ._winrm import winrm_providers as winrm_providers
 from ._local import LocalConfig as LocalConfig, LocalHost as LocalHost

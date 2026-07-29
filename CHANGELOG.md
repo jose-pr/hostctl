@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `ConnectionString` parses a connection target from whatever a user typed.
+  `ConnectionString("nas", default_scheme="wss")` and
+  `ConnectionString("nas:8443", ...)` parse, because a bare host is not an
+  invalid URI — it is a URI with the scheme left off, which is what people
+  type on a command line. A `default_ports` mapping fills a missing port
+  (`ws`/`wss` are the case in point: no system services database knows them);
+  an explicit port always wins.
+
+  Credentials are parsed but never rendered. `str()` and `repr()` both emit
+  the redacted form, with the password **removed rather than masked**, so the
+  output stays a valid, reusable connection string that cannot round-trip a
+  wrong credential — and a value reaching a log line or a traceback frame
+  cannot leak one. A password may carry `key:value` extras after a newline,
+  as `parse_credentials` describes, written raw.
+
+  The host keeps the spelling it was given, and `is_local` is a string check
+  that resolves nothing — it is called while a configuration is built, which
+  is network-free, and resolving would both block and raise on a name that
+  does not resolve. `qsl` and `query_val()` read the query; `replace()`
+  returns a changed copy.
+
 ### Fixed
 
 - A path in a command is rendered through `__fspath__` rather than `str()`.
