@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-05
+
+### Fixed
+
+- Directory listings no longer discard the backend's own `_scandir()`.
+  `walk()` and `glob()` went through hostctl's `_scandir()`, which was a
+  verbatim copy of `pathlib_next`'s generic fallback and called `iterdir()` —
+  so a scheme whose listing already carries metadata never got to use it.
+  `SftpPath._scandir()` reads every child's attributes in a single
+  `listdir_attr` round trip; before this fix a remote `walk()` paid a listing
+  plus one `stat()` per entry. `_scandir()` is now the routed primitive and
+  `iterdir()` derives from it, matching the direction upstream intends.
+
+- `copy()` and `move()` on a composite path now use the backend's own
+  implementation when the destination resolves to a path that backend
+  understands. They previously called `Path.copy(self, ...)` unconditionally,
+  which bypassed every backend override — `SftpPath.copy()` fans out over
+  asyncssh workers and `SftpPath.rm()`/`checksum()` run server-side, so the
+  results stayed correct while the transport-native path was silently
+  discarded. A genuine cross-backend transfer (a destination on another
+  provider) still uses the generic implementation, which is what it is for.
+
+### Changed
+
+- Composite paths forward the method that was called to the selected backend
+  instead of re-declaring a copy of `pathlib_next.Path`'s surface. Operations
+  hostctl never declares — `touch()`, `rm()`, `lstat()`, `is_symlink()`,
+  `chown()`, `checksum()` — now work through `host.path()`, and an operation
+  added upstream is reachable without a new method here. `chown()`, added in
+  `pathlib_next` 0.9.1, was unreachable before this.
+
+  `_CompositePathMixin` drops from 47 to 36 methods. Operations with real
+  composite behavior stay hand-written, each for a reason: `iterdir`/`_scandir`
+  (rebuild children as composite paths), `rename` (cross-provider guard),
+  `readlink` (rebuilds its result), `copy`/`move` (backend when the destination
+  resolves on this provider, generic for a true cross-backend transfer), and
+  `open` (the capability gate depends on the mode).
+
+  The pure-path derivations (`parent`, `parents`, `joinpath`, `/`,
+  `with_name`/`with_stem`/`with_suffix`, `relative_to`, `with_segments`) also
+  stay: `pathlib.PurePath` builds those through `object.__new__`, bypassing the
+  composite constructor, so they re-attach routing state that inheritance drops
+  rather than duplicating anything.
+
+- Provider fallback now also triggers on `NotImplementedError`, but only for
+  operations that cannot mutate before raising (reads, `stat`, `chown`,
+  `chmod`). Writes and composed wrappers still propagate it: a wrapper built
+  from several primitives may have already changed something when a later
+  primitive raises — `symlink_to(force=True)` unlinks before calling
+  `_symlink_to()`, so a backend lacking that primitive deletes the entry and
+  only then fails. Retrying that against another provider would repeat the
+  work with the original already gone.
+
 ## [0.2.3] - 2026-08-04
 
 ### Fixed
@@ -344,7 +397,8 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/jose-pr/hostctl/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/jose-pr/hostctl/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/jose-pr/hostctl/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/jose-pr/hostctl/compare/v0.2.0...v0.2.1
