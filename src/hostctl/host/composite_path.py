@@ -8,6 +8,7 @@ authority for I/O.
 
 from __future__ import annotations
 
+import inspect
 import pathlib
 import typing
 
@@ -25,6 +26,51 @@ def _supports(provider: PathProvider, operation: PathOperation) -> bool:
         or operation in capabilities
         or (operation.startswith("open_") and "open" in capabilities)
     )
+
+
+def _accepts_kwargs(
+    method: typing.Callable[..., object],
+    kwargs: dict[str, object],
+    operation: PathOperation,
+) -> dict[str, object]:
+    """Return ``kwargs``, first checking the backend method accepts them.
+
+    Composite dispatch normalises to the stdlib signature, which made a
+    backend's documented extension unreachable through the wrapper.  Rather
+    than forward blindly -- which turns a clear ``TypeError`` here into a
+    confusing one from inside a transport -- consult the selected backend's
+    signature and reject at this boundary what it cannot take.
+
+    A method whose signature cannot be introspected (a C function, a
+    ``functools.partial`` over one) is given the benefit of the doubt and
+    the kwargs are forwarded; a backend that then rejects them raises its
+    own ``TypeError``, which is no worse than calling it directly.
+    """
+
+    if not kwargs:
+        return kwargs
+
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return kwargs
+
+    parameters = signature.parameters
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return kwargs
+
+    unsupported = sorted(name for name in kwargs if name not in parameters)
+    if unsupported:
+        owner = getattr(method, "__self__", None)
+        backend = type(owner).__name__ if owner is not None else "backend path"
+        raise TypeError(
+            f"{backend}.{operation}() does not accept "
+            + ", ".join(repr(name) for name in unsupported)
+        )
+    return kwargs
 
 
 class _CompositePathMixin:
@@ -350,26 +396,43 @@ class _CompositePathMixin:
     def is_dir(self):
         return self._dispatch("is_dir", lambda path: path.is_dir())
 
-    def mkdir(self, mode=0o777, parents=False, exist_ok=False):
+    def mkdir(self, mode=0o777, parents=False, exist_ok=False, **kwargs):
         return self._dispatch(
             "mkdir",
-            lambda path: path.mkdir(mode=mode, parents=parents, exist_ok=exist_ok),
+            lambda path: path.mkdir(
+                mode=mode,
+                parents=parents,
+                exist_ok=exist_ok,
+                **_accepts_kwargs(path.mkdir, kwargs, "mkdir"),
+            ),
             pin=True,
         )
 
-    def chmod(self, mode, *, follow_symlinks=True):
+    def chmod(self, mode, *, follow_symlinks=True, **kwargs):
         return self._dispatch(
             "chmod",
-            lambda path: path.chmod(mode, follow_symlinks=follow_symlinks),
+            lambda path: path.chmod(
+                mode,
+                follow_symlinks=follow_symlinks,
+                **_accepts_kwargs(path.chmod, kwargs, "chmod"),
+            ),
             pin=True,
         )
 
-    def symlink_to(self, target, target_is_directory: bool = False):
+    def symlink_to(self, target, target_is_directory: bool = False, **kwargs):
         """Create this path as a symlink, through the selected provider.
 
         The backend path class owns the transport's real capability: a
         backend without symlink support raises ``NotImplementedError``
         (never a silent no-op), and that surfaces here unchanged.
+
+        Extra keyword arguments are forwarded to the backend's
+        ``symlink_to`` only when its signature actually accepts them --
+        see :func:`_accepts_kwargs`.  A backend extension (for example
+        pytruenas' ``force=``/``onremove=``) is therefore reachable through
+        the composite wrapper, while a kwarg no backend understands still
+        fails at this boundary with a plain ``TypeError`` rather than an
+        obscure one from inside a transport.
         """
         logical_target = str(target)
 
@@ -379,7 +442,8 @@ class _CompositePathMixin:
                 raise NotImplementedError(
                     f"{type(path).__name__} does not support symlink_to"
                 )
-            return method(logical_target, target_is_directory)
+            extra = _accepts_kwargs(method, kwargs, "symlink_to")
+            return method(logical_target, target_is_directory, **extra)
 
         return self._dispatch("symlink_to", symlink_with_selected_provider, pin=True)
 
@@ -408,13 +472,22 @@ class _CompositePathMixin:
             logical_segments=(str(target),),
         )
 
-    def unlink(self, missing_ok=False):
+    def unlink(self, missing_ok=False, **kwargs):
         return self._dispatch(
-            "unlink", lambda path: path.unlink(missing_ok=missing_ok), pin=True
+            "unlink",
+            lambda path: path.unlink(
+                missing_ok=missing_ok,
+                **_accepts_kwargs(path.unlink, kwargs, "unlink"),
+            ),
+            pin=True,
         )
 
-    def rmdir(self):
-        return self._dispatch("rmdir", lambda path: path.rmdir(), pin=True)
+    def rmdir(self, **kwargs):
+        return self._dispatch(
+            "rmdir",
+            lambda path: path.rmdir(**_accepts_kwargs(path.rmdir, kwargs, "rmdir")),
+            pin=True,
+        )
 
     def rename(self, target):
         logical_target = str(target)
