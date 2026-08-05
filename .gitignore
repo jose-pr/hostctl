@@ -17,3 +17,6 @@ site/
 .agents
 CLAUDE*
 .claude
+.*
+!.gitignore
+
