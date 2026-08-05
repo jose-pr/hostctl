@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-04
+
+### Fixed
+
+- Composite paths no longer drop backend-specific keyword arguments.
+  `CompositePosixPath.symlink_to()` accepted only the stdlib signature and
+  forwarded nothing else, so a backend's documented extension was unreachable
+  through the very abstraction meant to expose it — a path obtained from
+  `host.path()` raised `TypeError: unexpected keyword argument 'force'` even
+  when the selected backend implemented `force=`.
+
+  Forwarding is **signature-aware** rather than blind: the selected backend's
+  method is inspected, and only keywords it declares are passed through.
+  Anything else still raises `TypeError` at the composite boundary, naming
+  the backend class and the rejected keyword. Blind passthrough would have
+  turned a clear error at the abstraction boundary into a confusing one from
+  inside a transport, and the existing contract — a backend lacking a
+  capability raises `NotImplementedError`, never a silent no-op — is
+  unchanged. A method whose signature cannot be introspected (a C function,
+  a `functools.partial`) receives the keywords, since an error from it is no
+  worse than calling it directly.
+
+  Applied to `mkdir()`, `chmod()`, `unlink()`, and `rmdir()` alongside
+  `symlink_to()`, since the same normalization affected each of them.
+
+  This pairs with `pathlib_next`'s `symlink_to(force=)`, which that project
+  exposes as a generic `Path` extension over a `_symlink_to()` backend
+  primitive. No version floor change: hostctl's `pathlib_next>=0.8.6` floor
+  stays where it is, so `force=` is forwarded when the installed version
+  provides it and rejected at the boundary when it does not.
+
 ## [0.2.2] - 2026-07-29
 
 ### Changed
@@ -313,7 +344,8 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/jose-pr/hostctl/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/jose-pr/hostctl/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/jose-pr/hostctl/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jose-pr/hostctl/compare/v0.1.2...v0.2.0
