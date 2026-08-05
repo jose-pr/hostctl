@@ -73,16 +73,183 @@ def _accepts_kwargs(
     return kwargs
 
 
+def _is_composite_owner(base: type) -> bool:
+    """True for classes belonging to this module's composite hierarchy.
+
+    Used to tell a deliberate composite override (``iterdir``, ``rename``,
+    ``readlink``, ``copy``) apart from an inherited ``pathlib_next``
+    implementation, which is exactly what forwarding must displace.
+    """
+    return getattr(base, "__module__", "") == __name__
+
+
+def _make_forwarder(
+    name: str, capability: PathOperation, pin: bool, retry_safe: bool
+) -> typing.Callable[..., object]:
+    """Build a method forwarding ``name`` to the selected backend path."""
+
+    def forwarder(self, *args, **kwargs):
+        # A composite path used as an argument (a symlink target, a
+        # samefile operand) is meaningless to the backend, which would
+        # re-parse it through its own constructor.  Hand over the logical
+        # string and let the backend build its own path type from it.
+        args = tuple(
+            str(arg) if isinstance(arg, _CompositePathMixin) else arg for arg in args
+        )
+
+        def call(path: Path):
+            method = getattr(path, name, None)
+            if method is None:
+                raise NotImplementedError(
+                    f"{type(path).__name__} does not support {name}"
+                )
+            return method(*args, **_accepts_kwargs(method, kwargs, name))
+
+        return self._dispatch(
+            capability, call, pin=pin, retry_on_not_implemented=retry_safe
+        )
+
+    forwarder.__name__ = name
+    forwarder.__qualname__ = f"_CompositePathMixin.{name}"
+    forwarder.__doc__ = (
+        f"Route ``{name}`` to the selected path provider's backend path.\n\n"
+        f"        Forwarded verbatim, so a backend overriding ``{name}`` for a\n"
+        f"        transport-native implementation is the code that runs.\n"
+        f"        Generated from ``_FORWARDED``; see that table for the\n"
+        f"        capability gate and retry contract.\n        "
+    )
+    return forwarder
+
+
+# Methods forwarded verbatim to the selected backend path.  Each entry maps a
+# method name to the capability string gating it, whether the call pins the
+# provider, and whether a `NotImplementedError` from it may fall through to the
+# next provider.
+#
+# The method that was *called* is the method invoked on the backend -- never a
+# decomposition into primitives.  Backends override derived operations for real
+# optimization (``SftpPath.copy`` fans out over asyncssh workers,
+# ``SftpPath.rm``/``checksum`` run server-side, ``LocalPath`` reaches ``shutil``
+# and ``os.scandir``), and decomposing would silently discard all of it while
+# still producing correct results.  Anything the backend does not override
+# resolves to ``pathlib_next``'s own wrapper, so operations added upstream work
+# by adding a row here rather than writing a body.
+#
+# ``retry_safe`` is deliberately conservative.  A wrapper composed of several
+# primitives may already have mutated when a later primitive raises --
+# ``Path.symlink_to(force=True)`` unlinks *before* calling ``_symlink_to``, so a
+# backend lacking that primitive deletes the entry and only then raises.
+# ``NotImplementedError`` cannot distinguish "did nothing" from "did half", so
+# only calls that cannot mutate before raising opt in.
+_FORWARDED: "dict[str, tuple[str, bool, bool]]" = {
+    # name: (capability, pin, retry_safe)
+    "exists": ("exists", False, True),
+    "is_file": ("is_file", False, True),
+    "is_dir": ("is_dir", False, True),
+    "is_symlink": ("stat", False, True),
+    "is_block_device": ("stat", False, True),
+    "is_char_device": ("stat", False, True),
+    "is_fifo": ("stat", False, True),
+    "is_socket": ("stat", False, True),
+    "stat": ("stat", False, True),
+    "lstat": ("stat", False, True),
+    "samefile": ("stat", False, True),
+    "read_bytes": ("read", False, True),
+    "read_text": ("read", False, True),
+    "checksum": ("read", False, True),
+    "supported_checksums": ("read", False, True),
+    "chown": ("chmod", True, True),
+    "chmod": ("chmod", True, True),
+    "lchmod": ("chmod", True, True),
+    "write_bytes": ("write", True, False),
+    "write_text": ("write", True, False),
+    "mkdir": ("mkdir", True, False),
+    "touch": ("write", True, False),
+    "unlink": ("unlink", True, False),
+    "rmdir": ("rmdir", True, False),
+    "rm": ("unlink", True, False),
+    "symlink_to": ("symlink_to", True, False),
+}
+
+
 class _CompositePathMixin:
     """Provider routing shared by the POSIX and Windows concrete classes."""
 
     __slots__ = ()
 
+    def __init_subclass__(cls, **kwargs):
+        """Install the forwarders on every concrete composite class.
+
+        Generated here rather than written out so that following
+        ``pathlib_next`` is a row in ``_FORWARDED``, not a new method body.
+        A class defining the name in its own body always wins -- that is the
+        opt-out for an operation needing real composite logic (``iterdir``,
+        ``rename``, ``readlink``, ``copy``/``move``).
+        """
+        super().__init_subclass__(**kwargs)
+        for name, (capability, pin, retry_safe) in _FORWARDED.items():
+            # Only a definition inside the composite classes themselves opts
+            # out.  Testing the whole MRO would match everything inherited
+            # from ``pathlib_next.Path`` -- which is the entire surface this
+            # table exists to route.
+            owner = next(
+                (
+                    base
+                    for base in cls.__mro__
+                    if name in vars(base) and _is_composite_owner(base)
+                ),
+                None,
+            )
+            if owner is not None:
+                continue
+            setattr(cls, name, _make_forwarder(name, capability, pin, retry_safe))
+
     def copy(self, target, **kwargs):
-        return Path.copy(self, target, **kwargs)
+        return self._transfer("copy", target, **kwargs)
 
     def move(self, target, **kwargs):
-        return Path.move(self, target, **kwargs)
+        return self._transfer("move", target, **kwargs)
+
+    def _transfer(self, name, target, **kwargs):
+        """Route ``copy``/``move`` to the backend when both ends agree.
+
+        A backend overrides these for transport-native transfer --
+        ``SftpPath.copy`` fans out over asyncssh workers rather than
+        streaming bytes through the client -- so handing the call straight
+        to ``Path.copy`` would be correct and much slower.
+
+        The backend can only be used when the destination resolves to a
+        path *it* understands: a plain backend path, or a composite path
+        sharing this provider.  Anything else (a composite path on another
+        provider, a foreign ``Path``) is a genuine cross-backend transfer,
+        which is what the generic implementation exists for.
+        """
+        generic = getattr(Path, name)
+        provider = self._provider
+        backend_target = target
+        if isinstance(target, _CompositePathMixin):
+            if provider is None or not any(
+                item is provider for item in target.providers
+            ):
+                return generic(self, target, **kwargs)
+            backend_target = target._provider_path(provider)
+        elif isinstance(target, str):
+            backend_target = target
+        elif not isinstance(target, Path):
+            return generic(self, target, **kwargs)
+
+        def call(path: Path):
+            method = getattr(type(path), name, None)
+            if method is None or method is generic:
+                # The backend adds nothing over the generic implementation;
+                # use it directly so composite-aware behavior is preserved.
+                return generic(self, target, **kwargs)
+            return method(path, backend_target, **kwargs)
+
+        # Gated on "write", not a "copy"/"move" capability: neither is in
+        # PathProvider.DEFAULT_CAPABILITIES, so gating on the method name
+        # would reject every provider that has not opted in by hand.
+        return self._dispatch("write", call, pin=True)
 
     def _copy_from(self, source, **kwargs):
         """Accept Python 3.14 stdlib ``Path.copy()`` destinations."""
@@ -182,9 +349,11 @@ class _CompositePathMixin:
         *,
         pin: bool = False,
         with_provider: bool = False,
+        retry_on_not_implemented: bool = False,
     ):
         candidates = self._providers_in_order(operation, pin=pin)
         attempted = False
+        not_implemented: typing.Optional[NotImplementedError] = None
         for provider in candidates:
             attempted = True
             old = (self._provider, self._backend_path, self._factory, self._pinned)
@@ -196,6 +365,21 @@ class _CompositePathMixin:
                     # undo this and try the next provider.
                     self._adopt(provider, backend_path, pinned=True)
                 result = callback(backend_path)
+            except NotImplementedError as exc:
+                if not retry_on_not_implemented:
+                    # The call may have mutated before raising -- a wrapper
+                    # composed of primitives can fail partway (see _FORWARDED).
+                    # Report it rather than silently repeating the work
+                    # against another provider.
+                    raise
+                not_implemented = exc
+                if pin:
+                    self._provider, self._backend_path, self._factory, self._pinned = (
+                        old
+                    )
+                if self._selector is not None:
+                    self._selector.decline(provider.name, str(exc))
+                continue
             except OperationNotStarted as exc:
                 if pin:
                     self._provider, self._backend_path, self._factory, self._pinned = (
@@ -212,6 +396,14 @@ class _CompositePathMixin:
             return (result, provider) if with_provider else result
         if not attempted:
             raise NotImplementedError(f"no path provider supports {operation}")
+        if not_implemented is not None:
+            # Every candidate declined by saying it cannot do this at all.
+            # Surfacing OperationNotStarted here would rename a permanent
+            # "no backend implements this" into a transient "nothing started",
+            # which reads as retryable and hides the real cause -- most
+            # visibly with a single provider, where "try the next one" has
+            # nothing to try.
+            raise not_implemented
         raise OperationNotStarted(f"no path provider completed {operation}")
 
     def via(self, name: str):
@@ -313,49 +505,52 @@ class _CompositePathMixin:
     def parent(self):
         return self._child(str(super().parent))
 
-    def stat(self, *, follow_symlinks: bool = True):
-        return self._dispatch(
-            "stat", lambda path: path.stat(follow_symlinks=follow_symlinks)
-        )
-
-    def _scan_with_provider(self):
-        # The provider's iterator is returned only after the pre-dispatch
-        # operation has succeeded; errors after that point are terminal.
-        return self._dispatch(
-            "scandir", lambda path: iter(path.iterdir()), with_provider=True
-        )
-
     def _scandir(self):
-        """Yield ``(name, stat)`` pairs for ``walk()``/``glob()``.
+        """Yield ``(name, stat)`` pairs, routed to the backend's listing.
 
-        ``pathlib_next.Path._scandir`` is a listing hook with a fixed shape;
-        overriding it with a different return type silently breaks every
-        caller.  Provider selection still happens once, in
-        ``_scan_with_provider``.
+        ``_scandir`` is the primitive and ``iterdir`` derives from it, not
+        the other way round: a backend whose listing call already carries
+        metadata answers in one round trip (``SftpPath`` uses
+        ``listdir_attr``; FTP/HTTP/S3 do the equivalent).  Listing via
+        ``iterdir`` instead would rebuild every child as a composite path
+        and then stat each one separately, discarding that.
         """
-        from pathlib_next.path import FileStat
-
-        for entry in self.iterdir():
-            try:
-                stat = FileStat.from_path(entry, follow_symlink=False)
-            except OSError:
-                stat = None
-            yield entry.name, stat
+        entries, _provider = self._dispatch(
+            "scandir",
+            lambda path: iter(path._scandir()),
+            with_provider=True,
+            retry_on_not_implemented=True,
+        )
+        return entries
 
     def iterdir(self):
-        children, provider = self._scan_with_provider()
-        for child in children:
+        # Dispatches for the provider as well as the entries: children must
+        # be built against the provider that actually scanned, and
+        # ``__slots__`` leaves nowhere to stash it between calls.
+        entries, provider = self._dispatch(
+            "scandir",
+            lambda path: iter(path._scandir()),
+            with_provider=True,
+            retry_on_not_implemented=True,
+        )
+        for name, _stat in entries:
             yield type(self).from_path(
-                child,
+                provider.path(str(self), name),
                 provider,
                 provider.path,
                 self._providers,
                 self._selector,
                 pinned=self._pinned,
-                logical_segments=(str(self), getattr(child, "name", str(child))),
+                logical_segments=(str(self), name),
             )
 
     def open(self, mode="r", buffering=-1, encoding=None, errors=None, newline=None):
+        """Open through the selected provider.
+
+        Hand-written rather than generated because the capability gate
+        depends on the mode: a read opens under ``open_read``, a write
+        under ``open_write``.
+        """
         raw_mode = mode.replace("b", "")
         write = any(flag in raw_mode for flag in "wax+")
         operation = "open_write" if write else "open_read"
@@ -369,83 +564,10 @@ class _CompositePathMixin:
                 newline=newline,
             ),
             pin=True,
+            # A read has not mutated anything when it reports it cannot open;
+            # a write may have created or truncated the file first.
+            retry_on_not_implemented=not write,
         )
-
-    def read_bytes(self):
-        return self._dispatch("read", lambda path: path.read_bytes())
-
-    def write_bytes(self, data):
-        return self._dispatch("write", lambda path: path.write_bytes(data), pin=True)
-
-    def read_text(self, *args, **kwargs):
-        return self._dispatch("read", lambda path: path.read_text(*args, **kwargs))
-
-    def write_text(self, data, *args, **kwargs):
-        return self._dispatch(
-            "write", lambda path: path.write_text(data, *args, **kwargs), pin=True
-        )
-
-    def exists(self, *, follow_symlinks=True):
-        return self._dispatch(
-            "exists", lambda path: path.exists(follow_symlinks=follow_symlinks)
-        )
-
-    def is_file(self):
-        return self._dispatch("is_file", lambda path: path.is_file())
-
-    def is_dir(self):
-        return self._dispatch("is_dir", lambda path: path.is_dir())
-
-    def mkdir(self, mode=0o777, parents=False, exist_ok=False, **kwargs):
-        return self._dispatch(
-            "mkdir",
-            lambda path: path.mkdir(
-                mode=mode,
-                parents=parents,
-                exist_ok=exist_ok,
-                **_accepts_kwargs(path.mkdir, kwargs, "mkdir"),
-            ),
-            pin=True,
-        )
-
-    def chmod(self, mode, *, follow_symlinks=True, **kwargs):
-        return self._dispatch(
-            "chmod",
-            lambda path: path.chmod(
-                mode,
-                follow_symlinks=follow_symlinks,
-                **_accepts_kwargs(path.chmod, kwargs, "chmod"),
-            ),
-            pin=True,
-        )
-
-    def symlink_to(self, target, target_is_directory: bool = False, **kwargs):
-        """Create this path as a symlink, through the selected provider.
-
-        The backend path class owns the transport's real capability: a
-        backend without symlink support raises ``NotImplementedError``
-        (never a silent no-op), and that surfaces here unchanged.
-
-        Extra keyword arguments are forwarded to the backend's
-        ``symlink_to`` only when its signature actually accepts them --
-        see :func:`_accepts_kwargs`.  A backend extension (for example
-        pytruenas' ``force=``/``onremove=``) is therefore reachable through
-        the composite wrapper, while a kwarg no backend understands still
-        fails at this boundary with a plain ``TypeError`` rather than an
-        obscure one from inside a transport.
-        """
-        logical_target = str(target)
-
-        def symlink_with_selected_provider(path):
-            method = getattr(path, "symlink_to", None)
-            if method is None:
-                raise NotImplementedError(
-                    f"{type(path).__name__} does not support symlink_to"
-                )
-            extra = _accepts_kwargs(method, kwargs, "symlink_to")
-            return method(logical_target, target_is_directory, **extra)
-
-        return self._dispatch("symlink_to", symlink_with_selected_provider, pin=True)
 
     def readlink(self):
         def readlink_with_selected_provider(path):
@@ -470,23 +592,6 @@ class _CompositePathMixin:
             self._selector,
             pinned=self._pinned,
             logical_segments=(str(target),),
-        )
-
-    def unlink(self, missing_ok=False, **kwargs):
-        return self._dispatch(
-            "unlink",
-            lambda path: path.unlink(
-                missing_ok=missing_ok,
-                **_accepts_kwargs(path.unlink, kwargs, "unlink"),
-            ),
-            pin=True,
-        )
-
-    def rmdir(self, **kwargs):
-        return self._dispatch(
-            "rmdir",
-            lambda path: path.rmdir(**_accepts_kwargs(path.rmdir, kwargs, "rmdir")),
-            pin=True,
         )
 
     def rename(self, target):

@@ -2,11 +2,10 @@
 
 The composite path normalises every operation to the stdlib signature, which
 made a backend's documented extension unreachable through the very wrapper
-meant to expose it (`.agents/findings/processed/
-2026-08-04_composite_symlink_to_drops_backend_kwargs.md`).  Forwarding is
-signature-aware on purpose: a kwarg the selected backend declares is passed
-through, and one it does not is rejected *here*, so the error names the
-composite boundary instead of surfacing from inside a transport.
+meant to expose it.  Forwarding is signature-aware on purpose: a kwarg the
+selected backend declares is passed through, and one it does not is rejected
+*here*, so the error names the composite boundary instead of surfacing from
+inside a transport.
 """
 
 import inspect
@@ -18,7 +17,7 @@ from hostctl import PathProvider, PosixHost
 
 
 class ExtendedMemPath(MemPath):
-    """A backend path with an extension, like pytruenas' ``TruenasPath``."""
+    """A backend path with an extension, as real backends do."""
 
     calls: list[tuple[str, dict]] = []
 
@@ -64,9 +63,9 @@ def test_backend_extension_kwarg_reaches_the_backend(host):
 
 
 def test_mkdir_extension_kwarg_reaches_the_backend(host):
-    host.path("root", "made").mkdir(owner="jose")
+    host.path("root", "made").mkdir(owner="operator")
 
-    assert ("mkdir", {"owner": "jose"}) in ExtendedMemPath.calls
+    assert ("mkdir", {"owner": "operator"}) in ExtendedMemPath.calls
 
 
 def test_unknown_kwarg_fails_at_the_composite_boundary(host):

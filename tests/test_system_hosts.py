@@ -388,10 +388,10 @@ def test_composite_path_uses_target_flavour_independent_of_client():
     )
     windows = WindowsHost(path_providers=(windows_provider,)).path(
         r"C:\\Users",
-        "jose",
+        "operator",
     )
     assert type(windows).__name__ == "CompositeWindowsPath"
-    assert str(windows) == r"C:\Users\jose"
+    assert str(windows) == r"C:\Users\operator"
     assert windows.drive == "C:"
     assert windows.root == "\\"
     assert windows.parent.name == "Users"
