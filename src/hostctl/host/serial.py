@@ -18,8 +18,8 @@ from ..executor import (
     SerialLike,
     SerialSettings,
     capture_streams,
+    write_output,
 )
-from ..executor._common import write_output
 from ..process import Process, SerialConsoleProcess, terminal_options
 from ..serial import PromptConsoleProfile, RawConsoleProfile, SerialConsoleProtocol
 from ._common import (
