@@ -13,7 +13,10 @@ from ._common import (
     PathLike as PathLike,
     normalize_environment as normalize_environment,
     capture_streams as capture_streams,
+    dispatch_output as dispatch_output,
+    normalize_input as normalize_input,
     reject_stdin_conflict as reject_stdin_conflict,
+    write_output as write_output,
 )
 from .container import (
     ContainerExecutor as ContainerExecutor,
@@ -65,7 +68,10 @@ __all__ = [
     "normalize_container_error",
     "normalize_environment",
     "capture_streams",
+    "dispatch_output",
+    "normalize_input",
     "reject_stdin_conflict",
+    "write_output",
     "normalize_serial_error",
     "SerialExecutor",
     "SerialFactory",
