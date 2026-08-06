@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-08-05
+
+### Added
+
+- `write_output`, `normalize_input`, and `dispatch_output` are exported from
+  `hostctl.executor`, joining `capture_streams`. An executor implemented
+  outside hostctl previously had to import `hostctl.executor._common` to
+  reproduce hostctl's own stdout/stderr and stdin semantics.
+
+  Sharing these is a correctness requirement rather than a convenience: a
+  `SystemHost` can dispatch the same call through different providers on
+  different attempts, so providers that disagree about output handling return
+  results that differ by which transport won. `normalize_input` is the one
+  worth not reimplementing — a mismatch there does not raise, it deadlocks,
+  because bytes handed to a text-mode stdin kill `subprocess`'s writer thread
+  without closing the pipe, so the child never sees EOF and `timeout=` never
+  fires.
+
+  No behaviour change; these are the same objects `_common` defines.
+
+### Fixed
+
+- Four conformance tests covering timestamp handling were skipping for a
+  reason that was not true, so the contract they check went unverified. The
+  checks called `os.utime()` on paths belonging to fake *remote* providers,
+  which map into a private sandbox root and have no local existence; the
+  resulting `FileNotFoundError` was reported as "this provider cannot set
+  timestamps". Timestamps are now set through the sandbox that actually stores
+  the file. Test-only change.
+
 ## [0.2.4] - 2026-08-05
 
 ### Fixed
@@ -397,7 +427,8 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/jose-pr/hostctl/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/jose-pr/hostctl/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/jose-pr/hostctl/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/jose-pr/hostctl/compare/v0.2.1...v0.2.2
