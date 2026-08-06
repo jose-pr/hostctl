@@ -762,6 +762,64 @@ def _docker_live() -> tuple[object, Callable[[], None]]:
     return host, host.close
 
 
+def _sandbox_for(host, provider: Provider, path):
+    """Return the `_Sandbox` backing a fake provider's paths, or None.
+
+    The fakes present target-flavoured absolute paths (`/hostctl-conformance/
+    ...`, `C:\\hostctl-conformance\\...`) that have no local existence -- each
+    maps into a private temporary root.  Reaching that root is the only way to
+    drive a real filesystem call against a fake remote path.
+
+    Each fake reaches its sandbox by a different route (`_sftp_backend._client`
+    for SFTP, `_path_backend.runner` for WinRM, the transport itself for QGA),
+    so this walks object attributes breadth-first rather than encoding one
+    chain per transport -- a hardcoded chain silently returns None when a fake
+    is restructured, which reintroduces exactly the misreported skip this
+    helper exists to prevent.
+    """
+
+    if provider.live or provider.name == "local":
+        return None
+    roots = list(getattr(path, "_providers", ()) or ())
+    roots += [host]
+    seen: set = set()
+    queue = list(roots)
+    while queue:
+        current = queue.pop(0)
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        sandbox = getattr(current, "sandbox", None)
+        if sandbox is not None and hasattr(sandbox, "local"):
+            return sandbox
+        for value in list(getattr(current, "__dict__", {}).values()):
+            if hasattr(value, "__dict__"):
+                queue.append(value)
+    return None
+
+
+def conformance_utime(host, provider: Provider, path, times) -> bool:
+    """Set `path`'s mtime through whatever really stores it.
+
+    Returns False only when the provider genuinely cannot set timestamps, so a
+    caller can skip for that reason alone.  `os.utime(str(path))` is NOT a
+    substitute: for every fake remote provider that call targets a local path
+    that does not exist, raising `FileNotFoundError` -- an `OSError` that reads
+    as "this transport has no timestamp support" while actually meaning the
+    test pointed at the wrong filesystem.
+    """
+
+    target = str(path)
+    sandbox = _sandbox_for(host, provider, path)
+    if sandbox is not None:
+        target = str(sandbox.local(target))
+    try:
+        os.utime(target, times)
+    except (OSError, NotImplementedError):
+        return False
+    return True
+
+
 @contextlib.contextmanager
 def provider_context(provider: Provider) -> Iterator[object]:
     try:

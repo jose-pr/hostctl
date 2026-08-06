@@ -15,7 +15,12 @@ from pathlib_next.utils.sync import PathAndStat, PathSyncer, SyncEvent
 
 from hostctl.sync import host_checksum, stat_checksum
 
-from .providers import conformance_path, fake_providers, provider_context
+from .providers import (
+    conformance_path,
+    conformance_utime,
+    fake_providers,
+    provider_context,
+)
 
 _PATH_PROVIDERS = tuple(
     provider for provider in fake_providers() if "path" in provider.capabilities
@@ -144,6 +149,11 @@ def test_path_syncer_skips_files_whose_stat_already_matches(provider, tmp_path):
         # Build a target entry whose stat matches its source exactly.
         (source / "same.txt").write_bytes(b"identical")
         (target / "same.txt").write_bytes(b"identical")
+        # Two writes land at whatever mtime the clock gave them, so align the
+        # pair explicitly rather than skipping when they happen to differ.
+        pinned = stat_checksum(PathAndStat(source / "same.txt"))[1]
+        for side in (source, target):
+            conformance_utime(host, provider, side / "same.txt", (pinned, pinned))
         matching = stat_checksum(PathAndStat(source / "same.txt")) == stat_checksum(
             PathAndStat(target / "same.txt")
         )
@@ -174,8 +184,6 @@ def test_stat_checksum_does_not_converge_after_a_copy(provider, tmp_path):
     convergence and "a second pass would copy again" are exact opposites.
     """
 
-    import os
-
     with provider_context(provider) as host:
         source = conformance_path(host, provider, tmp_path, "converge-source.bin")
         target = conformance_path(host, provider, tmp_path, "converge-target.bin")
@@ -184,9 +192,7 @@ def test_stat_checksum_does_not_converge_after_a_copy(provider, tmp_path):
         # Age the source well beyond any filesystem timestamp granularity, so
         # the comparison below cannot pass by coincidence of a coarse clock.
         aged = stat_checksum(PathAndStat(source))[1] - 3600
-        try:
-            os.utime(str(source), (aged, aged))
-        except (OSError, NotImplementedError):
+        if not conformance_utime(host, provider, source, (aged, aged)):
             pytest.skip(f"{provider.name} cannot set timestamps for this check")
         if stat_checksum(PathAndStat(source))[1] != aged:
             pytest.skip(f"{provider.name} did not honor the backdated timestamp")
