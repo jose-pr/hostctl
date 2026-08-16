@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shlex
 import typing
 from pathlib import Path, PurePath, PurePosixPath

@@ -459,6 +459,59 @@ class _CompositePathMixin:
         # describes this path; it is re-derived lazily from the factory.
         self._backend_path = None
 
+    def _init_routing_state(
+        self,
+        segments,
+        *,
+        backend_path=None,
+        provider=None,
+        factory=None,
+        providers=(),
+        selector=None,
+        pinned=False,
+    ) -> None:
+        """Seed routing state on a freshly constructed composite path.
+
+        Explicit keywords win; anything left unset is inherited from the first
+        composite path among ``segments``, which is how ``parent / "name"`` and
+        the pure-path derivations keep their provider, pin, and trace.
+
+        The POSIX and Windows classes differ only in their syntax base and the
+        name in their ``TypeError``, so this body lives here rather than in two
+        copies that have to be kept in step by hand.
+        """
+        inherited = next(
+            (
+                segment
+                for segment in segments
+                if isinstance(segment, _CompositePathMixin)
+            ),
+            None,
+        )
+        if inherited is not None:
+            provider = provider or inherited.provider
+            factory = factory or inherited._factory
+            providers = providers or inherited.providers
+            selector = selector or inherited._selector
+            pinned = pinned or inherited._pinned
+            backend_path = backend_path or inherited._backend_path
+        self._provider = provider
+        self._backend_path = backend_path
+        self._providers = tuple(providers) or ((provider,) if provider else ())
+        self._selector = selector
+        self._factory = factory or (provider.path if provider else None)
+        self._pinned = pinned
+        self._selection_trace = (
+            inherited._selection_trace if inherited is not None else ()
+        )
+
+    def _routing_state_is_complete(self) -> bool:
+        return (
+            self._provider is not None
+            and self._backend_path is not None
+            and self._factory is not None
+        )
+
     def _provider_path(self, provider: PathProvider) -> Path:
         if (
             provider is self._provider
@@ -646,36 +699,17 @@ class CompositePosixPath(_CompositePathMixin, PosixPathname, Path):
         selector=None,
         pinned=False,
     ):
-        inherited = next(
-            (
-                segment
-                for segment in segments
-                if isinstance(segment, _CompositePathMixin)
-            ),
-            None,
-        )
-        if inherited is not None:
-            provider = provider or inherited.provider
-            factory = factory or inherited._factory
-            providers = providers or inherited.providers
-            selector = selector or inherited._selector
-            pinned = pinned or inherited._pinned
-            backend_path = backend_path or inherited._backend_path
         self = super().__new__(cls, *segments)
-        self._provider = provider
-        self._backend_path = backend_path
-        self._providers = tuple(providers) or ((provider,) if provider else ())
-        self._selector = selector
-        self._factory = factory or (provider.path if provider else None)
-        self._pinned = pinned
-        self._selection_trace = (
-            inherited._selection_trace if inherited is not None else ()
+        self._init_routing_state(
+            segments,
+            backend_path=backend_path,
+            provider=provider,
+            factory=factory,
+            providers=providers,
+            selector=selector,
+            pinned=pinned,
         )
-        if (
-            self._provider is None
-            or self._backend_path is None
-            or self._factory is None
-        ):
+        if not self._routing_state_is_complete():
             raise TypeError("CompositePosixPath requires a provider-backed path")
         return self
 
@@ -707,36 +741,17 @@ class CompositeWindowsPath(_CompositePathMixin, WindowsPathname, Path):
         selector=None,
         pinned=False,
     ):
-        inherited = next(
-            (
-                segment
-                for segment in segments
-                if isinstance(segment, _CompositePathMixin)
-            ),
-            None,
-        )
-        if inherited is not None:
-            provider = provider or inherited.provider
-            factory = factory or inherited._factory
-            providers = providers or inherited.providers
-            selector = selector or inherited._selector
-            pinned = pinned or inherited._pinned
-            backend_path = backend_path or inherited._backend_path
         self = super().__new__(cls, *segments)
-        self._provider = provider
-        self._backend_path = backend_path
-        self._providers = tuple(providers) or ((provider,) if provider else ())
-        self._selector = selector
-        self._factory = factory or (provider.path if provider else None)
-        self._pinned = pinned
-        self._selection_trace = (
-            inherited._selection_trace if inherited is not None else ()
+        self._init_routing_state(
+            segments,
+            backend_path=backend_path,
+            provider=provider,
+            factory=factory,
+            providers=providers,
+            selector=selector,
+            pinned=pinned,
         )
-        if (
-            self._provider is None
-            or self._backend_path is None
-            or self._factory is None
-        ):
+        if not self._routing_state_is_complete():
             raise TypeError("CompositeWindowsPath requires a provider-backed path")
         return self
 

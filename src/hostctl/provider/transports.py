@@ -31,26 +31,11 @@ from ._common import (
 
 log = logging.getLogger("hostctl.provider.transports")
 
-#: Operations a POSIX-complete filesystem backend performs.
-FULL_PATH_OPERATIONS = frozenset(
-    (
-        "stat",
-        "scandir",
-        "open",
-        "open_read",
-        "open_write",
-        "read",
-        "write",
-        "exists",
-        "is_file",
-        "is_dir",
-        "mkdir",
-        "chmod",
-        "unlink",
-        "rmdir",
-        "rename",
-    )
-)
+#: Operations a POSIX-complete filesystem backend performs.  Intentionally the
+#: same set as :attr:`PathProvider.DEFAULT_CAPABILITIES`: "everything a path
+#: backend can do" is one answer, and keeping it one object stops the two from
+#: drifting apart the next time an operation is added.
+FULL_PATH_OPERATIONS = PathProvider.DEFAULT_CAPABILITIES
 
 #: Content and metadata reads plus whole-file writes, with no namespace
 #: mutations.  The Docker archive API can replace a file's bytes but cannot

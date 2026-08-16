@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import subprocess
 import threading
 import typing
 from urllib.parse import parse_qsl, quote, urlencode
@@ -17,7 +16,6 @@ from ..provider import (
     PathProvider,
     ProviderSelector,
     ProviderSelection,
-    SessionInitializer,
 )
 from ..shell import POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ._common import (
@@ -193,15 +191,10 @@ class SystemConfig(HostConfig):
                 "system URI reconstruction accepts only provider_options= and "
                 f"initializer= constructor options; unsupported credentials: {names}"
             )
-        values = dict(parse_qsl(parsed.query, keep_blank_values=True))
-        executors = tuple(
-            v
-            for k, v in parse_qsl(parsed.query, keep_blank_values=True)
-            if k == "executor"
-        )
-        paths = tuple(
-            v for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k == "path"
-        )
+        pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        values = dict(pairs)
+        executors = tuple(v for k, v in pairs if k == "executor")
+        paths = tuple(v for k, v in pairs if k == "path")
         return cls(
             parsed.netloc or parsed.path or "localhost",
             shell=values.get("shell"),
@@ -420,11 +413,10 @@ class SystemHost(Host):
         self._connected_providers = connected
         if self._initializer is not None and not self._initializer_generation:
             try:
-                initializer = self._initializer
-                if isinstance(initializer, SessionInitializer):
-                    initializer(self)
-                else:
-                    initializer(self)
+                # `SessionInitializer` is itself callable and applies its own
+                # default timeout, so it and a plain callable are invoked
+                # identically -- there is no separate branch to take.
+                self._initializer(self)
                 self._initializer_generation = True
             except BaseException:
                 for provider in reversed(connected):
