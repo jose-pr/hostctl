@@ -80,9 +80,10 @@ def _path_operand(
         separator = value.rfind(":", 0, search_end)
         if separator < scheme_end:
             raise ValueError("remote path operand must be URI:PATH")
-        if separator == _port_colon(value, scheme_end, search_end) and value[
-            separator + 1 : search_end
-        ].isdigit():
+        if (
+            separator == _port_colon(value, scheme_end, search_end)
+            and value[separator + 1 : search_end].isdigit()
+        ):
             # `ssh://host:2222/x` has no path colon, so the last colon before
             # the authority's slash is the port's. Splitting there yields
             # `ssh://host` plus the relative path `2222/x` -- the wrong host
