@@ -277,7 +277,11 @@ pywinrm; `provider="psrp"` requires the extra.
 
 The WinRM executor provider supports PowerShell `run()` and Windows-semantic `WinRMPath`.
 Password-free configs on Windows use current-context native PowerShell
-remoting; explicit credentials use pywinrm. `WinRMPath.open("rb")` fetches
+remoting; explicit credentials use pywinrm. On that native path
+`server_cert_validation="ignore"` becomes `New-PSSessionOption -SkipCACheck
+-SkipCNCheck` (both checks, matching pywinrm), and the remote exit code is
+carried back explicitly, so a native command failing only by status is
+reported as a failure rather than as success. `WinRMPath.open("rb")` fetches
 bounded ranges; writable modes stage content and transfer Base64 chunks on
 close. WinRM stdin and command
 deadlines remain unsupported. Transport timeouts are not a total command

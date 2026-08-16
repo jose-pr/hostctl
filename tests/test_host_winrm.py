@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import os
 import subprocess
 import sys
 import io
@@ -235,7 +237,98 @@ def test_native_winrm_option_assembly(monkeypatch):
     wrapper = captured["input"].decode("utf-8")
     assert "UseSSL=$true" in wrapper
     assert "Port=5987" in wrapper
-    assert "SkipCACheck=$true" in wrapper
+    assert "New-PSSessionOption -SkipCACheck -SkipCNCheck" in wrapper
+    assert "SessionOption=$so" in wrapper
+    # `SkipCACheck` belongs to `New-PSSessionOption`; splatting it into
+    # `Invoke-Command` is a parameter-binding error, which is what the old
+    # string-splice produced whenever a port was configured.
+    assert "SkipCACheck=$true" not in wrapper
+
+
+@pytest.mark.parametrize("port", (None, 5986))
+def test_native_winrm_cert_ignore_survives_both_port_spellings(port):
+    wrapper = NativeWinRMSession(
+        "server.example",
+        ssl=True,
+        port=port,
+        server_cert_validation="ignore",
+    )._wrapper("Write-Output x")
+    # Without a port the old `str.replace` searched for ";};", which the
+    # rendered wrapper never contained, so the setting vanished silently.
+    assert "New-PSSessionOption -SkipCACheck -SkipCNCheck" in wrapper
+    assert "SessionOption=$so" in wrapper
+
+    validating = NativeWinRMSession("server.example", ssl=True, port=port)._wrapper(
+        "Write-Output x"
+    )
+    assert "New-PSSessionOption" not in validating
+    assert "SessionOption" not in validating
+
+
+def test_native_winrm_carries_the_remote_exit_code_through_a_marker():
+    wrapper = NativeWinRMSession("server.example")._wrapper("cmd /c exit 7")
+    # The epilogue runs inside the remote script block, so the code travels
+    # back as output; `Invoke-Command` never copies the remote $LASTEXITCODE.
+    epilogue = base64.b64encode(
+        (
+            "Write-Output ('__HOSTCTL_LASTEXITCODE__:' + "
+            "[string]([int]$LASTEXITCODE))"
+        ).encode("utf-8")
+    ).decode("ascii")
+    assert epilogue in wrapper
+    assert "$b=[ScriptBlock]::Create($s+[Environment]::NewLine+$e);" in wrapper
+    # The marker line is consumed locally rather than reaching the caller.
+    assert "if($t.StartsWith('__HOSTCTL_LASTEXITCODE__:'))" in wrapper
+    assert "$out;exit $c}" in wrapper
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="the wrapper is a Windows PowerShell program"
+)
+def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it():
+    """Run the real wrapper with the remote hop replaced by a local call.
+
+    This proves the half a fake cannot: that the emitted marker is stripped
+    from stdout and becomes the process exit status. Whether `Invoke-Command`
+    delivers the remote script block's output unchanged is the remaining
+    assumption, and it needs a live Windows target.
+    """
+    wrapper = NativeWinRMSession("server.example")._wrapper("cmd /c exit 7")
+    local = wrapper.replace("Invoke-Command @o -ScriptBlock $b", "& $b")
+    result = subprocess.run(
+        ("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "-"),
+        input=local.encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert result.returncode == 7
+    assert b"__HOSTCTL_LASTEXITCODE__" not in result.stdout
+    assert result.stdout == b""
+
+    echoing = NativeWinRMSession("server.example")._wrapper("Write-Output 'a'")
+    result = subprocess.run(
+        ("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "-"),
+        input=echoing.replace("Invoke-Command @o -ScriptBlock $b", "& $b").encode(
+            "utf-8"
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == b"a"
+
+
+@pytest.mark.skipif(
+    os.environ.get("HOSTCTL_TEST_WINRM_NATIVE") != "1",
+    reason="set HOSTCTL_TEST_WINRM_NATIVE=1 and HOSTCTL_TEST_WINRM_HOST "
+    "to enable the native WinRM leg",
+)
+def test_native_winrm_live_remote_exit_code():
+    """The one claim only a real target can settle."""
+    host = os.environ["HOSTCTL_TEST_WINRM_HOST"]
+    session = NativeWinRMSession(host)
+    assert session.run_ps("cmd /c exit 7").status_code == 7
+    assert session.run_ps("cmd /c exit 0").status_code == 0
 
 
 @pytest.mark.parametrize(

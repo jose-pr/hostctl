@@ -38,6 +38,24 @@ class _NativeResponse:
     std_err: bytes
 
 
+#: Emitted by the remote script block and consumed by the local wrapper.
+#: `Invoke-Command` does not copy the remote `$LASTEXITCODE` into the calling
+#: session, so a native command that fails only by exit code would otherwise
+#: report success locally.  Same convention as the PSRP runspace session.
+NATIVE_EXIT_MARKER = "__HOSTCTL_LASTEXITCODE__"
+
+#: Runs *inside* the remote script block, appended on its own line so that the
+#: payload's last statement -- comment, `}` or bare expression alike -- cannot
+#: swallow it.
+_NATIVE_EXIT_EPILOGUE = (
+    f"Write-Output ('{NATIVE_EXIT_MARKER}:' + [string]([int]$LASTEXITCODE))"
+)
+
+
+def _b64(value: str) -> str:
+    return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
 class NativeWinRMSession:
     """Current-context Windows PowerShell remoting session adapter."""
 
@@ -76,38 +94,60 @@ class NativeWinRMSession:
         else:
             self._skip_ca_check = False
 
-    def run_ps(self, script: str) -> _NativeResponse:
-        host = base64.b64encode(self.host.encode("utf-8")).decode("ascii")
-        payload = base64.b64encode(script.encode("utf-8")).decode("ascii")
-        wrapper = (
+    def _wrapper(self, script: str) -> str:
+        """Build the local PowerShell program that performs one remote call.
+
+        Everything variable is base64 -- the host, the payload, and the exit
+        epilogue -- so no caller-supplied text is ever spliced into PowerShell
+        source.  The connection options are assembled as a list rather than
+        patched into rendered text afterwards: the previous `str.replace`
+        approach silently did nothing without a port and produced a hashtable
+        `Invoke-Command` rejects with one.
+        """
+        options = [
+            "ComputerName=$h",
+            "Authentication='Negotiate'",
+            f"UseSSL=${str(self.ssl).lower()}",
+        ]
+        if self.port is not None:
+            options.append(f"Port={self.port}")
+        prelude = ""
+        if self._skip_ca_check:
+            # `SkipCACheck` is a `New-PSSessionOption` parameter, not an
+            # `Invoke-Command` one.  Both checks are skipped together to match
+            # pywinrm's `server_cert_validation="ignore"`.
+            prelude = "$so=New-PSSessionOption -SkipCACheck -SkipCNCheck;"
+            options.append("SessionOption=$so")
+        return (
             "$OutputEncoding=[Console]::OutputEncoding="
             "[Text.UTF8Encoding]::new($false);"
             "$ErrorActionPreference='Stop';"
             "$h=[Text.Encoding]::UTF8.GetString("
-            f"[Convert]::FromBase64String('{host}'));"
+            f"[Convert]::FromBase64String('{_b64(self.host)}'));"
             "$s=[Text.Encoding]::UTF8.GetString("
-            f"[Convert]::FromBase64String('{payload}'));"
-            "$o=@{ComputerName=$h;Authentication='Negotiate';"
-            f"UseSSL=${str(self.ssl).lower()}"
-            + (f";Port={self.port}" if self.port is not None else "")
+            f"[Convert]::FromBase64String('{_b64(script)}'));"
+            "$e=[Text.Encoding]::UTF8.GetString("
+            f"[Convert]::FromBase64String('{_b64(_NATIVE_EXIT_EPILOGUE)}'));"
+            + prelude
+            + "$o=@{"
+            + ";".join(options)
             + "};"
             "try{$global:LASTEXITCODE=0;"
-            "$r=Invoke-Command @o -ScriptBlock ([ScriptBlock]::Create($s));"
-            "$r;exit ([int]$global:LASTEXITCODE)}"
+            "$b=[ScriptBlock]::Create($s+[Environment]::NewLine+$e);"
+            "$r=Invoke-Command @o -ScriptBlock $b;"
+            "$c=[int]$global:LASTEXITCODE;$out=@();"
+            "foreach($v in $r){$t=[string]$v;"
+            f"if($t.StartsWith('{NATIVE_EXIT_MARKER}:'))"
+            "{$c=[int]($t.Split(':')[1])}else{$out+=$v}};"
+            "$out;exit $c}"
             "catch{$c=[string]$_.CategoryInfo.Category;"
             "$m=[Convert]::ToBase64String("
             "[Text.Encoding]::UTF8.GetBytes($_.Exception.Message));"
             "[Console]::Error.Write('HOSTCTL_NATIVE_ERROR:'+$c+':'+$m);exit 1}"
         )
-        if self._skip_ca_check:
-            wrapper = wrapper.replace(
-                ";Port=" + str(self.port) if self.port is not None else ";};",
-                (
-                    ";SkipCACheck=$true;Port=" + str(self.port)
-                    if self.port is not None
-                    else ";SkipCACheck=$true;};"
-                ),
-            )
+
+    def run_ps(self, script: str) -> _NativeResponse:
+        wrapper = self._wrapper(script)
         try:
             result = subprocess.run(
                 (

@@ -24,6 +24,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   grammar error, so the required spelling `ssh://host:2222:/tmp/x` is the only
   one that runs. Userinfo colons and IPv6 literals are excluded from the check.
 
+- Native current-context WinRM now honours `server_cert_validation="ignore"`.
+  It was spliced into the rendered wrapper with `str.replace`, which matched
+  nothing without a port (the setting vanished) and produced an
+  `Invoke-Command` parameter-binding error with one, since `SkipCACheck`
+  belongs to `New-PSSessionOption`. The option is now built explicitly and
+  passed as `-SessionOption`, skipping both the CA and CN checks to match
+  pywinrm's `ignore`.
+
+- Native current-context WinRM now reports remote exit codes.
+  `Invoke-Command` does not copy the remote `$LASTEXITCODE` into the calling
+  session, so a command that failed only by status — a native executable
+  exiting non-zero without throwing — returned 0 locally and `check=True`
+  never fired. The remote script block now emits the code as a
+  `__HOSTCTL_LASTEXITCODE__` marker line, which the local wrapper consumes
+  and exits with. **Behaviour change**: calls that silently succeeded against
+  a failing remote command now raise `CalledProcessError` under the default
+  `check=True`.
+
 ## [0.2.5] - 2026-08-05
 
 ### Added
