@@ -83,6 +83,50 @@ def test_cat_ls_cp_and_info(tmp_path):
     assert "os_family" in json.loads(info.getvalue())
 
 
+def test_remote_operand_split_rejects_a_port_taken_as_the_path(monkeypatch):
+    import contextlib
+
+    from hostctl import _cli
+
+    seen = []
+
+    class _Host:
+        def path(self, value):
+            return value
+
+    monkeypatch.setattr(
+        _cli,
+        "_open_host",
+        lambda stack, uri, credentials: (seen.append(uri), _Host())[1],
+    )
+
+    def split(value):
+        with contextlib.ExitStack() as stack:
+            path = _cli._path_operand(stack, value, {})
+        return seen[-1], path
+
+    assert split("ssh://host:2222:/tmp/x") == ("ssh://host:2222", "/tmp/x")
+    assert split("ssh://host:/tmp/x") == ("ssh://host", "/tmp/x")
+    assert split("ssh://[::1]:2222:/tmp/x") == ("ssh://[::1]:2222", "/tmp/x")
+    assert split("ssh://user:pw@host:2222:/tmp/x") == (
+        "ssh://user:pw@host:2222",
+        "/tmp/x",
+    )
+    # A colon-free relative path is still a path, digits and all.
+    assert split("ssh://host:2222:22") == ("ssh://host:2222", "22")
+
+    # Each of these would otherwise split on the port colon, silently reaching
+    # the default port with a relative path made of the port digits.
+    for rejected in (
+        "ssh://host:2222/x",
+        "ssh://host:2222",
+        "ssh://user:pw@host:2222/x",
+        "ssh://[::1]:2222/x",
+    ):
+        with pytest.raises(ValueError, match="URI:PATH"):
+            split(rejected)
+
+
 def test_cp_refuses_overwrite_without_flag(tmp_path):
     source = tmp_path / "source"
     target = tmp_path / "target"

@@ -22,7 +22,10 @@ interactive hidden prompt. Transport extras remain optional and produce their
 normal actionable import error when absent.
 
 `cp` accepts local paths or `URI:PATH` operands and delegates to
-`pathlib_next.Path.copy()`. Use `--overwrite` and `--recursive` explicitly.
+`pathlib_next.Path.copy()`. The colon before the path is required even when the
+URI carries a port — `ssh://host:2222:/tmp/x`, never `ssh://host:2222/tmp/x`,
+which is rejected rather than read as port-less host plus a relative path.
+Use `--overwrite` and `--recursive` explicitly.
 The copy is therefore only as streaming and atomic as the two selected path
 backends; see the filesystem and transfer guides for provider-specific limits.
 

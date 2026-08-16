@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   form of that public authoring contract. Both modules used `command_text`
   without importing it.
 
+- `hostctl cp` no longer mistakes a URI port colon for the `URI:PATH`
+  separator. `ssh://host:2222/tmp/x` split into `ssh://host` plus the relative
+  path `2222/tmp/x` — the default port and the wrong file, with no message. A
+  split that lands on the authority's port colon is now rejected with the
+  grammar error, so the required spelling `ssh://host:2222:/tmp/x` is the only
+  one that runs. Userinfo colons and IPv6 literals are excluded from the check.
+
 ## [0.2.5] - 2026-08-05
 
 ### Added
