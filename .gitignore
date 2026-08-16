@@ -19,4 +19,8 @@ CLAUDE*
 .claude
 .*
 !.gitignore
+!.gitattributes
+# Directory form: git cannot re-include a file below an excluded directory,
+# so `.github/` itself has to be un-ignored, not just the files under it.
+!.github/
 
