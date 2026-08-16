@@ -16,6 +16,7 @@ from ._common import (
     dispatch_output as dispatch_output,
     normalize_input as normalize_input,
     reject_stdin_conflict as reject_stdin_conflict,
+    wants_text as wants_text,
     write_output as write_output,
 )
 from .container import (
@@ -71,6 +72,7 @@ __all__ = [
     "dispatch_output",
     "normalize_input",
     "reject_stdin_conflict",
+    "wants_text",
     "write_output",
     "normalize_serial_error",
     "SerialExecutor",

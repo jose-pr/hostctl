@@ -21,7 +21,7 @@ import hostctl.executor as executor
 
 
 def test_stream_helpers_are_exported():
-    """All four helpers are public, not just `capture_streams`.
+    """Every stream helper is public, not just `capture_streams`.
 
     Regression test for a real gap: `capture_streams` was exported while
     `write_output`, `normalize_input`, and `dispatch_output` -- its neighbours
@@ -33,6 +33,7 @@ def test_stream_helpers_are_exported():
         "capture_streams",
         "dispatch_output",
         "normalize_input",
+        "wants_text",
         "write_output",
     ):
         assert name in executor.__all__, f"{name} is missing from __all__"
@@ -52,6 +53,7 @@ def test_exported_helpers_are_the_implementations_themselves():
         "capture_streams",
         "dispatch_output",
         "normalize_input",
+        "wants_text",
         "write_output",
     ):
         assert getattr(executor, name) is getattr(_common, name)
@@ -83,3 +85,20 @@ def test_normalize_input_matches_the_stream_mode():
     assert executor.normalize_input(b"payload", text_mode=True) == "payload"
     assert executor.normalize_input("payload", text_mode=False) == b"payload"
     assert executor.normalize_input(None, text_mode=True) is None
+
+
+def test_wants_text_is_subprocess_run_s_rule():
+    """Any of text/encoding/errors selects text; nothing set means bytes.
+
+    `errors=` alone was the divergent case: four executors treated it as
+    text mode and three did not, so the same call returned `str` or `bytes`
+    depending on which provider a `SystemHost` selected.
+    """
+
+    assert executor.wants_text(None, None, "replace") is True
+    assert executor.wants_text(None, "utf-8", None) is True
+    assert executor.wants_text(True, None, None) is True
+    assert executor.wants_text(None, None, None) is False
+    assert executor.wants_text(False, None, None) is False
+    # `text=False` does not veto an encoding; `subprocess` does not either.
+    assert executor.wants_text(False, "utf-8", None) is True

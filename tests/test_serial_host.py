@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import subprocess
+import sys
 
 import pytest
 
@@ -84,6 +86,53 @@ def test_prompt_profile_frames_reliable_run_and_check():
     assert result.returncode == 0
     assert result.stdout == b"output\n"
     assert host.capabilities == frozenset(("session", "run"))
+
+
+def _prompt_host(console_reads=(b"> ",)):
+    def respond(console, data):
+        if data.endswith(b"\r\n") and data != b"\r\n":
+            console.reads.extend([b"show\r\noutput\nSTATUS0\n> "])
+
+    console = _Console(reads=list(console_reads), on_write=respond)
+    profile = PromptConsoleProfile(
+        rb"> ", status_marker=rb"STATUS0", reliable_status=True
+    )
+    return SerialHost(SerialConfig("loop://", protocol=profile, serial_port=console))
+
+
+def test_serial_uncaptured_output_is_written_not_discarded(monkeypatch):
+    """`capture_output=False` routes the transcript, it does not drop it.
+
+    Serial reimplemented the stream contract and treated a `None` stdout
+    target as "discard"; every other transport, and `dispatch_output`
+    itself, treats it as `sys.stdout`.
+    """
+    sink = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", sink)
+    result = _prompt_host().run("show", capture_output=False, text=True)
+    assert result.stdout is None
+    assert sink.getvalue() == "output\n"
+
+
+def test_serial_explicit_stdout_target_still_wins():
+    target = io.BytesIO()
+    result = _prompt_host().run("show", stdout=target, capture_output=False)
+    assert result.stdout is None
+    assert target.getvalue() == b"output\n"
+
+
+def test_serial_devnull_target_discards_deliberately(monkeypatch):
+    sink = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", sink)
+    result = _prompt_host().run("show", stdout=subprocess.DEVNULL, capture_output=False)
+    assert result.stdout is None
+    assert sink.getvalue() == ""
+
+
+def test_serial_errors_alone_selects_text_mode():
+    """Matches every other executor and `subprocess.run`."""
+    assert _prompt_host().run("show", errors="replace").stdout == "output\n"
+    assert _prompt_host().run("show").stdout == b"output\n"
 
 
 def test_prompt_login_steps_are_ordered():

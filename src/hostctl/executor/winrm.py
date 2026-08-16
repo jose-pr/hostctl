@@ -18,6 +18,7 @@ from ._common import (
     Input,
     dispatch_output,
     capture_streams,
+    wants_text,
 )
 
 
@@ -237,7 +238,7 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
             # Remote errors are represented as a normal non-zero completion;
             # check=False must be able to inspect them.
             err = detail.encode(encoding or "utf-8", errors or "replace")
-        if text or encoding is not None or errors is not None:
+        if wants_text(text, encoding, errors):
             codec = encoding or "utf-8"
             out = out.decode(codec, errors or "strict")
             err = err.decode(codec, errors or "strict")

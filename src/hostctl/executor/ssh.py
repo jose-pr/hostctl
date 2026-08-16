@@ -23,6 +23,7 @@ from ._common import (
     normalize_input,
     capture_streams,
     reject_stdin_conflict,
+    wants_text,
 )
 
 
@@ -138,7 +139,9 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             raise ValueError("bufsize=0 is unsupported by the buffered SSH executor")
         command = command_text(command)
         reject_stdin_conflict(input, stdin)
-        if text and encoding is None:
+        if wants_text(text, encoding, errors) and encoding is None:
+            # AsyncSSH returns `bytes` unless it is given an encoding, so
+            # text mode has to be expressed as one.
             encoding = "utf-8"
         env = normalize_environment(env)
 

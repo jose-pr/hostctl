@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `wants_text(text, encoding, errors)` is exported from `hostctl.executor`,
+  joining the four stream helpers made public in 0.2.5 for the same reason:
+  an executor implemented outside hostctl must reach the same conclusions as
+  the built-in ones, because a `SystemHost` chooses the provider.
+
 ### Fixed
 
 - Direct execution no longer raises `NameError` on two dispatch paths.
@@ -41,6 +48,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and exits with. **Behaviour change**: calls that silently succeeded against
   a failing remote command now raise `CalledProcessError` under the default
   `check=True`.
+
+- Every provider now agrees on when output is text. `errors=` alone selected
+  text mode on the local, WinRM, container, and QEMU executors and binary
+  mode on SSH, PSRP, and the serial host, so the identical call returned
+  `str` or `bytes` depending on which provider a `SystemHost` selected — the
+  exact divergence the shared stream helpers exist to prevent. All seven
+  sites now call `wants_text`. **Behaviour change**: `run(cmd,
+  errors="replace")` returns `str` from SSH, PSRP, and serial where it
+  previously returned `bytes`.
+
+- `SerialHost.run(capture_output=False)` no longer discards the console
+  transcript. It reimplemented the output contract and treated a `None`
+  stdout target as "discard"; the shared `dispatch_output` — and every other
+  transport, and `subprocess` — treats it as `sys.stdout`. Serial now routes
+  through the shared helper. `stdout=subprocess.DEVNULL` remains the way to
+  discard deliberately.
 
 ## [0.2.5] - 2026-08-05
 

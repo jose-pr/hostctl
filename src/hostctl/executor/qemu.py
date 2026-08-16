@@ -25,6 +25,7 @@ from ._common import (
     normalize_input,
     capture_streams,
     reject_stdin_conflict,
+    wants_text,
 )
 
 
@@ -180,7 +181,7 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
                     "completed guest-exec status has no integer exit code or signal"
                 )
 
-        if text or encoding is not None or errors is not None:
+        if wants_text(text, encoding, errors):
             codec = encoding or "utf-8"
             out = out.decode(codec, errors or "strict")
             err = err.decode(codec, errors or "strict")

@@ -18,7 +18,8 @@ from ..executor import (
     SerialLike,
     SerialSettings,
     capture_streams,
-    write_output,
+    dispatch_output,
+    wants_text,
 )
 from ..process import Process, SerialConsoleProcess, terminal_options
 from ..serial import PromptConsoleProfile, RawConsoleProfile, SerialConsoleProtocol
@@ -358,21 +359,25 @@ class SerialHost(Host):
         finally:
             process.close()
         output_stream, _error_stream = capture_streams(capture_output, stdout, stderr)
-        use_text = bool(text) if text is not None else encoding is not None
-        if use_text:
+        if wants_text(text, encoding, errors):
             output_value: typing.Union[str, bytes] = output.decode(
                 encoding or "utf-8", errors or "strict"
             )
         else:
             output_value = output
-        captured = output_value if output_stream == subprocess.PIPE else None
-        if output_stream not in (None, subprocess.PIPE, subprocess.DEVNULL):
-            write_output(
-                output_stream,
-                output_value,
-                encoding=encoding,
-                errors=errors,
-            )
+        # The shared dispatcher owns the "a `None` target means `sys.stdout`"
+        # rule; serial used to treat `None` as "discard", which silently threw
+        # the console transcript away for `capture_output=False`.  A serial
+        # console is one merged stream, so the stderr side is pinned to PIPE
+        # to keep the dispatcher from writing an empty second stream.
+        captured, _ = dispatch_output(
+            output_stream,
+            subprocess.PIPE,
+            output_value,
+            None,
+            encoding=encoding,
+            errors=errors,
+        )
         result = subprocess.CompletedProcess(command, returncode, captured, None)
         if check and returncode:
             raise subprocess.CalledProcessError(

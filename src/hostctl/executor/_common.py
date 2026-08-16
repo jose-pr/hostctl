@@ -94,6 +94,26 @@ def normalize_input(
     return input
 
 
+def wants_text(
+    text: typing.Optional[bool],
+    encoding: typing.Optional[str],
+    errors: typing.Optional[str],
+) -> bool:
+    """Decide whether one call's output is `str` rather than `bytes`.
+
+    `subprocess.run`'s rule, and the only one hostctl has: any of `text`,
+    `encoding`, or `errors` selects text mode. `text=False` does not veto an
+    `encoding` -- `subprocess` does not treat it as one either.
+
+    This exists as a shared function because the answer must not depend on
+    which provider a `SystemHost` happened to select. Four executors inferred
+    it as `bool(encoding or errors or text)` while SSH, PSRP, and the serial
+    host each ignored `errors`, so `run(cmd, errors="replace")` returned
+    `str` or `bytes` depending on which transport won the fallback.
+    """
+    return bool(text or encoding or errors)
+
+
 def command_text(
     value: object, *, encoding: str = "utf-8", errors: str = "strict"
 ) -> str:

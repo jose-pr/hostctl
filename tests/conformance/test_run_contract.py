@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 import shutil
 import subprocess
@@ -63,6 +64,58 @@ def test_text_env_and_nonzero_check(provider):
         assert failed.returncode == 3
         with pytest.raises(subprocess.CalledProcessError):
             host.run(Exec(sys.executable, "-c", "raise SystemExit(4)"))
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_errors_alone_selects_text_mode(provider):
+    """`subprocess.run`'s rule: any of text/encoding/errors means `str`.
+
+    Four executors inferred this as `bool(encoding or errors or text)` while
+    SSH, PSRP, and the serial host ignored `errors`, so the identical call
+    returned `str` or `bytes` depending on which provider a `SystemHost`
+    happened to select.
+    """
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
+    with provider_context(provider) as host:
+        result = host.run(
+            Exec(sys.executable, "-c", "print('value')"), errors="replace"
+        )
+        binary = host.run(Exec(sys.executable, "-c", "print('value')"))
+    assert isinstance(result.stdout, str), f"{provider.name} returned bytes"
+    assert result.stdout.strip() == "value"
+    # Nothing set still means bytes -- the rule adds a case, it does not
+    # flip the default.
+    assert isinstance(binary.stdout, bytes)
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_uncaptured_output_reaches_the_substituted_stdout(provider, monkeypatch):
+    """A buffered transport writes an uncaptured stream to `sys.stdout`.
+
+    The serial host instead discarded the transcript for
+    `capture_output=False`, which is invisible without checking where the
+    output went.
+
+    `local` is excluded rather than exempted: it hands the child the real
+    file descriptor, which is `subprocess.run`'s own behaviour for
+    `stdout=None` and cannot be observed by substituting `sys.stdout`. Every
+    other transport receives the bytes itself and must then route them.
+    """
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
+    if provider.name == "local":
+        pytest.skip("local inherits the real stdout descriptor; nothing to route")
+    sink = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", sink)
+    with provider_context(provider) as host:
+        result = host.run(
+            Exec(sys.executable, "-c", "print('routed')"),
+            capture_output=False,
+            text=True,
+        )
+    assert result.stdout is None
+    assert "routed" in sink.getvalue()
 
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)

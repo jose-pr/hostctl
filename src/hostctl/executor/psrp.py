@@ -18,6 +18,7 @@ from ._common import (
     Input,
     capture_streams,
     dispatch_output,
+    wants_text,
 )
 
 if typing.TYPE_CHECKING:
@@ -120,12 +121,9 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
         err_text = "\n".join(str(item) for item in result.streams.error)
         if out_text:
             out_text += "\n"
-        out: typing.Union[str, bytes] = (
-            out_text if text or encoding else out_text.encode(codec)
-        )
-        err: typing.Union[str, bytes] = (
-            err_text if text or encoding else err_text.encode(codec)
-        )
+        as_text = wants_text(text, encoding, errors)
+        out: typing.Union[str, bytes] = out_text if as_text else out_text.encode(codec)
+        err: typing.Union[str, bytes] = err_text if as_text else err_text.encode(codec)
         if stderr is subprocess.STDOUT:
             out = out + err
             err = None

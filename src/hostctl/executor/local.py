@@ -20,6 +20,7 @@ from ._common import (
     normalize_input,
     capture_streams,
     reject_stdin_conflict,
+    wants_text,
 )
 
 
@@ -69,7 +70,7 @@ class LocalExecutor(Executor[subprocess.CompletedProcess]):
             # where bytes would kill the writer thread and hang the call.
             input=normalize_input(
                 input,
-                text_mode=bool(encoding or errors or text),
+                text_mode=wants_text(text, encoding, errors),
                 encoding=encoding,
                 errors=errors,
             ),

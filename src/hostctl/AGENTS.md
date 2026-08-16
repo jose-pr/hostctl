@@ -177,6 +177,13 @@ corresponding hosts.
   thread, and the call then blocks forever because the child never sees EOF --
   `timeout=` does not fire. All executors share the helper so the same call
   behaves identically whichever provider a `SystemHost` selects.
+- Output is `str` when ANY of `text`, `encoding`, or `errors` is given, and
+  `bytes` otherwise -- `subprocess.run`'s rule, decided by the exported
+  `wants_text(text, encoding, errors)`. `text=False` does not veto an
+  `encoding`. An executor implemented outside hostctl must use the same
+  helper, for the same reason as `normalize_input`: a `SystemHost` picks the
+  provider, so a caller cannot write one correct invocation if providers
+  disagree about the result type.
 - `env` on `run`/`session`/`configure` accepts `EnvironmentSelection`: a
   mapping merges over the shell's default per key, the default empty mapping
   merges nothing and inherits it, and `None` runs without the shell's

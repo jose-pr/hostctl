@@ -19,6 +19,7 @@ from ._common import (
     dispatch_output,
     normalize_environment,
     capture_streams,
+    wants_text,
 )
 
 
@@ -119,7 +120,7 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
             out = b""
         if err is None and not merge_stderr:
             err = b""
-        if text or encoding is not None or errors is not None:
+        if wants_text(text, encoding, errors):
             codec = encoding or "utf-8"
             out = (
                 out.decode(codec, errors or "strict") if isinstance(out, bytes) else out
