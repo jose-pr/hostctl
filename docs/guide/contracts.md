@@ -14,9 +14,9 @@ stderr by default.  Captured streams are bytes unless `text=True` or an
 - A string is shell source and remains verbatim (operators such as `&&`, pipes,
   and redirects are not quoted).
 - A tuple/list is argv data and each item is quoted by the selected shell.
-- A leading `pathlib.PurePath` or `pathlib_next.Path` selects direct argv
-  execution; following values are arguments and are never interpreted by a
-  shell.
+- `Exec(program, *args)` is the only direct-execution spelling: one program
+  with an argv, never interpreted by a shell, and never combined with other
+  commands. A path anywhere else is an ordinary value that stringifies.
 - Multiple top-level commands are joined with the shell's sequence separator.
 - `env` is additive to the provider's environment. `cwd` is the process working
   directory. `check=True` raises `CalledProcessError` for every non-zero status;

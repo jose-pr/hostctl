@@ -834,9 +834,10 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         """Run commands and return a subprocess-compatible result.
 
         A string is verbatim shell text.  A tuple/list is one quoted argv
-        command.  A leading :class:`pathlib.PurePath`/``pathlib_next`` path is
-        a direct executable and all trailing values are its argv arguments.
-        Otherwise multiple top-level commands are joined by the selected
+        command.  :class:`Exec` is the only direct-execution spelling: it runs
+        one program with an argv and no shell layer, and it cannot be combined
+        with other commands.  A path anywhere else is an ordinary value that
+        stringifies.  Multiple top-level commands are joined by the selected
         shell's command separator.
         """
         raise NotImplementedError(
