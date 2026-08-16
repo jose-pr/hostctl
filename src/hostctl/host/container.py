@@ -16,6 +16,7 @@ from ..executor.container import (
     normalize_container_error,
 )
 from ..executor import normalize_environment
+from ..executor._common import command_text
 from ..provider import OperationNotStarted, ProviderSelector
 from ..provider.transports import (
     ContainerArchivePathProvider,

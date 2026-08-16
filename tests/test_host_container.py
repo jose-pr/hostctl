@@ -64,9 +64,35 @@ class _Containers:
         return self.container
 
 
+class _Stream:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class _Api:
+    def __init__(self):
+        self.created = []
+        self.started = []
+
+    def exec_create(self, container, **options):
+        self.created.append((container, options))
+        return {"Id": "exec-id"}
+
+    def exec_start(self, exec_id, *, socket, tty):
+        self.started.append((exec_id, socket, tty))
+        return _Stream()
+
+    def exec_inspect(self, exec_id):
+        return {"Running": False, "ExitCode": 0}
+
+
 class _Client:
     def __init__(self, container):
         self.containers = _Containers(container)
+        self.api = _Api()
         self.closed = False
 
     def close(self):
@@ -137,6 +163,18 @@ def test_container_direct_argv_preserves_arguments_and_context():
     assert options["environment"] == {"COUNT": "3"}
     assert result.stdout == "out"
     assert result.stderr == "err"
+
+
+def test_container_spawn_direct_command_builds_argv_without_a_shell():
+    host, client, _ = _host(user="1000", workdir="/default")
+    process = host.spawn(Exec(PurePosixPath("/opt/my tool"), "value with spaces"))
+
+    container, options = client.api.created[0]
+    assert options["cmd"] == ["/opt/my tool", "value with spaces"]
+    assert options["workdir"] == "/default"
+    assert options["user"] == "1000"
+    assert container == "build-target"
+    assert process.wait() == 0
 
 
 def test_container_raw_command_invokes_selected_shell():

@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, quote, urlencode
 
 from pathlib_next import Path
 
+from ..executor._common import command_text
 from ..provider import (
     ExecutorProvider,
     OperationNotStarted,

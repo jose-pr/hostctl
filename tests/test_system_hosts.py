@@ -1,5 +1,6 @@
 import os
 import subprocess
+from pathlib import PurePosixPath
 
 import pytest
 from pathlib_next.mempath import MemPath, MemPathBackend
@@ -176,6 +177,34 @@ def test_direct_path_command_without_argv_capability_renders_one_quoted_command(
     assert args == ()
     assert "'a & b'" in rendered
     assert ";" not in rendered
+
+
+def test_direct_command_without_arguments_reaches_a_capabilityless_provider():
+    """A bare callable provider advertises nothing, so the no-args direct
+    branch renders the program itself -- the site that used to raise
+    NameError before `command_text` was imported."""
+    calls = []
+
+    def execute(command, *args, **options):
+        calls.append((command, args))
+        return subprocess.CompletedProcess((command, *args), 0, b"ok", b"")
+
+    provider = ExecutorProvider("bare", execute, capabilities=())
+    assert provider.capabilities == frozenset()
+
+    host = PosixHost(executor_providers=(provider,))
+    host.run(Exec("/bin/true"), check=False)
+    assert calls[-1] == ("/bin/true", ())
+
+    # A path program is asked for its filesystem representation, not str().
+    host.run(Exec(PurePosixPath("/opt/tool")), check=False)
+    assert calls[-1] == ("/opt/tool", ())
+
+    # The sibling with-args branch still renders one quoted shell command.
+    host.run(Exec("printf", "a & b"), check=False)
+    rendered, args = calls[-1]
+    assert args == ()
+    assert "'a & b'" in rendered
 
 
 def test_executor_fallback_replans_capabilities_before_retrying():

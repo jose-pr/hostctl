@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Direct execution no longer raises `NameError` on two dispatch paths.
+  `ContainerHost.spawn(Exec(...))` raised on *every* direct spawn, and
+  `SystemHost.run(Exec(program))` raised whenever the selected executor
+  provider advertised neither `args` nor `script` — the shape a bare
+  `ExecutorProvider("name", callable)` has, which is the documented minimal
+  form of that public authoring contract. Both modules used `command_text`
+  without importing it.
+
 ## [0.2.5] - 2026-08-05
 
 ### Added
