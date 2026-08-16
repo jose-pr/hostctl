@@ -24,6 +24,13 @@ from ..provider import (
 )
 
 log = logging.getLogger("hostctl.host.ssh")
+
+#: RFC 3986 `pchar`, plus `/`.  Everything legal in a URI path segment is
+#: left as written -- including `:` so a Windows-flavoured remote path still
+#: reads as `sftp://host:22/C:/Temp` -- while `%`, `?`, `#`, space, and
+#: non-ASCII are percent-encoded, because those are what a URI parser would
+#: otherwise take for syntax.
+_URI_PATH_SAFE = "/:@-._~!$&'()*+,;="
 from ..process import Process, SshProcess, TerminalRequest
 from ._common import (
     CaptureOutput,
@@ -392,8 +399,14 @@ class _SshTransport:
                 self._sftp_backend = AsyncsshSftpBackend(
                     connect_opts=self.config.connect_opts()
                 )
+            # The remote path becomes part of a URI, so it has to be encoded
+            # as one. `pathlib_next` parses with `uritools.urisplit` and then
+            # uridecodes the components: a raw `?` or `#` in a filename was
+            # taken as the start of the query or fragment and truncated the
+            # path, and a genuine `%xx` was decoded into a different name.
             path = SftpPath(
-                f"sftp://{uri_host(self.config.host)}:{self.config.port or 22}{remote_path}",
+                f"sftp://{uri_host(self.config.host)}:{self.config.port or 22}"
+                f"{quote(remote_path, safe=_URI_PATH_SAFE)}",
                 backend=self._sftp_backend,
             )
             self._sftp_sources.add(path.source)

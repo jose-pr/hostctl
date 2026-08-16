@@ -141,15 +141,12 @@ class SshProcess(Process):
     def close(self) -> None:
         if self._closed:
             return
-        from .. import _async
-
-        try:
-            self._call(self._process.close)
-            self._call(lambda: self._process.wait_closed())
-        except Exception:
-            # A failed close remains retryable; callers must not lose the
-            # channel reference merely because the first close attempt failed.
-            raise
+        # `_closed` is set only after both calls succeed, so a failed close
+        # stays retryable and the caller keeps the channel reference. That is
+        # the whole mechanism -- there used to be a `try/except: raise` around
+        # this, which reads like it does something and does not.
+        self._call(self._process.close)
+        self._call(lambda: self._process.wait_closed())
         self._closed = True
 
     def __enter__(self) -> SshProcess:

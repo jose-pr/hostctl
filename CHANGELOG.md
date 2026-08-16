@@ -58,6 +58,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   errors="replace")` returns `str` from SSH, PSRP, and serial where it
   previously returned `bytes`.
 
+- SFTP paths percent-encode the remote path before embedding it in the
+  `sftp://` URI. `pathlib_next` parses that URI and uridecodes its parts, so
+  a filename containing `?` or `#` was truncated into a query or fragment and
+  a literal `%xx` was decoded into a different name — reading and writing the
+  wrong file with no error. Encoding is minimal (RFC 3986 `pchar`), so a
+  Windows-flavoured remote path still reads as `sftp://host:22/C:/Temp`.
+
+- `RunspaceSession` no longer closes a pool it was given. `_owns_pool` was
+  recorded at construction and never read, so a pool injected to be shared
+  across sessions was closed by whichever session finished first. An injected
+  pool is now left open and retained, which also leaves the session
+  reopenable; a pool the session created is still closed.
+
 - An abandoned container or QGA write stream no longer uploads from the
   garbage collector. The staged write-back stream existed as three
   byte-identical copies of which only the WinRM one had a `__del__` guard;

@@ -120,8 +120,15 @@ class RunspaceSession:
     def close(self) -> None:
         if not self._open and self._pool is None:
             return
-        pool, self._pool = self._pool, None
+        pool = self._pool
         self._open = False
+        if not self._owns_pool:
+            # An injected pool belongs to whoever supplied it. Closing it
+            # here would take it out from under a caller sharing one pool
+            # across sessions, which is the reason to inject one at all.
+            # Keeping the reference also leaves the session reopenable.
+            return
+        self._pool = None
         if pool is not None:
             close = getattr(pool, "close", None)
             if close is not None:

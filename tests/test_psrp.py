@@ -151,20 +151,129 @@ def test_psrp_executor_projects_objects_and_error_streams():
 
 
 def test_psrp_executor_projects_native_last_exit_code():
+    """The executor trusts the session's marker handling, and only that.
+
+    It used to re-parse `__HOSTCTL_LASTEXITCODE__` out of output the session
+    had already stripped -- one convention with two implementations. The fake
+    here now behaves as `invoke(capture_exit=True)` really does: marker
+    consumed, code in `returncode`.
+    """
+
     class Session:
         def invoke(self, script, *, raw=False, capture_exit=False):
             assert capture_exit is True
             return PipelineResult(
-                ("ok", "__HOSTCTL_LASTEXITCODE__:7"),
+                ("ok",),
                 PipelineStreams(),
                 "Completed",
                 False,
-                0,
+                7,
             )
 
     result = PsrpExecutor(lambda: Session())("cmd", check=False, text=True)
     assert result.stdout == "ok\n"
     assert result.returncode == 7
+
+
+def test_runspace_capture_exit_consumes_the_marker_line(monkeypatch):
+    """The single owner of the marker convention, tested directly.
+
+    Both halves matter: the line must not reach the caller as output, and a
+    zero exit code reported alongside pipeline errors stays a failure.
+    """
+
+    class Pipeline:
+        streams = types.SimpleNamespace(error=[])
+        state = "Completed"
+
+        def __init__(self, pool):
+            self.pool = pool
+            self.had_errors = pool.had_errors
+
+        def add_script(self, script):
+            self.script = script
+
+        def invoke(self):
+            self.pool.scripts.append(self.script)
+            return ["ok", f"__HOSTCTL_LASTEXITCODE__:{self.pool.code}"]
+
+    class Pool:
+        def __init__(self, code, had_errors=False):
+            self.scripts = []
+            self.code = code
+            self.had_errors = had_errors
+
+        def open(self):
+            self.opened = True
+
+    fake = types.ModuleType("pypsrp")
+    fake_powershell = types.ModuleType("pypsrp.powershell")
+    fake_powershell.PowerShell = Pipeline
+    monkeypatch.setitem(__import__("sys").modules, "pypsrp", fake)
+    monkeypatch.setitem(__import__("sys").modules, "pypsrp.powershell", fake_powershell)
+
+    result = RunspaceSession(pool=Pool(7)).invoke("cmd", capture_exit=True)
+    assert result.output == ("ok",)
+    assert result.returncode == 7
+
+    # A remote zero beside pipeline errors is still a failure.
+    failed = RunspaceSession(pool=Pool(0, had_errors=True)).invoke(
+        "cmd", capture_exit=True
+    )
+    assert failed.returncode == 1
+
+    # The script the pipeline received carries the epilogue.
+    pool = Pool(0)
+    RunspaceSession(pool=pool).invoke("cmd", capture_exit=True)
+    assert "__HOSTCTL_LASTEXITCODE__" in pool.scripts[0]
+
+
+def test_runspace_does_not_close_an_injected_pool():
+    """An injected pool belongs to its supplier.
+
+    `_owns_pool` was recorded and never read, so a pool shared across
+    sessions was closed by whichever session finished first.
+    """
+
+    class Pool:
+        def __init__(self):
+            self.opened = False
+            self.closed = False
+
+        def open(self):
+            self.opened = True
+
+        def close(self):
+            self.closed = True
+
+    injected = Pool()
+    session = RunspaceSession(pool=injected)
+    session.connect()
+    session.close()
+    assert injected.opened
+    assert not injected.closed
+    # The session stays reopenable on the same pool.
+    session.connect()
+    assert session._pool is injected
+
+
+def test_runspace_closes_a_pool_it_created(monkeypatch):
+    class Pool:
+        def __init__(self):
+            self.closed = False
+
+        def open(self):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    created = Pool()
+    session = RunspaceSession(config=object())
+    monkeypatch.setattr(session, "_make_pool", lambda: created)
+    session.connect()
+    session.close()
+    assert created.closed
 
 
 def test_psrp_executor_rejects_byte_stream_options():

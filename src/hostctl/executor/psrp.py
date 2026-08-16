@@ -98,26 +98,14 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
             command_text(command), raw=False, capture_exit=True
         )
         codec = encoding or "utf-8"
+        # `invoke(capture_exit=True)` already consumed the
+        # `__HOSTCTL_LASTEXITCODE__` line and folded it into `returncode`;
+        # this used to re-parse the same marker out of output that no longer
+        # contained it, which is two implementations of one convention.
+        returncode = result.returncode
         # Preserve PowerShell's object-pipeline line orientation when
         # projecting objects to subprocess-compatible text.
-        projected_output = []
-        returncode = result.returncode
-        marker = "__HOSTCTL_LASTEXITCODE__:"
-        for item in result.output:
-            value = str(item)
-            if value.startswith(marker):
-                try:
-                    parsed_returncode = int(value[len(marker) :])
-                    returncode = (
-                        1
-                        if result.had_errors and parsed_returncode == 0
-                        else parsed_returncode
-                    )
-                except ValueError:
-                    returncode = 1
-                continue
-            projected_output.append(item)
-        out_text = "\n".join(str(item) for item in projected_output)
+        out_text = "\n".join(str(item) for item in result.output)
         err_text = "\n".join(str(item) for item in result.streams.error)
         if out_text:
             out_text += "\n"

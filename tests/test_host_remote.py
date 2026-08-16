@@ -313,6 +313,39 @@ def test_sftp_path_styles_when_ssh_extra_is_available():
     assert isinstance(windows, NextPath)
 
 
+@pytest.mark.parametrize(
+    "remote",
+    [
+        "/tmp/report%20final.txt",
+        "/tmp/cache?v=2",
+        "/tmp/a#b",
+        "/tmp/sp ace",
+        "/tmp/100%",
+        "/tmp/café.txt",
+    ],
+)
+def test_sftp_path_survives_uri_syntax_in_a_filename(remote):
+    """The path is embedded in a URI, so it must be encoded as one.
+
+    `pathlib_next` splits with `uritools.urisplit` and uridecodes the parts:
+    a raw `?` or `#` truncated the path into a query or fragment, and a
+    genuine `%xx` decoded into a different filename. Round-trip, not the
+    encoded spelling, is what is pinned here.
+    """
+    pytest.importorskip("asyncssh")
+    path = _SshTransport(SshConfig("host")).path(remote)
+    assert path.as_posix().split(":", 1)[1] == remote
+
+
+def test_sftp_path_leaves_uri_legal_characters_readable():
+    """Encoding is minimal: a Windows-flavoured path keeps its drive colon."""
+    pytest.importorskip("asyncssh")
+    windows = _SshTransport(SshConfig("host", path_flavor=WindowsPathname)).path(
+        r"C:\Temp"
+    )
+    assert str(windows) == "sftp://host:22/C:/Temp"
+
+
 def test_sftp_backend_is_reused_and_invalidated_on_close():
     host, stub = _host()
     first = host.path("/etc")

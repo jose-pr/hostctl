@@ -57,6 +57,40 @@ def test_path_round_trip_and_type(provider, tmp_path):
         assert path.stat().st_size > 0
 
 
+# Every fake's sandbox is a directory on the machine running the tests, so
+# the names have to be ones this filesystem can actually hold. `?` is
+# reserved on Windows and is therefore only exercised on POSIX; `%` and `#`
+# -- the two that made a URI parse address a different file -- are legal
+# everywhere and always run.
+_URI_SYNTAX_NAMES = ["report%20final.txt", "hash#tag.txt", "sp ace.txt", "100%"]
+if os.name != "nt":
+    _URI_SYNTAX_NAMES.append("cache?v=2")
+
+
+@pytest.mark.parametrize("name", _URI_SYNTAX_NAMES)
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_path_names_containing_uri_syntax_address_the_right_file(
+    provider, tmp_path, name
+):
+    """A filename is data, even for a backend addressed by URI.
+
+    The SFTP path was built by embedding the remote path in an `sftp://`
+    f-string, so `pathlib_next`'s URI parse truncated a name at `?` or `#`
+    and decoded a literal `%20` into a space -- silently reading or writing a
+    different file.
+    """
+    if "path" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no path capability")
+    with provider_context(provider) as host:
+        path = conformance_path(host, provider, tmp_path, name)
+        path.write_bytes(b"addressed")
+        assert path.read_bytes() == b"addressed"
+        assert path.name == name
+        neighbour = conformance_path(host, provider, tmp_path, "plain.txt")
+        neighbour.write_bytes(b"untouched")
+        assert path.read_bytes() == b"addressed"
+
+
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_path_error_types(provider, tmp_path):
     if "path" not in provider.capabilities:
