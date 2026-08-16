@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.2.6] - 2026-08-16
+## [0.2.7] - 2026-08-16
+
+### Changed
+
+- Dependency floors now name versions hostctl is actually tested against.
+  `pathlib_next` moves to `>=0.9.1,<0.10` and `netimps` to `>=0.2.0,<0.3`
+  (the `ssh` extra's `pathlib_next[sftp-async]` moves from `>=0.8.4` to the
+  same `>=0.9.1`). Both ceilings are unchanged, and no API hostctl calls has
+  moved — this only stops resolvers from choosing an install that does not
+  work.
+
+  The `pathlib_next` floor is above the start of its minor series for one
+  measured reason: `Path.symlink_to()` — and with it the `force=` keyword —
+  first exists in **0.9.1**. The composite path forwards `symlink_to` to
+  whichever backend path it was handed, so against a stock 0.9.0 `Path` the
+  whole chain raises `AttributeError` rather than linking anything. The
+  previous `>=0.8.6` floor therefore advertised support for installs where
+  composite `symlink_to` could never work. `netimps` needs nothing past
+  `0.2.0` and floors at the series start.
 
 ### Added
 
@@ -511,7 +529,8 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/jose-pr/hostctl/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/jose-pr/hostctl/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/jose-pr/hostctl/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/jose-pr/hostctl/compare/v0.2.3...v0.2.4

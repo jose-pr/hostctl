@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hostctl"
-version = "0.2.6"
+version = "0.2.7"
 authors = [{ name = "Jose A." }]
 description = "Run commands and access files on a host, local or remote, protocol-agnostic"
 readme = "README.md"
@@ -34,19 +34,23 @@ classifiers = [
 # them. Transport implementations remain extras, so importing hostctl never
 # requires them.
 #
-# Both ranges span two minors deliberately: hostctl uses no API added in
-# pathlib_next 0.9 or netimps 0.2, so raising the floor would exclude working
-# installs for nothing. The ceilings stay at the next major-ish boundary
+# Each floor is the `.0` of the dependency's current minor series, raised
+# above it only where hostctl needs a later patch. pathlib_next is that
+# exception: `Path.symlink_to()` -- and with it the `force=` keyword -- first
+# exists in 0.9.1, and the composite path forwards `symlink_to` to whichever
+# backend path it was handed, so against a stock 0.9.0 `Path` the call raises
+# `AttributeError` (measured on 3.9 and 3.14). netimps has no such case and
+# floors at the series start. The ceilings stay at the next major-ish boundary
 # because both projects are pre-1.0, where a minor may break. Composite kwargs
-# passthrough does not change this: forwarding is signature-aware, so `force=`
-# is forwarded when the installed pathlib_next provides it and rejected at the
-# boundary when it does not (verified against 0.9.0 and 0.9.1).
-dependencies = ["pathlib_next>=0.8.6,<0.10", "netimps>=0.1,<0.3"]
+# passthrough does not change this: forwarding is signature-aware, so a
+# `force=` the installed pathlib_next does not declare is rejected at the
+# composite boundary rather than inside a transport.
+dependencies = ["pathlib_next>=0.9.1,<0.10", "netimps>=0.2.0,<0.3"]
 
 [project.optional-dependencies]
 # SSH-backed run()/path(): asyncssh for shell exec, pathlib_next's SftpPath
 # (asyncssh-only since 0.8.2) for the remote path backend.
-ssh = ["asyncssh", "pathlib_next[sftp-async]>=0.8.4,<0.10"]
+ssh = ["asyncssh", "pathlib_next[sftp-async]>=0.9.1,<0.10"]
 # Windows Remote Management command execution.
 winrm = ["pywinrm>=0.5.0,<0.6"]
 # PowerShell Remoting Protocol runspaces (Python 3.10+ only).  The marker
