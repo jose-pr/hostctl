@@ -12,7 +12,6 @@ import stat as _stat
 import subprocess
 import typing
 import uuid
-import warnings
 from pathlib import PurePath as _StdPurePath
 from urllib.parse import quote, unquote, urlencode
 
@@ -53,6 +52,7 @@ from ._common import (
     uri_hostname,
 )
 from ..shell import POWERSHELL, ShellFlavour
+from ._staged_io import staged_open
 
 log = logging.getLogger("hostctl.host.winrm")
 
@@ -735,40 +735,6 @@ class WinRMPathBackend:
         )
 
 
-class _WriteBackBytesIO(io.BytesIO):
-    def __init__(
-        self,
-        value: bytes,
-        commit: typing.Optional[typing.Callable[[bytes], None]],
-    ) -> None:
-        super().__init__(value)
-        self._commit = commit
-
-    def close(self) -> None:
-        if not self.closed and self._commit is not None:
-            value = self.getvalue()
-            commit, self._commit = self._commit, None
-            try:
-                commit(value)
-            finally:
-                super().close()
-        else:
-            super().close()
-
-    def __del__(self):
-        if getattr(self, "_commit", None) is not None and not self.closed:
-            warnings.warn(
-                "unclosed WinRM write stream discarded without committing",
-                ResourceWarning,
-                stacklevel=2,
-            )
-            self._commit = None
-        try:
-            super().close()
-        except Exception:
-            pass
-
-
 class _WinRMReadStream(io.RawIOBase):
     """Lazy bounded reader backed by independent WinRM range requests."""
 
@@ -859,45 +825,8 @@ class WinRMPath(WindowsPathname, Path):
             yield self / name
 
     def _open(self, mode="r", buffering=-1):
-        if (
-            not mode
-            or sum(mode.count(value) for value in "rwax") != 1
-            or mode.count("+") > 1
-            or len(mode.replace("t", "")) != 1 + mode.count("+")
-            or mode.count("t") > 1
-        ):
-            raise ValueError(f"invalid mode: {mode!r}")
-        readable = "r" in mode or "+" in mode
-        writable = any(value in mode for value in "wax+")
-        if "r" in mode and not writable and hasattr(self.backend, "open_read"):
-            return self.backend.open_read(str(self))
-        if "r" in mode or "a" in mode:
-            try:
-                value = self.backend.read_bytes(str(self))
-            except FileNotFoundError:
-                if "a" in mode:
-                    value = b""
-                else:
-                    raise
-        else:
-            value = b""
-        stream = _WriteBackBytesIO(
-            value,
-            (
-                (
-                    lambda data: self.backend.write_bytes(
-                        str(self), data, exclusive="x" in mode
-                    )
-                )
-                if writable
-                else None
-            ),
-        )
-        if "a" in mode:
-            stream.seek(0, io.SEEK_END)
-        elif not readable:
-            stream.seek(0)
-        return stream
+        del buffering
+        return staged_open(self.backend, str(self), mode, label="WinRM")
 
     def symlink_to(self, target, target_is_directory: bool = False):
         """Create this path as a symbolic link to ``target``.

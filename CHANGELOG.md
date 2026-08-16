@@ -58,6 +58,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   errors="replace")` returns `str` from SSH, PSRP, and serial where it
   previously returned `bytes`.
 
+- An abandoned container or QGA write stream no longer uploads from the
+  garbage collector. The staged write-back stream existed as three
+  byte-identical copies of which only the WinRM one had a `__del__` guard;
+  `io.IOBase.__del__` calls `close()`, and `close()` is what commits, so a
+  write stream that went out of scope unclosed performed its network
+  transfer at an arbitrary GC point with any error printed and swallowed by
+  the interpreter. One `hostctl.host._staged_io` now serves all three, and
+  the abandonment case warns instead of uploading. The `open()` mode
+  validators were deduplicated with it, so `"rt"` is accepted on the
+  container and QGA backends as it always was on WinRM.
+
 - `SerialHost.run(capture_output=False)` no longer discards the console
   transcript. It reimplemented the output contract and treated a `None`
   stdout target as "discard"; the shared `dispatch_output` — and every other

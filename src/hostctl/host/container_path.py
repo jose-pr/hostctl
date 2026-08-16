@@ -13,6 +13,7 @@ import typing
 from pathlib import PurePath as _StdPurePath
 from pathlib_next import Path, PosixPathname, WindowsPathname
 from pathlib_next.utils.stat import FileStat
+from ._staged_io import staged_open
 
 
 class ContainerArchiveClient(typing.Protocol):
@@ -468,25 +469,6 @@ class ContainerPathBackend:
             raise OSError(f"container rejected archive for {path}")
 
 
-class _WriteBackBytesIO(io.BytesIO):
-    def __init__(
-        self, value: bytes, commit: typing.Optional[typing.Callable[[bytes], None]]
-    ) -> None:
-        super().__init__(value)
-        self._commit = commit
-
-    def close(self) -> None:
-        if not self.closed and self._commit is not None:
-            value = self.getvalue()
-            commit, self._commit = self._commit, None
-            try:
-                commit(value)
-            finally:
-                super().close()
-        else:
-            super().close()
-
-
 class _ContainerPathMixin:
     """Shared pathlib_next operations for both container path flavours."""
 
@@ -534,44 +516,8 @@ class _ContainerPathMixin:
             yield self / name
 
     def _open(self, mode="r", buffering=-1):
-        if (
-            not mode
-            or sum(mode.count(value) for value in "rwax") != 1
-            or mode.count("+") > 1
-            or len(mode) != 1 + mode.count("+")
-        ):
-            raise ValueError(f"invalid mode: {mode!r}")
-        readable = "r" in mode or "+" in mode
-        writable = any(value in mode for value in "wax+")
-        if "r" in mode and not writable:
-            return self.backend.open_read(str(self))
-        if "r" in mode or "a" in mode:
-            try:
-                value = self.backend.read_bytes(str(self))
-            except FileNotFoundError:
-                if "a" in mode:
-                    value = b""
-                else:
-                    raise
-        else:
-            value = b""
-        stream = _WriteBackBytesIO(
-            value,
-            (
-                (
-                    lambda data: self.backend.write_bytes(
-                        str(self), data, exclusive="x" in mode
-                    )
-                )
-                if writable
-                else None
-            ),
-        )
-        if "a" in mode:
-            stream.seek(0, io.SEEK_END)
-        elif not readable:
-            stream.seek(0)
-        return stream
+        del buffering
+        return staged_open(self.backend, str(self), mode, label="container")
 
     def symlink_to(self, target, target_is_directory: bool = False):
         """Create this path as a symlink to ``target``.

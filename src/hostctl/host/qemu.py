@@ -51,6 +51,7 @@ from ._common import (
     uri_hostname,
 )
 from ._ssh import SshConfig, _SshTransport
+from ._staged_io import staged_open
 
 QemuTransport = typing.Literal["libvirt", "unix", "ssh"]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
@@ -842,25 +843,6 @@ class QgaPathBackend:
         )
 
 
-class _WriteBackBytesIO(io.BytesIO):
-    def __init__(
-        self, value: bytes, commit: typing.Optional[typing.Callable[[bytes], None]]
-    ) -> None:
-        super().__init__(value)
-        self._commit = commit
-
-    def close(self) -> None:
-        if not self.closed and self._commit is not None:
-            value = self.getvalue()
-            commit, self._commit = self._commit, None
-            try:
-                commit(value)
-            finally:
-                super().close()
-        else:
-            super().close()
-
-
 class _QgaReadStream(io.RawIOBase):
     """Lazy QGA guest-file-read stream with one bounded request per fill."""
 
@@ -943,44 +925,8 @@ class _QgaPathMixin:
             yield self / name
 
     def _open(self, mode="r", buffering=-1):
-        if (
-            not mode
-            or sum(mode.count(value) for value in "rwax") != 1
-            or mode.count("+") > 1
-            or len(mode) != 1 + mode.count("+")
-        ):
-            raise ValueError(f"invalid mode: {mode!r}")
-        readable = "r" in mode or "+" in mode
-        writable = any(value in mode for value in "wax+")
-        if "r" in mode and not writable:
-            return self.backend.open_read(str(self))
-        if "r" in mode or "a" in mode:
-            try:
-                value = self.backend.read_bytes(str(self))
-            except FileNotFoundError:
-                if "a" in mode:
-                    value = b""
-                else:
-                    raise
-        else:
-            value = b""
-        stream = _WriteBackBytesIO(
-            value,
-            (
-                (
-                    lambda data: self.backend.write_bytes(
-                        str(self), data, exclusive="x" in mode
-                    )
-                )
-                if writable
-                else None
-            ),
-        )
-        if "a" in mode:
-            stream.seek(0, io.SEEK_END)
-        elif not readable:
-            stream.seek(0)
-        return stream
+        del buffering
+        return staged_open(self.backend, str(self), mode, label="QGA")
 
     def symlink_to(self, target, target_is_directory: bool = False):
         """Always raise -- QGA exposes no symlink RPC.
