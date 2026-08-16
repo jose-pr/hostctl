@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-08-16
+
 ### Added
 
 - `wants_text(text, encoding, errors)` is exported from `hostctl.executor`,
@@ -509,7 +511,8 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/jose-pr/hostctl/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/jose-pr/hostctl/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/jose-pr/hostctl/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/jose-pr/hostctl/compare/v0.2.2...v0.2.3
