@@ -533,7 +533,13 @@ class SshExecutorProvider(ExecutorProvider):
     def connect(self):
         try:
             self.transport.connect()
-        except (ConnectionError, TimeoutError) as exc:
+        # OSError, not just ConnectionError: a DNS failure (socket.gaierror)
+        # and a routing failure (EHOSTUNREACH/ENETUNREACH) are OSError but not
+        # ConnectionError, and they are unambiguously pre-dispatch -- no
+        # channel opened, nothing sent. They used to escape the provider, so
+        # ordered fallback stopped dead and a raw socket error crossed the
+        # public boundary.
+        except (OSError, TimeoutError) as exc:
             log.debug(
                 "SSH provider declining before dispatch: %s: %s",
                 type(exc).__name__,

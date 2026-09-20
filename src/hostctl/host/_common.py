@@ -542,27 +542,39 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         requested_scheme: _ty.Optional[str] = None,
     ) -> _ty.Tuple[_ty.Type[HostConfig], ...]:
         scheme = requested_scheme.casefold() if requested_scheme else None
-        with HostConfig._uri_registry_lock:
-            if HostConfig._uri_registry_cache is None:
-                from . import (
-                    container as _container,
-                    _local,
-                    qemu as _qemu,
-                    serial as _serial,
-                    _ssh,
-                    _winrm,
-                )
 
-                del _container, _local, _qemu, _serial, _ssh, _winrm
-                while HostConfig._uri_registry_cache is None:
-                    generation = HostConfig._uri_registry_generation
-                    discovered = list(_recursive_subclasses(HostConfig))
-                    if generation != HostConfig._uri_registry_generation:
-                        continue
-                    HostConfig._uri_registry_cache = tuple(
-                        item for item in discovered if item._uri_schemes
-                    )
+        # Every import below happens OUTSIDE `_uri_registry_lock`. Holding it
+        # across an import inverted the lock order against
+        # `__init_subclass__`, which takes the registry lock from inside a
+        # module body: one thread held the registry lock and waited for a
+        # module lock while another held that module lock and waited for the
+        # registry lock. Python's import deadlock detection only covers module
+        # locks, so both hung forever.
+        with HostConfig._uri_registry_lock:
+            needs_builtins = HostConfig._uri_registry_cache is None
+        if needs_builtins:
+            from . import (
+                container as _container,
+                _local,
+                qemu as _qemu,
+                serial as _serial,
+                _ssh,
+                _winrm,
+            )
+
+            del _container, _local, _qemu, _serial, _ssh, _winrm
+
+        with HostConfig._uri_registry_lock:
+            while HostConfig._uri_registry_cache is None:
+                generation = HostConfig._uri_registry_generation
+                discovered = list(_recursive_subclasses(HostConfig))
+                if generation != HostConfig._uri_registry_generation:
+                    continue
+                HostConfig._uri_registry_cache = tuple(
+                    item for item in discovered if item._uri_schemes
+                )
             if HostConfig._uri_entry_points is None:
+                # Reading metadata imports nothing, so it stays under the lock.
                 points = _metadata.entry_points()
                 if hasattr(points, "select"):
                     points = points.select(group="hostctl.configs")
@@ -576,40 +588,48 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
                     )
                 HostConfig._uri_entry_points = tuple(points)
             candidates = list(HostConfig._uri_registry_cache)
-            if scheme is not None:
-                for entry_point in HostConfig._uri_entry_points:
-                    name = str(getattr(entry_point, "name", "")).casefold()
-                    if name != scheme:
-                        continue
-                    failure = HostConfig._uri_plugin_failures.get(name)
-                    if failure is not None:
-                        raise failure
-                    try:
-                        implementation = entry_point.load()
-                        if not isinstance(implementation, type) or not issubclass(
-                            implementation, HostConfig
-                        ):
-                            raise TypeError(
-                                f"hostctl.configs entry point {name!r} "
-                                "must load a HostConfig subclass"
-                            )
-                    except Exception as exc:
-                        HostConfig._uri_plugin_failures[name] = exc
-                        import warnings
-
-                        warnings.warn(
-                            f"unable to load hostctl.configs entry point {name!r}: {exc}",
-                            RuntimeWarning,
-                            stacklevel=2,
-                        )
-                        raise
-                    candidates.append(implementation)
-                    break
-            return tuple(
-                item
-                for item in dict.fromkeys(candidates)
-                if issubclass(item, cls) and item._uri_schemes
+            entry_points = HostConfig._uri_entry_points
+            failure = (
+                HostConfig._uri_plugin_failures.get(scheme)
+                if scheme is not None
+                else None
             )
+
+        if failure is not None:
+            raise failure
+        if scheme is not None:
+            for entry_point in entry_points:
+                name = str(getattr(entry_point, "name", "")).casefold()
+                if name != scheme:
+                    continue
+                try:
+                    # The plugin import that must not hold the registry lock.
+                    implementation = entry_point.load()
+                    if not isinstance(implementation, type) or not issubclass(
+                        implementation, HostConfig
+                    ):
+                        raise TypeError(
+                            f"hostctl.configs entry point {name!r} "
+                            "must load a HostConfig subclass"
+                        )
+                except Exception as exc:
+                    with HostConfig._uri_registry_lock:
+                        HostConfig._uri_plugin_failures[name] = exc
+                    import warnings
+
+                    warnings.warn(
+                        f"unable to load hostctl.configs entry point {name!r}: {exc}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                    raise
+                candidates.append(implementation)
+                break
+        return tuple(
+            item
+            for item in dict.fromkeys(candidates)
+            if issubclass(item, cls) and item._uri_schemes
+        )
 
 
 class _HostMeta(_abc.ABCMeta):

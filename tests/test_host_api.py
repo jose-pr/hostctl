@@ -684,3 +684,94 @@ def test_a_upn_username_survives_the_same_path():
 
     assert config.username == "alice@corp.example"
     assert "%2540" not in config.connection_uri
+
+
+PLUGIN_SOURCE = """import time
+
+from hostctl.host._common import HostConfig
+
+time.sleep(0.4)
+
+
+class SlowConfig(HostConfig, schemes=("slowplugin",)):
+    @property
+    def connection_uri(self):
+        return "slowplugin://x"
+
+    @classmethod
+    def _from_parsed_uri(cls, parsed, **credentials):
+        return cls()
+
+    def _create_host(self):
+        raise NotImplementedError
+"""
+
+
+def test_dispatching_a_scheme_while_its_plugin_imports_does_not_deadlock(tmp_path):
+    """The registry lock must never be held across an import.
+
+    `__init_subclass__` takes the registry lock from inside a module body, so
+    holding it while importing inverted the lock order: one thread held the
+    registry lock and waited for a module lock, the other the reverse. Python's
+    import deadlock detection only covers module locks, so both hung forever.
+    """
+    import sys
+    import threading
+
+    module = tmp_path / "hostctl_slow_plugin.py"
+    module.write_text(
+        PLUGIN_SOURCE,
+        encoding="utf-8",
+    )
+
+    class _StubEntryPoint:
+        name = "slowplugin"
+
+        def load(self):
+            import hostctl_slow_plugin
+
+            return hostctl_slow_plugin.SlowConfig
+
+    sys.path.insert(0, str(tmp_path))
+    previous = HostConfig._uri_entry_points
+    threads = []
+    HostConfig._uri_entry_points = (_StubEntryPoint(),)
+    try:
+        done = []
+
+        def importer():
+            import hostctl_slow_plugin  # noqa: F401
+
+            done.append("import")
+
+        def dispatcher():
+            try:
+                HostConfig("slowplugin://x")
+            except Exception:
+                pass
+            done.append("dispatch")
+
+        # Daemon threads: if this ever regresses the two block forever, and a
+        # non-daemon pair would hang the interpreter at exit instead of
+        # failing the test.
+        threads[:] = [
+            threading.Thread(target=importer, daemon=True),
+            threading.Thread(target=dispatcher, daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+
+        blocked = [thread for thread in threads if thread.is_alive()]
+        assert not blocked, "the registry lock is held across an import"
+        assert sorted(done) == ["dispatch", "import"]
+    finally:
+        HostConfig._uri_entry_points = previous
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("hostctl_slow_plugin", None)
+        if not [thread for thread in threads if thread.is_alive()]:
+            # Skipped on a regression: refreshing takes the registry lock,
+            # which a wedged thread still holds, so the cleanup would hang
+            # instead of letting the assertion above report.
+            HostConfig._refresh_uri_registry()

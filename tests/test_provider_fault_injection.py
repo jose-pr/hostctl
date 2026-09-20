@@ -636,3 +636,56 @@ def test_the_shipped_local_provider_can_symlink_and_readlink(tmp_path):
 
     assert "release-42" in str(link.readlink())
     assert {"symlink_to", "readlink"} <= PathProvider.DEFAULT_CAPABILITIES
+
+
+def test_a_dns_failure_declines_to_the_next_provider():
+    """A pre-dispatch OSError that is not a ConnectionError still declines.
+
+    `socket.gaierror` (DNS) and EHOSTUNREACH/ENETUNREACH (routing) are OSError
+    but not ConnectionError, and asyncssh lets them through untouched, so they
+    escaped the provider: ordered fallback stopped dead and a raw socket error
+    crossed the public boundary.
+    """
+    import socket
+
+    from hostctl import SshConfig
+    from hostctl.host._ssh import SshExecutorProvider, _SshTransport
+
+    transport = _SshTransport(SshConfig("no-such-host.invalid", username="root"))
+
+    def unresolvable():
+        raise socket.gaierror(11001, "getaddrinfo failed")
+
+    transport.connect = unresolvable
+    fallback = ExecutorProvider(
+        "local",
+        lambda command, *args, **options: subprocess.CompletedProcess(
+            (command,), 0, b"ok", b""
+        ),
+    )
+    host = PosixHost(executor_providers=(SshExecutorProvider(transport), fallback))
+
+    assert host.run("uptime", check=False).stdout == b"ok"
+
+
+def test_a_routing_failure_declines_to_the_next_provider():
+    import errno
+
+    from hostctl import SshConfig
+    from hostctl.host._ssh import SshExecutorProvider, _SshTransport
+
+    transport = _SshTransport(SshConfig("10.0.0.1", username="root"))
+
+    def unreachable():
+        raise OSError(errno.EHOSTUNREACH, "No route to host")
+
+    transport.connect = unreachable
+    fallback = ExecutorProvider(
+        "local",
+        lambda command, *args, **options: subprocess.CompletedProcess(
+            (command,), 0, b"ok", b""
+        ),
+    )
+    host = PosixHost(executor_providers=(SshExecutorProvider(transport), fallback))
+
+    assert host.run("uptime", check=False).stdout == b"ok"
