@@ -265,3 +265,37 @@ def test_replace_returns_a_changed_copy():
 
     assert str(moved) == "wss://other:443/api"
     assert str(target) == "wss://nas:8443/api"
+
+
+def test_scheme_less_user_password_host_is_parsed_as_credentials():
+    """`root:hunter2@nas` is userinfo, not the scheme `root`.
+
+    `urlsplit` reads a scheme-shaped username as a scheme, which left the
+    password in `path` -- where `geturl()` renders it -- the host empty, and
+    `is_local` true for a remote machine.
+    """
+    target = ConnectionString("root:hunter2@nas", scheme="ssh")
+
+    assert (target.host, target.username, target.password) == ("nas", "root", "hunter2")
+    assert not target.is_local
+    assert "hunter2" not in str(target)
+    assert "hunter2" not in repr(target)
+
+
+def test_a_trailing_colon_is_a_host_not_a_scheme():
+    assert ConnectionString("nas:", scheme="ssh").host == "nas"
+
+
+def test_credentials_without_an_assumable_scheme_are_refused_and_redacted():
+    with pytest.raises(ValueError) as error:
+        ConnectionString("root:hunter2@nas")
+
+    assert "hunter2" not in str(error.value)
+    assert "<redacted>" in str(error.value)
+
+
+def test_a_scheme_less_target_error_never_echoes_a_password():
+    with pytest.raises(ValueError) as error:
+        ConnectionString("svc_backup:hunter2@nas")
+
+    assert "hunter2" not in str(error.value)

@@ -236,8 +236,9 @@ class ConnectionString:
 
         if resolved["scheme"] is None:
             raise ValueError(
-                f"connection string has no scheme: {value!r}; pass scheme= to set "
-                "one, or defaults= to supply it only when the string omits it"
+                f"connection string has no scheme: {_redacted_target(value)!r}; "
+                "pass scheme= to set one, or defaults= to supply it only when "
+                "the string omits it"
             )
         scheme_text = _ty.cast(str, resolved["scheme"]).casefold()
         # Only now is the scheme settled, so a callable or table given for the
@@ -356,6 +357,25 @@ def _as_defaults(
     return {name: value for name, value in defaults.items() if value is not None}
 
 
+def _has_userinfo(text: str) -> bool:
+    """Whether `text` carries `user[:password]@host` ahead of any path."""
+    return "@" in text.split("/", 1)[0]
+
+
+def _redacted_target(text: str) -> str:
+    """`text` with any password removed, for an error message.
+
+    Used where the text has not parsed yet, so `redact_uri` cannot be trusted
+    to find the password: the whole point is that `urlsplit` read it as
+    something other than userinfo.
+    """
+    head, at_sign, rest = text.rpartition("@")
+    if not at_sign:
+        return text
+    user, colon, _password = head.partition(":")
+    return f"{user}{':<redacted>' if colon else ''}@{rest}"
+
+
 def _split(value: str, assumed_scheme: _ty.Optional[str]) -> _SplitResult:
     """Parse `value`, tolerating the shorthands people actually type.
 
@@ -374,11 +394,20 @@ def _split(value: str, assumed_scheme: _ty.Optional[str]) -> _SplitResult:
     if parsed.scheme and parsed.netloc:
         return parsed
     if assumed_scheme is None:
+        if _has_userinfo(encoded):
+            # `root:hunter2@nas` looks like the scheme `root` with the opaque
+            # path `hunter2@nas`. Accepting that parse left the password
+            # sitting in `path`, where `geturl()` renders it, the host empty,
+            # and `is_local` true for a remote machine. Nothing here can tell
+            # which scheme was meant, so refuse rather than guess.
+            raise ValueError(
+                f"connection string has credentials but no scheme: "
+                f"{_redacted_target(value)!r}; pass scheme= to set one"
+            )
         return parsed
-    # `nas:8443` parses as scheme `nas`; a numeric "path" is the port. Detect
-    # that before treating the whole string as a host.
-    if parsed.scheme and not parsed.netloc and parsed.path.isdigit():
-        return _urlsplit(f"{assumed_scheme}://{encoded}")
-    if not parsed.scheme:
-        return _urlsplit(f"{assumed_scheme}://{encoded}")
-    return parsed
+    # No authority was found, so whatever `urlsplit` called the scheme is the
+    # first shorthand segment, not a scheme: `nas`, `nas:8443` (scheme `nas`,
+    # numeric path), `root:pw@nas` (scheme `root`), `nas:` (scheme `nas`,
+    # empty path). They are one input with the scheme left off -- prepend the
+    # known one and re-parse, rather than keep a separate parser per spelling.
+    return _urlsplit(f"{assumed_scheme}://{encoded}")
