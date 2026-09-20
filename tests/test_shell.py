@@ -865,3 +865,40 @@ def test_cmd_echo_still_prints_its_argument_verbatim():
     result = subprocess.run(command.command, capture_output=True, text=True)
 
     assert result.stdout.strip() == "a b"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell")
+@pytest.mark.parametrize(
+    "value",
+    (
+        'my file" /MIR "z',
+        "",
+        'q"x',
+        "trail sp\\",
+        'a\\"b',
+        "a b",
+        "100%",
+        "it's",
+        "amp&x",
+        "$var",
+    ),
+)
+def test_powershell_structured_arguments_reach_a_native_child_intact(value):
+    """PS 5 rebuilds the native command line and mis-quotes what it rebuilds.
+
+    `my file" /MIR "z` arrived as three arguments, one of them `/MIR` --
+    robocopy's mirror mode, which deletes files in the destination. An empty
+    argument was dropped and a trailing backslash swallowed the next one.
+    """
+    dump = "import sys; print(sys.argv[1:])"
+    command = POWERSHELL.command(((sys.executable, "-c", dump, value, "TAIL"),))
+
+    result = subprocess.run(command.command, capture_output=True, text=True)
+
+    assert result.stdout.strip() == repr([value, "TAIL"])
+
+
+def test_powershell_7_does_not_add_c_runtime_escaping():
+    """pwsh passes native arguments through without PS 5's rewrite."""
+    assert PWSH.structured_command(("tool", 'a"b')) == "& 'tool' 'a\"b'"
+    assert POWERSHELL.structured_command(("tool", 'a"b')) == "& 'tool' 'a\\\"b'"
