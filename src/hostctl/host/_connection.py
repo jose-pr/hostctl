@@ -199,6 +199,10 @@ class ConnectionString:
             parsed_values: _ty.Dict[str, object] = {
                 field.name: getattr(value, field.name) for field in _dc.fields(self)
             }
+            if not value._explicit_port:
+                # Its port was resolved from *its* scheme, so it is not an
+                # answer for a different one.
+                parsed_values["port"] = None
         else:
             # A scheme may come from the explicit argument or the defaults;
             # either lets a bare host parse, so resolve it before splitting.
@@ -246,12 +250,18 @@ class ConnectionString:
         # the scheme -- it knows ones the system services database does not
         # (`ws`/`wss`, `socks5`), and an application can add more with
         # `netimps.register_port`.
+        supplied_port = resolved["port"] is not None
         port_value = _resolve_port(scheme_text, _ty.cast("Port", resolved["port"]))
         if port_value is _NO_PORT:
             port_value = None
         elif port_value is None:
             port_value = _get_default_port(scheme_text)
         resolved["port"] = port_value
+        # Whether the port was *given* or resolved from the scheme. A
+        # resolved one must not travel: used as `defaults=`, or copied with a
+        # different `scheme=`, it overrode the new scheme's own default, so an
+        # SSH leg built from a `wss` profile dialled port 443.
+        object.__setattr__(self, "_explicit_port", supplied_port)
 
         object.__setattr__(self, "scheme", scheme_text)
         object.__setattr__(self, "host", resolved["host"] or "")
@@ -333,6 +343,15 @@ class ConnectionString:
         copy = object.__new__(type(self))
         for name in names:
             object.__setattr__(copy, name, changes.get(name, getattr(self, name)))
+        explicit_port = "port" in changes or self._explicit_port
+        if "scheme" in changes and not explicit_port:
+            # A port that was resolved from the old scheme is not an answer
+            # for the new one: `ConnectionString("wss://nas").replace(
+            # scheme="ssh")` used to keep 443.
+            object.__setattr__(
+                copy, "port", _get_default_port(str(changes["scheme"]).casefold())
+            )
+        object.__setattr__(copy, "_explicit_port", explicit_port)
         return copy
 
 
@@ -353,6 +372,7 @@ def _as_defaults(
             field.name: value
             for field in _dc.fields(defaults)
             if (value := getattr(defaults, field.name))
+            and (field.name != "port" or defaults._explicit_port)
         }
     return {name: value for name, value in defaults.items() if value is not None}
 

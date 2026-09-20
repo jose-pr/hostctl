@@ -654,3 +654,33 @@ def test_spawn_looks_past_a_provider_that_cannot_open_sessions():
 
     assert host.spawn("bash") == ("spawned", ("bash",))
     assert {"spawn", "tty"} <= host.capabilities
+
+
+def test_a_percent_encoded_username_survives_a_uri_carrying_a_password():
+    """`SplitResult.username` is still percent-encoded; quoting it again
+    turned `CORP%5Calice` into `CORP%255Calice`.
+
+    The rebuild only happens when a password is present, so the same URI
+    authenticated correctly without one and as the literal encoded name with
+    one -- and drifted further on every round trip.
+    """
+    config = HostConfig("winrm://CORP%5Calice:S3cret@win01")
+
+    assert config.username == "CORP\\alice"
+    assert "CORP%5Calice" in config.connection_uri
+    assert "%255C" not in config.connection_uri
+    assert redact_uri("winrm://CORP%5Calice:S3cret@win01") == (
+        "winrm://CORP%5Calice@win01"
+    )
+
+    # And it is stable across a round trip.
+    assert HostConfig(config.connection_uri, password="S3cret").username == (
+        "CORP\\alice"
+    )
+
+
+def test_a_upn_username_survives_the_same_path():
+    config = HostConfig("winrm://alice%40corp.example:S3cret@win01")
+
+    assert config.username == "alice@corp.example"
+    assert "%2540" not in config.connection_uri

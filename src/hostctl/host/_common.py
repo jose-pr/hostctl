@@ -246,7 +246,12 @@ def _rebuild_authority(parsed: _SplitResult, password: _ty.Optional[str]) -> str
         host = f"{host}:{parsed.port}"
     if not parsed.username:
         return host
-    userinfo = _quote(parsed.username, safe="")
+    # `SplitResult.username` is the raw, still-percent-encoded text: urlsplit
+    # does not decode it. Quoting it again turned `CORP%5Calice` into
+    # `CORP%255Calice`, so a Windows domain or UPN login authenticated as the
+    # literal encoded name -- and drifted further on every round trip. The
+    # rebuild keeps the authority as written.
+    userinfo = parsed.username
     if password is not None:
         userinfo = f"{userinfo}:{password}"
     return f"{userinfo}@{host}"

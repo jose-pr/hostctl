@@ -299,3 +299,31 @@ def test_a_scheme_less_target_error_never_echoes_a_password():
         ConnectionString("svc_backup:hunter2@nas")
 
     assert "hunter2" not in str(error.value)
+
+
+def test_a_resolved_port_does_not_travel_to_another_scheme():
+    """A default port is an answer for the scheme that produced it.
+
+    Materialised into the field it looked explicitly given, so a `wss`
+    profile reused for an SSH leg dialled 443.
+    """
+    profile = ConnectionString("wss://root@nas")
+    assert profile.port == 443
+
+    assert ConnectionString("ssh://nas", defaults=profile).port == 22
+    assert ConnectionString(profile, scheme="ssh").port == 22
+    assert ConnectionString("wss://nas").replace(scheme="ssh").port == 22
+
+
+def test_an_explicit_port_still_travels():
+    explicit = ConnectionString("wss://root@nas:8443")
+
+    assert ConnectionString("ssh://nas", defaults=explicit).port == 8443
+    assert ConnectionString(explicit, scheme="ssh").port == 8443
+    assert ConnectionString("wss://nas:8443").replace(scheme="ssh").port == 8443
+    assert ConnectionString("wss://nas").replace(scheme="ssh", port=2222).port == 2222
+
+
+def test_a_plain_copy_keeps_its_own_default_port():
+    assert ConnectionString(ConnectionString("wss://root@nas")).port == 443
+    assert ConnectionString("wss://nas").replace(host="other").port == 443
