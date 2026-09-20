@@ -582,3 +582,30 @@ def test_winrm_info_parses_partial_response_without_guessing():
 
     host, _ = _host(_Response(out=b"hostname=server\nos_family=Win32NT\n"))
     assert host.info() == HostInfo(hostname="server", os_family="windows")
+
+
+@pytest.mark.parametrize(
+    "uri",
+    (
+        "ssh://root:Tr0ub/4dor@nas.example.com",
+        "ssh://root:s3cr?et@host",
+        "ssh://root:pass#word@host",
+        "ssh://root:a/b?c#d@nas:22/srv",
+    ),
+)
+def test_redact_uri_removes_a_password_urlsplit_cannot_see(uri):
+    """An unencoded `/`, `?` or `#` ends the authority for `urlsplit`.
+
+    No password was detected, so the "redacted" form used to be the input in
+    full -- and randomly generated passwords routinely contain `/`.
+    """
+    redacted = redact_uri(uri)
+
+    assert "@" in redacted
+    for secret in ("Tr0ub", "4dor", "s3cr", "pass#word", "a/b?c#d"):
+        assert secret not in redacted
+
+
+def test_redact_uri_leaves_a_credential_free_uri_alone():
+    assert redact_uri("ssh://nas:22/dir") == "ssh://nas:22/dir"
+    assert redact_uri("wss://nas:8443/api?x=1") == "wss://nas:8443/api?x=1"

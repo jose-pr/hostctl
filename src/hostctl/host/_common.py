@@ -276,9 +276,28 @@ def redact_uri(uri: str) -> str:
     still recognized and removed rather than partly surviving into the output.
     """
     parsed = _urlsplit(_encode_stripped_characters(uri))
-    if parsed.password is None:
+    if parsed.password is not None:
+        return _without_password(parsed).geturl()
+
+    # `urlsplit` finds no password when one contains an unencoded `/`, `?` or
+    # `#`: those end the authority, so the secret lands in the path or query
+    # and the "redacted" form used to be the input in full. Randomly generated
+    # passwords routinely contain `/`.
+    #
+    # Fall back to reading the userinfo textually. The last `@` wins, as it
+    # does in a real authority. This can over-redact a path that contains `@`
+    # -- deliberately: an odd diagnostic beats a password in a log, which is
+    # the trade-off this function already documents.
+    head, separator, _rest = uri.partition("://")
+    start = len(head) + len(separator)
+    authority_end = uri.rfind("@")
+    if authority_end <= start:
         return uri
-    return _without_password(parsed).geturl()
+    userinfo = uri[start:authority_end]
+    username, colon, _secret = userinfo.partition(":")
+    if not colon:
+        return uri
+    return uri[:start] + username + uri[authority_end:]
 
 
 def parse_credentials(password: str) -> _ty.Tuple[str, _ty.Dict[str, str]]:

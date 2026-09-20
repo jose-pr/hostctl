@@ -408,3 +408,36 @@ def test_declines_accessor_exposes_redacted_reasons():
     # Mutating the copy must not disturb selector state.
     selector.declines.clear()
     assert "ssh" in selector.declines
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    (
+        "export DB_PASSWORD=hunter2",
+        "export MYSQL_PWD=hunter2",
+        "export GITHUB_TOKEN=hunter2",
+        "export AWS_SECRET_ACCESS_KEY=hunter2",
+        "$env:DB_PASSWORD='hunter2'",
+        "set DB_PASSWORD=hunter2&run.bat",
+        "app.secret=hunter2",
+        "svc-token=hunter2",
+    ),
+)
+def test_a_prefixed_credential_name_is_redacted(rendered):
+    """`\b` cannot anchor here: `_` is a word character.
+
+    So `\bpassword` never matched inside `DB_PASSWORD`, and every realistic
+    environment-variable spelling reached the DEBUG command log -- and the
+    public selection trace -- in clear text, while the bare `PASSWORD=` form
+    was redacted.
+    """
+    assert "hunter2" not in ProviderSelector.redact(rendered)
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    ("monkey=banana", "donkey=1", "LANG=en_US.UTF-8", "export PATH=/usr/bin"),
+)
+def test_a_name_that_merely_ends_in_a_keyword_is_not_a_secret(rendered):
+    """`monkey` ends in `key`; over-redaction would ruin the diagnostic."""
+    assert ProviderSelector.redact(rendered) == rendered

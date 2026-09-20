@@ -272,8 +272,20 @@ class ProviderSelector:
         )
 
     #: ``name=value`` and ``name: value`` credential assignments.
+    #:
+    #: The keyword may carry any prefix, because a `\b` anchor cannot help
+    #: here: `_` is a word character, so `\bpassword` never matched inside
+    #: `DB_PASSWORD`, and every realistic environment-variable spelling
+    #: (`DB_PASSWORD=`, `MYSQL_PWD=`, `GITHUB_TOKEN=`,
+    #: `AWS_SECRET_ACCESS_KEY=`, `$env:DB_PASSWORD='...'`) went to the log
+    #: verbatim while the bare `PASSWORD=` form was redacted.
+    #: A prefix must end at a separator, so `monkey=banana` is not a secret
+    #: while `DB_PASSWORD=` and `$env:API_KEY=` are.
     _SECRET_ASSIGNMENT = re.compile(
-        r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|key|credential)"
+        r"(?i)(?<![A-Za-z0-9])"
+        r"((?:[A-Za-z0-9_.$:\-]*[_.$:\-])?"
+        r"(?:password|passwd|pwd|secret|token|api[_-]?key|key|credential)"
+        r"[A-Za-z0-9_.\-]*)"
         r"\s*[=:]\s*(\"[^\"]*\"|'[^']*'|[^&\s,;]+)"
     )
     #: ``scheme://user:password@host`` URI userinfo.
