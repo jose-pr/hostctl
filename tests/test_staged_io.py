@@ -141,3 +141,57 @@ def test_a_closed_stream_does_not_upload_twice():
     stream.close()
     stream.close()
     assert len(backend.writes) == 1
+
+
+def test_a_with_block_that_raises_does_not_replace_the_destination():
+    """docs/guide/transfer.md promises exactly this, and it was not true.
+
+    `IOBase.__exit__` closes the stream, and `close()` commits, so an
+    interrupted copy uploaded whatever had been staged -- usually b'',
+    because a failing read raises rather than returning a partial buffer.
+    """
+    backend = _RecordingBackend()
+
+    with pytest.warns(ResourceWarning, match="discarded without committing"):
+        with pytest.raises(RuntimeError):
+            with staged_open(backend, "/f", "w", label="test") as stream:
+                stream.write(b"partial")
+                raise RuntimeError("the source died mid-copy")
+
+    assert backend.writes == []
+    assert backend.contents == b"existing"
+
+
+def test_a_normal_close_still_commits():
+    backend = _RecordingBackend()
+
+    with staged_open(backend, "/f", "w", label="test") as stream:
+        stream.write(b"done")
+
+    assert [value for _, value, _ in backend.writes] == [b"done"]
+
+
+def test_append_mode_writes_at_the_end_after_a_seek():
+    """`a`/`a+` append regardless of position, as O_APPEND does.
+
+    Seeking to the end once at open was not enough: any seek() or read()
+    moved the position and the next write() overwrote existing bytes.
+    """
+    backend = _RecordingBackend()
+
+    with staged_open(backend, "/f", "a+", label="test") as stream:
+        stream.seek(0)
+        assert stream.read(3) == b"exi"
+        stream.write(b"+new")
+
+    assert [value for _, value, _ in backend.writes] == [b"existing+new"]
+
+
+def test_append_writelines_also_lands_at_the_end():
+    backend = _RecordingBackend()
+
+    with staged_open(backend, "/f", "a+", label="test") as stream:
+        stream.seek(0)
+        stream.writelines([b"+a", b"+b"])
+
+    assert [value for _, value, _ in backend.writes] == [b"existing+a+b"]

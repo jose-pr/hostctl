@@ -52,8 +52,33 @@ class StagedWriteStream(io.BytesIO):
         else:
             super().close()
 
+    def discard(self) -> None:
+        """Drop the pending upload; a later `close()` writes nothing."""
+        self._commit = None
+
+    def __exit__(self, *exc_info) -> None:
+        # A `with` block that raised must not replace the destination. Without
+        # this, `IOBase.__exit__` closed the stream and the commit ran anyway,
+        # so an interrupted copy uploaded whatever had been staged -- usually
+        # b'', because a failing read raises rather than returning a partial
+        # buffer. docs/guide/transfer.md promises the opposite.
+        if exc_info and exc_info[0] is not None and self._commit is not None:
+            warnings.warn(
+                f"{self._label} write stream discarded without committing: "
+                f"{exc_info[0].__name__} left the block",
+                ResourceWarning,
+                stacklevel=2,
+            )
+            self.discard()
+        self.close()
+
     def __del__(self):
-        # Never upload from the collector. `io.IOBase.__del__` calls
+        # Never upload from the collector. This guards the BINARY case only:
+        # `pathlib_next.Path.open()` wraps a text mode in its own
+        # `io.TextIOWrapper`, and that wrapper's finalizer closes the buffer,
+        # which commits -- so an abandoned or exception-interrupted text
+        # stream still uploads. Closing that needs a wrapper hook upstream;
+        # see ../pathlib-next findings. `io.IOBase.__del__` calls
         # `close()`, so without this the pending commit would run at an
         # arbitrary point with its exceptions printed and discarded -- a
         # network write nobody asked for and nobody can catch.
@@ -68,6 +93,25 @@ class StagedWriteStream(io.BytesIO):
             super().close()
         except Exception:
             pass
+
+
+class StagedAppendStream(StagedWriteStream):
+    """A staged stream whose writes always land at the end, as `O_APPEND` does.
+
+    Seeking to the end once at open is not enough: the stream is a seekable
+    buffer, so any `seek()` or `read()` moved the position and the next
+    `write()` overwrote existing bytes -- silently, and only visible once the
+    whole buffer was uploaded on close. Real `a`/`a+` files append regardless
+    of position.
+    """
+
+    def write(self, data) -> int:  # type: ignore[override]
+        self.seek(0, io.SEEK_END)
+        return super().write(data)
+
+    def writelines(self, lines) -> None:  # type: ignore[override]
+        self.seek(0, io.SEEK_END)
+        super().writelines(lines)
 
 
 def validate_open_mode(mode: str) -> typing.Tuple[bool, bool]:
@@ -112,7 +156,8 @@ def staged_open(backend: object, path: str, mode: str, *, label: str) -> io.IOBa
             value = b""
     else:
         value = b""
-    stream = StagedWriteStream(
+    stream_type = StagedAppendStream if "a" in mode else StagedWriteStream
+    stream = stream_type(
         value,
         (
             (
