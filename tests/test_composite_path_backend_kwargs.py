@@ -8,8 +8,6 @@ selected backend declares is passed through, and one it does not is rejected
 inside a transport.
 """
 
-import inspect
-
 import pytest
 from pathlib_next.mempath import MemPath, MemPathBackend
 
@@ -90,15 +88,11 @@ def test_no_kwargs_leaves_the_stdlib_call_untouched(host):
 def test_force_reaches_a_real_backend_end_to_end(tmp_path):
     """`symlink_to(force=)` over a genuine backend, no fake in the way.
 
-    As of pathlib_next 0.9.0+, `force=` is a generic `Path` extension rather
-    than a backend-specific one, so this exercises the whole chain --
-    composite wrapper, signature check, real filesystem -- which is the call
-    that raised `TypeError` before the passthrough existed.
+    `force=` is a generic `Path` extension in pathlib_next, so this exercises
+    the whole chain -- composite wrapper, signature check, real filesystem --
+    which is the call that raised `TypeError` before the passthrough existed.
     """
     from pathlib_next import Path as PnPath
-
-    if "force" not in inspect.signature(PnPath.symlink_to).parameters:
-        pytest.skip("installed pathlib_next predates symlink_to(force=)")
 
     provider = PathProvider(
         "local",

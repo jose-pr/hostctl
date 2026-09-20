@@ -310,5 +310,9 @@ def test_open_modes_are_strict(mode):
         backend=QgaPathBackend(_Transport(), supported_commands=FILE_COMMANDS),
     )
 
-    with pytest.raises(ValueError, match="invalid mode"):
+    # What matters here is that the mode is refused, not which layer refuses
+    # it: `pathlib_next.Path.open()` rejects some of these spellings before
+    # the backend sees them, and its wording is its own to change.
+    # `validate_open_mode`'s message is pinned in tests/test_staged_io.py.
+    with pytest.raises(ValueError):
         path.open(mode)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import importlib
 import logging
 import os
 import subprocess
@@ -207,7 +206,6 @@ class _SshTransport:
             typing.Tuple[typing.Tuple[object, ...], ShellFlavour, typing.Optional[str]]
         ] = None
         self._sftp_backend: typing.Optional[object] = None
-        self._sftp_sources: typing.Set[object] = set()
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:
@@ -365,28 +363,12 @@ class _SshTransport:
                 raise normalized from exc
 
     def _invalidate_sftp(self) -> None:
-        backend, sources = self._sftp_backend, tuple(self._sftp_sources)
-        self._sftp_backend = None
-        self._sftp_sources.clear()
+        backend, self._sftp_backend = self._sftp_backend, None
         if backend is None:
             return
-        invalidate = getattr(backend, "invalidate", None)
-        if callable(invalidate):
-            for source in sources:
-                invalidate(source)
-            return
-        # pathlib_next 0.8.x exposes cache invalidation internally while its
-        # public backend API remains intentionally small. Use that hook when
-        # available; dropping our backend reference is the safe fallback.
-        try:
-            module = importlib.import_module("pathlib_next.uri.schemes.sftp._asyncssh")
-            cache = getattr(module, "_CACHE", None)
-            invalidate_cache = getattr(cache, "invalidate", None)
-            if callable(invalidate_cache):
-                for source in sources:
-                    invalidate_cache((backend, source))
-        except (ImportError, AttributeError):
-            pass
+        # `BaseSftpBackend.close()` closes every connection the backend
+        # cached and leaves it usable, so the next path() reconnects.
+        backend.close()
 
     def path(self, *segments: PathLike) -> HostPath:
         from pathlib_next.uri.schemes.sftp import AsyncsshSftpBackend, SftpPath
@@ -409,7 +391,6 @@ class _SshTransport:
                 f"{quote(remote_path, safe=_URI_PATH_SAFE)}",
                 backend=self._sftp_backend,
             )
-            self._sftp_sources.add(path.source)
             return path
 
     def run(
