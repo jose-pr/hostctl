@@ -10,6 +10,7 @@ import pytest
 from hostctl.executor._qga import (
     LibvirtGuestAgentTransport,
     QgaCommandError,
+    QgaDisconnectedError,
     QgaProtocolError,
     QgaTimeoutError,
     UnixSocketGuestAgentTransport,
@@ -257,3 +258,52 @@ def test_libvirt_lookup_failure_closes_connection_and_keyboard_interrupt_passes(
     )
     with pytest.raises(KeyboardInterrupt):
         transport.execute({"execute": "guest-ping"})
+
+
+class _UnreachableSocket:
+    """A socket whose connect() fails the way a missing QGA socket does."""
+
+    def __init__(self, error):
+        self._error = error
+        self.closed = False
+
+    def settimeout(self, value):
+        pass
+
+    def connect(self, path):
+        raise self._error
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.mark.parametrize(
+    "error",
+    (
+        FileNotFoundError(2, "No such file or directory"),
+        ConnectionRefusedError(111, "Connection refused"),
+        PermissionError(13, "Permission denied"),
+    ),
+)
+def test_an_unreachable_qga_socket_is_a_transport_error(error):
+    """A missing socket must not look like a missing guest FILE.
+
+    Raised as the bare FileNotFoundError it arrives as, `_qga_error` matched
+    the message and reported the guest path missing; `staged_open` read that
+    as "'a' creates what is missing", staged an empty buffer, and truncated
+    the guest file when the agent came back.
+    """
+    stream = _UnreachableSocket(error)
+    transport = UnixSocketGuestAgentTransport(
+        "/run/qga.sock", socket_factory=lambda *args: stream
+    )
+
+    with pytest.raises(
+        QgaDisconnectedError, match="cannot reach the QGA socket"
+    ) as raised:
+        transport.execute({"execute": "example"})
+
+    # The distinction that matters downstream: `staged_open` swallows a
+    # FileNotFoundError for mode "a", and would stage an empty buffer.
+    assert not isinstance(raised.value, FileNotFoundError)
+    assert stream.closed

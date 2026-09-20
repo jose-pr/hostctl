@@ -458,12 +458,31 @@ class UnixSocketGuestAgentTransport(_QgaFramedSession):
         try:
             connection.settimeout(self._remaining(deadline))
             connection.connect(self.path)
+        except socket.timeout as exc:
+            self._drop_socket(connection)
+            raise QgaTimeoutError(
+                f"timed out connecting to the QGA socket {self.path}"
+            ) from exc
+        except OSError as exc:
+            # A missing or refused socket is a *transport* failure. Raised as
+            # the bare FileNotFoundError it arrives as, it was indistinguishable
+            # from "the guest file does not exist": `_qga_error` matched the
+            # message and returned FileNotFoundError for the guest path, and
+            # `staged_open` read that as "'a' creates what is missing", staged
+            # an empty buffer, and truncated the guest file on close.
+            self._drop_socket(connection)
+            raise QgaDisconnectedError(
+                f"cannot reach the QGA socket {self.path}"
+            ) from exc
         except Exception:
-            try:
-                connection.close()
-            finally:
-                self._socket = None
+            self._drop_socket(connection)
             raise
+
+    def _drop_socket(self, connection: "socket.socket") -> None:
+        try:
+            connection.close()
+        finally:
+            self._socket = None
 
     def _send_raw(self, data: bytes, deadline: float) -> None:
         connection = self._require_socket()
