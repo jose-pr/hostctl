@@ -129,8 +129,14 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             if isinstance(keys, (str, bytes, os.PathLike)):
                 keys = [keys]
             opts["client_keys"] = keys
-        if self.known_hosts != ():
-            opts["known_hosts"] = self.known_hosts
+        # Always passed, never omitted on the default. `()` is asyncssh's own
+        # "resolve known_hosts the usual way" value, so the exec leg is
+        # unchanged -- but pathlib_next's SFTP connect seeds `known_hosts=None`
+        # (verification off) for options it is not given, so omitting the key
+        # made the path leg accept any host key, including a substituted one,
+        # and hand it the password. Opting out stays possible and explicit:
+        # `known_hosts=None`.
+        opts["known_hosts"] = self.known_hosts
         return opts
 
     @property

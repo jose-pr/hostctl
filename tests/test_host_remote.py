@@ -140,6 +140,24 @@ def test_ssh_config_uses_explicit_authentication_fields():
     }
 
 
+def test_default_config_still_verifies_the_host_key_on_every_leg():
+    """`known_hosts` is never omitted, whatever its value.
+
+    pathlib_next's SFTP connect seeds `known_hosts=None` -- verification off --
+    for options it is not handed. Omitting the key on its `()` default meant
+    `run()` verified the server key while `path()` accepted any key, including
+    a substituted one, and sent it the password.
+    """
+    options = SshConfig("host", password="secret").connect_opts()
+
+    assert "known_hosts" in options
+    assert options["known_hosts"] == ()
+
+
+def test_opting_out_of_host_key_verification_stays_explicit():
+    assert SshConfig("host", known_hosts=None).connect_opts()["known_hosts"] is None
+
+
 def test_ssh_key_path_is_not_reencoded():
     key = Path("id_ed25519")
     assert SshConfig("host", client_keys=key).connect_opts()["client_keys"] == [key]
