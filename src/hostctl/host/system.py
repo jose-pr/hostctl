@@ -212,10 +212,23 @@ class SystemConfig(HostConfig):
                 f"{type(self).__name__} is abstract and creates no host; "
                 f"use a concrete system configuration ({names})"
             )
+        # A fresh transport cache per host. The cache exists so that ONE
+        # host's executor and path providers share a connection -- not so that
+        # two hosts do. Kept on the config, it outlived the host: two
+        # `config.open()` calls returned hosts wired to the same SSH/WinRM
+        # transport, and either one's `close()` tore down the connection the
+        # other was using mid-command.
+        previous = self._provider_transports
+        self._provider_transports = {}
+        try:
+            executor_providers = self._build_providers("executor")
+            path_providers = self._build_providers("path")
+        finally:
+            self._provider_transports = previous
         return self.host_type(
             self,
-            executor_providers=self._build_providers("executor"),
-            path_providers=self._build_providers("path"),
+            executor_providers=executor_providers,
+            path_providers=path_providers,
         )
 
 
@@ -277,6 +290,7 @@ class SystemHost(Host):
         if self._initializer is not None and not callable(self._initializer):
             raise TypeError("initializer must be callable")
         self._initializer_generation = False
+        self._initializing = False
         self._connected = False
         self._connected_providers = []
         self._closed_targets = set()
@@ -411,26 +425,53 @@ class SystemHost(Host):
                     close()
             raise
         self._connected_providers = connected
-        if self._initializer is not None and not self._initializer_generation:
-            try:
-                # `SessionInitializer` is itself callable and applies its own
-                # default timeout, so it and a plain callable are invoked
-                # identically -- there is no separate branch to take.
-                self._initializer(self)
-                self._initializer_generation = True
-            except BaseException:
-                for provider in reversed(connected):
-                    close = getattr(provider, "close", None)
-                    if close:
-                        try:
-                            close()
-                        except BaseException:
-                            pass
-                self._connected_providers = []
-                self._executor_selector.invalidate()
-                self._path_selector.invalidate()
-                raise
+        self._run_initializer_locked(connected)
         self._connected = True
+
+    def _run_initializer_locked(self, connected) -> None:
+        """Run the session initializer once per connection generation.
+
+        Called from the explicit `connect()` *and* from the lazy path, because
+        `run()`, `path()` and `spawn()` all open a generation without going
+        through `connect()` -- and providers.md promises the initializer runs
+        once per generation, before the host is handed to the caller. It used
+        to run only from `connect()`, so a host used lazily was bootstrapped
+        silently not at all.
+
+        The `_initializing` guard is what makes the lazy path safe: the
+        initializer is handed this host and legitimately calls `run()`, which
+        re-enters here through `_ensure_provider_connected` (the lock is an
+        RLock for exactly that), and `_initializer_generation` is only set
+        afterwards -- so without the guard the nested call would start the
+        initializer again.
+        """
+        if (
+            self._initializer is None
+            or self._initializer_generation
+            or self._initializing
+        ):
+            return
+        self._initializing = True
+        try:
+            # `SessionInitializer` is itself callable and applies its own
+            # default timeout, so it and a plain callable are invoked
+            # identically -- there is no separate branch to take.
+            self._initializer(self)
+            self._initializer_generation = True
+        except BaseException:
+            for provider in reversed(connected):
+                close = getattr(provider, "close", None)
+                if close:
+                    try:
+                        close()
+                    except BaseException:
+                        pass
+            self._connected_providers = []
+            self._executor_selector.invalidate()
+            self._path_selector.invalidate()
+            raise
+        finally:
+            self._initializing = False
 
     def close(self):
         with self._lifecycle_lock:
@@ -543,6 +584,11 @@ class SystemHost(Host):
                 ),
             )
         try:
+            # Bookkeeping first: a path provider reconnects its transport
+            # lazily, and going straight to it left the reopened connection on
+            # `_closed_targets`, so every later close() skipped it and the
+            # connection lived until process exit.
+            self._ensure_provider_connected(selected.provider)
             value = selected.provider.path(*segments)
             path_type = (
                 CompositeWindowsPath
@@ -564,6 +610,7 @@ class SystemHost(Host):
             fallback = self._path_selector.select(
                 exclude=(selected.provider.name,)
             ).provider
+            self._ensure_provider_connected(fallback)
             value = fallback.path(*segments)
             path_type = (
                 CompositeWindowsPath
@@ -764,9 +811,11 @@ class SystemHost(Host):
             target = getattr(provider, "transport", provider)
             self._closed_targets.discard(id(target))
             self._connected_providers.append(provider)
+            self._run_initializer_locked([provider])
 
     def spawn(self, *cmds, **options):
         provider = self._executor_selector.select().provider
+        self._ensure_provider_connected(provider)
         spawn = getattr(provider, "spawn", None)
         if spawn is None:
             raise NotImplementedError(
@@ -778,6 +827,7 @@ class SystemHost(Host):
         """Return a provider-owned typed runspace when one is available."""
         selected = self._executor_selector.select(capability="runspace")
         provider = selected.provider
+        self._ensure_provider_connected(provider)
         method = getattr(provider, "runspace", None)
         if method is None:
             raise NotImplementedError(

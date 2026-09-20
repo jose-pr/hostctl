@@ -633,3 +633,119 @@ def test_a_shell_less_host_refuses_context_it_cannot_apply():
 
     with pytest.raises(NotImplementedError, match="cannot apply cwd or env"):
         host.run(Exec("/bin/true"), cwd="/srv", check=False)
+
+
+class _TransportProvider(PathProvider):
+    """A path provider whose transport records its connect/close calls."""
+
+    def __init__(self, backend, events):
+        super().__init__("mem", lambda *parts: MemPath(*parts, backend=backend))
+        self.events = events
+        self.transport = self
+
+    def connect(self):
+        self.events.append("connect")
+
+    def close(self):
+        self.events.append("close")
+
+
+def test_a_connection_reopened_through_path_is_closed_again():
+    """`_closed_targets` was only cleared by connect()/run().
+
+    `path()`, `spawn()` and `runspace()` dispatched straight to the provider,
+    so a transport they reopened stayed marked closed and every later close()
+    skipped it -- the connection lived until process exit, and repeated cycles
+    piled up connections on the server.
+    """
+    events = []
+    host = PosixHost(path_providers=(_TransportProvider(MemPathBackend(), events),))
+
+    host.connect()
+    host.close()
+    host.path("x")
+    host.close()
+
+    assert events == ["connect", "close", "connect", "close"]
+
+
+def test_the_initializer_runs_for_a_host_used_without_connect():
+    """providers.md promises once per connection generation, not per connect().
+
+    A host used lazily -- `run()`, `path()`, `spawn()` -- opened a generation
+    with the documented bootstrap silently skipped.
+    """
+    ran = []
+    host = PosixHost(
+        executor_providers=(
+            ExecutorProvider(
+                "bare",
+                lambda command, *args, **options: subprocess.CompletedProcess(
+                    (command,), 0, b"", b""
+                ),
+                capabilities=(),
+            ),
+        ),
+        initializer=SessionInitializer(lambda connected: ran.append(connected)),
+    )
+
+    host.run("systemctl restart app", check=False)
+
+    assert ran == [host]
+
+    host.run("systemctl status app", check=False)
+    assert ran == [host], "the initializer must run once per generation"
+
+
+def test_an_initializer_that_runs_a_command_does_not_recurse():
+    """The initializer is handed the host and legitimately calls run()."""
+    ran = []
+
+    def bootstrap(connected):
+        ran.append("start")
+        connected.run("sudo -v", check=False)
+        ran.append("done")
+
+    host = PosixHost(
+        executor_providers=(
+            ExecutorProvider(
+                "bare",
+                lambda command, *args, **options: subprocess.CompletedProcess(
+                    (command,), 0, b"", b""
+                ),
+                capabilities=(),
+            ),
+        ),
+        initializer=bootstrap,
+    )
+
+    host.run("uptime", check=False)
+
+    assert ran == ["start", "done"]
+
+
+def test_two_hosts_from_one_config_do_not_share_a_transport():
+    """The cache exists so ONE host's providers share a connection.
+
+    Kept on the config it outlived the host, so a health check's `close()`
+    tore down the SSH connection a worker was using mid-command. Uses the SSH
+    descriptors because they are what the cache serves; `local` providers
+    build no transport at all.
+    """
+    from hostctl import SshConfig
+
+    config = PosixConfig(
+        "node",
+        executor=("ssh",),
+        path=("sftp",),
+        provider_options={"ssh": SshConfig("node", username="root")},
+    )
+
+    first, second = config._create_host(), config._create_host()
+
+    first_transport = first._executor_selector.providers[0].transport
+    second_transport = second._executor_selector.providers[0].transport
+    assert first_transport is not second_transport
+
+    # The sharing the cache exists for still holds inside one host.
+    assert first._path_selector.providers[0].transport is first_transport
