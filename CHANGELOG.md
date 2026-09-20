@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The `pathlib_next` floor moves to `>=0.9.10` in both `dependencies` and
+  the `ssh` extra. **0.9.4 through 0.9.9 cannot be used**: those releases
+  decide "same file" and "overlapping trees" by falling back to path
+  equality, which compares `(type, segments)` and knows nothing about
+  hosts, so copying `/etc/app.conf` from one host to the same path on
+  another was refused with `OSError [Errno 22] Source and target are the
+  same file` (and `PathSyncer` with "source and target overlap"). 0.9.10
+  adds the `_same_filesystem()` hook this release answers.
+
+### Fixed
+
+- **A transfer between two hosts is no longer mistaken for a file copied
+  onto itself.** `CompositePosixPath`/`CompositeWindowsPath` now answer
+  `pathlib_next`'s `_same_filesystem()` with the host's provider set, so
+  two hosts are two namespaces even when a path is spelled identically on
+  both, while two paths on one host still are one — which keeps the guard
+  that refuses `copy()` of a file onto itself. A `.via()` pin selects a
+  route to the host, not a different host, and answers accordingly.
+- **One unsupported operation no longer takes a path provider out of
+  service.** A `NotImplementedError` from a retry-safe call was recorded as
+  a decline on the host's shared provider selector, which every later
+  operation then consulted: after a backend refused `samefile()` — it needs
+  `st_dev`/`st_ino`, which many remote stats lack — the next read on any
+  path of that host failed with `no path provider supports open_read`. The
+  refusal is now scoped to the call that raised it. `OperationNotStarted`
+  still declines the provider for the generation, as before.
+
 ## [0.2.7] - 2026-08-16
 
 ### Changed
