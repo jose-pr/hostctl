@@ -337,3 +337,29 @@ def test_a_via_pin_does_not_change_which_filesystem_a_path_is_on():
     path = host.path("app.conf")
 
     assert path._same_filesystem(path.via("second"))
+
+
+def test_supported_checksums_reports_none_instead_of_raising():
+    """`NativeChecksum` documents this as advisory and never-raising.
+
+    Forwarded like an ordinary operation it raised `NotImplementedError` --
+    which `PathSyncer`'s default policy calls bare, so a sync between two
+    composite paths aborted on the first file present on both sides.
+    """
+    backend = MemPathBackend()
+    _memory_file(backend, "app.conf", b"data")
+    host = _memory_host("only", backend)
+
+    assert host.path("app.conf").supported_checksums() == frozenset()
+
+
+def test_the_default_sync_policy_runs_between_two_composite_paths():
+    source_backend, target_backend = MemPathBackend(), MemPathBackend()
+    _memory_file(source_backend, "app.conf", b"new")
+    _memory_file(target_backend, "app.conf", b"old")
+    source = _memory_host("source", source_backend).path("app.conf")
+    target = _memory_host("target", target_backend).path("app.conf")
+
+    PathSyncer().sync(source, target, dry_run=True)
+
+    assert MemPath("app.conf", backend=target_backend).read_bytes() == b"old"

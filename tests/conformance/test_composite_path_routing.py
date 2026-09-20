@@ -144,3 +144,70 @@ def test_a_same_provider_destination_still_takes_the_backend_route():
     host.path("one.txt").move(host.path("two.txt"))
 
     assert calls == [("one.txt", "two.txt")]
+
+
+def test_a_joined_composite_does_not_borrow_its_parents_backend_path():
+    """`CompositePosixPath(parent, "cache")` is the public pathlib idiom.
+
+    It inherited the parent's cached backend path, so every operation went to
+    the parent -- `rm(recursive=True)` on the "child" deleted the parent tree.
+    """
+    from hostctl import CompositePosixPath
+
+    backend = MemPathBackend()
+    for directory in ("srv", "srv/app", "srv/app/cache"):
+        MemPath(directory, backend=backend).mkdir(parents=True)
+    MemPath("srv/app/config.ini", backend=backend).write_bytes(b"keep me")
+    MemPath("srv/app/cache/x.tmp", backend=backend).write_bytes(b"junk")
+    host = PosixHost(path_providers=(_memory_provider("mem", backend),))
+
+    parent = host.path("srv/app")
+    child = CompositePosixPath(parent, "cache")
+
+    assert str(child) == "srv/app/cache"
+    assert str(child._provider_path(child.provider)) == "srv/app/cache"
+
+    child.rm(recursive=True)
+
+    assert MemPath("srv/app/config.ini", backend=backend).exists()
+    assert not MemPath("srv/app/cache", backend=backend).exists()
+
+
+def test_a_plain_copy_keeps_the_backend_path_it_was_built_for():
+    backend = MemPathBackend()
+    MemPath("srv", backend=backend).mkdir(parents=True)
+    host = PosixHost(path_providers=(_memory_provider("mem", backend),))
+    original = host.path("srv")
+
+    from hostctl import CompositePosixPath
+
+    copy = CompositePosixPath(original)
+
+    assert copy._backend_path is original._backend_path
+
+
+def test_a_uri_backed_path_reports_a_filesystem_logical_path():
+    """`str()` of an SftpPath is the whole `sftp://host:port/...` URI.
+
+    Used as the logical path it sent I/O to `/sftp:/host:22/...`, so a
+    resolved symlink reported `exists()` False and a relative target raised.
+    """
+    from hostctl import SshConfig
+
+    host = PosixHost.from_ssh(SshConfig("h", username="root"))
+
+    assert str(host.path()) == "/"
+    assert str(host.path() / "srv" / "app.conf") == "/srv/app.conf"
+    assert str(host.path("/etc/hosts")) == "/etc/hosts"
+
+
+def test_logical_text_prefers_the_filesystem_spelling():
+    from pathlib_next.uri.schemes.sftp import SftpPath
+
+    from hostctl.host.composite_path import _logical_text
+
+    assert (
+        _logical_text(SftpPath("sftp://h:22/usr/lib/jvm/java")) == "/usr/lib/jvm/java"
+    )
+    # A backend with no filesystem spelling keeps its own text.
+    assert _logical_text(MemPath("srv/x", backend=MemPathBackend())) == "srv/x"

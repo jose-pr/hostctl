@@ -9,6 +9,7 @@ authority for I/O.
 from __future__ import annotations
 
 import inspect
+import os
 import pathlib
 import typing
 
@@ -71,6 +72,23 @@ def _accepts_kwargs(
             + ", ".join(repr(name) for name in unsupported)
         )
     return kwargs
+
+
+def _logical_text(backend_path: Path) -> str:
+    """The path text a backend path names *on its own host*.
+
+    `str()` of a URI-shaped backend path is the whole URI -- an `SftpPath`
+    renders as `sftp://host:22/srv/x`, which is not a path on the target, and
+    a relative one raises. Used as a logical path it sent I/O to
+    `/sftp:/host:22/srv/x`, so a resolved symlink reported `exists()` False.
+    `__fspath__()` is what a host-filesystem scheme answers with; backends
+    that have no filesystem spelling (MemPath) raise, and for those `str()` is
+    already the right text.
+    """
+    try:
+        return os.fspath(backend_path)
+    except (NotImplementedError, TypeError, ValueError):
+        return str(backend_path)
 
 
 def _resolves_on(target: object, provider: typing.Optional[PathProvider]) -> bool:
@@ -171,7 +189,6 @@ _FORWARDED: "dict[str, tuple[str, bool, bool]]" = {
     "read_bytes": ("read", False, True),
     "read_text": ("read", False, True),
     "checksum": ("read", False, True),
-    "supported_checksums": ("read", False, True),
     "chown": ("chmod", True, True),
     "chmod": ("chmod", True, True),
     "lchmod": ("chmod", True, True),
@@ -293,7 +310,7 @@ class _CompositePathMixin:
         logical_segments: typing.Iterable[object] = (),
     ):
         return cls(
-            *(logical_segments or (str(backend_path),)),
+            *(logical_segments or (_logical_text(backend_path),)),
             backend_path=backend_path,
             provider=provider,
             factory=factory,
@@ -537,7 +554,17 @@ class _CompositePathMixin:
             providers = providers or inherited.providers
             selector = selector or inherited._selector
             pinned = pinned or inherited._pinned
-            backend_path = backend_path or inherited._backend_path
+            if backend_path is None:
+                # Only a straight copy inherits the cached backend path: it
+                # describes the path it was built for. Joining further
+                # segments -- `CompositePosixPath(parent, "cache")`, the public
+                # constructor -- kept the parent's backend, so every operation
+                # silently acted on the parent and `rm(recursive=True)` on the
+                # "child" deleted the parent tree.
+                # Left unset when segments were joined: `_provider_path()`
+                # builds one from this path's own text on first use.
+                if len(tuple(segments)) == 1:
+                    backend_path = inherited._backend_path
         self._provider = provider
         self._backend_path = backend_path
         self._providers = tuple(providers) or ((provider,) if provider else ())
@@ -549,11 +576,11 @@ class _CompositePathMixin:
         )
 
     def _routing_state_is_complete(self) -> bool:
-        return (
-            self._provider is not None
-            and self._backend_path is not None
-            and self._factory is not None
-        )
+        # A cached backend path is deliberately not required: one is built on
+        # first use from this path's own text. Requiring it forced a joined
+        # path to borrow its parent's, which then took every operation to the
+        # parent.
+        return self._provider is not None and self._factory is not None
 
     def _provider_path(self, provider: PathProvider) -> Path:
         if (
@@ -680,15 +707,34 @@ class _CompositePathMixin:
         # readlink() reports the stored target verbatim -- a relative target
         # stays relative, exactly like pathlib.Path.readlink(). Rebuild it as
         # a composite path so the result keeps this path's provider routing.
+        text = _logical_text(target)
         return type(self).from_path(
-            provider.path(str(target)),
+            provider.path(text),
             provider,
             provider.path,
             self._providers,
             self._selector,
             pinned=self._pinned,
-            logical_segments=(str(target),),
+            logical_segments=(text,),
         )
+
+    def supported_checksums(self) -> frozenset:
+        """Algorithms the selected backend can digest remotely, or none.
+
+        Hand-written rather than a `_FORWARDED` row: `NativeChecksum`
+        documents this as advisory and says it never raises, and most backends
+        do not implement it at all. Forwarded, it raised `NotImplementedError`
+        straight into `PathSyncer`'s default policy, which calls it bare --
+        so a sync between two composite paths aborted on the first file.
+        """
+        try:
+            return self._dispatch(
+                "read",
+                lambda path: frozenset(getattr(path, "supported_checksums")()),
+                retry_on_not_implemented=True,
+            )
+        except (NotImplementedError, AttributeError):
+            return frozenset()
 
     def _rename_compatible(self, target: "Path") -> bool:
         """Whether `rename()` may be attempted onto `target` at all.
