@@ -36,21 +36,28 @@ classifiers = [
 #
 # Each floor is the `.0` of the dependency's current minor series, raised
 # above it only where hostctl needs a later patch. pathlib_next is that
-# exception: `Path.symlink_to()` -- and with it the `force=` keyword -- first
-# exists in 0.9.1, and the composite path forwards `symlink_to` to whichever
-# backend path it was handed, so against a stock 0.9.0 `Path` the call raises
-# `AttributeError` (measured on 3.9 and 3.14). netimps has no such case and
-# floors at the series start. The ceilings stay at the next major-ish boundary
-# because both projects are pre-1.0, where a minor may break. Composite kwargs
-# passthrough does not change this: forwarding is signature-aware, so a
-# `force=` the installed pathlib_next does not declare is rejected at the
-# composite boundary rather than inside a transport.
-dependencies = ["pathlib_next>=0.9.1,<0.10", "netimps>=0.2.0,<0.3"]
+# exception, and 0.9.10 is the floor for two reasons:
+#
+# * `Path._same_filesystem()`, which 0.9.10 added, is how a composite path
+#   tells pathlib_next that two hosts are two namespaces. Without it the
+#   copy/move/sync guards fall back to path equality -- `(type, segments)`,
+#   blind to hosts -- so 0.9.4 through 0.9.9 refuse to copy `/etc/app.conf`
+#   from one host to the same path on another (`EINVAL "Source and target
+#   are the same file"`, and `PathSyncer` "source and target overlap").
+#   0.9.4 is where those guards landed, so the whole 0.9.4-0.9.9 window is
+#   excluded rather than merely undesirable.
+# * `BaseSftpBackend.close()` is the public way to drop a backend's cached
+#   connections, which `SshTransport.close()` calls.
+#
+# netimps has no such case and floors at the series start. The ceilings stay
+# at the next major-ish boundary because both projects are pre-1.0, where a
+# minor may break.
+dependencies = ["pathlib_next>=0.9.10,<0.10", "netimps>=0.2.0,<0.3"]
 
 [project.optional-dependencies]
 # SSH-backed run()/path(): asyncssh for shell exec, pathlib_next's SftpPath
 # (asyncssh-only since 0.8.2) for the remote path backend.
-ssh = ["asyncssh", "pathlib_next[sftp-async]>=0.9.1,<0.10"]
+ssh = ["asyncssh", "pathlib_next[sftp-async]>=0.9.10,<0.10"]
 # Windows Remote Management command execution.
 winrm = ["pywinrm>=0.5.0,<0.6"]
 # PowerShell Remoting Protocol runspaces (Python 3.10+ only).  The marker

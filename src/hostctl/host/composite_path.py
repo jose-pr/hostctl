@@ -295,6 +295,24 @@ class _CompositePathMixin:
     def selection_trace(self):
         return self._selection_trace
 
+    def _same_filesystem(self, other: "Path") -> bool:
+        """Whether `other`'s segments resolve in the namespace this path does.
+
+        `pathlib_next` asks this before `copy()`, `move()` and `PathSyncer`
+        decide two paths are the same file or overlapping trees. Without an
+        answer it falls back to equality, which is `(type, segments)` and so
+        reads `/etc/app.conf` on two different hosts as one file and refuses
+        the transfer.
+
+        The answer is the host's provider set: one shared object per composed
+        host, kept across `path()` calls and through a `.via()` pin. The
+        *selected* provider is the wrong token -- it changes per operation,
+        so two paths on one host could disagree and lose the guard against
+        copying a file onto itself -- and resolving it may probe, which is
+        I/O this hook must not do.
+        """
+        return self._providers is other._providers
+
     def _adopt(
         self, provider: PathProvider, backend_path: Path, *, pinned: bool
     ) -> None:
@@ -377,8 +395,14 @@ class _CompositePathMixin:
                     self._provider, self._backend_path, self._factory, self._pinned = (
                         old
                     )
-                if self._selector is not None:
-                    self._selector.decline(provider.name, str(exc))
+                # Deliberately NOT declined on the selector: this says the
+                # provider cannot do *this operation*, not that it is
+                # unusable. Declining it there is remembered for every later
+                # operation on every path of the host, so one unsupported
+                # derived call (`samefile()` on a backend whose stat carries
+                # no st_dev/st_ino) took the whole provider out and the next
+                # read failed with "no path provider supports open_read".
+                # `excluded` already stops us retrying it for this call.
                 continue
             except OperationNotStarted as exc:
                 if pin:

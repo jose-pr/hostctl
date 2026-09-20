@@ -269,3 +269,71 @@ def test_progress_reader_reports_copy_progress():
 
     assert destination.getvalue() == b"abcdef"
     assert events[-1] == (6, 6)
+
+
+def _memory_host(name, backend):
+    """A host whose only path provider reads and writes `backend`."""
+    return PosixHost(
+        executor_providers=(
+            ExecutorProvider(
+                name,
+                lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, "", ""),
+            ),
+        ),
+        path_providers=(
+            PathProvider(
+                name,
+                lambda *parts: MemPath(*parts, backend=backend),
+                capabilities=PathProvider.DEFAULT_CAPABILITIES | {"open_read"},
+            ),
+        ),
+    )
+
+
+def test_two_hosts_are_two_filesystems_even_when_paths_are_spelled_alike():
+    """`/app.conf` on one host is not `/app.conf` on another.
+
+    pathlib_next decides "same file" through `_same_filesystem()`; without an
+    answer it falls back to `(type, segments)` equality and refuses the copy
+    with `EINVAL "Source and target are the same file"`.
+    """
+    source_backend, target_backend = MemPathBackend(), MemPathBackend()
+    _memory_file(source_backend, "app.conf", b"new config")
+    _memory_file(target_backend, "app.conf", b"old config")
+    source = _memory_host("source", source_backend).path("app.conf")
+    target = _memory_host("target", target_backend).path("app.conf")
+
+    assert not source._same_filesystem(target)
+    source.copy(target, overwrite=True)
+
+    assert target.read_bytes() == b"new config"
+
+
+def test_one_host_is_one_filesystem_so_copying_a_file_onto_itself_is_refused():
+    """The other direction: the guard that protects a file from itself."""
+    backend = MemPathBackend()
+    _memory_file(backend, "app.conf", b"payload")
+    host = _memory_host("host", backend)
+    path, same_path = host.path("app.conf"), host.path("app.conf")
+
+    assert path._same_filesystem(same_path)
+    with pytest.raises(OSError, match="same file"):
+        path.copy(same_path, overwrite=True)
+    with pytest.raises(ValueError, match="overlap"):
+        PathSyncer(stat_checksum).sync(path, same_path)
+
+    assert path.read_bytes() == b"payload"
+
+
+def test_a_via_pin_does_not_change_which_filesystem_a_path_is_on():
+    """`.via()` selects a route to the host, not a different host."""
+    backend = MemPathBackend()
+    host = PosixHost(
+        path_providers=(
+            PathProvider("first", lambda *parts: MemPath(*parts, backend=backend)),
+            PathProvider("second", lambda *parts: MemPath(*parts, backend=backend)),
+        )
+    )
+    path = host.path("app.conf")
+
+    assert path._same_filesystem(path.via("second"))

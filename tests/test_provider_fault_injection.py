@@ -531,3 +531,36 @@ def test_read_only_download_provider_rejects_a_mutation_without_fallback():
     assert "write" not in download.capabilities
     assert not MemPath("payload", backend=writable_backend).exists()
     assert injector.calls == []
+
+
+# --- (f) an unsupported operation does not take the provider out of service --
+
+
+def test_one_unsupported_operation_does_not_disable_the_provider():
+    """`NotImplementedError` scopes to the call, not to the provider.
+
+    A backend that cannot do one derived operation -- `samefile()` needs
+    `st_dev`/`st_ino`, which plenty of remote stats lack -- used to be
+    declined on the host's shared selector, so the *next* operation on any
+    path of that host failed with "no path provider supports open_read".
+    """
+
+    class PartialPath(MemPath):
+        def samefile(self, other):
+            raise NotImplementedError("samefile() needs st_dev/st_ino")
+
+    backend = MemPathBackend()
+    MemPath("payload", backend=backend).write_bytes(b"content")
+    provider = PathProvider(
+        "partial", lambda *parts: PartialPath(*parts, backend=backend)
+    )
+    host = PosixHost(path_providers=(provider,))
+
+    path = host.path("payload")
+    with pytest.raises(NotImplementedError):
+        path.samefile(host.path("payload"))
+
+    # The provider is still usable for everything it does implement.
+    assert path.read_bytes() == b"content"
+    assert host.path("payload").stat().st_size == 7
+    assert host.provider_details[0]["availability"] == "available"
