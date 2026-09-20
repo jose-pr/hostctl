@@ -24,6 +24,22 @@ from ._common import (
 )
 
 
+def _merged_environment(env):
+    """`env` merged over the inherited environment, or None when unset.
+
+    A truly empty environment is deliberately not expressible here: it is a
+    separate contract (see the shipped header), and it is dangerous -- a
+    replacing environment that omits PATH/SystemRoot stops powershell.exe
+    from starting at all on Windows.
+    """
+    values = normalize_environment(env)
+    if values is None:
+        return None
+    merged = dict(os.environ)
+    merged.update(values)
+    return merged
+
+
 class LocalExecutor(Executor[subprocess.CompletedProcess]):
     """Execute direct argv or finalized shell invocations locally."""
 
@@ -62,7 +78,14 @@ class LocalExecutor(Executor[subprocess.CompletedProcess]):
             stdout=stdout,
             stderr=stderr,
             cwd=os.fspath(cwd) if cwd is not None else None,
-            env=normalize_environment(env),
+            # Additive, like every other transport. `subprocess.run(env=...)`
+            # replaces the environment, so the one documented cross-provider
+            # rule -- "env is additive to the provider's environment" -- held
+            # for SSH, WinRM, container and QGA and was inverted for the
+            # local executor. A SystemHost that fell back to local therefore
+            # handed the child no PATH where the same call over SSH kept it,
+            # which on Windows is enough to stop powershell.exe starting.
+            env=_merged_environment(env),
             check=check,
             encoding=encoding,
             errors=errors,

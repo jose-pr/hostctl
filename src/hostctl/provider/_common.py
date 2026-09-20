@@ -8,6 +8,7 @@ safety.
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import logging
 import re
 import typing
@@ -55,6 +56,29 @@ class ProviderSelection:
     pinned: bool = False
 
 
+def _accepts_keyword(hook: typing.Callable[..., object], name: str) -> bool:
+    """Whether `hook` declares `name`, or takes arbitrary keywords.
+
+    A hook whose signature cannot be introspected (a builtin, a C callable)
+    is given the benefit of the doubt: it then raises its own TypeError,
+    which is no worse than calling it directly.
+    """
+    try:
+        parameters = inspect.signature(hook).parameters
+    except (TypeError, ValueError):
+        return True
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return True
+    parameter = parameters.get(name)
+    return parameter is not None and parameter.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class SessionInitializer:
     """Optional post-connect bootstrap hook receiving the connected system host."""
@@ -63,7 +87,18 @@ class SessionInitializer:
     timeout: float | None = None
 
     def __call__(self, host, **options):
-        if self.timeout is not None:
+        """Run the hook, passing `timeout` only to a hook that accepts it.
+
+        It used to be injected unconditionally, so the documented example --
+        `SessionInitializer(lambda h: h.run("sudo -v"), timeout=10)` -- raised
+        `TypeError` at `connect()` and tore the connection down, because that
+        lambda takes no `timeout` keyword.
+
+        The value is advisory: it is handed to a hook that declares it, and
+        nothing here enforces a deadline. A hook that wants one applies it to
+        the calls it makes (`host.run(..., timeout=...)`).
+        """
+        if self.timeout is not None and _accepts_keyword(self.initialize, "timeout"):
             options.setdefault("timeout", self.timeout)
         return self.initialize(host, **options)
 

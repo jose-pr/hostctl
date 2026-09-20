@@ -122,3 +122,50 @@ def test_local_shell_execute_path_preserves_native_arguments():
     )
 
     assert result.stdout.strip() == "'a & b'"
+
+
+def test_local_env_is_additive_like_every_other_transport():
+    """contracts.md states one rule: `env` is additive to the provider's.
+
+    `subprocess.run(env=...)` replaces instead, so a SystemHost falling back
+    to the local provider handed the child no PATH where the same call over
+    SSH kept it -- and on Windows an environment without PATH/SystemRoot stops
+    powershell.exe from starting at all.
+    """
+    import os
+    import sys
+
+    host = LocalHost()
+    probe = (
+        "import os, sys; "
+        "print(os.environ.get('HOSTCTL_MARK'), bool(os.environ.get('PATH')))"
+    )
+
+    result = host.run(
+        [sys.executable, "-c", probe], env={"HOSTCTL_MARK": "yes"}, check=False
+    )
+
+    assert result.stdout.split() == [b"yes", b"True"]
+    assert "HOSTCTL_MARK" not in os.environ, "the parent environment is untouched"
+
+
+def test_local_env_overrides_an_inherited_value():
+    import os
+    import sys
+
+    host = LocalHost()
+    os.environ["HOSTCTL_OVERRIDE_ME"] = "parent"
+    try:
+        result = host.run(
+            [
+                sys.executable,
+                "-c",
+                "import os; print(os.environ['HOSTCTL_OVERRIDE_ME'])",
+            ],
+            env={"HOSTCTL_OVERRIDE_ME": "child"},
+            check=False,
+        )
+    finally:
+        del os.environ["HOSTCTL_OVERRIDE_ME"]
+
+    assert result.stdout.strip() == b"child"

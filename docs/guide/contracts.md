@@ -18,7 +18,8 @@ stderr by default.  Captured streams are bytes unless `text=True` or an
   with an argv, never interpreted by a shell, and never combined with other
   commands. A path anywhere else is an ordinary value that stringifies.
 - Multiple top-level commands are joined with the shell's sequence separator.
-- `env` is additive to the provider's environment. `cwd` is the process working
+- `env` is additive to the provider's environment, on every transport
+  including the local one. `cwd` is the process working
   directory. `check=True` raises `CalledProcessError` for every non-zero status;
   a provider which cannot obtain a status must use `-1`, never `None`.
 - `timeout` raises `subprocess.TimeoutExpired` and the provider must make a

@@ -140,10 +140,14 @@ corresponding hosts.
 - Structured values are normalized through the base class (including bytes and
   iterable argv sequences); empty structured commands and control characters
   are rejected. Raw empty command strings are skipped when joining.
-- Environment assignments embedded by a shell are additive to the inherited
-  remote environment. This intentionally differs from local
-  `subprocess.run(env=...)`, which replaces the environment; a clear-env mode
-  remains a separate future contract.
+- `env` is additive on every transport, including the local one: values are
+  merged over the inherited environment, never replacing it. Remote flavours
+  embed `export`/`$env:`/`set -gx` assignments; the local executor merges over
+  `os.environ` rather than handing `subprocess.run(env=...)` a replacing map,
+  which is what made the same call drop PATH locally and keep it over SSH.
+  A genuinely empty environment remains a separate future contract -- and a
+  dangerous one: a replacing environment without PATH/SystemRoot stops
+  `powershell.exe` from starting at all.
 - `POSIX_SHELL` and `POWERSHELL` are the built-in strategies;
   common built-ins also include `BASH`, `ZSH`, `FISH`, `CMD`, and PowerShell 7
   `PWSH`. PowerShell 5 rejects `AND`/`OR`; PowerShell 7 supports them.

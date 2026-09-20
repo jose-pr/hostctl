@@ -76,6 +76,9 @@ def test_system_initializer_default_and_generation_timeout_and_override():
     host.connect()
     assert calls == [host, host]
     captured = []
+    # A hook taking **kwargs still receives the timeout; one that does not
+    # declare it is called without -- the documented example is
+    # `SessionInitializer(lambda h: h.run("sudo -v"), timeout=10)`.
     timeout_init = SessionInitializer(
         lambda connected_host, **opts: captured.append((connected_host, opts)),
         timeout=3,
@@ -750,3 +753,36 @@ def test_two_hosts_from_one_config_do_not_share_a_transport():
 
     # The sharing the cache exists for still holds inside one host.
     assert first._path_selector.providers[0].transport is first_transport
+
+
+def test_the_documented_initializer_example_does_not_raise():
+    """`SessionInitializer(lambda h: ..., timeout=10)` is what providers.md shows.
+
+    `timeout` was injected into the hook's keywords unconditionally, so that
+    lambda raised TypeError at connect() and the connection was torn down.
+    """
+    ran = []
+    host = PosixHost(
+        executor_providers=(_InitProvider(),),
+        initializer=SessionInitializer(
+            lambda connected: ran.append(connected), timeout=10
+        ),
+    )
+
+    host.connect()
+
+    assert ran == [host]
+
+
+def test_a_hook_that_declares_timeout_still_receives_it():
+    seen = []
+    host = PosixHost(
+        executor_providers=(_InitProvider(),),
+        initializer=SessionInitializer(
+            lambda connected, timeout=None: seen.append(timeout), timeout=7
+        ),
+    )
+
+    host.connect()
+
+    assert seen == [7]

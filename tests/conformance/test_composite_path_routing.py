@@ -211,3 +211,34 @@ def test_logical_text_prefers_the_filesystem_spelling():
     )
     # A backend with no filesystem spelling keeps its own text.
     assert _logical_text(MemPath("srv/x", backend=MemPathBackend())) == "srv/x"
+
+
+def test_a_pinned_destination_is_not_resolved_on_the_dispatched_provider():
+    """`copy()` used to resolve the destination against the provider the
+    source was *built* with, before dispatch chose the one that runs, and
+    ignored the destination's own `.via()` pin -- so with a copy-overriding
+    backend the data landed on the wrong provider.
+    """
+    calls = []
+
+    class RecordingMemPath(MemPath):
+        def copy(self, target, **kwargs):
+            calls.append((str(self), str(target)))
+            return super().copy(target, **kwargs)
+
+    first, second = MemPathBackend(), MemPathBackend()
+    MemPath("f.txt", backend=first).write_bytes(b"payload")
+    host = PosixHost(
+        path_providers=(
+            PathProvider("a", lambda *parts: RecordingMemPath(*parts, backend=first)),
+            PathProvider("b", lambda *parts: RecordingMemPath(*parts, backend=second)),
+        )
+    )
+
+    host.path("f.txt").copy(host.path("g.txt").via("b"))
+
+    # The backend route is declined: the destination belongs to another
+    # provider, so this is a real cross-backend transfer.
+    assert calls == []
+    assert MemPath("g.txt", backend=second).read_bytes() == b"payload"
+    assert not MemPath("g.txt", backend=first).exists()
