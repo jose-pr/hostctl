@@ -41,18 +41,56 @@ def _argument(value: object) -> str:
     return '^"' + "".join(escaped) + '^"'
 
 
-def _builtin_argument(value: object) -> str:
-    """Escape data for a cmd.exe builtin, which has no C argv parser."""
+def _echo_argument(value: object) -> str:
+    """Escape data for `echo`, which prints quotes rather than consuming them."""
     if isinstance(value, os.PathLike):
         value = os.fspath(value)
     elif isinstance(value, bytes):
         value = value.decode("utf-8", "surrogateescape")
     text = str(value).replace("^", "^^")
-    for character in '&|<>()@^"%!':
-        if character == "^":
-            continue
+    for character in '&|<>()"%!':
         text = text.replace(character, f"^{character}")
     return text
+
+
+#: Characters a builtin argument may carry unquoted. A whitelist, because
+#: cmd splits a builtin's operands on far more than whitespace -- `,`, `;` and
+#: `=` are separators too, and `del /q a=b.txt` deleted `a` and `b.txt` while
+#: the named file survived.
+_BUILTIN_SAFE = frozenset("._-:\\/")
+
+
+def _builtin_argument(value: object) -> str:
+    """Quote and escape data for a cmd.exe builtin, which has no C argv parser.
+
+    Caret escaping alone is not enough: a builtin's operands are split on
+    whitespace, `,`, `;` and `=`, and a caret does not stop that. The value is
+    therefore wrapped in double quotes, which builtins strip and which do stop
+    the split. Inside a quoted span cmd ignores carets but still expands
+    `%VAR%` and would end the span on a `"`, so those two characters are
+    emitted caret-escaped *outside* the quotes instead.
+    """
+    if isinstance(value, os.PathLike):
+        value = os.fspath(value)
+    elif isinstance(value, bytes):
+        value = value.decode("utf-8", "surrogateescape")
+    text = str(value)
+    if text and all(char.isalnum() or char in _BUILTIN_SAFE for char in text):
+        return text
+
+    parts: typing.List[str] = []
+    span: typing.List[str] = []
+    for char in text:
+        if char in '%"':
+            if span:
+                parts.append('"' + "".join(span) + '"')
+                span = []
+            parts.append(f"^{char}")
+        else:
+            span.append(char)
+    if span or not parts:
+        parts.append('"' + "".join(span) + '"')
+    return "".join(parts)
 
 
 class CmdShellFlavour(ShellFlavour):
@@ -117,7 +155,16 @@ class CmdShellFlavour(ShellFlavour):
     def structured_command(self, values: typing.Iterable[object]) -> str:
         values = tuple(values)
         if values and self._text(values[0]).casefold() in self.builtins:
-            return " ".join(_builtin_argument(self._text(value)) for value in values)
+            # `echo` is the one builtin that does not consume quotes: it
+            # prints them, so quoting would change the output it exists to
+            # produce. It also takes its whole tail as one operand, which is
+            # what the quoting protects everywhere else.
+            escape = (
+                _echo_argument
+                if self._text(values[0]).casefold() == "echo"
+                else _builtin_argument
+            )
+            return " ".join(escape(self._text(value)) for value in values)
         return super().structured_command(values)
 
     def operator(self, value: ShellOperator) -> str:
@@ -131,9 +178,24 @@ class CmdShellFlavour(ShellFlavour):
         }[value]
 
     def environment_assignment(self, key: str, value: object) -> str:
-        value = self._text(value).replace("^", "^^")
-        value = value.replace("%", "^%").replace("!", "^!").replace('"', '^"')
-        return f'set "{key}={value}"'
+        """Render `set KEY=VALUE`, caret-escaping the value.
+
+        Deliberately *not* the quoted `set "KEY=VALUE"` form. cmd does not
+        process carets inside a quoted span, so escaping there put the carets
+        into the child's environment verbatim (`100%` arrived as `100^%`),
+        while `%VAR%` still expanded and a `"` in the value ended the
+        assignment early -- leaving the rest of it to run as a command.
+        Unquoted, every metacharacter is caret-escapable, which round-trips
+        all of `100%`, `%OS%`, `c^d`, `a!b`, `x&y`, `a|b`, `(x)` and
+        `say "hi"` through a real cmd.exe.
+
+        A value of `""` is beyond cmd: `set KEY=` deletes the variable, and
+        cmd has no spelling for an empty one. The variable arrives unset.
+        """
+        text = self._text(value).replace("^", "^^")
+        for character in '&|<>()"%!':
+            text = text.replace(character, f"^{character}")
+        return f"set {key}={text}"
 
     def change_directory(self, cwd: PathLike) -> str:
         return f"cd /d {_builtin_argument(self._text(cwd))}"

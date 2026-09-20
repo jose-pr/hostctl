@@ -384,7 +384,10 @@ def test_cmd_shell_renders_environment_cwd_args_and_operators():
         env={"NAME": "100%"},
     )
     assert script == (
-        'set "NAME=100^%"&cd /d C:\\Program Files&&'
+        # Unquoted `set`, so the caret escapes actually reach cmd's parser,
+        # and a quoted `cd` target, so a path with a space stays one operand.
+        "set NAME=100^%&"
+        'cd /d "C:\\Program Files"&&'
         'tool.exe ^"value ^& data^"&&echo done'
     )
 
@@ -810,3 +813,55 @@ def test_shell_capability_vocabulary_is_strings_and_keeps_provider_tokens():
     assert enum_shell._executor_accepts_cwd is True
     assert string_shell._executor_accepts_cwd is True
     assert enum_shell._executor_accepts_env is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.parametrize(
+    "value",
+    ("100%", "a b", 'say "hi"', "c^d", "%OS%", "a!b", "x&y", "a|b", "(x)", "a>b"),
+)
+def test_cmd_environment_values_round_trip_on_windows(value):
+    """The quoted `set "K=V"` form put its own carets into the child.
+
+    cmd does not process carets inside a quoted span, so `100%` arrived as
+    `100^%`, `%OS%` still expanded, and a `"` in the value ended the
+    assignment early -- leaving the remainder to run as a command.
+    """
+    code = "import os, sys; print(ascii(os.environ.get('PROBE', '<unset>')))"
+    command = CMD.command(((sys.executable, "-c", code),), env={"PROBE": value})
+
+    result = subprocess.run(command.command, capture_output=True, text=True)
+
+    assert result.stdout.strip() == ascii(value)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.parametrize(
+    "name", ("a b.txt", "a,b.txt", "a=b.txt", "a%OS%b.txt", "a;b.txt")
+)
+def test_cmd_builtin_operands_are_not_split_on_windows(tmp_path, name):
+    """`del /q a b.txt` deleted `a` and `b.txt` and left the named file.
+
+    cmd splits a builtin's operands on `,`, `;` and `=` as well as whitespace,
+    and a caret does not stop that -- only quoting does.
+    """
+    (tmp_path / name).write_text("target")
+    (tmp_path / "a").write_text("collateral")
+    (tmp_path / "b.txt").write_text("collateral")
+    script = CMD.structured_command(("del", "/q", name))
+
+    subprocess.run(
+        f'cmd.exe /d /v:off /s /c "{script}"', cwd=tmp_path, capture_output=True
+    )
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a", "b.txt"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+def test_cmd_echo_still_prints_its_argument_verbatim():
+    """`echo` is the builtin that prints quotes instead of consuming them."""
+    command = CMD.command((("echo", "a b"),))
+
+    result = subprocess.run(command.command, capture_output=True, text=True)
+
+    assert result.stdout.strip() == "a b"
