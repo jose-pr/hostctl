@@ -648,13 +648,29 @@ class SystemHost(Host):
                 raise NotImplementedError(
                     "executable cannot be combined with a direct command"
                 )
-            if "args" in provider.capabilities:
+            # `cwd`/`env` were stripped from `options` above and put back only
+            # for a provider that carries them natively. Whatever is left must
+            # be embedded in a rendered script, or the call silently runs in
+            # the wrong directory with the wrong environment -- which is what
+            # `Exec` over the shipped SSH provider (no capabilities at all)
+            # used to do.
+            native_cwd = cwd is None or "cwd" in provider.capabilities
+            native_env = env is None or "env" in provider.capabilities
+            if "args" in provider.capabilities and native_cwd and native_env:
                 return provider.execute(command, *args, **options)
-            if args and self._shell is None and self._shell_resolver is None:
-                raise NotImplementedError(
-                    f"executor provider {provider.name!r} does not support argv arguments"
-                )
+            if self._shell is None and self._shell_resolver is None:
+                if args:
+                    raise NotImplementedError(
+                        f"executor provider {provider.name!r} does not support argv arguments"
+                    )
+                if not (native_cwd and native_env):
+                    raise NotImplementedError(
+                        f"executor provider {provider.name!r} cannot apply cwd or env "
+                        "and no shell is configured to embed them"
+                    )
+                return provider.execute(command_text(command), **options)
             flavour = self.shell_flavour
+            shell_executable = getattr(provider, "shell_executable", None)
             if "script" in provider.capabilities:
                 script = flavour.script(
                     ((command, *args),),
@@ -663,11 +679,26 @@ class SystemHost(Host):
                     for_session="manages_status" in provider.capabilities,
                 )
                 return provider.execute(script, **options)
-            if not args:
-                return provider.execute(command_text(command), **options)
-            # An `args` provider returned above, so only the single-string
-            # form is left here.
-            shell_executable = getattr(provider, "shell_executable", None)
+            if "args" in provider.capabilities:
+                script = flavour.script(
+                    ((command, *args),),
+                    cwd=None if "cwd" in provider.capabilities else cwd,
+                    env=None if "env" in provider.capabilities else env,
+                    for_session="manages_status" in provider.capabilities,
+                )
+                invocation = flavour.invocation(script, executable=shell_executable)
+                return provider.execute(invocation[0], *invocation[1:], **options)
+            if not args and native_cwd and native_env:
+                # Nothing to embed. Send the program itself when it needs no
+                # quoting -- a provider that is not a shell (a bare callable,
+                # a container exec) must not be handed `sh -c ...`. A program
+                # whose text would not survive a shell verbatim still goes
+                # through the flavour below, because the one provider shape
+                # that reaches here -- an SSH exec request -- is read by the
+                # remote login shell, which word-split a spaced path.
+                text = command_text(command)
+                if flavour.quote(text) == text:
+                    return provider.execute(text, **options)
             rendered = flavour.command(
                 ((command, *args),),
                 executable=shell_executable,
