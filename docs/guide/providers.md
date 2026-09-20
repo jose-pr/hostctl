@@ -237,9 +237,11 @@ lifetime of the stream, so a multi-step write can never be split across two
 backends. `str(path)` is unaffected by pinning — the logical path is stable
 regardless of which channel served it.
 
-Cross-backend `rename()` is rejected outright, since no backend can rename into
-another's namespace. Copying between providers is explicit and buffered through
-`copy()`.
+Cross-backend `rename()` is rejected with `NotImplementedError`, since no
+backend can rename into another's namespace. `move()` acts on that refusal
+rather than failing: it falls back to a copy followed by removing the source,
+so moving between two providers transfers the file. `copy()` between providers
+is likewise buffered through the client.
 
 ## Operation-level capabilities
 

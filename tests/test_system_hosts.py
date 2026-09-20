@@ -475,6 +475,11 @@ def test_composite_path_routes_read_only_operations_and_pins_mutations():
 
 
 def test_composite_path_rejects_cross_provider_rename():
+    """Still rejected -- but as NotImplementedError, which `move()` acts on.
+
+    `Path.move()` reads NotImplementedError as "rename cannot express this"
+    and falls back to copy + remove; a ValueError aborted the move instead.
+    """
     first = PathProvider(
         "first", lambda *parts: MemPath(*parts, backend=MemPathBackend())
     )
@@ -482,7 +487,7 @@ def test_composite_path_rejects_cross_provider_rename():
         "second", lambda *parts: MemPath(*parts, backend=MemPathBackend())
     )
     host = PosixHost(path_providers=(first, second))
-    with pytest.raises(ValueError, match="across path providers"):
+    with pytest.raises(NotImplementedError, match="across path providers"):
         host.path("source").rename(host.path("target").via("second"))
 
 

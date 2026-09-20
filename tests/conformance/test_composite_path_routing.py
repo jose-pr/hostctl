@@ -73,3 +73,74 @@ def test_rename_resolves_target_on_the_selected_source_provider(tmp_path):
     assert renamed.read_bytes() == b"payload"
     assert not HostPath(second_root, "source").exists()
     assert not HostPath(first_root, "target").exists()
+
+
+def test_move_to_a_foreign_path_transfers_instead_of_renaming_on_the_source():
+    """A foreign destination is a cross-backend transfer, not a backend rename.
+
+    `ssh_path.move(local_path)` used to issue an SFTP rename *inside the remote
+    host* to a path spelled like the local destination: the file left the
+    source, never arrived, and a path was returned with no error.
+    """
+    from pathlib_next import LocalPath
+    import tempfile
+
+    backend = MemPathBackend()
+    MemPath("export.csv", backend=backend).write_bytes(b"payload")
+    host = PosixHost(path_providers=(_memory_provider("remote", backend),))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        destination = LocalPath(tmp) / "export.csv"
+        host.path("export.csv").move(destination)
+
+        assert destination.read_bytes() == b"payload"
+    assert not MemPath("export.csv", backend=backend).exists()
+    # Nothing was renamed into place on the source host.
+    assert list(backend) == []
+
+
+def test_move_between_two_providers_does_not_use_either_backend_rename():
+    source_backend, target_backend = MemPathBackend(), MemPathBackend()
+    MemPath("data.bin", backend=source_backend).write_bytes(b"content")
+    source = PosixHost(path_providers=(_memory_provider("a", source_backend),))
+    target = PosixHost(path_providers=(_memory_provider("b", target_backend),))
+
+    source.path("data.bin").move(target.path("data.bin"))
+
+    assert MemPath("data.bin", backend=target_backend).read_bytes() == b"content"
+    assert not MemPath("data.bin", backend=source_backend).exists()
+
+
+def test_a_string_destination_is_a_logical_path_on_the_same_host():
+    """`pathlib_next` documents `target: Path | str`; both raised TypeError."""
+    backend = MemPathBackend()
+    MemPath("a.txt", backend=backend).write_bytes(b"data")
+    host = PosixHost(path_providers=(_memory_provider("only", backend),))
+
+    host.path("a.txt").copy("b.txt")
+    host.path("a.txt").move("c.txt")
+
+    assert MemPath("b.txt", backend=backend).read_bytes() == b"data"
+    assert MemPath("c.txt", backend=backend).read_bytes() == b"data"
+    assert not MemPath("a.txt", backend=backend).exists()
+
+
+def test_a_same_provider_destination_still_takes_the_backend_route():
+    """The optimisation the routing exists for must survive the fix."""
+    calls = []
+
+    class RecordingMemPath(MemPath):
+        def move(self, target, **kwargs):
+            calls.append((str(self), str(target)))
+            return super().move(target, **kwargs)
+
+    backend = MemPathBackend()
+    MemPath("one.txt", backend=backend).write_bytes(b"x")
+    provider = PathProvider(
+        "only", lambda *parts: RecordingMemPath(*parts, backend=backend)
+    )
+    host = PosixHost(path_providers=(provider,))
+
+    host.path("one.txt").move(host.path("two.txt"))
+
+    assert calls == [("one.txt", "two.txt")]

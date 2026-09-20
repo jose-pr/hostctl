@@ -73,6 +73,20 @@ def _accepts_kwargs(
     return kwargs
 
 
+def _resolves_on(target: object, provider: typing.Optional[PathProvider]) -> bool:
+    """Whether `target` names a path the given provider can address itself.
+
+    Only then may a transfer take the backend's own ``copy``/``move``. Anything
+    else -- a foreign ``Path``, a composite pinned elsewhere, one that does not
+    carry this provider at all -- is a real cross-backend transfer.
+    """
+    if provider is None or not isinstance(target, _CompositePathMixin):
+        return False
+    if target._pinned and target.provider is not provider:
+        return False
+    return any(item is provider for item in target.providers)
+
+
 def _is_composite_owner(base: type) -> bool:
     """True for classes belonging to this module's composite hierarchy.
 
@@ -225,26 +239,31 @@ class _CompositePathMixin:
         which is what the generic implementation exists for.
         """
         generic = getattr(Path, name)
-        provider = self._provider
-        backend_target = target
-        if isinstance(target, _CompositePathMixin):
-            if provider is None or not any(
-                item is provider for item in target.providers
-            ):
-                return generic(self, target, **kwargs)
-            backend_target = target._provider_path(provider)
-        elif isinstance(target, str):
-            backend_target = target
-        elif not isinstance(target, Path):
-            return generic(self, target, **kwargs)
+        if isinstance(target, str):
+            # `pathlib_next` documents `target: Path | str`. A bare string is a
+            # logical spelling on *this* host, so it is given this path's
+            # routing state; handing it to the backend raw made every backend
+            # re-parse it through its own constructor and raise TypeError.
+            target = self.with_segments(target)
 
         def call(path: Path):
+            # Read the provider here, not before dispatch: `_dispatch(pin=True)`
+            # adopts the selected one before calling back, so this is the
+            # provider that actually owns `path`.
+            provider = self._provider
+            if not _resolves_on(target, provider):
+                # A foreign `Path`, or a composite on another provider, is a
+                # genuine cross-backend transfer. Handing it to the backend
+                # made `ssh_path.move(local_path)` an SFTP rename *inside the
+                # remote host*: the file left the source, never arrived, and a
+                # path was returned with no error.
+                return generic(self, target, **kwargs)
             method = getattr(type(path), name, None)
             if method is None or method is generic:
                 # The backend adds nothing over the generic implementation;
                 # use it directly so composite-aware behavior is preserved.
                 return generic(self, target, **kwargs)
-            return method(path, backend_target, **kwargs)
+            return method(path, target._provider_path(provider), **kwargs)
 
         # Gated on "write", not a "copy"/"move" capability: neither is in
         # PathProvider.DEFAULT_CAPABILITIES, so gating on the method name
@@ -671,6 +690,18 @@ class _CompositePathMixin:
             logical_segments=(str(target),),
         )
 
+    def _rename_compatible(self, target: "Path") -> bool:
+        """Whether `rename()` may be attempted onto `target` at all.
+
+        `pathlib_next.Path.move()` asks first and skips straight to
+        copy + remove when the answer is no, which is what a transfer between
+        two hosts needs. A rename is only expressible when one provider can
+        address both ends.
+        """
+        return _resolves_on(target, self._provider) or not isinstance(
+            target, (_CompositePathMixin, Path)
+        )
+
     def rename(self, target):
         logical_target = str(target)
 
@@ -679,10 +710,12 @@ class _CompositePathMixin:
             if provider is None:  # pragma: no cover - guarded by _dispatch
                 raise NotImplementedError("rename requires a path provider")
             if isinstance(target, _CompositePathMixin):
-                if target._pinned and target.provider is not provider:
-                    raise ValueError("cannot rename across path providers")
-                if not any(item is provider for item in target.providers):
-                    raise ValueError("cannot rename across path providers")
+                if not _resolves_on(target, provider):
+                    # NotImplementedError, not ValueError: `Path.move()` reads
+                    # it as "rename cannot express this" and falls back to
+                    # copy + remove, which is exactly what a cross-provider
+                    # move needs. A ValueError aborted the move instead.
+                    raise NotImplementedError("cannot rename across path providers")
                 target_path = target._provider_path(provider)
             else:
                 target_path = provider.path(logical_target)
