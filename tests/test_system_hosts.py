@@ -555,3 +555,81 @@ def test_windows_quoting_and_variables_survive_the_local_executor():
 
     assert host.run('Write-Output "a b"', check=False).stdout.strip() == b"a b"
     assert host.run("$v = 41 + 1; Write-Output $v", check=False).stdout.strip() == b"42"
+
+
+def test_direct_exec_embeds_cwd_and_env_a_provider_cannot_carry():
+    """The shipped SSH provider advertises nothing, so this was every SSH host.
+
+    `cwd`/`env` were stripped from the options and only restored for a
+    provider that carries them natively, and the direct branch never embedded
+    what was left -- so the command ran in the wrong directory with the wrong
+    environment and reported success.
+    """
+    calls = []
+
+    def execute(command, *args, **options):
+        calls.append((command, args, options))
+        return subprocess.CompletedProcess((command, *args), 0, b"", b"")
+
+    host = PosixHost(
+        executor_providers=(ExecutorProvider("bare", execute, capabilities=()),)
+    )
+
+    host.run(Exec("/usr/bin/make"), cwd="/srv/build", env={"CC": "clang"}, check=False)
+
+    command, args, options = calls[-1]
+    assert "/srv/build" in command and command.startswith("cd ")
+    assert "CC=clang" in command
+    assert "/usr/bin/make" in command
+    # Never smuggled back through the options a provider did not ask for.
+    assert "cwd" not in options and "env" not in options
+
+
+def test_direct_exec_quotes_a_program_the_remote_shell_would_split():
+    """An SSH exec request is read by the remote login shell."""
+    calls = []
+
+    def execute(command, *args, **options):
+        calls.append(command)
+        return subprocess.CompletedProcess((command,), 0, b"", b"")
+
+    host = PosixHost(
+        executor_providers=(ExecutorProvider("bare", execute, capabilities=()),)
+    )
+
+    host.run(Exec("/opt/My Tools/run"), check=False)
+
+    assert "'/opt/My Tools/run'" in calls[-1]
+
+
+def test_an_args_provider_without_cwd_gets_the_context_in_the_script():
+    """ARGS+ENV but no CWD silently ignored cwd=."""
+    provider, seen = _argv_recording_provider(capabilities=("args", "env"))
+    host = PosixHost(executor_providers=(provider,))
+
+    host.run(Exec("/usr/bin/make"), cwd="/srv/build", check=False)
+
+    argv = seen[-1]
+    assert argv[:2] == ("/bin/sh", "-c")
+    assert "/srv/build" in argv[2]
+    assert "/usr/bin/make" in argv[2]
+
+
+def test_a_shell_less_host_refuses_context_it_cannot_apply():
+    """Better a clear refusal than a command that runs somewhere else.
+
+    `IosHost` configures no shell, so there is nowhere to embed cwd/env.
+    """
+    from hostctl.host.system import IosHost
+
+    provider = ExecutorProvider(
+        "bare",
+        lambda command, *args, **options: subprocess.CompletedProcess(
+            (command,), 0, b"", b""
+        ),
+        capabilities=(),
+    )
+    host = IosHost(executor_providers=(provider,))
+
+    with pytest.raises(NotImplementedError, match="cannot apply cwd or env"):
+        host.run(Exec("/bin/true"), cwd="/srv", check=False)
