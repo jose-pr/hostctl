@@ -665,6 +665,8 @@ class SystemHost(Host):
                 return provider.execute(script, **options)
             if not args:
                 return provider.execute(command_text(command), **options)
+            # An `args` provider returned above, so only the single-string
+            # form is left here.
             shell_executable = getattr(provider, "shell_executable", None)
             rendered = flavour.command(
                 ((command, *args),),
@@ -672,12 +674,7 @@ class SystemHost(Host):
                 cwd=None if "cwd" in provider.capabilities else cwd,
                 env=None if "env" in provider.capabilities else env,
             )
-            if "args" not in provider.capabilities:
-                return provider.execute(rendered.command, **options)
-            invocation = flavour.invocation(
-                rendered.command, executable=shell_executable
-            )
-            return provider.execute(invocation[0], *invocation[1:], **options)
+            return provider.execute(rendered.command, **options)
 
         if self._shell is None and self._shell_resolver is None:
             raise NotImplementedError(
@@ -699,15 +696,28 @@ class SystemHost(Host):
             )
             return provider.execute(script, **options)
         shell_executable = executable or getattr(provider, "shell_executable", None)
-        rendered = flavour.command(
+        if "args" not in provider.capabilities:
+            rendered = flavour.command(
+                cmds,
+                executable=shell_executable,
+                cwd=None if "cwd" in provider.capabilities else cwd,
+                env=None if "env" in provider.capabilities else env,
+            )
+            return provider.execute(rendered.command, **options)
+        # One shell layer, exactly as LocalHost renders it. `flavour.command()`
+        # already contains the shell invocation, so feeding *that* to
+        # `invocation()` -- whose argument is a script -- ran the target shell
+        # twice: on Windows the outer PowerShell re-parsed the inner
+        # `-Command "...; exit $LASTEXITCODE"` as its own double-quoted string,
+        # so the status never came back and `check=True` passed for a command
+        # that failed.
+        script = flavour.script(
             cmds,
-            executable=shell_executable,
             cwd=None if "cwd" in provider.capabilities else cwd,
             env=None if "env" in provider.capabilities else env,
+            for_session="manages_status" in provider.capabilities,
         )
-        if "args" not in provider.capabilities:
-            return provider.execute(rendered.command, **options)
-        invocation = flavour.invocation(rendered.command, executable=shell_executable)
+        invocation = flavour.invocation(script, executable=shell_executable)
         return provider.execute(invocation[0], *invocation[1:], **options)
 
     def _ensure_provider_connected(self, provider):

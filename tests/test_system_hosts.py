@@ -504,3 +504,49 @@ def test_composite_iterdir_children_keep_the_provider_that_scanned_them():
     children = list(host.path("root").iterdir())
     assert [child.name for child in children] == ["child"]
     assert children[0].provider is second
+
+
+def _argv_recording_provider(name="args", capabilities=("args", "cwd", "env")):
+    """A provider that records the argv it is handed and reports success."""
+    seen = []
+
+    def execute(command, *args, **kwargs):
+        seen.append((command, *args))
+        return subprocess.CompletedProcess((command, *args), 0, "", "")
+
+    return ExecutorProvider(name, execute, capabilities=capabilities), seen
+
+
+def test_an_args_provider_is_given_one_shell_layer_not_two():
+    """`flavour.command()` already invokes the shell; `invocation()` takes a script.
+
+    Feeding the first to the second ran the target shell twice.
+    """
+    provider, seen = _argv_recording_provider()
+    host = PosixHost(executor_providers=(provider,))
+
+    host.run("echo hi", check=False)
+
+    argv = seen[0]
+    assert argv[:2] == ("/bin/sh", "-c")
+    assert len(argv) == 3
+    # The payload is the script itself, not another complete `sh -c ...` line.
+    assert "-c" not in argv[2]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="needs a real Windows PowerShell")
+def test_windows_exit_status_survives_the_local_executor():
+    """The double wrap lost every status, so check=True passed for a failure."""
+    host = HostConfig("windows://node?executor=local")._create_host()
+
+    assert host.run("cmd /c exit 3", check=False).returncode == 3
+    with pytest.raises(subprocess.CalledProcessError):
+        host.run("cmd /c exit 3", check=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="needs a real Windows PowerShell")
+def test_windows_quoting_and_variables_survive_the_local_executor():
+    host = HostConfig("windows://node?executor=local")._create_host()
+
+    assert host.run('Write-Output "a b"', check=False).stdout.strip() == b"a b"
+    assert host.run("$v = 41 + 1; Write-Output $v", check=False).stdout.strip() == b"42"
