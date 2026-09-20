@@ -76,42 +76,34 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
         self._connection = connection
 
     @staticmethod
-    def _terminate_timeout(connection: SshConnection, error: BaseException) -> bool:
-        """Best-effort termination for a timed-out AsyncSSH process.
+    async def _abandon(process: object) -> bool:
+        """Terminate and close a process whose wait() did not finish.
 
-        ``SSHClientConnection.run()`` does not expose the process it creates,
-        so AsyncSSH versions and test doubles may expose it on the exception or
-        connection.  Probe those documented/duck-typed hooks and report
-        whether termination was attempted; the timeout remains marked
-        ``orphaned`` when no channel can be recovered.
+        Returns whether termination was actually attempted, which is what
+        `TimeoutExpired.orphaned` reports.
         """
-        targets = [
-            getattr(error, "process", None),
-            getattr(error, "channel", None),
-            getattr(connection, "process", None),
-            getattr(connection, "last_process", None),
-        ]
-        target = next((item for item in targets if item is not None), None)
-        if target is None:
-            return False
-
-        from .. import _async
-
-        async def terminate() -> None:
-            for name in ("terminate", "close"):
-                method = getattr(target, name, None)
-                if method is None:
-                    continue
+        attempted = False
+        for name in ("terminate", "close"):
+            method = getattr(process, name, None)
+            if method is None:
+                continue
+            try:
                 result = method()
                 if inspect.isawaitable(result):
                     await result
-                return
-
-        try:
-            _async.async_to_sync(terminate())
-        except Exception:
-            return False
-        return True
+            except Exception:
+                continue
+            attempted = True
+            break
+        closer = getattr(process, "wait_closed", None)
+        if closer is not None:
+            try:
+                result = closer()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                pass
+        return attempted
 
     def __call__(
         self,
@@ -173,25 +165,40 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             )
 
         stdout_target, stderr_target = stdout, stderr
-        try:
-            result = _async.async_to_sync(
-                self._connection().run(
-                    command,
-                    bufsize=bufsize,
-                    stdin=stdin,
-                    stdout=None,
-                    stderr=(
-                        subprocess.STDOUT
-                        if stderr_target == subprocess.STDOUT
-                        else None
-                    ),
-                    env=env,
-                    check=False,
-                    encoding=encoding,
-                    errors=errors,
-                    timeout=timeout,
-                )
+        terminated = False
+        # Resolved on the calling thread: the accessor connects, and
+        # connecting runs on the bridge loop -- asking for it from inside the
+        # loop waits on a future only that loop can complete.
+        connection = self._connection()
+
+        async def dispatch() -> object:
+            # `connection.run()` is `create_process()` followed by
+            # `process.wait()`, and it never hands the process back -- so a
+            # timeout used to abandon a live channel and a still-running
+            # remote command, with nothing to terminate and `orphaned` always
+            # True. Creating the process here keeps the handle that
+            # docs/guide/contracts.md requires for a best-effort terminate.
+            nonlocal terminated
+            process = await connection.create_process(
+                command,
+                bufsize=bufsize,
+                stdin=stdin,
+                stdout=None,
+                stderr=(
+                    subprocess.STDOUT if stderr_target == subprocess.STDOUT else None
+                ),
+                env=env,
+                encoding=encoding,
+                errors=errors,
             )
+            try:
+                return await process.wait(check=False, timeout=timeout)
+            except BaseException:
+                terminated = await SshExecutor._abandon(process)
+                raise
+
+        try:
+            result = _async.async_to_sync(dispatch())
         except Exception as exc:
             normalized = _async.normalize_asyncssh_error(
                 exc,
@@ -199,7 +206,6 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
                 timeout=timeout,
             )
             if isinstance(normalized, subprocess.TimeoutExpired):
-                terminated = self._terminate_timeout(self._connection(), exc)
                 normalized.orphaned = not terminated
             if normalized is exc:
                 raise

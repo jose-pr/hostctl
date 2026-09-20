@@ -196,26 +196,53 @@ class FakeSshSession(_FakeTransport):
         return None
 
     async def create_process(self, command, **options):
-        """Back ``_SshTransport.spawn`` with a real streaming channel."""
+        """Back both `spawn()` and `run()`, as asyncssh's own does.
+
+        `run()` is `create_process()` followed by `process.wait()`, so the
+        production run path arrives here too. The two are told apart by the
+        options: the run path redirects (`stdout`), the spawn path does not.
+        """
         self.connect()
+        if "stdout" in options:
+            return _FakeSshRunProcess(command, options)
         return _FakeSshChannel(command)
 
     async def run(self, command, **options):
-        self.connect()
-        if os.name == "nt":
-            # AsyncSSH gives the target one finalized command line. Passing
-            # that line directly to CreateProcess emulates the same single
-            # PowerShell layer; wrapping it in another PowerShell process
-            # would expand $env variables before the target script sees them.
-            invocation = command
-        else:
-            invocation = command
+        """Kept for direct callers; production goes through create_process."""
+        process = await self.create_process(command, **options)
+        return await process.wait(
+            check=options.get("check", False), timeout=options.get("timeout")
+        )
+
+
+class _FakeSshRunProcess:
+    """A one-shot process whose `wait()` runs the command and collects output."""
+
+    def __init__(self, command, options):
+        self._command = command
+        self._options = options
+        self.terminated = False
+        self.closed = False
+
+    def terminate(self):
+        self.terminated = True
+
+    def close(self):
+        self.closed = True
+
+    async def wait_closed(self):
+        return None
+
+    async def wait(self, check=False, timeout=None):
+        command, options = self._command, self._options
+        invocation = command
         encoding = options.get("encoding")
         stdin = options.get("stdin")
         input_value = stdin.read() if hasattr(stdin, "read") else None
-        if os.name == "nt" and (
-            bool(input_value) or options.get("timeout") is not None
-        ):
+        if os.name == "nt" and (bool(input_value) or timeout is not None):
+            # AsyncSSH gives the target one finalized command line. Passing it
+            # to CreateProcess emulates the same single PowerShell layer;
+            # wrapping it in another would expand $env before the script sees it.
             direct = _direct_powershell_argv(command)
             if direct is not None:
                 invocation = direct
@@ -228,9 +255,9 @@ class FakeSshSession(_FakeTransport):
             invocation,
             shell=os.name != "nt",
             capture_output=True,
-            check=False,
+            check=check,
             env=options.get("env"),
-            timeout=options.get("timeout"),
+            timeout=timeout,
             encoding=encoding,
             errors=options.get("errors"),
             text=encoding is not None,

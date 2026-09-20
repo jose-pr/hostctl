@@ -40,9 +40,11 @@ class _StubSSH:
     def is_closed(self):
         return False
 
-    async def run(self, command, **kwargs):
+    async def create_process(self, command, **kwargs):
+        """asyncssh's real shape: `run()` is create_process + process.wait()."""
         self.calls.append((command, kwargs))
-        return self.result
+        self.process = _StubProcess(self.result)
+        return self.process
 
     def close(self):
         self.closed = True
@@ -51,9 +53,41 @@ class _StubSSH:
         self.waited = True
 
 
+class _StubProcess:
+    """The process `create_process()` hands back, as asyncssh does."""
+
+    def __init__(self, result, error=None):
+        self._result = result
+        self._error = error
+        self.waits = []
+        self.terminated = False
+        self.closed = False
+
+    async def wait(self, check=False, timeout=None):
+        self.waits.append({"check": check, "timeout": timeout})
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+    def terminate(self):
+        self.terminated = True
+
+    def close(self):
+        self.closed = True
+
+    async def wait_closed(self):
+        return None
+
+
 class _TimeoutSSH(_StubSSH):
-    async def run(self, command, **kwargs):
-        raise TimeoutError
+    def __init__(self, result=None):
+        super().__init__(result)
+        self.process = None
+
+    async def create_process(self, command, **kwargs):
+        self.calls.append((command, kwargs))
+        self.process = _StubProcess(None, error=TimeoutError())
+        return self.process
 
 
 def _host(shell=None, result=None):
@@ -70,7 +104,8 @@ def test_ssh_result_is_real_completed_process_and_asyncssh_never_checks():
     result = host.run("echo hello")
     assert type(result) is subprocess.CompletedProcess
     assert result.stdout == b"stub-out"
-    assert stub.calls[0][1]["check"] is False
+    # hostctl applies `check` itself; asyncssh is always asked not to raise.
+    assert stub.process.waits[0]["check"] is False
 
 
 def test_ssh_text_mode_selects_an_encoding_for_executor():
@@ -296,10 +331,12 @@ def test_ssh_auto_rejects_executable_override():
 )
 def test_ssh_auto_detects_windows_shell_in_probe_order(responses, expected):
     class _ProbeSSH(_StubSSH):
-        async def run(self, command, **kwargs):
+        async def create_process(self, command, **kwargs):
             self.calls.append((command, kwargs))
             returncode, stdout = responses[len(self.calls) - 1]
-            return _Result(returncode=returncode, stdout=stdout, stderr="")
+            return _StubProcess(
+                _Result(returncode=returncode, stdout=stdout, stderr="")
+            )
 
     host = _SshTransport(SshConfig("host", dialect="auto", path_flavor=PureWindowsPath))
     stub = _ProbeSSH()

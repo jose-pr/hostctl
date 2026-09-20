@@ -273,6 +273,7 @@ class ProviderSelector:
         self.last_selection: ProviderSelection | None = None
         self._probe_cache: dict[str, ProviderProbe] = {}
         self._declined: dict[str, str] = {}
+        self._decline_causes: dict[str, BaseException] = {}
         self._generation = 0
         # Trace entries accumulated across the failover attempts of one
         # caller-level operation, keyed by provider name so a later, more
@@ -285,6 +286,18 @@ class ProviderSelector:
         """The current connection generation; probes are cached per value."""
         return self._generation
 
+    def retry_declined(self) -> None:
+        """Forget refusals recorded during an earlier call.
+
+        A decline exists to stop one dispatch re-dialling a provider that just
+        refused; it was never meant to outlive the call. Kept for the life of
+        the selector it bricked a single-provider host: one transient refusal
+        (sshd restarting, a network blip) and hostctl never dialled out again
+        until `close()`.
+        """
+        self._declined.clear()
+        self._decline_causes.clear()
+
     @property
     def declines(self) -> dict[str, str]:
         """Providers that refused before dispatch this generation, by name.
@@ -296,7 +309,13 @@ class ProviderSelector:
             name: self._safe_name(reason) for name, reason in self._declined.items()
         }
 
-    def decline(self, name: str, reason: str = "declined before dispatch") -> None:
+    def decline(
+        self,
+        name: str,
+        reason: str = "declined before dispatch",
+        *,
+        cause: typing.Optional[BaseException] = None,
+    ) -> None:
         """Record that a provider refused *before* dispatch this generation.
 
         A provider which raised ``OperationNotStarted`` proved that nothing
@@ -305,6 +324,8 @@ class ProviderSelector:
         cleared by :meth:`invalidate` along with the probe cache.
         """
         self._declined[str(name)] = str(reason)
+        if cause is not None:
+            self._decline_causes[str(name)] = cause
         log.debug(
             "provider %s declined before dispatch (generation %d): %s",
             self._safe_name(name),
@@ -476,7 +497,20 @@ class ProviderSelector:
             )
             or "<none>",
         )
-        raise OperationNotStarted("no provider is available")
+        # Name why. This used to surface as a bare "no provider is available"
+        # with no `__cause__` and no `.cause`, so the real refusal -- a
+        # rejected host key, a refused connection -- was visible only at DEBUG.
+        detail = "; ".join(
+            f"{name}: {reason}" for name, reason in self.declines.items()
+        )
+        cause = next(
+            (self._decline_causes.get(name) for name in reversed(self._declined)),
+            None,
+        )
+        raise OperationNotStarted(
+            "no provider is available" + (f" ({detail})" if detail else ""),
+            cause=cause,
+        ) from cause
 
     def _record(self, entry: dict[str, object]) -> None:
         """Merge one trace entry, letting a later record supersede an earlier.

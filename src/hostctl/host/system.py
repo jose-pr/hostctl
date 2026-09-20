@@ -654,6 +654,11 @@ class SystemHost(Host):
             raise NotImplementedError(
                 f"{type(self).__name__} does not provide the 'run' capability"
             )
+        # A refusal recorded by an earlier call must not decide this one: a
+        # single-provider SSH host that hit one transient ConnectionError
+        # never dialled out again until close(). Within this call, `excluded`
+        # still stops a provider being retried after it declines.
+        self._executor_selector.retry_declined()
         excluded: list[str] = []
         while True:
             provider = self._executor_selector.select(exclude=excluded).provider
@@ -679,7 +684,7 @@ class SystemHost(Host):
             except OperationNotStarted as exc:
                 # Providers may be retried only when they prove no operation
                 # was dispatched; planning is repeated for the next provider.
-                self._executor_selector.decline(provider.name, str(exc))
+                self._executor_selector.decline(provider.name, str(exc), cause=exc)
                 excluded.append(provider.name)
 
     def _run_with_provider(self, provider, cmds, **kwargs):

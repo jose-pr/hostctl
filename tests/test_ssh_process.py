@@ -18,15 +18,42 @@ class _Result:
         self.stderr = stderr
 
 
+class _WaitProcess:
+    """What asyncssh's `create_process()` returns: a handle you can terminate."""
+
+    def __init__(self, result=None, error=None):
+        self.result = result
+        self.error = error
+        self.waits = []
+        self.terminated = False
+        self.closed = False
+
+    async def wait(self, check=False, timeout=None):
+        self.waits.append({"check": check, "timeout": timeout})
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    def terminate(self):
+        self.terminated = True
+
+    def close(self):
+        self.closed = True
+
+    async def wait_closed(self):
+        return None
+
+
 class _Connection:
     def __init__(self, result=None):
         self.calls = []
         self.result = result or _Result()
         self.process = None
 
-    async def run(self, command, **kwargs):
+    async def create_process(self, command, **kwargs):
         self.calls.append((command, kwargs))
-        return self.result
+        self.process = _WaitProcess(self.result)
+        return self.process
 
 
 def test_executor_sends_eof_when_stdin_is_omitted():
@@ -53,14 +80,45 @@ def test_executor_maps_missing_exit_status_to_failure():
 
 
 class _TimeoutConnection(_Connection):
-    async def run(self, command, **kwargs):
-        raise TimeoutError
+    async def create_process(self, command, **kwargs):
+        self.calls.append((command, kwargs))
+        self.process = _WaitProcess(error=TimeoutError())
+        return self.process
 
 
-def test_timeout_is_explicitly_marked_orphaned_when_channel_unavailable():
+def test_a_timeout_terminates_the_remote_process():
+    """`connection.run()` never handed the process back, so a timeout
+    abandoned a live channel and a running remote command, and `orphaned` was
+    True every time -- conveying nothing."""
     connection = _TimeoutConnection()
+
     with pytest.raises(subprocess.TimeoutExpired) as raised:
         SshExecutor(lambda: connection)("sleep 60", timeout=0.01)
+
+    assert connection.process.terminated is True
+    assert raised.value.orphaned is False
+
+
+class _UnterminableConnection(_Connection):
+    class _Stuck:
+        async def wait(self, check=False, timeout=None):
+            raise TimeoutError
+
+        async def wait_closed(self):
+            return None
+
+    async def create_process(self, command, **kwargs):
+        self.calls.append((command, kwargs))
+        self.process = self._Stuck()
+        return self.process
+
+
+def test_orphaned_still_reports_a_process_that_cannot_be_terminated():
+    connection = _UnterminableConnection()
+
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        SshExecutor(lambda: connection)("sleep 60", timeout=0.01)
+
     assert raised.value.orphaned is True
 
 

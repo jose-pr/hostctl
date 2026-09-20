@@ -689,3 +689,51 @@ def test_a_routing_failure_declines_to_the_next_provider():
     host = PosixHost(executor_providers=(SshExecutorProvider(transport), fallback))
 
     assert host.run("uptime", check=False).stdout == b"ok"
+
+
+def test_a_transient_refusal_does_not_brick_the_host():
+    """A decline lasts for the call that saw it, not for the selector's life.
+
+    An SSH host has one executor provider, so a single transient refusal --
+    sshd restarting, a network blip -- meant hostctl never dialled out again
+    until close(), while `host.connect()` still reported success.
+    """
+    state = {"failing": True}
+
+    def flaky(command, *args, **options):
+        if state["failing"]:
+            raise OperationNotStarted(
+                "sshd restarting", cause=ConnectionError("sshd restarting")
+            )
+        return subprocess.CompletedProcess((command,), 0, b"ok", b"")
+
+    host = PosixHost(
+        executor_providers=(ExecutorProvider("ssh", flaky, capabilities=()),)
+    )
+
+    with pytest.raises(OperationNotStarted):
+        host.run("uptime", check=False)
+
+    state["failing"] = False
+    assert host.run("uptime", check=False).stdout == b"ok"
+
+
+def test_the_refusal_names_the_provider_and_keeps_its_cause():
+    """It surfaced as a bare "no provider is available" with no __cause__."""
+
+    def refuse(command, *args, **options):
+        raise OperationNotStarted(
+            "host key is not trusted", cause=ConnectionError("host key is not trusted")
+        )
+
+    host = PosixHost(
+        executor_providers=(ExecutorProvider("ssh", refuse, capabilities=()),)
+    )
+
+    with pytest.raises(OperationNotStarted) as raised:
+        host.run("uptime", check=False)
+
+    assert "ssh" in str(raised.value)
+    assert "host key is not trusted" in str(raised.value)
+    assert raised.value.cause is not None
+    assert raised.value.__cause__ is not None
