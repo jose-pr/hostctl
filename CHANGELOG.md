@@ -27,6 +27,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   both, while two paths on one host still are one — which keeps the guard
   that refuses `copy()` of a file onto itself. A `.via()` pin selects a
   route to the host, not a different host, and answers accordingly.
+- **The SFTP leg verifies the server's host key.** `SshConfig.connect_opts()`
+  omitted `known_hosts` whenever it held its `()` default. asyncssh reads a
+  missing key as "resolve known_hosts the usual way", so `run()` verified the
+  server — but `pathlib_next`'s SFTP connect seeds `known_hosts=None`
+  (verification off) for options it is not handed, so `path()` accepted any
+  host key, including an actively substituted one, and sent it the configured
+  password. Opting out is still possible and now explicit: `known_hosts=None`.
+- **`ConnectionString` parses `user:password@host`.** A scheme-shaped username
+  made `urlsplit` read `root:hunter2@nas` as the scheme `root`, so the password
+  was never recognised: it stayed in the path, where `str()` and `repr()`
+  rendered it verbatim, the host came out empty, and `is_local` reported a
+  remote machine as local. Without a scheme to assume, a target carrying
+  credentials is now refused rather than guessed at, and both error messages
+  redact (`root:<redacted>@nas`).
+- **An args-capable executor gets one shell layer, not two.** `SystemHost`
+  fed a finished shell command line back into `flavour.invocation()`, which
+  takes a script. On Windows the outer PowerShell re-parsed the inner
+  `-Command` string, so `windows://node?executor=local` reported 0 for
+  `cmd /c exit 3` — `check=True` passed for a failing command — and quoted
+  text and variables came back mangled or empty.
+- **cmd.exe builtin operands are quoted, and `set` no longer escapes inside
+  quotes.** cmd splits a builtin's operands on `,`, `;` and `=` as well as
+  whitespace, so `del /q a b.txt` deleted `a` and `b.txt` and left the named
+  file. Separately, `set "KEY=VALUE"` caret-escaped inside a quoted span,
+  where cmd does not process carets: `100%` reached the child as `100^%`,
+  `%OS%` still expanded, and a `"` in the value ended the assignment early.
+  An empty value remains inexpressible in cmd, and is now documented as such.
+- **PowerShell 5 native arguments survive the C runtime.** PS 5.1 rebuilds the
+  command line for a native program and leaves embedded quotes alone, so
+  `run(("robocopy", src, dst, name))` with `name = 'my file" /MIR "z'` handed
+  robocopy `/MIR` — mirror mode, which deletes files in the destination. Empty
+  arguments were dropped and a trailing backslash swallowed the next argument.
+  PowerShell 7 is unaffected and keeps the plain literal.
+- **A transfer to another backend no longer renames inside the source host.**
+  `ssh_host.path('/srv/export.csv').move(LocalPath('/home/op/export.csv'))`
+  issued an SFTP rename on the server: the file left `/srv`, never arrived,
+  and no error was raised. A `str` destination — documented by `pathlib_next`
+  — also raised `TypeError` on every transport, and a cross-provider `move()`
+  aborted instead of falling back to copy + remove. All three now work.
+- **Docker file modes are translated.** The archive stat header carries Go's
+  `os.FileMode`, used verbatim as a POSIX `st_mode`: `is_file()` was False for
+  every ordinary file and `is_dir()` raised `OverflowError: mode out of range`
+  for a directory, which also killed any recursive copy.
+- **An unreachable QGA socket is reported as a transport failure.** It escaped
+  as a bare `FileNotFoundError`, indistinguishable from the guest file being
+  absent — so an append across a guest reboot staged an empty buffer and
+  truncated the guest file when the agent came back.
+- **Native WinRM reports the remote exit status.** The provider did not
+  declare `manages_status`, so PowerShell's `; exit $LASTEXITCODE` epilogue was
+  appended and its `exit` ended the remote pipeline before the
+  `__HOSTCTL_LASTEXITCODE__` marker could be emitted. A command that failed by
+  exit status reported 0 and `check=True` passed.
 - **One unsupported operation no longer takes a path provider out of
   service.** A `NotImplementedError` from a retry-safe call was recorded as
   a decline on the host's shared provider selector, which every later
