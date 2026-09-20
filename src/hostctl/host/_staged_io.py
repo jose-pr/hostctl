@@ -114,6 +114,96 @@ class StagedAppendStream(StagedWriteStream):
         super().writelines(lines)
 
 
+class StagedTextWrapper(io.TextIOWrapper):
+    """A text view whose finalizer does not let the staged buffer commit.
+
+    `TextIOWrapper.__exit__` and its finalizer both call `close()`, which
+    closes the buffer -- and for a staged stream that *is* the upload. The
+    buffer's own guards never see an unclosed stream, so the discard has to
+    happen here, before the close reaches it.
+    """
+
+    def _discard_pending(self, reason: str) -> None:
+        try:
+            buffer = self.buffer
+            pending = getattr(buffer, "_commit", None) is not None
+        except Exception:  # pragma: no cover - finalization races
+            return
+        if not pending:
+            return
+        warnings.warn(
+            f"{getattr(buffer, '_label', 'staged')} write stream discarded "
+            f"without committing: {reason}",
+            ResourceWarning,
+            stacklevel=3,
+        )
+        typing.cast(StagedWriteStream, buffer).discard()
+
+    def __exit__(self, *exc_info) -> None:
+        if exc_info and exc_info[0] is not None:
+            self._discard_pending(f"{exc_info[0].__name__} left the block")
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            closed = self.closed
+        except Exception:  # pragma: no cover - finalization races
+            closed = True
+        if not closed:
+            self._discard_pending("never closed")
+        try:
+            super().__del__()  # type: ignore[misc]
+        except AttributeError:  # pragma: no cover - build without IOBase.__del__
+            try:
+                self.close()
+            except Exception:
+                pass
+
+
+def _text_encoding(encoding: typing.Optional[str]) -> typing.Optional[str]:
+    # `io.text_encoding` is 3.10+; on the 3.9 floor pass the value through,
+    # exactly as pathlib_next's own open() does.
+    resolve = getattr(io, "text_encoding", None)
+    return resolve(encoding) if resolve is not None else encoding
+
+
+class StagedOpenMixin:
+    """Supplies `open()` for a path whose `_open()` stages writes in memory.
+
+    Identical to the inherited `pathlib_next.Path.open()` except for the text
+    wrapper it builds: a plain `io.TextIOWrapper` commits the staged buffer
+    from `__exit__` and from the garbage collector, so `open('w')` ignored the
+    guards that `open('wb')` honours.
+    """
+
+    def open(  # type: ignore[override]
+        self,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
+        newline: typing.Optional[str] = None,
+    ) -> io.IOBase:
+        if "b" in mode:
+            return super().open(mode, buffering, encoding, errors, newline)  # type: ignore[misc]
+        binary = super().open(mode.replace("t", "") + "b", buffering)  # type: ignore[misc]
+        try:
+            return StagedTextWrapper(
+                binary,
+                _text_encoding(encoding),
+                errors,
+                newline,
+                line_buffering=buffering == 1,
+            )
+        except BaseException:
+            # An unknown encoding or newline fails after the handle is open;
+            # leaving it would commit an empty upload at collection time.
+            if isinstance(binary, StagedWriteStream):
+                binary.discard()
+            binary.close()
+            raise
+
+
 def validate_open_mode(mode: str) -> typing.Tuple[bool, bool]:
     """Validate a binary `open()` mode and return `(readable, writable)`.
 

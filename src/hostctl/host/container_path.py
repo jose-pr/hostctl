@@ -13,7 +13,7 @@ import typing
 from pathlib import PurePath as _StdPurePath
 from pathlib_next import Path, PosixPathname, WindowsPathname
 from pathlib_next.utils.stat import FileStat
-from ._staged_io import staged_open
+from ._staged_io import StagedOpenMixin, staged_open
 
 
 class ContainerArchiveClient(typing.Protocol):
@@ -524,7 +524,7 @@ class ContainerPathBackend:
             raise OSError(f"container rejected archive for {path}")
 
 
-class _ContainerPathMixin:
+class _ContainerPathMixin(StagedOpenMixin):
     """Shared pathlib_next operations for both container path flavours."""
 
     __slots__ = ()

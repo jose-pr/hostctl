@@ -51,7 +51,7 @@ from ._common import (
     uri_hostname,
 )
 from ._ssh import SshConfig, _SshTransport
-from ._staged_io import staged_open
+from ._staged_io import StagedOpenMixin, staged_open
 
 QemuTransport = typing.Literal["libvirt", "unix", "ssh"]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
@@ -880,7 +880,7 @@ class _QgaReadStream(io.RawIOBase):
             super().close()
 
 
-class _QgaPathMixin:
+class _QgaPathMixin(StagedOpenMixin):
     __slots__ = ()
 
     def copy(self, target, **kwargs):

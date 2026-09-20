@@ -195,3 +195,58 @@ def test_append_writelines_also_lands_at_the_end():
         stream.writelines([b"+a", b"+b"])
 
     assert [value for _, value, _ in backend.writes] == [b"existing+a+b"]
+
+
+@pytest.mark.parametrize("flavour", sorted(_paths()))
+def test_a_text_mode_block_that_raises_does_not_commit(flavour):
+    """The guards must not depend on whether the mode carried a `b`.
+
+    `pathlib_next.Path.open()` wraps a text mode in a plain `TextIOWrapper`
+    whose `__exit__` and finalizer both close the buffer -- and for a staged
+    stream that close *is* the upload, so the binary guards never ran.
+    hostctl supplies its own wrapper instead.
+    """
+    backend = _RecordingBackend()
+    path = _paths()[flavour](backend)
+
+    with pytest.warns(ResourceWarning, match="discarded without committing"):
+        with pytest.raises(RuntimeError):
+            with path.open("w", encoding="utf-8") as stream:
+                stream.write("partial")
+                raise RuntimeError("the source died mid-copy")
+
+    assert backend.writes == []
+
+
+@pytest.mark.parametrize("flavour", sorted(_paths()))
+def test_an_abandoned_text_stream_never_uploads_from_the_collector(flavour):
+    backend = _RecordingBackend()
+    path = _paths()[flavour](backend)
+
+    with pytest.warns(ResourceWarning, match="discarded without committing"):
+        stream = path.open("w", encoding="utf-8")
+        stream.write("partial")
+        del stream
+        gc.collect()
+
+    assert backend.writes == []
+
+
+@pytest.mark.parametrize("flavour", sorted(_paths()))
+def test_a_closed_text_stream_still_commits_once(flavour):
+    backend = _RecordingBackend()
+    path = _paths()[flavour](backend)
+
+    with path.open("w", encoding="utf-8") as stream:
+        stream.write("done")
+
+    assert [value for _, value, _ in backend.writes] == [b"done"]
+
+
+@pytest.mark.parametrize("flavour", sorted(_paths()))
+def test_text_reads_are_unaffected(flavour):
+    backend = _RecordingBackend()
+    path = _paths()[flavour](backend)
+
+    with path.open("r", encoding="utf-8") as stream:
+        assert stream.read() == "existing"
