@@ -124,7 +124,8 @@ def test_system_config_resolves_transport_descriptors_with_explicit_options():
         provider_options={"ssh": SshConfig("node", username="root")},
     )
     host = config._create_host()
-    assert host.capabilities == frozenset(("run", "path"))
+    # The SSH provider implements spawn(), and now says so.
+    assert host.capabilities == frozenset(("run", "path", "spawn", "tty"))
 
 
 def test_provider_selector_rejects_unavailable_without_replay():

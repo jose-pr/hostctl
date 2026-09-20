@@ -25,7 +25,13 @@ def _supports(provider: PathProvider, operation: PathOperation) -> bool:
     return bool(
         "path" in capabilities
         or operation in capabilities
-        or (operation.startswith("open_") and "open" in capabilities)
+        # A bare `open` stands in for `open_read` only. It used to grant
+        # `open_write` too, so a provider declaring read operations -- the
+        # shipped `DownloadPathProvider`, or QGA on a guest with no write RPCs
+        # -- accepted `open('wb')` and was even preferred for it over a
+        # writable sibling. A mutation has to be declared: that is the whole
+        # point of operation-level capabilities.
+        or (operation == "open_read" and "open" in capabilities)
     )
 
 

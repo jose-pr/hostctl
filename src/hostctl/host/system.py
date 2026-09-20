@@ -377,11 +377,17 @@ class SystemHost(Host):
         ]
         if any(probe.usable for _, probe in executor_probes):
             values.add("run")
-        if any(
-            probe.usable and "runspace" in (probe.capabilities | provider.capabilities)
-            for provider, probe in executor_probes
-        ):
-            values.add("runspace")
+        # `spawn` and `tty` were never reported, so an SSH-backed host
+        # advertised {run, path} while `spawn()` and TTY sessions worked --
+        # and contracts.md tells callers to gate on exactly this set.
+        # `ContainerHost` reported them all along; the two now agree.
+        for capability in ("runspace", "spawn", "tty"):
+            if any(
+                probe.usable
+                and capability in (probe.capabilities | provider.capabilities)
+                for provider, probe in executor_probes
+            ):
+                values.add(capability)
         if any(probe.usable for _, probe in path_probes):
             values.add("path")
         return frozenset(values)
@@ -813,8 +819,28 @@ class SystemHost(Host):
             self._connected_providers.append(provider)
             self._run_initializer_locked([provider])
 
+    def _select_capable(self, capability: str, operation: str):
+        """Select an executor provider offering `capability`.
+
+        `run()` and `path()` report an unsupported operation as
+        `NotImplementedError`, which is the documented contract. `spawn()` and
+        `runspace()` went straight to `select()`, whose "no provider is
+        available" is an `OperationNotStarted` -- a RuntimeError -- so a caller
+        catching NotImplementedError to fall back crashed instead.
+        """
+        try:
+            return self._executor_selector.select(capability=capability).provider
+        except OperationNotStarted as exc:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not provide the {operation!r} capability"
+            ) from exc
+
     def spawn(self, *cmds, **options):
-        provider = self._executor_selector.select().provider
+        # Filtered on the capability, as runspace() already was: selecting
+        # blind meant a first provider without sessions ended the search, so a
+        # WindowsHost composed as (winrm, ssh) could not open an SSH session
+        # at all.
+        provider = self._select_capable("spawn", "spawn")
         self._ensure_provider_connected(provider)
         spawn = getattr(provider, "spawn", None)
         if spawn is None:
@@ -825,8 +851,7 @@ class SystemHost(Host):
 
     def runspace(self):
         """Return a provider-owned typed runspace when one is available."""
-        selected = self._executor_selector.select(capability="runspace")
-        provider = selected.provider
+        provider = self._select_capable("runspace", "runspace")
         self._ensure_provider_connected(provider)
         method = getattr(provider, "runspace", None)
         if method is None:

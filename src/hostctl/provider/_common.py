@@ -167,6 +167,12 @@ class PathProvider:
             "unlink",
             "rmdir",
             "rename",
+            # Both were missing, so a provider that enumerates its operations
+            # -- the shipped LocalPathProvider among them -- reported "no path
+            # provider supports symlink_to" however capable its backend was.
+            # SFTP and WinRM escaped only by declaring the `path` wildcard.
+            "symlink_to",
+            "readlink",
         )
     )
 

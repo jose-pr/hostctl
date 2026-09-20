@@ -519,7 +519,13 @@ class SshExecutorProvider(ExecutorProvider):
         self.transport = transport
         # SSH receives one finalized command string; argv arguments are
         # rendered by the host shell before dispatch.
-        super().__init__("ssh", transport.executor)
+        #
+        # `spawn`/`tty` are declared because this provider implements
+        # `spawn()`: the host selects on the capability, and a provider that
+        # can open a session but does not say so is skipped for it.
+        capabilities = set(transport.executor.executor_capabilities)
+        capabilities |= {"spawn", "tty"} & transport.capabilities
+        super().__init__("ssh", transport.executor, capabilities=capabilities)
 
     def probe(self):
         return ProviderProbe("available", capabilities=self.capabilities)

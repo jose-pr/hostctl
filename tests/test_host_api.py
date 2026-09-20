@@ -527,8 +527,12 @@ def test_repr_redacts_credentials():
 
 
 def test_capabilities_are_explicit():
+    # `spawn`/`tty` are reported because the SSH provider implements sessions.
+    # This used to assert {run, path} while `spawn()` worked, so a tool gating
+    # on `capabilities` -- which contracts.md tells callers to do -- refused
+    # to open a shell on every SSH host while offering it on containers.
     assert PosixHost.from_ssh(SshConfig("host")).capabilities == frozenset(
-        ("run", "path")
+        ("run", "path", "spawn", "tty")
     )
     windows_capabilities = WindowsHost.from_winrm(
         WinRMConfig("host", "user", "secret")
@@ -609,3 +613,44 @@ def test_redact_uri_removes_a_password_urlsplit_cannot_see(uri):
 def test_redact_uri_leaves_a_credential_free_uri_alone():
     assert redact_uri("ssh://nas:22/dir") == "ssh://nas:22/dir"
     assert redact_uri("wss://nas:8443/api?x=1") == "wss://nas:8443/api?x=1"
+
+
+def test_an_unsupported_session_raises_not_implemented_not_a_runtime_error():
+    """AGENTS.md: unsupported run()/path()/spawn() raise NotImplementedError.
+
+    `spawn()` and `runspace()` went straight to `select()`, whose "no provider
+    is available" is an `OperationNotStarted` -- a RuntimeError -- so a caller
+    catching NotImplementedError to fall back to `run()` crashed instead.
+    """
+    from hostctl.host.system import IosHost
+
+    host = IosHost()
+
+    with pytest.raises(NotImplementedError, match="spawn"):
+        host.spawn("bash")
+    with pytest.raises(NotImplementedError, match="runspace"):
+        host.runspace()
+
+
+def test_spawn_looks_past_a_provider_that_cannot_open_sessions():
+    """Selecting blind meant the first provider ended the search."""
+    import subprocess
+
+    from hostctl import ExecutorProvider, PosixHost
+
+    def execute(command, *args, **options):
+        return subprocess.CompletedProcess((command,), 0, b"", b"")
+
+    sessionless = ExecutorProvider("winrm", execute, capabilities=("script",))
+
+    class _SessionProvider(ExecutorProvider):
+        def __init__(self):
+            super().__init__("ssh", execute, capabilities=("args", "spawn", "tty"))
+
+        def spawn(self, *cmds, **options):
+            return ("spawned", cmds)
+
+    host = PosixHost(executor_providers=(sessionless, _SessionProvider()))
+
+    assert host.spawn("bash") == ("spawned", ("bash",))
+    assert {"spawn", "tty"} <= host.capabilities

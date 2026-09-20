@@ -90,7 +90,10 @@ def test_system_config_roundtrip_accepts_constructor_only_provider_options():
     )
     assert restored.executors == ("ssh",)
     assert restored.paths == ("sftp",)
-    assert restored._create_host().capabilities == frozenset(("run", "path"))
+    # SSH providers open sessions, so the host reports spawn/tty as well.
+    assert restored._create_host().capabilities == frozenset(
+        ("run", "path", "spawn", "tty")
+    )
 
     with pytest.raises(ValueError, match="unsupported credentials"):
         HostConfig(str(config), password="secret")

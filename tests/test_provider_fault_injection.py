@@ -564,3 +564,75 @@ def test_one_unsupported_operation_does_not_disable_the_provider():
     assert path.read_bytes() == b"content"
     assert host.path("payload").stat().st_size == 7
     assert host.provider_details[0]["availability"] == "available"
+
+
+# --- (g) the capability vocabulary matches what backends actually do --------
+
+
+def test_open_write_is_refused_by_a_read_only_provider():
+    """A bare `open` granted every `open_*`, `open_write` included.
+
+    So `DownloadPathProvider` -- read operations only -- accepted `open('wb')`
+    and was even preferred for it over a writable sibling, which is exactly
+    the silent routing of a mutation that operation-level capabilities exist
+    to prevent.
+    """
+    writable_backend = MemPathBackend()
+    download = DownloadPathProvider(
+        lambda *parts: MemPath(*parts, backend=MemPathBackend())
+    )
+    writable = PathProvider(
+        "sftp", lambda *parts: MemPath(*parts, backend=writable_backend)
+    )
+    host = PosixHost(path_providers=(download, writable))
+
+    with host.path("payload").open("wb") as stream:
+        stream.write(b"data")
+
+    assert MemPath("payload", backend=writable_backend).read_bytes() == b"data"
+    assert "open_write" not in download.capabilities
+
+
+def test_a_read_only_provider_alone_refuses_open_write():
+    download = DownloadPathProvider(
+        lambda *parts: MemPath(*parts, backend=MemPathBackend())
+    )
+    host = PosixHost(path_providers=(download,))
+
+    with pytest.raises(NotImplementedError, match="open_write"):
+        host.path("payload").open("wb")
+
+
+def test_a_read_only_provider_still_serves_reads_declared_only_as_open():
+    """`open` alone still stands in for `open_read`."""
+    backend = MemPathBackend()
+    MemPath("payload", backend=backend).write_bytes(b"content")
+    provider = PathProvider(
+        "legacy",
+        lambda *parts: MemPath(*parts, backend=backend),
+        capabilities=("open", "stat", "exists"),
+    )
+    host = PosixHost(path_providers=(provider,))
+
+    with host.path("payload").open("rb") as stream:
+        assert stream.read() == b"content"
+
+
+def test_the_shipped_local_provider_can_symlink_and_readlink(tmp_path):
+    """Both were missing from the capability vocabulary.
+
+    A provider that enumerates its operations reported "no path provider
+    supports symlink_to" however capable its backend was, while SFTP and
+    WinRM escaped only by declaring the `path` wildcard.
+    """
+    from pathlib_next import Path as LocalPath
+
+    host = PosixHost(path_providers=(LocalPathProvider(lambda *p: LocalPath(*p)),))
+    target = host.path(str(tmp_path / "release-42"))
+    target.mkdir()
+    link = host.path(str(tmp_path / "current"))
+
+    link.symlink_to(str(target))
+
+    assert "release-42" in str(link.readlink())
+    assert {"symlink_to", "readlink"} <= PathProvider.DEFAULT_CAPABILITIES
