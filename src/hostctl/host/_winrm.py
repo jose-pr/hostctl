@@ -19,6 +19,7 @@ from pathlib_next import Path, WindowsPathname
 from pathlib_next.utils.stat import FileStat
 
 from ..executor import (
+    ExecutorCapability,
     NativeWinRMSession,
     PsrpExecutor,
     WinRMExecutor,
@@ -207,8 +208,15 @@ class _WinRMTransport:
         # therefore uses a conservative budget.  Native PowerShell remoting
         # and PSRP feed scripts through stdin/messages and can safely batch
         # larger payloads.
-        native_context = self.config.password is None and os.name == "nt"
-        script_budget = 256_000 if self._provider == "psrp" or native_context else 6_000
+        #: True when the local PowerShell relays the command itself. That
+        #: session reports the remote status through its own
+        #: `__HOSTCTL_LASTEXITCODE__` marker line, so the flavour's
+        #: `; exit $LASTEXITCODE` epilogue must not be appended -- the `exit`
+        #: ends the remote pipeline before the marker can be emitted.
+        self._native_session = self.config.password is None and os.name == "nt"
+        script_budget = (
+            256_000 if self._provider == "psrp" or self._native_session else 6_000
+        )
         self._path_backend = WinRMPathBackend(
             self.run,
             max_script_bytes=script_budget,
@@ -219,6 +227,8 @@ class _WinRMTransport:
         capabilities = {"run", "path"}
         if self._provider == "psrp":
             capabilities.add("runspace")
+        if self._native_session:
+            capabilities.add(ExecutorCapability.MANAGES_STATUS.value)
         return frozenset(capabilities)
 
     @property
@@ -873,6 +883,13 @@ class WinRMExecutorProvider(ExecutorProvider):
         capabilities = set(transport.executor.executor_capabilities)
         if "runspace" in transport.capabilities:
             capabilities.add("runspace")
+        if ExecutorCapability.MANAGES_STATUS.value in transport.capabilities:
+            # The native session reports the remote status itself, through its
+            # own marker line. Declaring it here is what stops SystemHost
+            # appending `; exit $LASTEXITCODE`, whose `exit` ended the remote
+            # pipeline before the marker could be emitted -- so a command that
+            # failed by status reported 0 and `check=True` passed.
+            capabilities.add(ExecutorCapability.MANAGES_STATUS.value)
         super().__init__("winrm", transport.executor, capabilities=capabilities)
 
     def probe(self):

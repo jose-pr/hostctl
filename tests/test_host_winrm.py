@@ -344,3 +344,45 @@ def test_native_winrm_live_remote_exit_code():
 def test_winrm_config_rejects_invalid_transport_settings(kwargs):
     with pytest.raises(ValueError):
         WinRMConfig("host", "user", "password", **kwargs)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native context is Windows-only")
+def test_native_winrm_declares_that_it_manages_status():
+    """Without this the flavour appends `; exit $LASTEXITCODE`.
+
+    That `exit` ends the remote pipeline before NativeWinRMSession's
+    `__HOSTCTL_LASTEXITCODE__` marker line can be emitted, so the marker never
+    comes back, the status stays 0, and `check=True` passes for a command that
+    failed by exit status.
+    """
+    from hostctl.host._winrm import WinRMExecutorProvider
+
+    native = _WinRMTransport(WinRMConfig("server.example", "operator"))
+    assert "manages_status" in native.capabilities
+    assert "manages_status" in WinRMExecutorProvider(native).capabilities
+
+
+def test_pywinrm_does_not_claim_to_manage_status():
+    """With explicit credentials the payload goes through pywinrm, which needs
+    the flavour's epilogue to carry the status.
+
+    Pinned on the pywinrm provider explicitly: PSRP manages status on its own,
+    so with pypsrp installed "auto" would hide the distinction.
+    """
+    from hostctl.host._winrm import WinRMExecutorProvider
+
+    remote = _WinRMTransport(
+        WinRMConfig("server.example", "operator", password="secret", provider="pywinrm")
+    )
+    assert "manages_status" not in remote.capabilities
+    assert "manages_status" not in WinRMExecutorProvider(remote).capabilities
+
+
+def test_a_status_managing_provider_gets_a_script_without_the_epilogue():
+    """The consequence the capability exists for, at the flavour boundary."""
+    from hostctl.shell import POWERSHELL
+
+    assert POWERSHELL.script(("cmd /c exit 7",)).endswith("; exit $LASTEXITCODE")
+    assert not POWERSHELL.script(("cmd /c exit 7",), for_session=True).endswith(
+        "; exit $LASTEXITCODE"
+    )
