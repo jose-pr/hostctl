@@ -79,7 +79,7 @@ def test_container_stat_closes_unused_archive_stream():
     container = _Container()
     container.get_archive = lambda path: (
         stream,
-        {"name": "data", "size": 4, "mode": 0o100644, "mtime": "0"},
+        {"name": "data", "size": 4, "mode": 0o644, "mtime": "0"},
     )
 
     result = ContainerPathBackend(container).stat("/data")
@@ -102,7 +102,7 @@ def test_container_followed_metadata_links_close_every_unused_stream():
             (streams[0], {"linkTarget": "target"}),
             (
                 streams[1],
-                {"name": "target", "size": 4, "mode": 0o100644, "mtime": "0"},
+                {"name": "target", "size": 4, "mode": 0o644, "mtime": "0"},
             ),
         )
     )
@@ -246,3 +246,49 @@ def test_unsupported_archive_mutations_are_explicit(operation):
             path.rename("/other")
         else:
             path.chmod(0o600)
+
+
+def test_engine_file_modes_are_translated_from_go_to_posix():
+    """Docker's path-stat header carries a Go os.FileMode, not a POSIX one.
+
+    Used verbatim, a regular file had no S_IFREG -- `is_file()` was False for
+    every ordinary file -- and a directory carried `1 << 31`, which `S_ISDIR`
+    rejects with OverflowError.
+    """
+    import stat
+
+    cases = {
+        # (go mode, linkTarget) -> predicate that must be true
+        (493, ""): stat.S_ISREG,  # docker-py's own documented /bin/sh header
+        ((1 << 31) | 0o755, ""): stat.S_ISDIR,
+        ((1 << 27) | 0o777, ""): stat.S_ISLNK,
+        ((1 << 25) | 0o644, ""): stat.S_ISFIFO,
+        ((1 << 24) | 0o755, ""): stat.S_ISSOCK,
+        ((1 << 26) | (1 << 21) | 0o666, ""): stat.S_ISCHR,
+        ((1 << 26) | 0o660, ""): stat.S_ISBLK,
+        (0o777, "elsewhere"): stat.S_ISLNK,
+    }
+    for (mode, link_target), predicate in cases.items():
+        container = _Container()
+        container.get_archive = lambda path, mode=mode, link_target=link_target: (
+            io.BytesIO(),
+            {
+                "name": "x",
+                "size": 1,
+                "mode": mode,
+                "mtime": "0",
+                "linkTarget": link_target,
+            },
+        )
+
+        result = ContainerPathBackend(container).stat("/x", follow_symlinks=False)
+
+        assert predicate(result.st_mode), (oct(mode), oct(result.st_mode))
+
+    container = _Container()
+    container.get_archive = lambda path: (
+        io.BytesIO(),
+        {"name": "x", "size": 1, "mode": (1 << 23) | 0o755, "mtime": "0"},
+    )
+    mode = ContainerPathBackend(container).stat("/x").st_mode
+    assert stat.S_IMODE(mode) == 0o4755

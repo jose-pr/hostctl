@@ -11,6 +11,8 @@ import struct
 import subprocess
 import sys
 import tarfile
+import stat as _stat
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
@@ -48,6 +50,35 @@ def _direct_powershell_argv(command: str):
         for match in _POWERSHELL_LITERAL.finditer(script)
     ]
     return values or None
+
+
+def _go_file_mode(st_mode: int) -> int:
+    """Convert a POSIX st_mode to Go's os.FileMode, as Docker reports it.
+
+    Permission bits stay in the low nine; the type moves to Go's high bits.
+    This is the inverse of container_path._posix_mode, and it is what keeps
+    this fake honest: the engine never sends a POSIX mode.
+    """
+    mode = _stat.S_IMODE(st_mode) & 0o777
+    if st_mode & _stat.S_ISUID:
+        mode |= 1 << 23
+    if st_mode & _stat.S_ISGID:
+        mode |= 1 << 22
+    if st_mode & _stat.S_ISVTX:
+        mode |= 1 << 20
+    if _stat.S_ISDIR(st_mode):
+        mode |= 1 << 31
+    elif _stat.S_ISLNK(st_mode):
+        mode |= 1 << 27
+    elif _stat.S_ISCHR(st_mode):
+        mode |= (1 << 26) | (1 << 21)
+    elif _stat.S_ISBLK(st_mode):
+        mode |= 1 << 26
+    elif _stat.S_ISFIFO(st_mode):
+        mode |= 1 << 25
+    elif _stat.S_ISSOCK(st_mode):
+        mode |= 1 << 24
+    return mode
 
 
 class _FakeTransport:
@@ -284,7 +315,10 @@ class _FakeDockerContainer:
         metadata = {
             "name": os.path.basename(path),
             "size": value.st_size,
-            "mode": value.st_mode,
+            # A real engine sends Go's os.FileMode here, not a POSIX st_mode.
+            # Sending the POSIX one made this fake kinder than Docker and hid
+            # a bug where every ordinary file reported is_file() False.
+            "mode": _go_file_mode(value.st_mode),
             "mtime": int(value.st_mtime),
             "linkTarget": os.readlink(path) if os.path.islink(path) else "",
         }

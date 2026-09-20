@@ -86,6 +86,58 @@ def _safe_name(name: str) -> typing.Tuple[str, ...]:
     return parts
 
 
+#: Go's `os.FileMode` bits, as Docker sends them in the path-stat header.
+#: Only the ones with a POSIX equivalent are listed; the rest (ModeAppend,
+#: ModeExclusive, ModeTemporary, ModeIrregular...) have none and are dropped.
+_GO_MODE_DIR = 1 << 31
+_GO_MODE_SYMLINK = 1 << 27
+_GO_MODE_DEVICE = 1 << 26
+_GO_MODE_NAMED_PIPE = 1 << 25
+_GO_MODE_SOCKET = 1 << 24
+_GO_MODE_SETUID = 1 << 23
+_GO_MODE_SETGID = 1 << 22
+_GO_MODE_CHAR_DEVICE = 1 << 21
+_GO_MODE_STICKY = 1 << 20
+
+
+def _posix_mode(mode: int, *, link_target: bool = False) -> int:
+    """Translate Docker's Go ``os.FileMode`` into a POSIX ``st_mode``.
+
+    The archive stat header's ``mode`` is a Go file mode: permission bits in
+    the low nine, and type in high bits that mean nothing to ``stat.S_IS*``.
+    Used verbatim it left a regular file with no ``S_IFREG`` -- so
+    ``is_file()`` was False for every ordinary file -- and a directory with
+    ``1 << 31`` set, which ``S_ISDIR`` rejects with ``OverflowError``.
+
+    ``_file_stat`` already does this correctly for the tar path; this is the
+    same translation for the metadata path, so the two agree about one file.
+    """
+    result = mode & 0o777
+    if mode & _GO_MODE_SETUID:
+        result |= _stat.S_ISUID
+    if mode & _GO_MODE_SETGID:
+        result |= _stat.S_ISGID
+    if mode & _GO_MODE_STICKY:
+        result |= _stat.S_ISVTX
+
+    if mode & _GO_MODE_DIR:
+        return result | _stat.S_IFDIR
+    if mode & _GO_MODE_SYMLINK:
+        return result | _stat.S_IFLNK
+    if mode & _GO_MODE_DEVICE:
+        kind = _stat.S_IFCHR if mode & _GO_MODE_CHAR_DEVICE else _stat.S_IFBLK
+        return result | kind
+    if mode & _GO_MODE_NAMED_PIPE:
+        return result | _stat.S_IFIFO
+    if mode & _GO_MODE_SOCKET:
+        return result | _stat.S_IFSOCK
+    if link_target:
+        # Older engines have been seen sending a bare permission mode with a
+        # populated linkTarget; the link is the better evidence of the type.
+        return result | _stat.S_IFLNK
+    return result | _stat.S_IFREG
+
+
 def _file_stat(member: tarfile.TarInfo) -> FileStat:
     if member.isdir():
         kind = _stat.S_IFDIR
@@ -195,7 +247,10 @@ class ContainerPathBackend:
 
     @staticmethod
     def _metadata_stat(metadata: typing.Mapping[str, object]) -> FileStat:
-        mode = int(metadata.get("mode", 0o644))
+        mode = _posix_mode(
+            int(metadata.get("mode", 0o644)),
+            link_target=bool(metadata.get("linkTarget")),
+        )
         size = int(metadata.get("size", 0))
         mtime = metadata.get("mtime", 0)
         if isinstance(mtime, str):
