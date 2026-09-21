@@ -290,37 +290,65 @@ def test_native_winrm_carries_the_remote_exit_code_through_a_marker():
 @pytest.mark.skipif(
     os.name != "nt", reason="the wrapper is a Windows PowerShell program"
 )
-def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it():
-    """Run the real wrapper with the remote hop replaced by a local call.
+@pytest.mark.parametrize("compose", (False, True))
+def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it(compose):
+    """Run the real wrapper with the remote hop replaced by a *runspace*.
 
-    This proves the half a fake cannot: that the emitted marker is stripped
-    from stdout and becomes the process exit status. Whether `Invoke-Command`
-    delivers the remote script block's output unchanged is the remaining
-    assumption, and it needs a live Windows target.
+    Not `& $b`: that runs the block in the CALLING scope, so an `exit` inside
+    it ends the wrapper process directly and produces the expected status
+    whether or not the marker mechanism worked at all. `Invoke-Command
+    -ComputerName` and PSRP both run the block in a separate runspace, where
+    `exit` ends only the block -- which is the entire thing this test exists
+    to prove. It also drives the composed payload every real dispatch sends,
+    not just the bare one.
     """
-    wrapper = NativeWinRMSession("server.example")._wrapper("cmd /c exit 7")
-    local = wrapper.replace("Invoke-Command @o -ScriptBlock $b", "& $b")
+    from hostctl.shell import POWERSHELL
+
+    # `for_session=True` is what a real dispatch renders for this provider:
+    # the native session declares `manages_status`, so the flavour's own exit
+    # epilogue is left off and the wrapper's marker epilogue is the one that
+    # reports the status. Without that the payload's `exit` ends the runspace
+    # before the marker is ever emitted, and the code is lost -- which is
+    # exactly what this used to do.
+    payload = "cmd /c exit 7"
+    if compose:
+        payload = POWERSHELL.script((payload,), for_session=True)
+    wrapper = NativeWinRMSession("server.example")._wrapper(payload)
+    local = _in_a_separate_runspace(wrapper)
     result = subprocess.run(
         ("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "-"),
         input=local.encode("utf-8"),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    assert result.returncode == 7
+    assert result.returncode == 7, result.stderr
     assert b"__HOSTCTL_LASTEXITCODE__" not in result.stdout
     assert result.stdout == b""
 
-    echoing = NativeWinRMSession("server.example")._wrapper("Write-Output 'a'")
+    echoing = NativeWinRMSession("server.example")._wrapper(
+        POWERSHELL.script((("Write-Output", "a"),), for_session=True)
+        if compose
+        else "Write-Output 'a'"
+    )
     result = subprocess.run(
         ("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "-"),
-        input=echoing.replace("Invoke-Command @o -ScriptBlock $b", "& $b").encode(
-            "utf-8"
-        ),
+        input=_in_a_separate_runspace(echoing).encode("utf-8"),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    assert result.returncode == 0
+    assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == b"a"
+
+
+def _in_a_separate_runspace(wrapper):
+    """Replace the remote hop with a local runspace, which is what a remote
+    one is: a scope of its own, where `exit` ends the block and not us."""
+    return wrapper.replace(
+        "Invoke-Command @o -ScriptBlock $b",
+        "$(try{$ps=[PowerShell]::Create();"
+        "[void]$ps.AddScript($b.ToString());$ps.Invoke()}"
+        "finally{$ps.Dispose()})",
+    )
 
 
 @pytest.mark.skipif(

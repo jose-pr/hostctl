@@ -703,7 +703,17 @@ class WinRMPathBackend:
             "if($null -eq $i){"
             + ("" if missing_ok else "throw [IO.FileNotFoundException]::new($p)")
             + "}elseif($i.Attributes -band [IO.FileAttributes]::ReparsePoint){"
-            "Remove-Item -LiteralPath $p -Force"
+            # NOT Remove-Item: on Windows PowerShell 5.1 -- the default remote
+            # shell on every Windows Server -- a DIRECTORY reparse point whose
+            # target has entries is treated as a directory with children, so
+            # Remove-Item asks for confirmation. Every WinRM hop runs
+            # powershell.exe with -NonInteractive, where the prompt cannot be
+            # answered: it raised and left the junction in place, and only
+            # when the target was non-empty, so the failure looked
+            # intermittent. These .NET calls delete the link itself and
+            # never recurse into what it points at.
+            "if($i.PSIsContainer){[IO.Directory]::Delete($p,$false)}"
+            "else{[IO.File]::Delete($p)}"
             "}elseif($i.PSIsContainer){"
             "$m=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($p));"
             "Write-Output ('HOSTCTL_ERROR:isdir:'+$m)}else{[IO.File]::Delete($p)}"

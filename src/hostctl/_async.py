@@ -52,7 +52,15 @@ def normalize_asyncssh_error(
 ) -> Exception:
     """Map AsyncSSH transport/process errors to hostctl's standard contract."""
     module = asyncssh()
-    if isinstance(exc, (TimeoutError, module.TimeoutError)):
+    # `_asyncio.TimeoutError` explicitly: it IS the builtin from 3.11 on, but
+    # on 3.9 and 3.10 -- 3.9 is the declared floor -- it is a distinct class,
+    # and a bare one is exactly what asyncssh raises for a connect or login
+    # timeout (`ConnectTimeout` from ~/.ssh/config, or the default 120s
+    # `login_timeout`). Matching neither arm, it escaped `host.run()`
+    # verbatim: the documented `except (ConnectionError, TimeoutError)` did
+    # not catch it, and `SshExecutorProvider.connect()` could not turn it
+    # into `OperationNotStarted` for the next provider.
+    if isinstance(exc, (TimeoutError, _asyncio.TimeoutError, module.TimeoutError)):
         if command is not None:
             return _subprocess.TimeoutExpired(
                 command,

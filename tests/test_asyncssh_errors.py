@@ -79,3 +79,33 @@ def test_asyncssh_timeout_normalizes_to_timeout_expired_with_output():
     assert result.timeout == 0.5
     assert result.stdout == b"partial out"
     assert result.stderr == b"partial err"
+
+
+def test_an_asyncio_connect_timeout_crosses_as_a_builtin_timeout():
+    """On 3.9/3.10 -- 3.9 is the declared floor -- `asyncio.TimeoutError` is
+    a distinct class, not the builtin, and asyncssh raises exactly that for a
+    connect or login timeout (`ConnectTimeout` in ~/.ssh/config, or the
+    default 120s `login_timeout`). It matched neither arm of the mapping, so
+    it escaped `host.run()` verbatim: the documented
+    `except (ConnectionError, TimeoutError)` did not catch it, and
+    `SshExecutorProvider.connect()` could not turn it into
+    `OperationNotStarted` for the next provider."""
+    import asyncio
+
+    result = _async.normalize_asyncssh_error(asyncio.TimeoutError("timed out"))
+
+    assert isinstance(result, TimeoutError)
+    assert type(result) is not asyncio.TimeoutError or TimeoutError is (
+        asyncio.TimeoutError
+    )
+
+
+def test_an_asyncio_command_timeout_still_becomes_timeout_expired():
+    import asyncio
+
+    result = _async.normalize_asyncssh_error(
+        asyncio.TimeoutError("timed out"), command="sleep 30", timeout=5
+    )
+
+    assert isinstance(result, subprocess.TimeoutExpired)
+    assert result.timeout == 5

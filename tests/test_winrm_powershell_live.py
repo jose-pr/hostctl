@@ -119,3 +119,31 @@ def test_stat_and_scandir_agree_about_a_junction(backend, tmp_path):
 
     assert stat_module.S_ISDIR(followed.st_mode)
     assert backend.scandir(str(link)) == []
+
+
+def test_unlinking_a_populated_directory_junction_removes_only_the_link(
+    backend, tmp_path
+):
+    """`Remove-Item -Force` on a *directory* reparse point whose target has
+    entries treats the link as a directory with children and prompts for
+    confirmation. Under `-NonInteractive` -- how every WinRM hop runs
+    powershell.exe -- the prompt cannot be answered, so PowerShell raised and
+    the junction stayed. The same call succeeded when the target happened to
+    be empty, so the failure looked intermittent."""
+    real = tmp_path / "release"
+    real.mkdir()
+    (real / "app.exe").write_text("payload", encoding="utf-8")
+    link = tmp_path / "current"
+
+    made = subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(real)],
+        capture_output=True,
+        text=True,
+    )
+    if made.returncode != 0:
+        pytest.skip(f"cannot create a junction here: {made.stdout}{made.stderr}")
+
+    backend.unlink(str(link))
+
+    assert not link.exists()
+    assert (real / "app.exe").read_text(encoding="utf-8") == "payload"

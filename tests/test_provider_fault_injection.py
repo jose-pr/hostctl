@@ -12,6 +12,8 @@ exception alone.
 
 import subprocess
 
+from hostctl import _async
+
 import pytest
 from pathlib_next.mempath import MemPath, MemPathBackend
 
@@ -680,6 +682,35 @@ def test_a_routing_failure_declines_to_the_next_provider():
         raise OSError(errno.EHOSTUNREACH, "No route to host")
 
     transport.connect = unreachable
+    fallback = ExecutorProvider(
+        "local",
+        lambda command, *args, **options: subprocess.CompletedProcess(
+            (command,), 0, b"ok", b""
+        ),
+    )
+    host = PosixHost(executor_providers=(SshExecutorProvider(transport), fallback))
+
+    assert host.run("uptime", check=False).stdout == b"ok"
+
+
+def test_a_connect_timeout_declines_to_the_next_provider():
+    """asyncssh raises a bare `asyncio.TimeoutError` for a connect or login
+    timeout, and on 3.9/3.10 -- 3.9 is the declared floor -- that is not the
+    builtin `TimeoutError`, so it matched neither the error normalizer nor
+    the provider's decline clause. `ConnectTimeout 5` in a user's ssh config
+    against a firewalled host therefore escaped `host.run()` verbatim and the
+    fallback never ran."""
+    import asyncio
+
+    from hostctl import SshConfig
+    from hostctl.host._ssh import SshExecutorProvider, _SshTransport
+
+    transport = _SshTransport(SshConfig("firewalled.example", username="root"))
+
+    def timed_out():
+        raise _async.normalize_asyncssh_error(asyncio.TimeoutError("timed out"))
+
+    transport.connect = timed_out
     fallback = ExecutorProvider(
         "local",
         lambda command, *args, **options: subprocess.CompletedProcess(
