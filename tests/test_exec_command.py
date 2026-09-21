@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import PurePosixPath
@@ -167,3 +168,31 @@ def test_powershell_structured_command_still_renders_through_the_call_operator()
         POWERSHELL.script([["Get-Item", "C:/a b"]])
         == "& 'Get-Item' 'C:/a b'" + POWERSHELL.execution_epilogue
     )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the .bat dispatch is Windows-only")
+@pytest.mark.parametrize(
+    ("value", "must_not_contain"),
+    (
+        ('x" & echo INJECTED-VIA-EXEC & "', "INJECTED-VIA-EXEC"),
+        ("%USERNAME%", os.environ.get("USERNAME", "\x00")),
+    ),
+)
+def test_exec_of_a_batch_file_is_not_reparsed_by_cmd(tmp_path, value, must_not_contain):
+    """`Exec` promises one program plus argv, never interpreted by a shell.
+
+    Windows breaks that promise for us: `CreateProcess` dispatches a
+    `.bat`/`.cmd` target to cmd.exe, which re-parses the C-runtime-quoted
+    line with *cmd* rules (the CVE-2024-24576 class; CPython ships no
+    mitigation). An argument could therefore close the quoting and start a
+    new cmd command, and `%VAR%` was substituted before the batch file saw
+    it. The shell layer is the platform's, so the escaping has to be too.
+    """
+    script = tmp_path / "show.bat"
+    script.write_bytes(b"@echo off\r\necho ARG1=[%1]\r\n")
+
+    result = LocalHost().run(
+        Exec(str(script), value), check=False, text=True, capture_output=True
+    )
+
+    assert must_not_contain not in result.stdout

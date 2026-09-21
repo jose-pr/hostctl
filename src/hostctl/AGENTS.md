@@ -67,6 +67,11 @@ shell commands. `Exec` is a deliberately non-iterable frozen dataclass --
 `ShellFlavour.command_text` dispatches structured commands on `Iterable`, and
 an iterable marker would be quoted into an argv instead of taking the direct
 branch; `command_text` raises if an `Exec` reaches it.
+One platform exception, handled rather than inherited: Windows dispatches a
+`.bat`/`.cmd` target through cmd.exe, so a local `Exec` of one is quoted with
+cmd's rules instead of the C runtime's. Without that an argument could close
+the quoting and run a second cmd command, and `%VAR%` expanded before the
+batch file saw it.
 `Shell.execute(command, *args)` keeps its own program-plus-argv signature and
 wraps into an `Exec` only when dispatching to a host `run(*cmds)` and only when
 argv values are present -- `Shell.run` renders every command into one script

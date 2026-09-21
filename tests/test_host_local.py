@@ -169,3 +169,37 @@ def test_local_env_overrides_an_inherited_value():
         del os.environ["HOSTCTL_OVERRIDE_ME"]
 
     assert result.stdout.strip() == b"child"
+
+
+def test_a_shell_rendered_timeout_bounds_the_call_and_kills_the_tree(tmp_path):
+    """`timeout=` bounded the shell, not the work.
+
+    Every non-`Exec` command runs through a shell, so the real process is a
+    grandchild holding the stdout/stderr pipes. `subprocess.run` kills only
+    the direct child and then waits for those pipes to close: on Windows the
+    call blocked for the command's full duration and returned the *completed*
+    output as a timeout, and on POSIX the grandchild was orphaned and kept
+    running, so a retry ran a second concurrent copy.
+
+    The timeout is deliberately larger than a shell's own startup: with a
+    shorter one the shell is killed before it has even spawned the payload,
+    which is the one case the old code handled.
+    """
+    import time
+
+    ticks = tmp_path / "ticks"
+    code = (
+        "import pathlib, time; p = pathlib.Path({0!r}); "
+        "list(map(lambda n: (p.write_text(str(n)), time.sleep(0.1)), range(120)))"
+    ).format(str(ticks))
+
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        LocalHost().run([sys.executable, "-c", code], timeout=3)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 8, f"timeout=3 took {elapsed:.1f}s"
+    assert ticks.exists(), "the payload never started; the test proves nothing"
+    frozen = ticks.read_text()
+    time.sleep(1.5)
+    assert ticks.read_text() == frozen, "the grandchild outlived its timeout"
