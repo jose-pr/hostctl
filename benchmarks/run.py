@@ -157,9 +157,12 @@ def main(argv=None):
         }
         RESULTS.mkdir(parents=True, exist_ok=True)
         target = RESULTS / f"{version}-{interpreter}.json"
-        target.write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        # LF-only, on every platform. `write_text(newline=...)` is 3.10+,
+        # and the default translates to `os.linesep` -- which would commit
+        # CRLF from a Windows run.
+        with open(target, "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
         print(f"\nwrote {target.relative_to(ROOT)}")
     return 0
 

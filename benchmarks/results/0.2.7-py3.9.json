@@ -4,89 +4,89 @@
   "metrics": [
     {
       "iterations": 2000,
-      "max_ms": 0.03174170000000001,
-      "median_ms": 0.03103119999999998,
-      "min_ms": 0.030664749999999963,
+      "max_ms": 0.041351849999999996,
+      "median_ms": 0.03250929999999999,
+      "min_ms": 0.031015650000000006,
       "name": "path.build",
       "samples": 7
     },
     {
       "iterations": 2000,
-      "max_ms": 0.018505500000000008,
-      "median_ms": 0.017812099999999997,
-      "min_ms": 0.01755365000000003,
+      "max_ms": 0.01937430000000001,
+      "median_ms": 0.0177601,
+      "min_ms": 0.017600649999999995,
       "name": "path.exists",
       "samples": 7
     },
     {
       "iterations": 2000,
-      "max_ms": 0.02332409999999996,
-      "median_ms": 0.02020084999999994,
-      "min_ms": 0.019349100000000008,
+      "max_ms": 0.021337300000000003,
+      "median_ms": 0.020430199999999954,
+      "min_ms": 0.02008029999999994,
       "name": "path.read_bytes",
       "samples": 7
     },
     {
       "iterations": 2000,
-      "max_ms": 0.05852365000000004,
-      "median_ms": 0.053654650000000026,
-      "min_ms": 0.05329234999999998,
+      "max_ms": 0.05497954999999999,
+      "median_ms": 0.053751850000000045,
+      "min_ms": 0.052336099999999997,
       "name": "path.iterdir",
       "samples": 7
     },
     {
       "iterations": 2000,
-      "max_ms": 0.0032570499999999836,
-      "median_ms": 0.0031126999999999683,
-      "min_ms": 0.0030697500000000932,
+      "max_ms": 0.0033509499999999637,
+      "median_ms": 0.003173649999999917,
+      "min_ms": 0.0031471999999999056,
       "name": "path.truediv",
       "samples": 7
     },
     {
       "iterations": 2000,
-      "max_ms": 0.01017239999999986,
-      "median_ms": 0.00919234999999996,
-      "min_ms": 0.009049350000000178,
+      "max_ms": 0.012058100000000183,
+      "median_ms": 0.011391200000000046,
+      "min_ms": 0.011182849999999966,
       "name": "shell.posix.script(argv)",
       "samples": 7
     },
     {
       "iterations": 2000,
-      "max_ms": 0.012064550000000063,
-      "median_ms": 0.011470349999999963,
-      "min_ms": 0.01140629999999998,
+      "max_ms": 0.012400449999999896,
+      "median_ms": 0.011492350000000151,
+      "min_ms": 0.011084450000000023,
       "name": "shell.posix.script(raw+cwd+env)",
       "samples": 7
     },
     {
       "iterations": 2000,
-      "max_ms": 0.015267850000000083,
-      "median_ms": 0.013642800000000177,
-      "min_ms": 0.013494649999999941,
+      "max_ms": 0.014116550000000005,
+      "median_ms": 0.013814549999999981,
+      "min_ms": 0.013450399999999973,
       "name": "shell.powershell5.structured_command",
       "samples": 7
     },
     {
       "iterations": 2000,
-      "max_ms": 0.009183900000000023,
-      "median_ms": 0.008719499999999991,
-      "min_ms": 0.0086624500000001,
+      "max_ms": 0.009425199999999911,
+      "median_ms": 0.009201000000000015,
+      "min_ms": 0.008772650000000048,
       "name": "shell.powershell7.structured_command",
       "samples": 7
     },
     {
       "iterations": 500,
-      "max_ms": 0.050473199999999885,
-      "median_ms": 0.04959739999999968,
-      "min_ms": 0.048804999999999765,
+      "max_ms": 0.05210579999999965,
+      "median_ms": 0.05052520000000005,
+      "min_ms": 0.048869800000000296,
       "name": "shell.powershell.command(encoded)",
       "samples": 7
     },
     {
       "iterations": 2000,
-      "max_ms": 0.023222250000000107,
-      "median_ms": 0.01997490000000002,
-      "min_ms": 0.01951349999999996,
+      "max_ms": 0.022053600000000007,
+      "median_ms": 0.020004200000000024,
+      "min_ms": 0.019591999999999832,
       "name": "shell.cmd.script(argv)",
       "samples": 7
     }
