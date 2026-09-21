@@ -251,3 +251,54 @@ def test_send_eof_reports_a_transport_failure_as_one():
 
     with pytest.raises(ConnectionError, match="connection reset"):
         process.send_eof()
+
+
+class _ClosingSocket(_Socket):
+    """A socket that answers like a real one after `close()`: WinError 10038."""
+
+    def __init__(self, *values):
+        super().__init__(*values)
+        self.timeout = None
+
+    def _check(self):
+        if self.closed:
+            raise OSError(
+                10038,
+                "an operation was attempted on something that is not a socket",
+            )
+
+    def recv(self, size):
+        self._check()
+        return super().recv(size)
+
+    def settimeout(self, value):
+        self._check()
+        self.timeout = value
+
+    def gettimeout(self):
+        self._check()
+        return self.timeout
+
+
+def test_close_leaves_read_and_wait_answering_instead_of_raising_winerror():
+    """A closed process reads EOF and still reports its exit code.
+
+    `close()` closed the socket and nothing else, so the next `read()` or
+    `wait()` reached `recv()`/`settimeout()` on a closed handle and raised
+    the operating system's raw error -- `WinError 10038` on Windows,
+    `EBADF` elsewhere -- out of a method whose contract is a stream.
+    """
+    socket_ = _ClosingSocket(_frame(1, b"before"))
+    process = ContainerProcess(
+        _Api([{"Running": False, "ExitCode": 3}]),
+        "exec",
+        socket_,
+        tty=False,
+        command=["sh"],
+    )
+    assert process.read() == b"before"
+
+    process.close()
+    assert process.read() == b""
+    assert process.read_stderr() == b""
+    assert process.wait() == 3

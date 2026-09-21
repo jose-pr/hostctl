@@ -209,6 +209,8 @@ class ContainerProcess(Process):
         return self._read_stream(2, size)
 
     def send_eof(self) -> None:
+        if self._closed:
+            raise ValueError("half-close of a closed process")
         shutdown = getattr(self._socket, "shutdown", None)
         if shutdown is None:
             # The transport genuinely cannot half-close.
@@ -265,6 +267,9 @@ class ContainerProcess(Process):
             self._receive_available_locked()
 
     def _receive_available_locked(self) -> None:
+        if self._eof or self._closed:
+            # Nothing more will arrive, and the handle may already be gone.
+            return
         settimeout = getattr(self._socket, "settimeout", None)
         gettimeout = getattr(self._socket, "gettimeout", None)
         if settimeout is None:
@@ -302,6 +307,13 @@ class ContainerProcess(Process):
     def close(self) -> None:
         if not self._closed:
             self._closed = True
+            # EOF first. `close()` used to close the socket and nothing
+            # else, so the next `read()` or `wait()` still went to `recv()`
+            # -- on a closed handle, which answers with the operating
+            # system's raw error (`WinError 10038`, `EBADF`) out of a method
+            # whose contract is a stream. Whatever was already buffered
+            # stays readable; after that the stream reads as ended.
+            self._eof = True
             self._socket.close()
 
     def __enter__(self) -> ContainerProcess:
