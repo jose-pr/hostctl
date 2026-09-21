@@ -153,7 +153,7 @@ SSH and container hosts expose a persistent shell separately from buffered
 
 ```python
 with host.shell.session(terminal=True, encoding="utf-8") as session:
-    session.send(["printf", "%s\n", "quoted value"])
+    session.send(["printf", "%s", "quoted value"])
     session.send("echo raw | sed s/raw/stream/")
     output = session.read()
 ```
@@ -247,7 +247,13 @@ with WinRMConfig("windows.example.com", "admin", "secret", provider="psrp") as h
 Install `hostctl[psrp]` for Python 3.10+; Python 3.9 remains on the portable
 buffered `pywinrm` provider.
 
-`SerialConfig("serial:///...")` provides an exclusive serial host. Its default
+A serial host has two entry points, and they take different first arguments.
+The constructor takes the **device**, the way pyserial names it --
+`SerialConfig("COM3")`, `SerialConfig("/dev/ttyUSB0")`,
+`SerialConfig("rfc2217://host:4001")` -- while the URI dispatcher takes the
+**connection URI**, with the device inside it: `Host("serial:///COM3")`.
+Passing a URI to the constructor asks pyserial to open a port literally named
+`serial:///COM3`, which no system has. Its default
 `RawConsoleProfile` exposes `host.shell.session()` with a merged byte stream,
 serial break, DTR, and RTS controls, but no filesystem or command status. A
 `PromptConsoleProfile(prompt=..., status_marker=..., reliable_status=True)` can
@@ -292,6 +298,12 @@ and deletes. Every other element is a quoted string literal. A value that
 happens to look like a parameter name but is meant as data cannot be expressed
 through the structured grammar -- render it as raw source, or pass the `--`
 separator the target program provides.
+
+A structured element is a **value**, so it cannot carry a control
+character: `["printf", "%s\\n", value]` is refused, because a newline inside a
+quoted argument is how a second command gets smuggled in. A value that really
+needs a newline goes through raw shell text, which is shell source and stays
+verbatim.
 
 ## QEMU guests
 

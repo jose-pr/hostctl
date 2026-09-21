@@ -5,6 +5,11 @@ Keeping those separate is the point of `PosixHost`, `WindowsHost`, and
 `IosHost`: the operating-system semantics stay put when the access mechanism
 changes.
 
+`IosHost` is deliberately session- and command-only: it configures no shell
+flavour and no path grammar, so commands must be `Exec(...)` (or raw text the
+device understands) and `path()` raises `NotImplementedError` until an IOS
+path grammar exists.
+
 ## System versus transport
 
 Historically a host was named for its transport — `SshHost`, `WinRMHost`. But a

@@ -152,3 +152,35 @@ def test_the_sdist_never_ships_private_or_unshared_files(sdist):
     assert [name for name in names if ".local." in name] == []
     assert [name for name in names if name.split("/")[0] == ".agents"] == []
     assert [name for name in names if name.startswith("CLAUDE")] == []
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("SshConfig", "WinRMConfig", "ContainerConfig", "QemuConfig", "SerialConfig"),
+)
+def test_the_header_names_every_constructor_parameter(name):
+    """The header is what a consuming agent reads instead of the source.
+
+    Four signatures there had drifted: `client_factory`, `max_reply_size`,
+    `transport_factory`, `serial_console` and `path_helper` were absent, and
+    `SerialConfig` had no signature at all -- so the injection seams a
+    caller needs were discoverable nowhere but the source.
+    """
+    import dataclasses
+    import re
+
+    import hostctl
+
+    header = (ROOT / "src" / "hostctl" / "AGENTS.md").read_text(encoding="utf-8")
+    match = re.search(rf"`{name}\((.*?)\)`", header, re.DOTALL)
+    assert match, f"{name} has no documented signature"
+    documented = match.group(1)
+
+    missing = [
+        field.name
+        for field in dataclasses.fields(getattr(hostctl, name))
+        if not field.name.startswith("_")
+        and not re.search(rf"\b{re.escape(field.name)}\b", documented)
+    ]
+
+    assert missing == [], f"{name} signature omits {missing}"

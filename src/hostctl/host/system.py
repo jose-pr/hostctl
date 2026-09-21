@@ -1009,6 +1009,12 @@ class SystemHost(Host):
 
 
 class PosixHost(SystemHost):
+    """A POSIX system: POSIX-shell command construction and POSIX paths.
+
+    Compose it from providers directly, or build one over SSH with
+    :meth:`from_ssh`.
+    """
+
     system_family = "posix"
     default_shell = POSIX_SHELL
 
@@ -1024,6 +1030,12 @@ class PosixHost(SystemHost):
 
 
 class WindowsHost(SystemHost):
+    """A Windows system: PowerShell command construction and Windows paths.
+
+    Compose it from providers directly, or build one over WinRM with
+    :meth:`from_winrm`.
+    """
+
     system_family = "windows"
     default_shell = POWERSHELL
 
@@ -1039,21 +1051,39 @@ class WindowsHost(SystemHost):
 
 
 class IosHost(SystemHost):
+    """A Cisco IOS-style device: session and command only, by design.
+
+    It configures **no shell flavour and no path grammar**, which is a
+    deliberate gap rather than an unfinished one: IOS command syntax is
+    not a shell, and quoting it as one would corrupt ordinary commands.
+    So commands must be :class:`Exec` (or raw text the device
+    understands), and :meth:`path` raises ``NotImplementedError`` until
+    an IOS path grammar exists.
+    """
+
     system_family = "ios"
     default_shell = None
 
 
 class PosixConfig(SystemConfig, schemes=("posix", "posix+ssh")):
+    """Connection identity for a :class:`PosixHost` (`posix:`, `posix+ssh:`)."""
+
     host_type = PosixHost
     uri_scheme = "posix"
 
 
 class WindowsConfig(SystemConfig, schemes=("windows", "windows+winrm")):
+    """Connection identity for a :class:`WindowsHost` (`windows:`,
+    `windows+winrm:`)."""
+
     host_type = WindowsHost
     uri_scheme = "windows"
 
 
 class IosConfig(SystemConfig, schemes=("ios",)):
+    """Connection identity for an :class:`IosHost` (`ios:`), which is
+    session- and command-only."""
+
     host_type = IosHost
     uri_scheme = "ios"
 

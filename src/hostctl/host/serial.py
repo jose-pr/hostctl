@@ -99,10 +99,12 @@ class SerialConfig(HostConfig, schemes=("serial",)):
     serial_port: typing.Optional[SerialLike] = dataclasses.field(
         default=None, repr=False, compare=False
     )
-    #: The validated transport settings, assembled in `__post_init__`.
-    settings: typing.Optional[SerialSettings] = dataclasses.field(
-        default=None, repr=False, compare=False
-    )
+    #: The validated transport settings, assembled by `__post_init__` and
+    #: set with `object.__setattr__`. Declared as a ClassVar so it is NOT a
+    #: constructor parameter: a `settings=` a caller passed would be
+    #: overwritten by the validation below, which is the accepted-and-ignored
+    #: shape this package refuses everywhere else.
+    settings: typing.ClassVar[typing.Optional[SerialSettings]] = None
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)

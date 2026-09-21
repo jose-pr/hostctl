@@ -28,6 +28,12 @@ from ..shell import POSIX_SHELL, POWERSHELL, ShellFlavour
 
 
 class LocalConfig(HostConfig, schemes=("local",)):
+    """This machine, addressed as `local:`.
+
+    It takes no host, no port and no credentials -- there is nothing to
+    connect to -- so it is the one config whose URI is a bare scheme.
+    """
+
     #: Declared rather than enforced inside `_from_parsed_uri`, so the
     #: whitelist can be read before a config is built: an ambient
     #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it

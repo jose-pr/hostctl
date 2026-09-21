@@ -49,6 +49,10 @@ plugins:
             show_source: true
             show_root_heading: true
             merge_init_into_class: true
+            # Without this an enum renders as a bare class name: the six
+            # `ShellOperator` members ARE the documentation.
+            members: true
+            show_if_no_docstring: false
 
 markdown_extensions:
   - admonition

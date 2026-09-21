@@ -11,9 +11,12 @@ The dependency-free CLI entry point is `hostctl._cli:main`. Commands are
 exceptions you catch, types you annotate with, and the provider/shell contracts
 you implement. Concrete backends, transport adapters, and objects the library
 only hands back (`QgaPathBackend`, `WinRMPathBackend`, `ContainerPathBackend`,
-the `Posix*`/`Windows*` path classes, the concrete `*Executor`s, `*Process`
-classes, and `hostctl.provider.transports`) stay importable from their defining
-module but are **not** exported from `hostctl` and may change without notice.
+the `Posix*`/`Windows*` path classes, the concrete `*Executor`s **other than
+`LocalExecutor`**, `*Process` classes, and `hostctl.provider.transports`) stay
+importable from their defining module but are **not** exported from `hostctl`
+and may change without notice. `LocalExecutor` is the exception and is
+deliberately exported: it is the one executor a caller constructs directly, to
+compose a host out of providers without a transport.
 
 Host implementations are grouped under `hostctl.host`: shared contracts are
 re-exported from the package, with concrete implementations in private
@@ -27,6 +30,38 @@ their concrete flavours. Executor code follows the same layout under
 `hostctl.executor`: `_common.py` owns contracts and option types; `ssh.py` and
 `winrm.py` own `SshExecutor` and `WinRMExecutor`. Each package re-exports its
 own contracts; only the stable subset above reaches top-level `hostctl`.
+`hostctl.executor`'s public helpers are the ones a transport adapter needs to
+behave like the others; an executor that skips them is where cross-transport
+divergence comes from:
+
+- `normalize_input(input, *, text_mode, encoding=None, errors=None)` -- match
+  `input` to the stream mode about to be used. A mismatch is not a clean
+  error: the writer thread dies without closing the pipe and the call blocks
+  forever. Covers `bytes`, `bytearray` and `memoryview`.
+- `normalize_environment(env)` -- `None` stays `None`; everything else becomes
+  a `str`-keyed dict, so a transport never has to guess at `Path` or `int`
+  values.
+- `capture_streams(capture_output, stdout, stderr)` -- resolve the three
+  spellings of "capture" into one `(stdout, stderr)` pair.
+- `dispatch_output(stdout_target, stderr_target, stdout, stderr, *,
+  encoding=None, errors=None)` -- route captured bytes to where the caller
+  asked. `None` means `sys.stdout`/`sys.stderr`, NOT discard;
+  `subprocess.DEVNULL` is the way to discard.
+- `write_output(target, value, *, encoding=None, errors=None)` -- the single
+  stream half of the same rule.
+- `reject_stdin_conflict(input, stdin)` -- refuse `input=` and `stdin=`
+  together, as `subprocess` does, rather than silently preferring one.
+- `wants_text(text, encoding, errors)` -- one answer to "is this call in text
+  mode", so `errors=` alone selects text on every transport.
+- `expired(command, timeout, *, output=None, stderr=None, orphaned=False,
+  pid=None, text=False)` -- build the one `subprocess.TimeoutExpired` payload
+  every transport raises: `.orphaned` says whether the remote command is still
+  running, `.pid` names it when known, and the output attributes are never
+  `None`.
+- `CommandLine(str)` -- marks a string that is already a finalized command
+  line for the target's own parser, so the executor passes it through instead
+  of quoting it again.
+
 `hostctl.sync` adds `stat_checksum(entry)`, `host_checksum(*hosts,
 algorithm="md5", chunk_size=1048576)`, and `ProgressReader`; these plug into
 `pathlib_next.utils.sync.PathSyncer` and the existing path copy machinery.
@@ -41,10 +76,13 @@ descriptors. Built-ins include `local`, `ssh`, `sftp`, and `winrm`; transport
 descriptors require matching objects in `SystemConfig(provider_options=...)` and
 never serialize credentials into the canonical URI.
 
-`Executor(command, *, stdin=None, stdout=None, stderr=None, cwd=None, env=None,
-capture_output=None, check=None, encoding=None, errors=None, input=None,
-timeout=None, text=None, **options)` defines the shared shell-agnostic option
-surface. `ExecutionOptions` is the corresponding total-false `TypedDict`;
+`Executor(command, *args, stdin=None, stdout=None, stderr=None, cwd=None,
+env=None, capture_output=None, check=None, encoding=None, errors=None,
+input=None, timeout=None, text=None, **options)` defines the shared
+shell-agnostic option surface. `*args` is positional and is what
+`ExecutorCapability.ARGS` exists for: argv reaches an `ARGS`-capable executor
+as separate elements, while a non-`ARGS` executor never receives them at all,
+because the shell flavour has already rendered them into `command`. `ExecutionOptions` is the corresponding total-false `TypedDict`;
 executor-specific extensions remain keyword options.
 `ExecutorCommand` is `str | pathlib.PurePath | pathlib_next.Pathname`; paths
 remain path objects until the concrete executor converts them for transport.
@@ -335,7 +373,7 @@ normalization as `wait()`.
 ## Containers
 
 `ContainerConfig(container, engine_url=None, user=None, workdir=None,
-executable=None, dialect="auto", path_flavor="auto")` uses the optional
+executable=None, dialect="auto", path_flavor="auto", client_factory=None)` uses the optional
 `container` extra and Docker Engine API. Inspection selects Linux/POSIX or
 Windows/PowerShell semantics. `ContainerHost` supports buffered exec,
 persistent sessions/TTYs, and archive-backed POSIX or Windows paths. Archive
@@ -350,7 +388,9 @@ re-downloaded level by level -- list a large one through `run()` instead.
 ## QEMU Guest Agent
 
 `QemuConfig(domain, transport="libvirt", connection=None, socket_path=None,
-ssh=None, agent_timeout=10, dialect="auto", path_flavor="auto")` creates a
+ssh=None, agent_timeout=10.0, max_reply_size=48*1024*1024, dialect="auto",
+path_flavor="auto", transport_factory=None, serial_console=None,
+path_helper=None)` creates a
 `QemuHost`. Transports are local libvirt (`qemu-libvirt` extra), direct Unix
 socket, or an AsyncSSH-tunneled remote Unix socket. Discovery positively probes
 QGA and its enabled command list.
@@ -426,6 +466,16 @@ are not advertised as a byte-oriented `spawn`/TTY process.
 `LocalHost.path()` and `LocalHost.run()` work on POSIX and Windows.
 `LocalExecutor` provides native argv, cwd, environment, stream, encoding,
 check, and timeout behavior through `subprocess.run`.
+
+`SerialConfig(port, baudrate=115200, bytesize=8, parity="N", stopbits=1,
+xonxoff=False, rtscts=False, dsrdtr=False, read_timeout=0.1, write_timeout=10,
+inter_byte_timeout=None, exclusive=None, protocol=RawConsoleProfile(),
+serial_factory=None, serial_port=None)` takes the DEVICE as its first
+argument, the way pyserial names one (`"COM3"`, `"/dev/ttyUSB0"`,
+`"rfc2217://host:4001"`); the `serial:///...` URI is the dispatcher's
+spelling, `Host("serial:///COM3")`. `serial_factory` and `serial_port` are
+supported injection seams, not test-only: a caller that already owns a port
+passes `serial_port=` and keeps ownership of it.
 
 `SerialConfig`/`SerialHost` provide an opaque `serial:///...` URI and one
 exclusive byte-stream lease. `RawConsoleProfile` supports sessions only;

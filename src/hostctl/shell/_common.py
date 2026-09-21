@@ -38,6 +38,15 @@ if typing.TYPE_CHECKING:
 
 
 class ShellOperator(enum.Enum):
+    """A command operator, spelled by each shell flavour in its own syntax.
+
+    Place a member between two commands in a `run()`/`script()` call and
+    the flavour renders it: `PIPE` is `|` everywhere, `AND`/`OR` are
+    `&&`/`||` in POSIX and PowerShell 7 but raise on PowerShell 5, which
+    has neither. A flavour that cannot express one refuses rather than
+    approximating it.
+    """
+
     PIPE = "pipe"
     AND = "and"
     OR = "or"

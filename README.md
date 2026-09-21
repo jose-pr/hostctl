@@ -94,10 +94,10 @@ with WinRMConfig("windows.example.com", "admin", "secret", ssl=True) as windows:
 
 # An existing running container (needs the `container` extra).
 with ContainerConfig("application") as container:
-    container.run(["printf", "%s\n", "hello"])
+    container.run(["printf", "%s", "hello"])
     print(container.path("/etc/os-release").read_text())
     with container.shell.session(terminal=True, encoding="utf-8") as session:
-        session.send(["printf", "%s\n", "hello from the session"])
+        session.send(["printf", "%s", "hello from the session"])
         print(session.read())
 
 # A QEMU guest through its QGA Unix socket tunneled over SSH.
@@ -171,6 +171,11 @@ Use `PosixHost`, `WindowsHost`, or `IosHost` when system semantics should be
 independent of the transport. Providers are tried in declaration order during
 preflight; a provider may be retried only when it raises
 `OperationNotStarted`, which guarantees that no remote operation was sent.
+`IosHost` is deliberately session- and command-only: it configures no shell
+flavour and no path grammar, so commands must be `Exec(...)` (or raw text the
+device understands) and `path()` raises `NotImplementedError` until an IOS
+path grammar exists.
+
 Paths retain their selected provider and expose it through `.provider` and
 `.via(name)`:
 

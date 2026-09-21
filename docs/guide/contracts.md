@@ -9,7 +9,9 @@ operations.
 
 `Host.run(*cmds)` returns `subprocess.CompletedProcess` and captures stdout and
 stderr by default.  Captured streams are bytes unless `text=True` or an
-`encoding` is supplied; a silent stream is always `b""`, never `None`.
+`encoding` is supplied. A CAPTURED stream that produced no output is `b""`,
+never `None`; a stream excluded by `capture_output=False` (or routed to a
+target) is `None`, exactly as `subprocess` reports one it did not capture.
 
 - A string is shell source and remains verbatim (operators such as `&&`, pipes,
   and redirects are not quoted).
