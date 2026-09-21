@@ -914,3 +914,43 @@ def test_a_family_with_no_path_grammar_says_so():
 
     with pytest.raises(NotImplementedError, match="command-only"):
         host.path("flash:/config.text")
+
+
+def test_info_stops_dialling_once_it_knows_everything():
+    """`info()` connected every usable provider, including ordered
+    fallbacks, so a host with a backup transport dialled it -- possibly
+    prompting for 2FA, or waiting out a TCP timeout -- merely to read
+    `HostInfo` the primary had already answered in full."""
+    from hostctl import HostInfo
+
+    connected = []
+
+    class _Reporting(ExecutorProvider):
+        def __init__(self, name, reply):
+            super().__init__(
+                name,
+                lambda command, *args, **options: subprocess.CompletedProcess(
+                    (command,), 0, b"", b""
+                ),
+            )
+            self._reply = reply
+
+        def connect(self):
+            connected.append(self.name)
+
+        def info(self):
+            return self._reply
+
+    full = HostInfo(
+        hostname="node",
+        os_family="posix",
+        os_name="Linux",
+        os_version="6.1",
+        architecture="x86_64",
+    )
+    host = PosixHost(
+        executor_providers=(_Reporting("primary", full), _Reporting("backup", full))
+    )
+
+    assert host.info().os_name == "Linux"
+    assert connected == ["primary"]

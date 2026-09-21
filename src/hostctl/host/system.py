@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import threading
 import typing
 from urllib.parse import unquote, parse_qsl, quote, urlencode
@@ -27,6 +28,8 @@ from ._common import (
     starts_direct_command,
 )
 from .composite_path import CompositePosixPath, CompositeWindowsPath
+
+log = logging.getLogger("hostctl.host.system")
 
 _SYSTEM_PROVIDER_RESOLVERS = {}
 
@@ -592,6 +595,11 @@ class SystemHost(Host):
                 }
             )
         for provider in self._executor_selector.providers:
+            if all(value is not None for value in fields.values()):
+                # Everything is known. Dialling a backup transport merely to
+                # read `HostInfo` could prompt for 2FA or wait out a TCP
+                # timeout on a host whose primary already answered.
+                break
             if not self._provider_probe(self._executor_selector, provider).usable:
                 continue
             callback = getattr(provider, "info", None)
@@ -600,9 +608,21 @@ class SystemHost(Host):
             try:
                 self._ensure_provider_connected(provider)
                 value = callback()
-            except (OperationNotStarted, ConnectionError, TimeoutError, OSError):
-                continue
-            except Exception:
+            # Transport failures only. A bare `except Exception` here also
+            # swallowed programming errors, so a broken provider reported
+            # "no information available" instead of its own traceback.
+            except (
+                OperationNotStarted,
+                ConnectionError,
+                TimeoutError,
+                PermissionError,
+                OSError,
+            ) as exc:
+                log.debug(
+                    "provider %s could not report info: %s",
+                    ProviderSelector.redact(provider.name),
+                    type(exc).__name__,
+                )
                 continue
             if not isinstance(value, HostInfo):
                 continue
