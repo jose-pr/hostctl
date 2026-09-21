@@ -8,6 +8,7 @@ import importlib.metadata as _metadata
 import subprocess as _subprocess
 import threading as _threading
 import typing as _ty
+import unicodedata as _unicodedata
 import types as _types
 from pathlib import PurePath as _PurePath
 from urllib.parse import (
@@ -209,6 +210,17 @@ def _reject_authority_control_characters(parsed: _SplitResult) -> None:
             "connection URI host contains a control character; only the "
             "userinfo may carry one"
         )
+    # Every other control character too, in either spelling. Only TAB, CR and
+    # LF were checked -- the three `urlsplit` deletes -- so NUL, ESC, VT and
+    # DEL travelled into `config.host` and from there into every log line and
+    # error message built from it, where an ESC sequence is terminal-escape
+    # injection into whatever reads the log.
+    if any(_unicodedata.category(char) == "Cc" for char in host):
+        raise ValueError("connection URI host contains a control character")
+    upper_encoded = host.upper()
+    for code in list(range(0x20)) + [0x7F]:
+        if f"%{code:02X}" in upper_encoded:
+            raise ValueError("connection URI host contains a control character")
 
 
 def uri_hostname(parsed: _SplitResult) -> str:
@@ -236,7 +248,19 @@ def uri_hostname(parsed: _SplitResult) -> str:
     index = authority.casefold().find(hostname)
     if index < 0:
         return hostname
-    return authority[index : index + len(hostname)]
+    # Cut at the port separator rather than by `len(hostname)`: lowercasing is
+    # not length-preserving (U+0130 folds to two characters), so the slice ran
+    # past the host into the ':' of the port. The stored host gained a
+    # trailing colon and was then rendered as a bracketed IPv6 literal, which
+    # is both unresolvable and malformed.
+    tail = authority[index:]
+    closing = tail.find("]")
+    if closing >= 0:
+        # An IPv6 literal: `index` lands inside the brackets, because
+        # `hostname` has none.
+        return tail[:closing]
+    port = tail.rfind(":")
+    return tail if port < 0 else tail[:port]
 
 
 def _rebuild_authority(parsed: _SplitResult, password: _ty.Optional[str]) -> str:
@@ -280,9 +304,23 @@ def redact_uri(uri: str) -> str:
     the same as during dispatch, so a password written with a raw newline is
     still recognized and removed rather than partly surviving into the output.
     """
-    parsed = _urlsplit(_encode_stripped_characters(uri))
-    if parsed.password is not None:
-        return _without_password(parsed).geturl()
+    try:
+        parsed = _urlsplit(_encode_stripped_characters(uri))
+        password = parsed.password
+    except ValueError:
+        # A malformed IPv6 authority. The textual fallback below still strips
+        # the userinfo, which is the whole job.
+        password = None
+    else:
+        if password is not None:
+            try:
+                return _without_password(parsed).geturl()
+            except ValueError:
+                # `_rebuild_authority` reads `parsed.port`, which raises for a
+                # non-numeric or out-of-range one. This function is called
+                # from inside exception handlers to format a diagnostic, so
+                # raising here would replace the real error with this one.
+                pass
 
     # `urlsplit` finds no password when one contains an unencoded `/`, `?` or
     # `#`: those end the authority, so the secret lands in the path or query
@@ -383,9 +421,29 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
     _uri_registry_generation: _ty.ClassVar[int] = 0
     _uri_registry_lock: _ty.ClassVar[_threading.RLock] = _threading.RLock()
 
+    #: Lifecycle state lives on the CLASS as well, because `HostConfig` is a
+    #: documented extension point and a subclass with its own `__init__` that
+    #: does not call `super().__init__()` -- the shape this project's own
+    #: tests use -- otherwise dispatched and rendered fine and then failed
+    #: `with config as host:` with a bare AttributeError about a private
+    #: attribute.
+    _opened_host: _ty.Optional["Host"] = None
+    _lifecycle_lock: _ty.Optional["_threading.Lock"] = None
+
     def __init__(self) -> None:
         self._opened_host: _ty.Optional[Host] = None
         self._lifecycle_lock = _threading.Lock()
+
+    def _lifecycle(self) -> "_threading.Lock":
+        """The instance's lifecycle lock, created on first use if needed."""
+        lock = self.__dict__.get("_lifecycle_lock")
+        if lock is None:
+            with HostConfig._uri_registry_lock:
+                lock = self.__dict__.get("_lifecycle_lock")
+                if lock is None:
+                    lock = _threading.Lock()
+                    object.__setattr__(self, "_lifecycle_lock", lock)
+        return lock
 
     def __init_subclass__(
         cls,
@@ -418,7 +476,7 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         return self._create_host()
 
     def __enter__(self) -> Host:
-        with self._lifecycle_lock:
+        with self._lifecycle():
             if self._opened_host is not None:
                 raise RuntimeError("host configuration is already open")
             host = self._create_host()
@@ -431,7 +489,7 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
             except BaseException:
                 pass
             finally:
-                with self._lifecycle_lock:
+                with self._lifecycle():
                     if self._opened_host is host:
                         self._opened_host = None
             raise
@@ -442,7 +500,7 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         exc_value: _ty.Optional[BaseException],
         traceback: _ty.Optional[_types.TracebackType],
     ) -> _ty.Optional[bool]:
-        with self._lifecycle_lock:
+        with self._lifecycle():
             host, self._opened_host = self._opened_host, None
         if host is not None:
             return host.__exit__(exc_type, exc_value, traceback)
@@ -617,11 +675,32 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
             )
 
         if failure is not None:
-            raise failure
+            # A FRESH exception. Re-raising the cached instance appended the
+            # current frames to its traceback every time, so a service that
+            # retried a broken plugin's scheme per request grew the traceback
+            # -- and every frame's locals, including credentials passed as
+            # dispatch kwargs -- without bound, for the life of the process.
+            raise RuntimeError(
+                f"hostctl.configs entry point for scheme {scheme!r} failed to load"
+            ) from failure
         if scheme is not None:
+            known = {
+                value
+                for item in candidates
+                for value in getattr(item, "_uri_schemes", ())
+            }
             for entry_point in entry_points:
                 name = str(getattr(entry_point, "name", "")).casefold()
-                if name != scheme:
+                # The entry point's NAME matching the scheme is the fast
+                # path, not the rule. A plugin may declare several schemes
+                # under one entry point (`schemes=("plug", "plug+tls")`), and
+                # matching only on the name made its secondary schemes work
+                # or fail depending on whether something had already
+                # dispatched the primary one in this process. An unknown
+                # scheme now loads the remaining entry points too; each load
+                # happens once, and a plugin that matches nothing simply
+                # leaves the scheme unsupported as before.
+                if name != scheme and scheme in known:
                     continue
                 try:
                     # The plugin import that must not hold the registry lock.
@@ -645,7 +724,8 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
                     )
                     raise
                 candidates.append(implementation)
-                break
+                if scheme in getattr(implementation, "_uri_schemes", ()):
+                    break
         return tuple(
             item
             for item in dict.fromkeys(candidates)
@@ -684,9 +764,6 @@ class _ShellAccessor:
         self._build = build
         self.__doc__ = build.__doc__
 
-    def __set_name__(self, owner, name):
-        self._name = name
-
     def __get__(self, instance, owner=None):
         if instance is None:
             return self
@@ -712,6 +789,18 @@ class _ConfigurableShell:
         return getattr(self._shell, name)
 
     def __setattr__(self, name, value):
+        # `host.shell` builds a NEW `Shell` on every attribute access, so an
+        # assignment here reached an object discarded at the end of the
+        # expression: `host.shell.env = {"TZ": "UTC"}` appeared to work and
+        # changed nothing. Say so instead, and name the spelling that does
+        # work -- `Shell.cwd`/`env`/`encoding`/`errors` are ordinary public
+        # attributes, so trying to set them is a reasonable thing to do.
+        if name in ("cwd", "env", "encoding", "errors"):
+            raise AttributeError(
+                f"host.shell is rebuilt on every access, so setting {name!r} "
+                f"here would be discarded; use host.shell({name}=...) to get "
+                "a configured shell"
+            )
         setattr(self._shell, name, value)
 
     def __enter__(self):
@@ -722,6 +811,15 @@ class _ConfigurableShell:
 
     def __repr__(self):
         return repr(self._shell)
+
+    @property
+    def __class__(self):
+        # `Host.shell` is annotated `-> Shell` and this proxy forwards every
+        # attribute to one, but `isinstance(host.shell, Shell)` was False,
+        # which is the one question a caller asks about a documented return
+        # type. Answering with the wrapped shell's type keeps the annotation
+        # honest without turning the proxy into a subclass.
+        return type(self._shell)
 
 
 class Host(_abc.ABC, metaclass=_HostMeta):
@@ -753,7 +851,13 @@ class Host(_abc.ABC, metaclass=_HostMeta):
             executor_capabilities = host.executor_capabilities
 
             def __call__(self, command, *args, **options):
-                return host.run(command, *args, **options)
+                # `Executor.__call__(command, *args)` is one program plus
+                # argv. Forwarding the argv as further positionals made
+                # `host.run()` read them as SEPARATE top-level commands, so
+                # `executor("grep", "-r", "needle")` ran `grep; -r; needle`.
+                if args:
+                    return host.run(Exec(command, *args), **options)
+                return host.run(command, **options)
 
         return _HostExecutor()
 
@@ -936,8 +1040,16 @@ def strict_uri_query(
 def strict_uri_credentials(
     credentials: _ty.Mapping[str, object], allowed: _ty.Iterable[str]
 ) -> None:
-    """Reject credentials which the selected implementation does not accept."""
-    unknown = set(credentials) - set(allowed)
+    """Reject credentials which the selected implementation does not accept.
+
+    A key whose value is `None` is not a credential -- nothing was supplied --
+    so it is ignored rather than refused. Counting keys made
+    `HostConfig("local:", password=None)` fail, which is exactly the shape a
+    generic caller produces when it forwards an optional argument.
+    """
+    unknown = {name for name, value in credentials.items() if value is not None} - set(
+        allowed
+    )
     if unknown:
         raise ValueError(f"unknown credential argument: {sorted(unknown)[0]}")
 

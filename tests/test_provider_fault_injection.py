@@ -768,3 +768,30 @@ def test_the_refusal_names_the_provider_and_keeps_its_cause():
     assert "host key is not trusted" in str(raised.value)
     assert raised.value.cause is not None
     assert raised.value.__cause__ is not None
+
+
+def test_path_falls_back_over_every_candidate_not_just_one():
+    """`run()` loops over every provider; `path()` fell back exactly once, so
+    three ordered providers with the first two offline failed on a host where
+    the identical `run()` succeeded."""
+    from hostctl import PosixHost
+    from hostctl.provider import OperationNotStarted, PathProvider
+    from pathlib_next import Path as LocalPath
+
+    def offline(name):
+        def factory(*segments):
+            raise OperationNotStarted(f"{name} offline")
+
+        return PathProvider(name, factory)
+
+    host = PosixHost(
+        path_providers=(
+            offline("first"),
+            offline("second"),
+            PathProvider("third", lambda *parts: LocalPath(*parts)),
+        )
+    )
+
+    path = host.path("/etc/hosts")
+
+    assert path.provider.name == "third"

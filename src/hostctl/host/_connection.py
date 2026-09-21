@@ -60,10 +60,23 @@ def _resolve_port(scheme: str, value: Port) -> object:
     """
     if value is False:
         return _NO_PORT
-    if value is None or isinstance(value, int):
+    if isinstance(value, bool):
         # `True` is an `int`, but nothing sensible means port 1 by it; only
-        # `False` is given a meaning, as the explicit "no port".
+        # `False` is given a meaning, as the explicit "no port", and that was
+        # handled above. `port=True` used to be stored and rendered verbatim,
+        # so a URI came out as `wss://nas:True`.
+        raise TypeError("port=True has no meaning; use False for 'no port'")
+    if value is None or isinstance(value, int):
         return value
+    if isinstance(value, str):
+        # Text, not a table: `port="2222"` is what a config file or an
+        # argv-derived value looks like. It used to be indexed as a mapping
+        # (`"2222"[scheme]`) or stored verbatim and rendered into an invalid
+        # URI like `wss://nas:abc`.
+        try:
+            return int(value)
+        except ValueError:
+            raise ValueError(f"port is not a number: {value!r}") from None
     if callable(value):
         found = value(scheme)
     else:
@@ -76,7 +89,16 @@ def _resolve_port(scheme: str, value: Port) -> object:
             found = None
     # A resolver may itself answer `False` to mean "this scheme has no port,
     # do not go looking".
-    return _NO_PORT if found is False else found
+    if found is False:
+        return _NO_PORT
+    if found is None or isinstance(found, int) and not isinstance(found, bool):
+        return found
+    # A table loaded from JSON answers `{"wss": "443"}`. Storing that text
+    # made `.port` a string, which fails much later inside a socket call.
+    try:
+        return int(found)
+    except (TypeError, ValueError):
+        raise TypeError(f"port table answered with a non-port: {found!r}") from None
 
 
 @_dc.dataclass(frozen=True)
@@ -159,7 +181,9 @@ class ConnectionString:
     port: _ty.Optional[int] = None
     username: _ty.Optional[str] = None
     password: _ty.Optional[str] = _dc.field(default=None, repr=False)
-    extras: _ty.Mapping[str, str] = _dc.field(default_factory=dict, repr=False)
+    extras: _ty.Mapping[str, str] = _dc.field(
+        default_factory=dict, repr=False, compare=False
+    )
     path: str = ""
     query: str = ""
     fragment: str = ""
@@ -295,6 +319,27 @@ class ConnectionString:
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.geturl()!r})"
 
+    def __hash__(self) -> int:
+        """Hashable, as `frozen=True` advertises.
+
+        The generated `__hash__` covered `extras`, a plain dict, so
+        `{ConnectionString(t) for t in inventory}` raised `TypeError:
+        unhashable type: 'dict'`. Hashing the rendered target keeps hash and
+        equality consistent: `extras` is credential material carried
+        alongside the password and is excluded from both.
+        """
+        return hash(
+            (
+                self.scheme,
+                self.host,
+                self.port,
+                self.username,
+                self.path,
+                self.query,
+                self.fragment,
+            )
+        )
+
     @property
     def qsl(self) -> _ty.List[_ty.Tuple[str, str]]:
         """Query pairs in order, keeping repeats."""
@@ -342,7 +387,20 @@ class ConnectionString:
             raise TypeError(f"unknown field: {sorted(unknown)[0]}")
         copy = object.__new__(type(self))
         for name in names:
-            object.__setattr__(copy, name, changes.get(name, getattr(self, name)))
+            value = changes.get(name, getattr(self, name))
+            if name == "scheme" and value is not None:
+                # `__init__` casefolds it, so `replace(scheme="WSS")` used to
+                # produce an object unequal to the parsed form of the same
+                # target.
+                value = str(value).casefold()
+            if name == "port" and name in changes:
+                value = _resolve_port(
+                    str(changes.get("scheme", self.scheme)).casefold(), value
+                )
+                value = None if value is _NO_PORT else value
+            if name == "extras" and value is not None:
+                value = dict(value)
+            object.__setattr__(copy, name, value)
         explicit_port = "port" in changes or self._explicit_port
         if "scheme" in changes and not explicit_port:
             # A port that was resolved from the old scheme is not an answer

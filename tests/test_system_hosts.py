@@ -801,3 +801,116 @@ def test_a_hook_that_declares_timeout_still_receives_it():
     host.connect()
 
     assert seen == [7]
+
+
+def test_a_system_uri_fails_closed_on_an_unknown_or_duplicated_parameter():
+    """Every other config parses its query with `strict_uri_query`. This one
+    used `parse_qsl` + `dict`, so `?exectuor=ssh` built a host with no
+    executors that failed much later as "does not provide the 'run'
+    capability", and a repeated `shell=` silently took the last value."""
+    with pytest.raises(ValueError, match="unknown connection parameter: exectuor"):
+        HostConfig("posix://node?exectuor=local")
+
+    with pytest.raises(ValueError, match="duplicate connection parameter: shell"):
+        HostConfig("posix://node?shell=bash&shell=zsh&executor=local")
+
+    # The two that legitimately repeat still do.
+    config = HostConfig("posix://node?executor=local&executor=ssh&path=local")
+    assert config.executors == ("local", "ssh")
+
+
+@pytest.mark.parametrize("authority", ("node", "node:22", "[::1]", "root@node:2222"))
+def test_a_system_uri_round_trips_its_authority(authority):
+    """`connection_uri` percent-encodes the authority while `_from_parsed_uri`
+    stored the still-encoded netloc, so every `HostConfig(str(config))` added
+    a layer: `node:22` -> `node%3A22` -> `node%253A22`."""
+    config = PosixConfig(authority, executors=("local",))
+
+    once = HostConfig(str(config))
+    twice = HostConfig(str(once))
+
+    assert once.authority == authority
+    assert twice.authority == authority
+    assert str(twice) == str(once)
+
+
+def test_host_info_reports_a_hostname_not_a_whole_authority():
+    """Userinfo in `HostInfo.hostname` put a username -- and a hint at the
+    credential -- into every diagnostic that printed it."""
+    host = HostConfig("posix://root@node:2222?executor=local")._create_host()
+
+    assert host.info().hostname == "node"
+
+
+def test_an_out_of_band_environment_is_carried_not_dropped():
+    """`ShellCommand.environment` means "not embedded -- send it separately",
+    which is what the SSH transport does. SystemHost passed only `.command`,
+    so a registered flavour for a shell that cannot export variables lost
+    every one of them in silence."""
+    from hostctl.shell import POSIX_SHELL, ShellCommand
+
+    class _OutOfBand(type(POSIX_SHELL)):
+        name = "test-out-of-band"
+
+        def command(self, cmds, *, executable=None, cwd=None, env=None):
+            rendered = super().command(cmds, executable=executable, cwd=cwd, env=None)
+            # A flavour for an appliance shell that cannot export variables:
+            # it hands the environment back for the transport to carry.
+            return ShellCommand(rendered.command, {"TZ": "UTC", **(env or {})})
+
+    seen = []
+
+    def execute(command, *args, **options):
+        seen.append(options.get("env"))
+        return subprocess.CompletedProcess((command,), 0, b"", b"")
+
+    host = PosixHost(
+        executor_providers=(
+            ExecutorProvider("carries-env", execute, capabilities=("env",)),
+        ),
+        shell=_OutOfBand(),
+    )
+
+    host.run("printenv TZ", env={"TZ": "UTC"}, check=False)
+
+    assert seen == [{"TZ": "UTC"}]
+
+
+def test_a_provider_that_cannot_carry_it_refuses_rather_than_losing_it():
+    from hostctl.shell import POSIX_SHELL, ShellCommand
+
+    class _OutOfBand(type(POSIX_SHELL)):
+        name = "test-out-of-band-2"
+
+        def command(self, cmds, *, executable=None, cwd=None, env=None):
+            rendered = super().command(cmds, executable=executable, cwd=cwd, env=None)
+            return ShellCommand(rendered.command, dict(env or {}))
+
+    host = PosixHost(
+        executor_providers=(
+            ExecutorProvider(
+                "no-env",
+                lambda command, *args, **options: subprocess.CompletedProcess(
+                    (command,), 0, b"", b""
+                ),
+                capabilities=(),
+            ),
+        ),
+        shell=_OutOfBand(),
+    )
+
+    with pytest.raises(NotImplementedError, match="out of band"):
+        host.run("printenv TZ", env={"TZ": "UTC"}, check=False)
+
+
+def test_a_family_with_no_path_grammar_says_so():
+    """Everything non-Windows fell through to POSIX, so an `IosHost` --
+    documented as command-only until an IOS path grammar is designed --
+    advertised `path` and applied POSIX rules to `flash:/config.text`."""
+    from hostctl import IosHost
+    from pathlib_next import Path as LocalPath
+
+    host = IosHost(path_providers=(PathProvider("local", lambda *p: LocalPath(*p)),))
+
+    with pytest.raises(NotImplementedError, match="command-only"):
+        host.path("flash:/config.text")

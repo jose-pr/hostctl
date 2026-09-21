@@ -60,6 +60,9 @@ from .composite_path import (
 )
 
 __all__ = [
+    "uri_hostname",
+    "Exec",
+    "ConnectionString",
     "Host",
     "HostConfig",
     "HostInfo",

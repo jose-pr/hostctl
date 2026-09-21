@@ -327,3 +327,33 @@ def test_an_explicit_port_still_travels():
 def test_a_plain_copy_keeps_its_own_default_port():
     assert ConnectionString(ConnectionString("wss://root@nas")).port == 443
     assert ConnectionString("wss://nas").replace(host="other").port == 443
+
+
+def test_a_connection_string_is_hashable_like_the_value_object_it_claims_to_be():
+    """`frozen=True` advertises hashability, and the generated `__hash__`
+    covered `extras` -- a plain dict -- so a set of targets raised."""
+    inventory = {ConnectionString(t, scheme="ssh") for t in ("nas", "nas", "vault")}
+
+    assert len(inventory) == 2
+    assert ConnectionString("nas", scheme="ssh") in inventory
+
+
+def test_port_true_is_refused_rather_than_rendered():
+    """`port=True` was stored verbatim: `wss://nas:True`."""
+    with pytest.raises(TypeError, match="port=True"):
+        ConnectionString("nas", scheme="wss", port=True)
+
+
+def test_a_port_table_answering_with_text_still_yields_an_int():
+    """A table loaded from JSON answers `{"wss": "443"}`; storing that text
+    made `.port` a string, which fails much later inside a socket call."""
+    value = ConnectionString("nas", scheme="wss", port={"wss": "443"})
+
+    assert value.port == 443
+
+
+def test_replace_normalises_what_init_normalises():
+    parsed = ConnectionString("wss://nas")
+
+    assert parsed.replace(scheme="WSS") == parsed
+    assert ConnectionString("ssh://nas").replace(port="2222").port == 2222

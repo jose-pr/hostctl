@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from urllib.parse import quote, urlsplit
 
 import pytest
@@ -174,11 +175,33 @@ def test_ssh_path_flavor_selects_system_semantics_without_changing_dialect():
     assert posix_pwsh.shell_flavour is POWERSHELL
 
 
-def test_transport_system_hosts_have_safe_info_fallback_without_connection():
+def test_transport_system_hosts_have_safe_info_fallback_without_connection(
+    monkeypatch,
+):
+    """`info()` connects its providers, so this really did dial example.com
+    over SSH and WinRM and passed only because the failure was swallowed: its
+    duration depended on the network (a silently filtered port costs a full
+    TCP timeout per transport) and a reachable example.com:22 would have made
+    a unit test attempt a real handshake as root.
+    """
+    from hostctl.host import _ssh, _winrm
+
+    dialled = []
+
+    def refuse(self):
+        dialled.append(type(self).__name__)
+        raise ConnectionError("no network in a unit test")
+
+    monkeypatch.setattr(_ssh._SshTransport, "connect", refuse)
+    monkeypatch.setattr(_winrm._WinRMTransport, "connect", refuse)
+
     ssh = Host("ssh://root@example.com")
     winrm = Host("winrm://user@example.com")
+
     assert ssh.info().hostname == "example.com"
     assert winrm.info().hostname == "example.com"
+    # The fallback is what is under test; the dial is what it survives.
+    assert dialled
 
 
 @pytest.mark.parametrize(
@@ -205,7 +228,7 @@ def test_scheme_matches_connection_uri_and_registered_scheme(host):
         ("ssh://host?guess_os=true", "unknown"),
         ("ssh:///tmp/socket", "requires a host"),
         ("winrm://host", "requires a username"),
-        ("local:?dialect=posix", "exactly"),
+        ("local:?dialect=posix", "local URI"),
     ],
 )
 def test_connection_string_rejects_invalid_or_ambiguous_input(uri, message):
@@ -775,3 +798,142 @@ def test_dispatching_a_scheme_while_its_plugin_imports_does_not_deadlock(tmp_pat
             # which a wedged thread still holds, so the cleanup would hang
             # instead of letting the assertion above report.
             HostConfig._refresh_uri_registry()
+
+
+def test_a_config_subclass_that_skips_super_init_can_still_be_entered():
+    """`HostConfig` is a documented extension point, and its lifecycle state
+    lived only in `__init__`: a subclass with its own `__init__` -- the shape
+    this suite's own `_ExternalConfig` uses -- dispatched and rendered fine
+    and then failed `with config as host:` with a bare AttributeError about a
+    private attribute."""
+
+    class _Skipping(HostConfig, schemes=("skipsuper",)):
+        def __init__(self, host="node"):
+            self.host = host  # deliberately no super().__init__()
+
+        @property
+        def connection_uri(self):
+            return f"skipsuper://{self.host}"
+
+        @classmethod
+        def _from_parsed_uri(cls, parsed, **credentials):
+            return cls(parsed.netloc or "node")
+
+        def _create_host(self):
+            return LocalConfig()._create_host()
+
+    config = _Skipping()
+    with config as host:
+        assert host is not None
+
+
+def test_a_broken_plugin_does_not_grow_its_traceback_on_every_dispatch():
+    """The cached failure was re-raised as the same object, so each raise
+    appended the current frames -- and their locals, including credentials
+    passed as dispatch kwargs -- to a traceback kept for the process's life."""
+    import traceback
+
+    failures = HostConfig._uri_plugin_failures
+    previous = dict(failures)
+    failures["brokenplug"] = ImportError("plugin exploded")
+    try:
+        depths = []
+        for _ in range(4):
+            try:
+                HostConfig("brokenplug://x")
+            except Exception as exc:
+                depths.append(len(traceback.extract_tb(exc.__traceback__)))
+        assert len(set(depths)) == 1, depths
+    finally:
+        failures.clear()
+        failures.update(previous)
+
+
+def test_a_plugin_declaring_several_schemes_loads_for_each_of_them(tmp_path):
+    """An entry point was loaded only when its NAME equalled the requested
+    scheme, so a plugin declaring `schemes=("plug", "plug+tls")` under one
+    entry point failed for `plug+tls://` in a fresh process and succeeded
+    once something had dispatched `plug://`."""
+    import sys
+
+    module = tmp_path / "hostctl_multi_plugin.py"
+    module.write_text(
+        "from hostctl import HostConfig, LocalConfig\n"
+        "\n"
+        "\n"
+        'class MultiConfig(HostConfig, schemes=("plug", "plug+tls")):\n'
+        "    def __init__(self, host):\n"
+        "        super().__init__()\n"
+        "        self.host = host\n"
+        "\n"
+        "    @property\n"
+        "    def connection_uri(self):\n"
+        '        return f"plug://{self.host}"\n'
+        "\n"
+        "    @classmethod\n"
+        "    def _from_parsed_uri(cls, parsed, **credentials):\n"
+        '        return cls(parsed.netloc or "node")\n'
+        "\n"
+        "    def _create_host(self):\n"
+        "        return LocalConfig()._create_host()\n",
+        encoding="utf-8",
+    )
+
+    class _StubEntryPoint:
+        name = "plug"
+
+        def load(self):
+            import hostctl_multi_plugin
+
+            return hostctl_multi_plugin.MultiConfig
+
+    sys.path.insert(0, str(tmp_path))
+    previous = HostConfig._uri_entry_points
+    HostConfig._uri_entry_points = (_StubEntryPoint(),)
+    try:
+        # The secondary scheme, in a process that never dispatched the
+        # primary one.
+        config = HostConfig("plug+tls://node")
+        assert type(config).__name__ == "MultiConfig"
+    finally:
+        HostConfig._uri_entry_points = previous
+        sys.path.remove(str(tmp_path))
+        sys.modules.pop("hostctl_multi_plugin", None)
+        HostConfig._refresh_uri_registry()
+
+
+def test_the_host_executor_treats_argv_as_argv():
+    """`Executor.__call__(command, *args)` is one program plus argv, and the
+    default wrapper forwarded the argv as further positionals -- which
+    `host.run()` reads as SEPARATE top-level commands, so
+    `executor("grep", "-r", "needle")` ran `grep; -r; needle`."""
+    seen = []
+
+    class _External(Host):
+        config = LocalConfig()
+
+        @property
+        def capabilities(self):
+            return frozenset(("run",))
+
+        def info(self):
+            return HostInfo()
+
+        def run(self, *cmds, **options):
+            seen.append(cmds)
+            return subprocess.CompletedProcess(cmds, 0, b"", b"")
+
+    _External().executor("grep", "-r", "needle")
+
+    assert len(seen[0]) == 1
+    assert seen[0][0].program == "grep"
+    assert seen[0][0].args == ("-r", "needle")
+
+
+def test_host_shell_is_a_shell_by_isinstance():
+    """`Host.shell` is annotated `-> Shell`; the proxy answered False."""
+    from hostctl import Shell
+
+    host = LocalConfig()._create_host()
+
+    assert isinstance(host.shell, Shell)

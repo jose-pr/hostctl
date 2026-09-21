@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import threading
 import typing
-from urllib.parse import parse_qsl, quote, urlencode
+from urllib.parse import unquote, parse_qsl, quote, urlencode
 
 from pathlib_next import Path
 
@@ -187,7 +187,9 @@ class SystemConfig(HostConfig):
             raise NotImplementedError(
                 f"{type(self).__name__} is abstract and has no connection URI"
             )
-        query: list[tuple[str, str]] = [("executor", value) for value in self.executors]
+        query: typing.List[typing.Tuple[str, str]] = [
+            ("executor", value) for value in self.executors
+        ]
         query += [("path", value) for value in self.paths]
         if self.shell is not None:
             query.append(("shell", getattr(self.shell, "name", str(self.shell))))
@@ -208,11 +210,29 @@ class SystemConfig(HostConfig):
                 f"initializer= constructor options; unsupported credentials: {names}"
             )
         pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        # Fail closed, like every other config's `strict_uri_query`: an
+        # unknown key used to be dropped in silence, so `?exectuor=ssh` built
+        # a config with no executors that only failed much later as "does not
+        # provide the 'run' capability", and a repeated `shell=` silently took
+        # the last value. `executor` and `path` are the two keys that
+        # legitimately repeat -- they are ordered lists.
+        seen: typing.Set[str] = set()
+        for key, _value in pairs:
+            if key not in ("executor", "path", "shell"):
+                raise ValueError(f"unknown connection parameter: {key}")
+            if key == "shell" and key in seen:
+                raise ValueError("duplicate connection parameter: shell")
+            seen.add(key)
         values = dict(pairs)
         executors = tuple(v for k, v in pairs if k == "executor")
         paths = tuple(v for k, v in pairs if k == "path")
         return cls(
-            parsed.netloc or parsed.path or "localhost",
+            # Unquoted: `connection_uri` percent-encodes the authority, so
+            # storing the still-encoded netloc added a layer on every
+            # `HostConfig(str(config))` round trip -- `node:22` became
+            # `node%3A22`, then `node%253A22` -- and the API header promises
+            # `str(config)` can be handed straight back.
+            unquote(parsed.netloc) or unquote(parsed.path) or "localhost",
             shell=values.get("shell"),
             executor=executors,
             path=paths,
@@ -252,19 +272,19 @@ class SystemHost(Host):
     """Host orchestration shared by POSIX, Windows, and IOS systems."""
 
     system_family = "generic"
-    default_shell: ShellFlavour | None = None
+    default_shell: typing.Optional[ShellFlavour] = None
     #: Configuration class used when a host is constructed without one.
     #: Bound by each concrete family below, once those classes exist.
     config_type: typing.ClassVar[typing.Type[SystemConfig]]
 
     def __init__(
         self,
-        config: SystemConfig | None = None,
+        config: typing.Optional[SystemConfig] = None,
         *,
         executor_providers=(),
         path_providers=(),
         shell=None,
-        info: HostInfo | None = None,
+        info: typing.Optional[HostInfo] = None,
         initializer=None,
     ):
         # A config-less host builds the configuration matching its own system
@@ -410,8 +430,32 @@ class SystemHost(Host):
 
     @property
     def executor(self):
+        """The selected provider, presented as an `Executor`.
+
+        A bare `ExecutorProvider` has no `executor_capabilities`, so a
+        `Shell` built on one inferred CWD/ENV support from the callable's
+        signature instead of reading the provider's declared set -- and
+        inferred it wrongly. The wrapper carries the declared capabilities
+        and dispatches through `run()`, so the host's own rendering and
+        failover still apply.
+        """
         selected = self._executor_selector.select()
-        return selected.provider
+        provider = selected.provider
+        host = self
+
+        class _ProviderExecutor:
+            executor_capabilities = frozenset(provider.capabilities)
+            name = provider.name
+
+            def __call__(self, command, *args, **options):
+                if args:
+                    return host.run(Exec(command, *args), **options)
+                return host.run(command, **options)
+
+            def __getattr__(self, attribute):
+                return getattr(provider, attribute)
+
+        return _ProviderExecutor()
 
     def connect(self):
         with self._lifecycle_lock:
@@ -565,16 +609,47 @@ class SystemHost(Host):
             for name, item in dataclasses.asdict(value).items():
                 if fields[name] is None and item is not None:
                     fields[name] = item
-        hostname = getattr(self.config, "authority", None) or getattr(
+        authority = getattr(self.config, "authority", None) or getattr(
             self.config, "host", None
         )
+        # The host, not the authority: `root@node:2222` is a target, and
+        # reporting it as `HostInfo.hostname` put userinfo -- a username, and
+        # with it a hint at the credential -- into every diagnostic that
+        # printed the hostname.
+        hostname = authority
+        if isinstance(authority, str) and authority:
+            hostname = authority.rpartition("@")[2]
+            if hostname.startswith("["):
+                hostname = hostname.partition("]")[0].lstrip("[") or hostname
+            else:
+                head, colon, tail = hostname.rpartition(":")
+                if colon and tail.isdigit():
+                    hostname = head
         if fields["hostname"] is None:
             fields["hostname"] = hostname
         if fields["os_family"] is None:
             fields["os_family"] = self.system_family
         return HostInfo(**fields)
 
-    def path(self, *segments: PathLike, backend: str | None = None) -> Path:
+    def _composite_path_type(self):
+        """The path grammar this system family actually has.
+
+        Everything that is not Windows used to fall through to POSIX, so an
+        `IosHost` -- documented as session/command-only until an IOS path
+        grammar is designed -- advertised `path` and applied POSIX rules to
+        locations like `flash:/config.text`, where `:` is a device separator
+        rather than part of a name.
+        """
+        if self.system_family == "windows":
+            return CompositeWindowsPath
+        if self.system_family == "posix":
+            return CompositePosixPath
+        raise NotImplementedError(
+            f"{type(self).__name__} has no path grammar; "
+            f"the {self.system_family!r} family is command-only"
+        )
+
+    def path(self, *segments: PathLike, backend: typing.Optional[str] = None) -> Path:
         if not self._path_selector.providers:
             raise NotImplementedError(
                 f"{type(self).__name__} does not provide the 'path' capability"
@@ -605,50 +680,62 @@ class SystemHost(Host):
                     },
                 ),
             )
-        try:
-            # Note the provider as in use WITHOUT connecting: building a path
-            # is I/O-free, and `host.path()` on a host that was never
-            # connected must stay that way. The marker is what matters here --
-            # a transport these paths later reopen lazily was left on
-            # `_closed_targets`, so every later close() skipped it and the
-            # connection lived until process exit.
-            self._note_provider_in_use(selected.provider)
-            value = selected.provider.path(*segments)
-            path_type = (
-                CompositeWindowsPath
-                if self.system_family == "windows"
-                else CompositePosixPath
-            )
+        path_type = self._composite_path_type()
+        provider = selected.provider
+        excluded: typing.List[str] = []
+        while True:
+            try:
+                # Note the provider as in use WITHOUT connecting: building a
+                # path is I/O-free, and `host.path()` on a host that was never
+                # connected must stay that way. The marker is what matters
+                # here -- a transport these paths later reopen lazily was left
+                # on `_closed_targets`, so every later close() skipped it and
+                # the connection lived until process exit.
+                self._note_provider_in_use(provider)
+                value = provider.path(*segments)
+            except OperationNotStarted as exc:
+                if backend is not None:
+                    raise
+                # Every candidate, not just one. Falling back exactly once
+                # meant three ordered providers with the first two offline
+                # failed although the third was usable -- while `run()`,
+                # which loops, succeeded on the same host.
+                self._path_selector.decline(provider.name, str(exc))
+                excluded.append(provider.name)
+                provider = self._path_selector.select(exclude=excluded).provider
+                continue
             return path_type.from_path(
                 value,
-                selected.provider,
-                selected.provider.path,
+                provider,
+                provider.path,
                 self._path_selector.providers,
                 self._path_selector,
                 logical_segments=segments,
             )
-        except OperationNotStarted as exc:
-            if backend is not None:
-                raise
-            self._path_selector.decline(selected.provider.name, str(exc))
-            fallback = self._path_selector.select(
-                exclude=(selected.provider.name,)
-            ).provider
-            self._note_provider_in_use(fallback)
-            value = fallback.path(*segments)
-            path_type = (
-                CompositeWindowsPath
-                if self.system_family == "windows"
-                else CompositePosixPath
+
+    @staticmethod
+    def _out_of_band_env(provider, rendered, options):
+        """Carry a flavour's out-of-band environment, or refuse to lose it.
+
+        `ShellCommand.environment` means "the environment is NOT embedded in
+        this command; send it separately" -- which is what `_SshTransport.run`
+        does. `SystemHost` passed only `.command`, so a registered flavour
+        for a shell that cannot export variables lost every one of them in
+        silence. Latent for the four built-in flavours, which all return
+        `None`; that is a reason to fix it cheaply, not to keep it.
+        """
+        environment = getattr(rendered, "environment", None)
+        if not environment:
+            # `None` means embedded, and an empty mapping says the same
+            # thing with fewer words -- neither may overwrite an environment
+            # the provider is already carrying natively.
+            return options
+        if "env" not in provider.capabilities:
+            raise NotImplementedError(
+                f"shell flavour sends its environment out of band, and executor "
+                f"provider {provider.name!r} cannot carry one"
             )
-            return path_type.from_path(
-                value,
-                fallback,
-                fallback.path,
-                self._path_selector.providers,
-                self._path_selector,
-                logical_segments=segments,
-            )
+        return {**options, "env": environment}
 
     def run(
         self,
@@ -782,7 +869,9 @@ class SystemHost(Host):
                 cwd=None if "cwd" in provider.capabilities else cwd,
                 env=None if "env" in provider.capabilities else env,
             )
-            return provider.execute(rendered.command, **options)
+            return provider.execute(
+                rendered.command, **self._out_of_band_env(provider, rendered, options)
+            )
 
         if self._shell is None and self._shell_resolver is None:
             raise NotImplementedError(
@@ -811,7 +900,9 @@ class SystemHost(Host):
                 cwd=None if "cwd" in provider.capabilities else cwd,
                 env=None if "env" in provider.capabilities else env,
             )
-            return provider.execute(rendered.command, **options)
+            return provider.execute(
+                rendered.command, **self._out_of_band_env(provider, rendered, options)
+            )
         # One shell layer, exactly as LocalHost renders it. `flavour.command()`
         # already contains the shell invocation, so feeding *that* to
         # `invocation()` -- whose argument is a script -- ran the target shell

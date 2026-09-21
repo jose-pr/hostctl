@@ -1041,3 +1041,19 @@ def test_binary_output_reaches_a_text_stream_untouched():
     text_stream.flush()
 
     assert buffer.getvalue() == payload
+
+
+def test_setting_a_default_on_host_shell_is_refused_not_discarded():
+    """`host.shell` builds a fresh `Shell` on every attribute access, so
+    `host.shell.env = {...}` reached an object discarded at the end of the
+    expression: it appeared to work and changed nothing. `cwd`, `env`,
+    `encoding` and `errors` are ordinary public attributes on `Shell`, so
+    assigning to them is a natural thing to try."""
+    host = LocalConfig()._create_host()
+
+    with pytest.raises(AttributeError, match=r"host.shell\(env=...\)"):
+        host.shell.env = {"TZ": "UTC"}
+
+    configured = host.shell(env={"TZ": "UTC"})
+    assert configured.env == {"TZ": "UTC"}
+    assert host.shell.env is None

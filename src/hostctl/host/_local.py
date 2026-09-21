@@ -44,7 +44,9 @@ class LocalConfig(HostConfig, schemes=("local",)):
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> LocalConfig:
         if parsed.netloc or parsed.path or parsed.query:
-            raise ValueError("local URI must be exactly 'local:'")
+            # `local://` is the same URI with an empty authority, and it
+            # already parsed as one; the message used to claim otherwise.
+            raise ValueError("local URI must be 'local:' or 'local://'")
         return cls()
 
     def _create_host(self) -> LocalHost:

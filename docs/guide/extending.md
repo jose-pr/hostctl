@@ -5,6 +5,18 @@ identity, URI selection, and lifecycle. Installed integrations register config
 subclasses through the `hostctl.configs` entry-point group. Registry hooks are
 protected implementation details.
 
+An entry point whose **name** equals the requested scheme is loaded first,
+which is the cheap path for the common one-scheme plugin. A plugin may
+declare several schemes on one config (`schemes=("plug", "plug+tls")`) under
+a single entry point: a scheme no loaded config claims falls back to loading
+the remaining entry points, so the secondary schemes work in a fresh process
+rather than only after something dispatched the primary one. Name the entry
+point after the scheme users will reach for most; the rest still resolve.
+
+A subclass that defines its own `__init__` need not call `super().__init__()`
+-- `with config as host:` works either way -- but calling it is cheaper and
+keeps the lifecycle state on the instance.
+
 An API client and a transport are usually different objects. Prefer composition:
 
 ```python
