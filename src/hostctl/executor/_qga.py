@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import errno
 import itertools
 import json
 import math
+import re
 import secrets
 import socket
 import subprocess
@@ -30,6 +33,14 @@ class QgaTimeoutError(QgaError, TimeoutError):
     """A guest-agent request did not complete before its deadline."""
 
 
+class _QgaRequestNotSerializable(QgaError, ValueError):
+    """The request never reached the wire, so the stream is untouched.
+
+    A `ValueError` to every caller; a distinct type only so `execute()` can
+    tell "nothing was sent" from "something failed mid-stream".
+    """
+
+
 class QgaCommandError(QgaError):
     """A structured QGA command error returned by the guest."""
 
@@ -44,6 +55,73 @@ class QgaCommandError(QgaError):
         self.error_class = error_class
         self.description = description
         self.data = dict(data or {})
+
+
+#: Guest-error classification, keyed on the `strerror` tail.
+#:
+#: qemu-ga formats a failure as `"<context>: <strerror>"`, and the context
+#: embeds the guest path -- so classifying the whole string reported
+#: `/var/log/notfound.log` missing whatever had actually gone wrong with it.
+_GUEST_ERRORS: typing.Tuple[
+    typing.Tuple[int, typing.Type[OSError], typing.Tuple[str, ...]], ...
+] = (
+    (
+        errno.ENOENT,
+        FileNotFoundError,
+        (
+            "notfound",
+            "enoent",
+            "filenotfound",
+            "no such file or directory",
+            "cannot find the file",
+            "cannot find the path",
+        ),
+    ),
+    (
+        errno.EACCES,
+        PermissionError,
+        ("permission", "denied", "eacces", "access is denied"),
+    ),
+    (
+        errno.EEXIST,
+        FileExistsError,
+        ("eexist", "already exists", "file exists"),
+    ),
+    (
+        errno.EISDIR,
+        IsADirectoryError,
+        ("isdir", "eisdir", "is a directory"),
+    ),
+)
+
+
+def guest_oserror(exc: Exception, path: str) -> OSError:
+    """Translate a guest-agent failure into the filesystem error it means.
+
+    `path` names what the operation was about -- a guest path, or the
+    program a `guest-exec` tried to start. The result carries `.errno` and
+    `.filename`, so a caller can branch on the errno instead of the text.
+    """
+    if isinstance(exc, (QgaTimeoutError, QgaDisconnectedError)):
+        return exc
+    name = str(
+        getattr(exc, "error_class", "")
+        or getattr(exc, "name", "")
+        or getattr(exc, "code", "")
+        or type(exc).__name__
+    ).lower()
+    message = (
+        str(getattr(exc, "description", "") or getattr(exc, "message", "") or exc)
+        or path
+    )
+    # Only the tail: everything before the last ": " is qemu-ga's own
+    # context, which quotes the path the caller supplied.
+    tail = message.rsplit(": ", 1)[-1]
+    detail = f"{name} {tail.lower()}"
+    for code, error_type, needles in _GUEST_ERRORS:
+        if any(value in detail for value in needles):
+            return error_type(code, message, path)
+    return OSError(message)
 
 
 class _QgaFramedSession:
@@ -108,7 +186,16 @@ class _QgaFramedSession:
                 payload["id"] = request_id
                 self._send(payload, deadline)
                 return self._unwrap(self._correlated_reply(request_id, deadline))
+            except (QgaCommandError, _QgaRequestNotSerializable):
+                # The guest answered, or nothing was ever sent. Either way
+                # the stream sits at a frame boundary and the connection is
+                # healthy -- tearing it down made every "no such file" cost a
+                # reconnect and a fresh `guest-sync-delimited`, turning an
+                # ordinary `exists()` returning False into three round trips.
+                raise
             except Exception:
+                # A protocol, timeout or transport failure: the stream
+                # position is unknown, so the connection cannot be reused.
                 self._disconnect_locked()
                 raise
 
@@ -132,10 +219,18 @@ class _QgaFramedSession:
             deadline,
             prefix=b"\xff",
         )
-        self._discard_until_delimiter(deadline)
-        returned = self._unwrap(self._correlated_reply(request_id, deadline))
-        if returned != token:
-            raise QgaProtocolError("QGA synchronization token did not match")
+        while True:
+            self._discard_until_delimiter(deadline)
+            returned = self._unwrap(self._correlated_reply(request_id, deadline))
+            if returned == token:
+                return
+            # A delimiter and a reply left over from an abandoned session.
+            # One scan was enough only when the stream was already clean;
+            # with anything buffered ahead of our own reply, connect() gave
+            # up where the protocol's own recovery is to keep discarding to
+            # the next delimiter. The deadline, not an attempt count, ends
+            # this.
+            self._remaining(deadline)
 
     def _send(
         self,
@@ -149,7 +244,9 @@ class _QgaFramedSession:
                 request, ensure_ascii=False, separators=(",", ":")
             ).encode("utf-8")
         except (TypeError, ValueError) as exc:
-            raise ValueError("QGA request is not JSON serializable") from exc
+            raise _QgaRequestNotSerializable(
+                "QGA request is not JSON serializable"
+            ) from exc
         self._send_raw(prefix + encoded + b"\n", deadline)
 
     def _discard_until_delimiter(self, deadline: float) -> None:
@@ -258,11 +355,54 @@ class GuestAgentTransport(typing.Protocol):
         """Release transport resources."""
 
 
+#: libvirt's own error codes, so a `libvirtError` can be classified without
+#: importing libvirt into a process that may not have it. These are stable
+#: API constants (`include/libvirt/virterror.h`).
+_LIBVIRT_NO_DOMAIN = 42
+_LIBVIRT_AUTH_FAILED = 45
+_LIBVIRT_OPERATION_TIMEOUT = 68
+_LIBVIRT_AGENT_UNRESPONSIVE = 86
+_LIBVIRT_ACCESS_DENIED = 87
+
+#: How libvirt relays a guest-agent error reply: it raises, with the guest's
+#: own description wrapped in a sentence of its own.
+_AGENT_COMMAND_ERROR = re.compile(
+    r"unable to execute QEMU agent command '[^']*':\s*(?P<desc>.+)",
+    re.DOTALL,
+)
+
+
 def normalize_libvirt_error(error: BaseException) -> BaseException:
     """Normalize common libvirt/QGA failures without importing libvirt eagerly."""
     if not isinstance(error, Exception):
         return error
     message = str(error)
+    relayed = _AGENT_COMMAND_ERROR.search(message)
+    if relayed is not None:
+        # The guest answered and libvirt raised on its behalf. Reported as
+        # `ConnectionError`, an ordinary "no such file" looked like a dead
+        # link: the caller retried, `_qga_error` never saw it, and the two
+        # transport families disagreed about what a guest error even is.
+        return QgaCommandError("GenericError", relayed.group("desc").strip())
+    code = None
+    get_error_code = getattr(error, "get_error_code", None)
+    if callable(get_error_code):
+        try:
+            code = get_error_code()
+        except Exception:
+            code = None
+    if isinstance(code, int):
+        if code in (_LIBVIRT_OPERATION_TIMEOUT, _LIBVIRT_AGENT_UNRESPONSIVE):
+            return QgaTimeoutError(message)
+        if code in (_LIBVIRT_ACCESS_DENIED, _LIBVIRT_AUTH_FAILED):
+            return PermissionError(message)
+        if code == _LIBVIRT_NO_DOMAIN:
+            return FileNotFoundError(message)
+        return ConnectionError(message)
+    # No code to read -- a plain exception from a connect factory, or a
+    # message relayed by something other than libvirt itself. The text is
+    # all there is, so keep the substring reading for that case only: it is
+    # what made a guest path containing "timeout" a TimeoutError.
     folded = message.casefold()
     if any(value in folded for value in ("permission denied", "access denied")):
         return PermissionError(message)
@@ -605,10 +745,34 @@ class SshUnixGuestAgentTransport(_QgaFramedSession):
         self.close()
         return False
 
+    @contextlib.contextmanager
+    def _failures(self, command: str, timed_out: str) -> typing.Iterator[None]:
+        """One error ladder for every leg of this transport.
+
+        Written out three times, the connect leg was missing the timeout
+        branch -- and on the 3.9 floor asyncio.TimeoutError is a distinct
+        class from the builtin, so a connect deadline escaped raw where a
+        send or receive deadline raised QgaTimeoutError. One condition, two
+        exception types, decided by which Python was running.
+        """
+        try:
+            yield
+        except QgaError:
+            # Already in this vocabulary -- a deadline _remaining() noticed,
+            # for instance. Re-wrapping would relabel it.
+            raise
+        except (asyncio.TimeoutError, TimeoutError) as exc:
+            raise QgaTimeoutError(timed_out) from exc
+        except Exception as exc:
+            normalized = self._normalize_ssh_error(exc, command)
+            if normalized is exc:
+                raise
+            raise normalized from exc
+
     def _connect_raw(self, deadline: float) -> None:
         from .. import _async
 
-        try:
+        with self._failures("open QGA stream", "timed out opening the QGA stream"):
             opened = _async.async_to_sync(
                 _wait(
                     self._connection().open_unix_connection(self.path, encoding=None),
@@ -618,11 +782,6 @@ class SshUnixGuestAgentTransport(_QgaFramedSession):
             self._reader, self._writer = typing.cast(
                 typing.Tuple[_Reader, _Writer], opened
             )
-        except Exception as exc:
-            normalized = self._normalize_ssh_error(exc, "open QGA stream")
-            if normalized is exc:
-                raise
-            raise normalized from exc
 
     def _send_raw(self, data: bytes, deadline: float) -> None:
         from .. import _async
@@ -633,30 +792,16 @@ class SshUnixGuestAgentTransport(_QgaFramedSession):
             writer.write(data)
             await asyncio.wait_for(writer.drain(), self._remaining(deadline))
 
-        try:
+        with self._failures("send QGA request", "timed out sending a QGA request"):
             _async.async_to_sync(send())
-        except (asyncio.TimeoutError, TimeoutError) as exc:
-            raise QgaTimeoutError("timed out sending a QGA request") from exc
-        except Exception as exc:
-            normalized = self._normalize_ssh_error(exc, "send QGA request")
-            if normalized is exc:
-                raise
-            raise normalized from exc
 
     def _recv_raw(self, size: int, deadline: float) -> bytes:
         from .. import _async
 
-        try:
+        with self._failures("receive QGA reply", "timed out waiting for a QGA reply"):
             chunk = _async.async_to_sync(
                 _wait(self._require_reader().read(size), self._remaining(deadline))
             )
-        except (asyncio.TimeoutError, TimeoutError) as exc:
-            raise QgaTimeoutError("timed out waiting for a QGA reply") from exc
-        except Exception as exc:
-            normalized = self._normalize_ssh_error(exc, "receive QGA reply")
-            if normalized is exc:
-                raise
-            raise normalized from exc
         if not isinstance(chunk, bytes):
             raise TypeError("SSH QGA stream returned non-byte data")
         return chunk

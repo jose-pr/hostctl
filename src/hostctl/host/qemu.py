@@ -21,8 +21,7 @@ from ..executor import QemuExecutor
 from ..executor._qga import (
     GuestAgentTransport,
     LibvirtGuestAgentTransport,
-    QgaDisconnectedError,
-    QgaTimeoutError,
+    guest_oserror,
     SshUnixGuestAgentTransport,
     UnixSocketGuestAgentTransport,
 )
@@ -568,45 +567,6 @@ class GuestPathHelper(typing.Protocol):
     def chmod(self, path: str, mode: int, *, follow_symlinks: bool = True) -> None: ...
 
 
-def _qga_error(exc: Exception, path: str) -> OSError:
-    """Translate transport-specific QGA errors without importing a provider."""
-    if isinstance(exc, (QgaTimeoutError, QgaDisconnectedError)):
-        return exc
-    name = str(
-        getattr(exc, "error_class", "")
-        or getattr(exc, "name", "")
-        or getattr(exc, "code", "")
-        or type(exc).__name__
-    ).lower()
-    message = (
-        str(getattr(exc, "description", "") or getattr(exc, "message", "") or exc)
-        or path
-    )
-    detail = f"{name} {message.lower()}"
-    if any(
-        value in detail
-        for value in (
-            "notfound",
-            "enoent",
-            "filenotfound",
-            "no such file or directory",
-            "cannot find the file",
-            "cannot find the path",
-        )
-    ):
-        return FileNotFoundError(message)
-    if any(
-        value in detail
-        for value in ("permission", "denied", "eacces", "access is denied")
-    ):
-        return PermissionError(message)
-    if any(value in detail for value in ("eexist", "already exists", "file exists")):
-        return FileExistsError(message)
-    if any(value in detail for value in ("isdir", "eisdir", "is a directory")):
-        return IsADirectoryError(message)
-    return OSError(message)
-
-
 class QgaPathBackend:
     """Bounded file transfer plus capability-gated guest path helpers."""
 
@@ -656,7 +616,7 @@ class QgaPathBackend:
         try:
             value = self.transport.execute(request, timeout=self.timeout)
         except Exception as exc:
-            raise _qga_error(exc, path) from exc
+            raise guest_oserror(exc, path) from exc
         if isinstance(value, dict) and set(value) == {"return"}:
             return value["return"]
         return value

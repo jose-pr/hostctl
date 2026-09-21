@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import base64
+import errno
 import io
 import subprocess
 from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
+from hostctl.executor._qga import QgaCommandError
 from hostctl.executor.qemu import GuestAgentProtocolError, QemuExecutor
 
 
@@ -197,3 +199,48 @@ def test_qemu_executor_normalizes_transport_timeout_and_bad_replies():
     invalid_status = _Transport([{"exitcode": 0}])
     with pytest.raises(GuestAgentProtocolError, match="boolean exited"):
         QemuExecutor(lambda: invalid_status)("program")
+
+
+class _RefusingTransport:
+    """A guest agent that refuses guest-exec the way qemu-ga does."""
+
+    def __init__(self, description):
+        self.description = description
+
+    def execute(self, request, timeout=None):
+        raise QgaCommandError("GenericError", self.description)
+
+
+def test_a_missing_guest_program_is_a_filenotfounderror():
+    """The QGA leg spoke its own error vocabulary and nobody else's.
+
+    Every other transport answers a missing program with a
+    FileNotFoundError, so portable code guards host.run() with one. Raised
+    as QgaCommandError, that guard simply did not fire, and the failure
+    escaped as an exception the caller had no reason to expect.
+    """
+    executor = QemuExecutor(
+        lambda: _RefusingTransport(
+            "Failed to execute child process \"/usr/bin/absent\": "
+            "No such file or directory"
+        ),
+        sleep=lambda _: None,
+    )
+
+    with pytest.raises(FileNotFoundError) as caught:
+        executor("/usr/bin/absent")
+
+    assert caught.value.errno == errno.ENOENT
+    assert caught.value.filename == "/usr/bin/absent"
+
+
+def test_a_refused_guest_program_is_a_permissionerror():
+    executor = QemuExecutor(
+        lambda: _RefusingTransport(
+            "Failed to execute child process \"/root/tool\": Permission denied"
+        ),
+        sleep=lambda _: None,
+    )
+
+    with pytest.raises(PermissionError):
+        executor("/root/tool")

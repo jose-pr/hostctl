@@ -8,7 +8,7 @@ import subprocess
 import time
 import typing
 
-from ._qga import GuestAgentTransport, QgaProtocolError
+from ._qga import GuestAgentTransport, QgaCommandError, QgaProtocolError, guest_oserror
 from ._common import (
     expired,
     CaptureOutput,
@@ -237,6 +237,12 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
                 remaining,
                 orphaned=request.get("execute") == "guest-exec",
             ) from exc
+        except QgaCommandError as exc:
+            # The guest refused the command. `run()` of a missing program is
+            # a `FileNotFoundError` on every other transport; raised as the
+            # QGA-specific `QgaCommandError` it was, `except FileNotFoundError`
+            # around a portable `host.run()` simply did not fire.
+            raise guest_oserror(exc, command[0] if command else "") from exc
 
     def _wait(
         self,
