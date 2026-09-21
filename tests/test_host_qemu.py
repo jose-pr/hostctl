@@ -36,9 +36,18 @@ class _Transport:
                 ]
             }
         if command == "guest-get-osinfo":
+            # What qemu-ga actually sends: `id` is the os-release ID, and
+            # `kernel-name` is the family. The fixture used to answer
+            # `id: "linux"`, which no real agent returns, and the family
+            # assertion below measured nothing.
             return {
-                "id": "mswindows" if self.windows else "linux",
-                "pretty-name": "Windows" if self.windows else "Linux",
+                "id": "mswindows" if self.windows else "ubuntu",
+                "kernel-name": "Windows" if self.windows else "Linux",
+                "pretty-name": (
+                    "Microsoft Windows Server 2022"
+                    if self.windows
+                    else "Ubuntu 24.04.1 LTS"
+                ),
                 "version": "1",
                 "machine": "x86_64",
             }
@@ -75,6 +84,7 @@ def test_qemu_host_discovers_capabilities_info_and_posix_path():
     assert host.capabilities == frozenset(("path", "run"))
     assert host.info().hostname == "guest"
     assert host.info().os_family == "linux"
+    assert host.info().os_name == "Ubuntu 24.04.1 LTS"
     assert isinstance(host.path("/tmp/file"), PosixQemuPath)
     host.close()
     assert transport.closed

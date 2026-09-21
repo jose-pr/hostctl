@@ -92,13 +92,14 @@ def test_qemu_executor_text_capture_merge_and_output_targets():
     target = io.StringIO()
     executor = QemuExecutor(lambda: transport)
 
-    result = executor(
-        "program",
-        stdout=target,
-        stderr=subprocess.STDOUT,
-        capture_output=False,
-        text=True,
-    )
+    with pytest.warns(RuntimeWarning, match="truncated captured stdout"):
+        result = executor(
+            "program",
+            stdout=target,
+            stderr=subprocess.STDOUT,
+            capture_output=False,
+            text=True,
+        )
 
     assert target.getvalue() == "héerr"
     assert result.stdout is None

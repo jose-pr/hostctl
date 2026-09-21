@@ -24,9 +24,13 @@ Docker's archive API cannot remove, rename, chmod, or create an empty directory;
 those operations raise `NotImplementedError` explicitly.
 
 QGA paths use bounded `guest-file-open/read/write/seek/flush/close` requests and
-always close remote handles. Content access needs no in-guest shell. Metadata,
-listing, rename, removal, and permissions require a positively probed helper;
-unavailable operations raise `NotImplementedError`.
+always close remote handles. Content access needs no in-guest shell. A reader
+from `open("rb")` is seekable wherever the agent advertises `guest-file-seek`,
+so `zipfile` and `tarfile` work against a guest path; where it does not,
+`seekable()` is `False` and the reader is forward-only. Metadata, listing,
+rename, removal, and permissions require a positively probed helper;
+unavailable operations raise `NotImplementedError` -- including the exclusive
+`x` modes, which are refused by `open()` itself rather than at close-time.
 
 `WinRMPath.open("rb")` fetches bounded binary ranges through PowerShell.
 Writable modes stage data for close-time chunked write-back. Write-back happens

@@ -294,6 +294,22 @@ has no native cwd, and its `env` list *replaces* the guest environment instead
 of adding to it, so shell commands embed both cwd and env in the rendered
 script while direct executable paths reject both.
 
+qemu-ga caps the output it captures, and says so in the status reply.
+`result.stdout_truncated` and `result.stderr_truncated` carry that flag, and a
+truncated result also raises a `RuntimeWarning` -- a shortened transcript is
+otherwise indistinguishable from a complete one. Each guest-agent round trip is
+bounded by `QemuConfig.agent_timeout` independently of the command's own
+`timeout=`, so an agent that stops answering is reported as such
+(`ConnectionError`) rather than as a command that ran too long.
+`QemuConfig.max_reply_size` bounds a single reply; a reply refused for size
+takes the captured output with it, so the error names the pid and the setting.
+
+`dialect="auto"` and `path_flavor="auto"` need *positive* evidence of the
+guest's family: `guest-get-osinfo`, or a command in `guest-info` that only one
+family implements. An agent that provides neither -- `guest-get-osinfo` can be
+blocklisted -- makes both raise `NotImplementedError` naming the settings that
+resolve it, rather than quietly answering POSIX.
+
 An optional injected `QemuSerialConsole` exposes raw rescue-console access
 through `guest.open_serial()`. It is exclusive, merged-stream, and does not
 infer login, shell, prompts, command status, or filesystem behavior. A live

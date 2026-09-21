@@ -10,6 +10,7 @@ import pytest
 from hostctl.process import Process
 from hostctl.process.qemu_serial import (
     QemuSerialConsole,
+    QemuSerialProcess,
     normalize_qemu_console_error,
 )
 
@@ -155,3 +156,62 @@ def test_stream_error_retains_cause_and_failed_finish_aborts():
     with pytest.raises(ConnectionError):
         process.close()
     assert stream.aborted == 1
+
+
+class _EndingStream:
+    """A console stream whose peer goes away after one chunk."""
+
+    def __init__(self, *chunks):
+        self.chunks = list(chunks)
+        self.finished = 0
+
+    def send(self, data):
+        return len(data)
+
+    def recv(self, size):
+        if not self.chunks:
+            return b""
+        return self.chunks.pop(0)
+
+    def finish(self):
+        self.finished += 1
+
+    def abort(self):
+        self.finished += 1
+
+
+def test_read_after_eof_reads_eof_again_instead_of_raising():
+    """EOF is sticky, as the Process contract says it is.
+
+    An empty receive ends the console lease; raising `ConnectionError` on
+    the next read made an ordinary drain loop -- one that reads once more
+    after a falsy chunk -- crash instead of finishing.
+    """
+    console = QemuSerialConsole(stream=_EndingStream(b"hello"), owns_stream=True)
+    process = console.open()
+
+    assert process.read() == b"hello"
+    assert process.read() == b""
+    assert process.read() == b""
+
+
+def test_read_zero_answers_in_the_process_mode():
+    """`b""` even with a decoder attached made `buffer += read(0)` a TypeError."""
+    process = QemuSerialProcess(
+        _EndingStream(b"hi"),
+        release=lambda: None,
+        encoding="utf-8",
+    )
+
+    assert process.read(0) == ""
+    assert process.read() == "hi"
+
+
+def test_reopening_a_consumed_injected_stream_says_why():
+    """A bare AssertionError named nothing, and vanished under -O."""
+    console = QemuSerialConsole(stream=_EndingStream(b""), owns_stream=True)
+    process = console.open()
+    process.close()
+
+    with pytest.raises(RuntimeError, match="stream_factory"):
+        console.open()

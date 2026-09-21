@@ -6,6 +6,7 @@ import base64
 import os
 import subprocess
 import time
+import warnings
 import typing
 
 from ._qga import GuestAgentTransport, QgaCommandError, QgaProtocolError, guest_oserror
@@ -227,6 +228,25 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
         completed.pid = pid
         completed.stdout_truncated = bool(status.get("out-truncated", False))
         completed.stderr_truncated = bool(status.get("err-truncated", False))
+        if completed.stdout_truncated or completed.stderr_truncated:
+            # qemu-ga caps what it captures and says so in the status reply.
+            # Recorded on the result and nowhere else, a silently shortened
+            # transcript looked exactly like a complete one -- and a caller
+            # who never heard of these attributes had no way to tell.
+            streams = ", ".join(
+                name
+                for name, flag in (
+                    ("stdout", completed.stdout_truncated),
+                    ("stderr", completed.stderr_truncated),
+                )
+                if flag
+            )
+            warnings.warn(
+                f"the guest agent truncated captured {streams} for pid {pid}: "
+                "the result is incomplete",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         if check:
             completed.check_returncode()
         return completed

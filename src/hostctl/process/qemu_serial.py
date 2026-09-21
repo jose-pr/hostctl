@@ -74,7 +74,15 @@ class QemuSerialConsole:
         try:
             stream = self._stream
             if stream is None:
-                assert self._factory is not None
+                if self._factory is None:
+                    # An injected stream is consumed by the process that
+                    # owned it -- it was finished on teardown, so there is
+                    # nothing left to reopen. A bare AssertionError said
+                    # none of that, and vanished entirely under -O.
+                    raise RuntimeError(
+                        "this console's stream was consumed; supply a "
+                        "stream_factory to reopen it"
+                    )
                 stream = self._factory()
                 self._stream = stream
         except Exception as exc:
@@ -153,12 +161,24 @@ class QemuSerialProcess(Process):
         except Exception as exc:
             raise_normalized(exc, normalize_qemu_console_error)
 
+    def _eof_value(self) -> ProcessData:
+        """The empty value this process reads in, in its own mode."""
+        return "" if self._decoder is not None else b""
+
     def read(self, size: int = -1) -> ProcessData:
-        self._require_open()
         if size < -1:
             raise ValueError("read size must be -1 or non-negative")
         if size == 0:
-            return b""
+            # `b""` even with a decoder attached: a text-mode caller doing
+            # `buffer += proc.read(0)` got a TypeError from a read that is
+            # defined to return nothing.
+            return self._eof_value()
+        if self._closed.is_set():
+            # EOF is sticky. An empty receive ends the lease, and raising
+            # here made a second read of an ended stream a ConnectionError
+            # where the Process contract says it reads `b""` -- so an
+            # ordinary drain loop that reads once more after EOF crashed.
+            return self._eof_value()
         request_size = 64 * 1024 if size == -1 else size
         try:
             # Deliberately NOT under `_io_lock`: holding it across a blocking

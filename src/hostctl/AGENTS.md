@@ -365,6 +365,18 @@ answered from those RPCs alone, while metadata and namespace mutations need a
 guest helper (`QemuConfig(path_helper=...)`) and raise `NotImplementedError`
 without one.
 
+`QemuConfig.max_reply_size` (default 48 MiB) bounds one QGA reply, and
+`agent_timeout` bounds one round trip independently of a command's `timeout=`:
+an agent that stops answering raises `ConnectionError`, not a command timeout.
+`run()` results carry `stdout_truncated`/`stderr_truncated` and warn when set.
+`dialect="auto"`/`path_flavor="auto"` require positive evidence of the guest
+family (`guest-get-osinfo`, or a family-exclusive command in `guest-info`) and
+raise rather than defaulting to POSIX. `info().os_family` is a family from
+`kernel-name`, not the os-release `id`. A `QgaPathBackend` is invalidated by
+`QemuHost.close()`, so a path handed out earlier refuses instead of
+reconnecting. `open("rb")` is seekable where `guest-file-seek` is advertised;
+the exclusive `x` modes are refused by `open()` without a guest helper.
+
 `QgaCommandError` is a guest agent error reply, carrying `.error_class` and
 `.description`; a path operation translates it into the matching `OSError`
 (`FileNotFoundError`, `PermissionError`, ...). `QgaProtocolError` is a

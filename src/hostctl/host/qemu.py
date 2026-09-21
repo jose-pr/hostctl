@@ -46,6 +46,7 @@ from ._common import (
     Input,
     PathLike,
     starts_direct_command,
+    strict_uri_credentials,
     strict_uri_query,
     uri_host,
     uri_hostname,
@@ -192,8 +193,19 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             f"{urlencode(query)}"
         )
 
+    #: Credentials every QEMU scheme accepts. `password`, `client_keys` and
+    #: `known_hosts` are meaningful only where an SSH tunnel carries the
+    #: agent stream, so they are checked per scheme below rather than only
+    #: against the class-wide whitelist.
+    _COMMON_CREDENTIALS = ("transport_factory", "serial_console", "path_helper")
+
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> QemuConfig:
+        scheme = parsed.scheme.casefold()
+        if scheme != "qga+ssh":
+            # Accepted and discarded, a `password=` on a libvirt or Unix
+            # socket URI read as authentication that had been applied.
+            strict_uri_credentials(credentials, cls._COMMON_CREDENTIALS)
         query = strict_uri_query(
             parsed,
             (
@@ -227,7 +239,6 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             "serial_console": credentials.get("serial_console"),
             "path_helper": credentials.get("path_helper"),
         }
-        scheme = parsed.scheme.casefold()
         if scheme == "qemu+libvirt":
             if parsed.netloc or not parsed.path.strip("/"):
                 raise ValueError("libvirt QEMU URI requires a domain path")
@@ -441,13 +452,53 @@ class QemuHost(Host):
             if ssh is not None:
                 ssh.close()
 
-    @property
-    def _windows(self) -> bool:
+    #: qemu-ga commands only one family implements. An administrator can
+    #: blocklist `guest-get-osinfo` (that is what `enabled` in `guest-info`
+    #: is for), and then the command set is the only positive evidence left.
+    _WINDOWS_ONLY_COMMANDS = frozenset({"guest-get-devices"})
+    _POSIX_ONLY_COMMANDS = frozenset({"guest-get-cpustats", "guest-get-diskstats"})
+
+    def _probe_os_family(self) -> typing.Optional[str]:
+        """The guest's OS family, or `None` when nothing positively said.
+
+        Every branch here is positive evidence. Reading "not Windows" out of
+        an `guest-get-osinfo` that never ran is a guess, and the project's
+        rule for auto-detection is to raise rather than guess.
+        """
         self.connect()
         values = " ".join(
             str(self._os_info.get(key, "")) for key in ("id", "name", "pretty-name")
         ).casefold()
-        return "windows" in values
+        if "windows" in values:
+            return "windows"
+        kernel = str(self._os_info.get("kernel-name", "")).strip().casefold()
+        if kernel:
+            # `Linux`, `FreeBSD`, ... -- the family, where `id` is the
+            # distribution (`ubuntu`, `rhel`) every other transport does
+            # not report here.
+            return kernel
+        if self._os_info:
+            # osinfo answered and named no kernel: an older agent, but the
+            # answer itself is evidence the guest is not Windows.
+            return "posix"
+        commands = self._commands or frozenset()
+        if commands & self._WINDOWS_ONLY_COMMANDS:
+            return "windows"
+        if commands & self._POSIX_ONLY_COMMANDS:
+            return "posix"
+        return None
+
+    @property
+    def _windows(self) -> bool:
+        family = self._probe_os_family()
+        if family is None:
+            raise NotImplementedError(
+                "this guest agent did not report an OS: 'guest-get-osinfo' is "
+                "unavailable or blocklisted and the advertised command set "
+                "names no family. Set dialect= and path_flavor= explicitly "
+                "(for example dialect=POSIX_SHELL, path_flavor='posix')."
+            )
+        return family == "windows"
 
     @property
     def shell_flavour(self) -> ShellFlavour:
@@ -457,13 +508,19 @@ class QemuHost(Host):
 
     def info(self) -> HostInfo:
         self.connect()
-        os_id = self._os_info.get("id")
+        # `os_family` is a FAMILY. It used to carry `guest-get-osinfo`'s
+        # `id` -- an os-release id such as `ubuntu` or `rhel` -- so the same
+        # machine answered `linux` over SSH and `ubuntu` over QGA, and a
+        # caller branching on the family had to special-case this transport.
+        # `id` and `pretty-name` feed `os_name`, where they belong.
         return HostInfo(
             hostname=self._hostname,
-            os_family=("windows" if self._windows else str(os_id) if os_id else None),
+            os_family=self._probe_os_family(),
             os_name=typing.cast(
                 typing.Optional[str],
-                self._os_info.get("pretty-name") or self._os_info.get("name"),
+                self._os_info.get("pretty-name")
+                or self._os_info.get("name")
+                or self._os_info.get("id"),
             ),
             os_version=typing.cast(
                 typing.Optional[str],
@@ -946,6 +1003,31 @@ class _QgaReadStream(io.RawIOBase):
     def readable(self) -> bool:
         return True
 
+    def seekable(self) -> bool:
+        # The backend has implemented `guest-file-seek` all along and the
+        # documentation advertised it, but nothing exposed it: `open("rb")`
+        # answered `seekable() == False`, so `zipfile`, `tarfile` and every
+        # other reader that looks at the end of a file raised
+        # `io.UnsupportedOperation` on a guest path.
+        return "guest-file-seek" in self._backend.supported_commands
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        if self._handle is None:
+            raise ValueError("seek of a closed QGA read stream")
+        if not self.seekable():
+            raise io.UnsupportedOperation(
+                "this guest agent does not support guest-file-seek"
+            )
+        position = self._backend.seek(self._handle, offset, whence, path=self._path)
+        # Whatever it was, it is no longer at the end.
+        self._eof = False
+        return position
+
+    def tell(self) -> int:
+        if self._handle is None:
+            raise ValueError("tell of a closed QGA read stream")
+        return self.seek(0, io.SEEK_CUR)
+
     def readinto(self, target: bytearray) -> int:
         if self._eof or not target:
             return 0
@@ -1044,6 +1126,16 @@ class _QgaPathMixin(StagedOpenMixin):
 
     def _open(self, mode="r", buffering=-1):
         del buffering
+        if "x" in mode and self.backend.helper is None:
+            # `staged_open` would return a writable stream and only call
+            # `write_bytes` from `close()`, so the refusal arrived after the
+            # caller had streamed the whole payload into memory -- from the
+            # context manager's exit, where nothing was wrapped in a
+            # capability check. Every other unsupported QGA operation is
+            # refused before any work happens.
+            raise NotImplementedError(
+                "exclusive QGA writes require a transactional guest helper"
+            )
         return staged_open(self.backend, str(self), mode, label="QGA")
 
     def _symlink_target(self, target):
