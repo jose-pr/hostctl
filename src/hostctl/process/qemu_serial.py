@@ -113,6 +113,9 @@ class QemuSerialProcess(Process):
     ) -> None:
         self._stream = stream
         self._io_lock = io_lock or threading.RLock()
+        # Guards the teardown decision only; never held across I/O.
+        self._finish_lock = threading.Lock()
+        self._finishing = False
         self._release = release
         self._close_stream = close_stream
         self._resize = resize
@@ -158,8 +161,11 @@ class QemuSerialProcess(Process):
             return b""
         request_size = 64 * 1024 if size == -1 else size
         try:
-            with self._io_lock:
-                value = self._stream.recv(request_size)
+            # Deliberately NOT under `_io_lock`: holding it across a blocking
+            # recv() meant write() and close() could not proceed while a read
+            # was outstanding, so a console whose guest stopped emitting could
+            # neither be driven nor closed. The stream owns its own framing.
+            value = self._stream.recv(request_size)
         except Exception as exc:
             raise_normalized(exc, normalize_qemu_console_error)
         if not value:
@@ -216,8 +222,14 @@ class QemuSerialProcess(Process):
         self._finish(closing_stream=self._close_stream)
 
     def _finish(self, *, closing_stream: bool) -> None:
-        if self._closed.is_set():
-            return
+        # Check-then-act on `_closed` let a concurrent close() and an
+        # EOF-driven finish both run: the console lease was released twice,
+        # which either raises "release unlocked lock" out of close() or frees
+        # a lease a new owner already holds. One winner claims the teardown.
+        with self._finish_lock:
+            if self._closed.is_set() or self._finishing:
+                return
+            self._finishing = True
         error: typing.Optional[Exception] = None
         if closing_stream:
             try:
@@ -230,7 +242,11 @@ class QemuSerialProcess(Process):
                 except Exception:
                     pass
         self._closed.set()
-        self._release()
+        try:
+            self._release()
+        finally:
+            with self._finish_lock:
+                self._finishing = False
         if error is not None:
             raise_normalized(error, normalize_qemu_console_error)
 

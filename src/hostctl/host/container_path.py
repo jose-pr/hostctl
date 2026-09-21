@@ -329,7 +329,9 @@ class ContainerPathBackend:
                 archive.close()
         raise OSError("too many symbolic links")
 
-    def scandir(self, path: str) -> typing.List[typing.Tuple[str, FileStat]]:
+    def scandir(
+        self, path: str, *, hops: int = 8
+    ) -> typing.List[typing.Tuple[str, FileStat]]:
         try:
             stream, _ = self.container.get_archive(path)
             archive = tarfile.open(fileobj=_ChunkReader(stream), mode="r|*")
@@ -349,6 +351,16 @@ class ContainerPathBackend:
                 parts = _safe_name(member.name)
                 if root is None:
                     root = parts
+                    if member.issym():
+                        # Follow it, as every other archive operation here
+                        # does. This was the only one that refused, so
+                        # `iterdir()` on merged-usr `/bin`, `/lib` or `/sbin`
+                        # failed on every modern Linux image while `stat()`
+                        # and `read_bytes()` on the same path worked.
+                        if hops <= 0:
+                            raise OSError("too many symbolic links")
+                        target = self._link_destination(path, member.linkname)
+                        return self.scandir(target, hops=hops - 1)
                     if not member.isdir():
                         raise NotADirectoryError(path)
                 if parts[: len(root)] != root or len(parts) != len(root) + 1:

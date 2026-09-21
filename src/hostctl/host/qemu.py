@@ -8,6 +8,7 @@ import dataclasses
 import io
 import subprocess
 import typing
+import warnings
 import uuid
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from pathlib import PurePath as _StdPurePath
@@ -343,7 +344,12 @@ class QemuHost(Host):
                     and isinstance(entry.get("name"), str)
                 ):
                     commands.add(typing.cast(str, entry["name"]))
-        self._commands = frozenset(commands)
+        # `_commands` is the "already discovered" flag, so it is committed
+        # only once the optional probes below have run. Set first, a single
+        # transient probe failure froze a Windows guest as POSIX for the
+        # object's lifetime, and a retried connect() silently succeeded
+        # without re-probing.
+        discovered = frozenset(commands)
         if "guest-get-osinfo" in commands:
             value = transport.execute(
                 {"execute": "guest-get-osinfo"}, self.config.agent_timeout
@@ -358,6 +364,7 @@ class QemuHost(Host):
             if isinstance(value, typing.Mapping):
                 hostname = value.get("host-name")
                 self._hostname = str(hostname) if hostname else None
+        self._commands = discovered
 
     def close(self) -> None:
         self._commands = None
@@ -878,6 +885,26 @@ class _QgaReadStream(io.RawIOBase):
                 super().close()
         else:
             super().close()
+
+    def __del__(self) -> None:
+        # Never issue the guest RPC from the collector. `RawIOBase.__del__`
+        # calls `close()`, and `close()` sends `guest-file-close`; the framed
+        # session's lock is not reentrant, so a collection firing inside
+        # `execute()` on the same thread deadlocked the transport for good.
+        # Dropping the handle leaks one guest-side file handle, which is the
+        # lesser harm and is what the warning is for.
+        if not self.closed and self._handle is not None:
+            warnings.warn(
+                f"unclosed QGA read stream for {self._path}: the guest handle "
+                "was not released",
+                ResourceWarning,
+                stacklevel=2,
+            )
+            self._handle = None
+        try:
+            super().close()
+        except Exception:
+            pass
 
 
 class _QgaPathMixin(StagedOpenMixin):

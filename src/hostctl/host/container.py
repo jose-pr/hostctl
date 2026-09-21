@@ -172,6 +172,29 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
         return ContainerHost(self)
 
 
+def _close_hijacked(stream: object) -> None:
+    """Close a hijacked docker connection, socket included.
+
+    docker-py hands back a `socket.SocketIO` whose `close()` leaves the
+    underlying socket open, so closing only the wrapper leaked the daemon
+    connection until the garbage collector broke its reference cycle.
+    """
+    for attribute in ("_sock", "_socket", "sock"):
+        raw = getattr(stream, attribute, None)
+        close = getattr(raw, "close", None)
+        if close is not None:
+            try:
+                close()
+            except Exception:
+                pass
+    close = getattr(stream, "close", None)
+    if close is not None:
+        try:
+            close()
+        except Exception:
+            pass
+
+
 class ContainerHost(Host):
     """A running container reached through the Docker Engine API.
 
@@ -581,21 +604,28 @@ class ContainerHost(Host):
                         width=selected_terminal.columns,
                     )
                 except Exception:
-                    close = getattr(stream, "close", None)
-                    if close is not None:
-                        close()
+                    _close_hijacked(stream)
                     raise
         except Exception as exc:
             normalized = normalize_container_error(exc)
             if normalized is exc:
                 raise
             raise normalized from exc
-        return ContainerProcess(
-            api,
-            str(exec_id),
-            stream,
-            tty=tty,
-            command=list(invocation),
-            encoding=encoding,
-            errors=errors,
-        )
+        try:
+            return ContainerProcess(
+                api,
+                str(exec_id),
+                stream,
+                tty=tty,
+                command=list(invocation),
+                encoding=encoding,
+                errors=errors,
+            )
+        except Exception:
+            # The exec has already started, so the hijacked daemon connection
+            # is live. `SocketIO.close()` provably does not close the
+            # underlying socket, and this construction can raise (a bad
+            # `encoding` gives LookupError) -- both paths used to leave the
+            # connection open until a GC pass broke its reference cycle.
+            _close_hijacked(stream)
+            raise

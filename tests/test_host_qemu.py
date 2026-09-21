@@ -2,6 +2,8 @@
 
 import base64
 
+import pytest
+
 from hostctl import HostConfig, QemuConfig, QemuHost, SshConfig
 from hostctl.host.qemu import PosixQemuPath, WindowsQemuPath
 
@@ -124,3 +126,53 @@ def test_qemu_ssh_uri_round_trip_is_secret_safe():
     assert rebuilt.domain == "102"
     assert rebuilt.ssh.host == "hypervisor.example"
     assert str(rebuilt) == uri
+
+
+def test_a_failed_probe_does_not_freeze_the_guest_family(monkeypatch):
+    """`_commands` is the "already discovered" flag.
+
+    Committing it before the optional osinfo/hostname probes meant one
+    transient probe failure froze a Windows guest as POSIX for the object's
+    lifetime, and a retried connect() silently succeeded without re-probing.
+    """
+    calls = []
+
+    class _Transport:
+        def __init__(self):
+            self.fail = True
+
+        def connect(self):
+            pass
+
+        def close(self):
+            pass
+
+        def execute(self, request, timeout=None):
+            command = request.get("execute")
+            calls.append(command)
+            if command == "guest-info":
+                return {
+                    "supported_commands": [
+                        {"name": "guest-get-osinfo", "enabled": True}
+                    ]
+                }
+            if command == "guest-get-osinfo":
+                if self.fail:
+                    raise ConnectionError("agent busy")
+                return {"id": "mswindows", "name": "Microsoft Windows"}
+            return {}
+
+    transport = _Transport()
+    host = QemuHost(
+        QemuConfig("vm", transport="libvirt", transport_factory=lambda: transport)
+    )
+
+    with pytest.raises(Exception):
+        host.connect()
+
+    # The failure must not have been cached as a successful discovery.
+    transport.fail = False
+    calls.clear()
+    host.connect()
+
+    assert "guest-get-osinfo" in calls

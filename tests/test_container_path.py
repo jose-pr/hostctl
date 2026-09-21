@@ -31,6 +31,26 @@ def _tar(entries):
     return payload.getvalue()
 
 
+def _tar_entries(entries):
+    """Build a tar from (name, type, payload, linkname) tuples."""
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w") as archive:
+        for name, kind, value, linkname in entries:
+            member = tarfile.TarInfo(name)
+            member.type = kind
+            if kind == tarfile.SYMTYPE:
+                member.linkname = linkname
+                archive.addfile(member)
+            elif kind == tarfile.DIRTYPE:
+                member.mode = 0o755
+                archive.addfile(member)
+            else:
+                member.size = len(value)
+                member.mode = 0o644
+                archive.addfile(member, io.BytesIO(value))
+    return payload.getvalue()
+
+
 def _tar_special():
     payload = io.BytesIO()
     with tarfile.open(fileobj=payload, mode="w") as archive:
@@ -382,3 +402,32 @@ def test_writing_over_a_symlink_does_not_inherit_its_mode():
     ContainerPathBackend(container).write_bytes("/srv/link", b"data")
 
     assert _sent_member(container).mode == 0o644
+
+
+def test_iterdir_follows_a_symlinked_directory():
+    """merged-usr `/bin`, `/lib` and `/sbin` are symlinks on every modern image.
+
+    scandir() was the only archive operation that refused to follow one, so
+    `iterdir('/bin')` raised NotADirectoryError while `stat()` and
+    `read_bytes()` on the same path followed it correctly.
+    """
+    container = _Container()
+    container.archives["/bin"] = _tar_entries(
+        [("bin", tarfile.SYMTYPE, b"", "usr/bin")]
+    )
+    container.archives["/usr/bin"] = _tar_entries(
+        [("bin", tarfile.DIRTYPE, b"", None), ("bin/ls", tarfile.REGTYPE, b"x", None)]
+    )
+
+    names = [name for name, _stat in ContainerPathBackend(container).scandir("/bin")]
+
+    assert names == ["ls"]
+
+
+def test_a_symlink_loop_in_scandir_is_bounded():
+    container = _Container()
+    container.archives["/a"] = _tar_entries([("a", tarfile.SYMTYPE, b"", "/b")])
+    container.archives["/b"] = _tar_entries([("b", tarfile.SYMTYPE, b"", "/a")])
+
+    with pytest.raises(OSError, match="too many symbolic links"):
+        ContainerPathBackend(container).scandir("/a")
