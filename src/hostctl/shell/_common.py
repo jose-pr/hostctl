@@ -91,7 +91,7 @@ class ShellSession(Process):
             raise ValueError("send requires commands, cwd, or env")
         script = self.flavour.script(cmds, cwd=cwd, env=env, for_session=True)
         self.process.write(
-            script + self.flavour.command_separator + self.flavour.line_terminator
+            self.flavour.terminate_submission(script) + self.flavour.line_terminator
         )
 
     def write(self, data):
@@ -152,9 +152,34 @@ class ShellFlavour(abc.ABC):
     info_script: str
     command_separator: str
     line_terminator: str = "\n"
+    #: Trailing tokens that already end a command in this flavour, so
+    #: `send()` does not append a second one. Extended by POSIX-family
+    #: flavours, which also accept `&`, `|` and their doubled forms.
+    submission_terminators: typing.Tuple[str, ...] = ()
+    #: Appended to a rendered script before it is executed. Declared here so
+    #: `script()` reads an attribute instead of duck-probing with `getattr`.
+    execution_epilogue: str = ""
     context_order = ("env", "cwd", "command")
     structured_command_prefix = ""
     path_flavor: type[PurePath] = PurePath
+
+    def terminate_submission(self, script: str) -> str:
+        """Return `script` ending in exactly one command terminator.
+
+        `send()` used to append the separator unconditionally, so ordinary
+        shell text that already ended in one became a syntax error: `;;` in
+        POSIX, and `while read x; do ...; done;;` is not a script. A
+        background `&`, a pipe left open, and `&&`/`||` are terminators too
+        -- appending after them produces `&;` and `&&;`.
+        """
+        stripped = script.rstrip()
+        if not stripped:
+            return script
+        terminators = (self.command_separator,) + self.submission_terminators
+        for terminator in sorted(terminators, key=len, reverse=True):
+            if terminator and stripped.endswith(terminator):
+                return stripped
+        return stripped + self.command_separator
 
     def command_path(self, value: PathLike) -> PurePath:
         """Return a direct-command marker using the target shell's path syntax."""
@@ -315,7 +340,7 @@ class ShellFlavour(abc.ABC):
                 rendered["command"] = ""
         parts = [rendered[name] for name in self.context_order if rendered[name]]
         script = self.command_separator.join(parts)
-        epilogue = getattr(self, "execution_epilogue", "")
+        epilogue = self.execution_epilogue
         if script and epilogue and not for_session:
             script += epilogue
         return script
@@ -398,7 +423,11 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         #: override wholesale; `env` merges per key so a call can change one
         #: variable without restating the rest (see `_resolve_env`).
         self.cwd = cwd
-        self.env = dict(env) if env is not None else None
+        # `dict(env) if env is not None` kept an empty mapping, which the
+        # local executor forwards to `subprocess` as `env={}` -- a child
+        # started with NO environment at all, where the caller meant "no
+        # overrides". `configure()` already normalised it this way.
+        self.env = dict(env) if env else None
         self.encoding = encoding
         self.errors = errors
         run = getattr(executor, "run", None)

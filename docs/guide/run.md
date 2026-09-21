@@ -275,6 +275,24 @@ correlation:
 and RFC 2217 URLs are passed to PySerial); RFC 2217 provides no encryption or
 authentication and must be protected by an external secure transport.
 
+## What a rendered command may contain
+
+A **raw string** is shell source and stays verbatim, so it may span lines and
+carry tabs -- a heredoc, an `if`/`for` block, an embedded `awk` program. Only
+NUL and the other non-whitespace control characters are refused there: nothing
+in any supported shell needs them, and they defeat terminal and log inspection.
+A **structured element** is a value, and a value carrying any control character
+at all is refused, because a newline inside a quoted argument is how a second
+command gets smuggled in.
+
+In a structured PowerShell command, a token that is exactly a parameter name
+(`-LiteralPath`, `-Force`, `-Path:`) is rendered unquoted so the binder reads
+it as one; `host.run(["Remove-Item", "-LiteralPath", path])` therefore binds
+and deletes. Every other element is a quoted string literal. A value that
+happens to look like a parameter name but is meant as data cannot be expressed
+through the structured grammar -- render it as raw source, or pass the `--`
+separator the target program provides.
+
 ## QEMU guests
 
 `QemuHost` supports direct Unix-socket, libvirt, and SSH-tunneled Unix-socket

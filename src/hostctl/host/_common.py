@@ -33,7 +33,7 @@ from ..executor import (
 )
 
 if _ty.TYPE_CHECKING:
-    from ..executor import Executor, ExecutorCapability
+    from ..executor import Executor
     from ..process import Process, TerminalRequest
     from ..shell import Shell, ShellFlavour
 
@@ -794,7 +794,7 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         return _HostExecutor()
 
     @property
-    def executor_capabilities(self) -> _ty.FrozenSet[ExecutorCapability]:
+    def executor_capabilities(self) -> _ty.FrozenSet[str]:
         """Native context/argument features of the underlying executor.
 
         Derived from the host's own executor so a host that does not compose

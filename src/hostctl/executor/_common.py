@@ -14,7 +14,11 @@ from pathlib_next import Pathname
 _Result = typing.TypeVar("_Result", covariant=True)
 
 FileHandle = typing.Union[int, typing.BinaryIO, typing.TextIO]
-Input = typing.Optional[typing.Union[bytes, str]]
+#: `bytearray` and `memoryview` are here because callers really do pass
+#: them -- a `socket.recv_into` buffer, a slice of a `mmap` -- and the whole
+#: point of `normalize_input` is that the sink must never see a type it
+#: cannot write.
+Input = typing.Optional[typing.Union[bytes, bytearray, memoryview, str, int]]
 PathLike = typing.Union[str, os.PathLike[str]]
 Environment = typing.Mapping[typing.Union[str, bytes], object]
 CaptureOutput = typing.Literal[True, False, "stdout", "stderr"]
@@ -105,14 +109,20 @@ def normalize_input(
     binary mode encodes them. `encoding`/`errors` default to UTF-8/strict,
     matching `subprocess`.
     """
-    if input is None or isinstance(input, (int,)):
+    if input is None or isinstance(input, int):
         return input
     if text_mode:
-        if isinstance(input, bytes):
-            return input.decode(encoding or "utf-8", errors or "strict")
+        if isinstance(input, (bytes, bytearray, memoryview)):
+            # A `bytearray` reached the text-mode writer thread untouched
+            # and raised there -- exactly the deadlock this function exists
+            # to prevent, for the two buffer types it did not check.
+            return bytes(input).decode(encoding or "utf-8", errors or "strict")
         return input
     if isinstance(input, str):
         return input.encode(encoding or "utf-8", errors or "strict")
+    if isinstance(input, (bytearray, memoryview)):
+        # AsyncSSH and the QGA base64 leg both want real `bytes`.
+        return bytes(input)
     return input
 
 
@@ -338,7 +348,11 @@ class ExecutionOptions(typing.TypedDict, total=False):
 class Executor(typing.Protocol[_Result]):
     """Callable executor receiving one command string and execution options."""
 
-    executor_capabilities: typing.FrozenSet[ExecutorCapability]
+    #: Declared as strings: `ExecutorCapability` members subclass `str` and
+    #: stay the documented spelling, but the vocabulary itself is open --
+    #: a third-party executor may declare a capability this enum does not
+    #: know, and the narrower annotation called that a type error.
+    executor_capabilities: typing.FrozenSet[str]
 
     def __call__(
         self,

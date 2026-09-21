@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -262,3 +263,36 @@ def test_the_registry_capabilities_match_the_host_that_was_built(provider):
             f"{provider.name}: the registry says {capability}={registry} "
             f"while the host reports {real}"
         )
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_a_shell_rendered_command_times_out_too(provider):
+    """Every timeout case in this battery used `Exec`.
+
+    `Exec` is the one shape where the local timeout was already sound, so
+    the shell-rendered path -- where the deadline has to reach a child of
+    the shell, not the shell itself -- was never exercised. Measured before
+    the local executor bounded the process tree: `Exec` returned in 2.0s
+    while the same sleep through the shell layer took 15.8-16.2s.
+    """
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
+    if "timeout" not in provider.capabilities:
+        pytest.skip(f"{provider.name} does not support timeout")
+    with provider_context(provider) as host:
+        invocation = host.shell_flavour.invocation("echo probe")
+        if shutil.which(invocation[0]) is None:
+            pytest.skip(f"shell executable {invocation[0]!r} is unavailable")
+        # Rendered as shell source, not as argv: `structured_command` is
+        # what a flavour calls a command line, call operator included.
+        script = host.shell_flavour.structured_command(
+            (sys.executable, "-c", "import time; time.sleep(30)")
+        )
+        started = time.monotonic()
+        with pytest.raises(subprocess.TimeoutExpired) as raised:
+            host.run(script, timeout=2)
+        elapsed = time.monotonic() - started
+
+    # The deadline is what ended it, not the command.
+    assert elapsed < 20, f"{provider.name} waited {elapsed:.1f}s for a 2s timeout"
+    assert isinstance(raised.value.orphaned, bool)

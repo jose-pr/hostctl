@@ -14,6 +14,10 @@ class PosixShellFlavour(ShellFlavour):
     name = "posix"
     default_executable = "/bin/sh"
     command_separator = ";"
+    # A command already ended by any of these needs no `;` after it: `&` and
+    # `|` terminate as surely as `;` does, and `&&`/`||` expect a command
+    # next, so `cmd &&;` is a syntax error.
+    submission_terminators = ("&&", "||", "&", "|")
     info_script = (
         "printf 'hostname=%s\\n' \"$(hostname 2>/dev/null)\";"
         "printf 'os_family=%s\\n' \"$(uname -s 2>/dev/null)\";"
@@ -76,7 +80,21 @@ class BashShellFlavour(PosixShellFlavour):
 
 
 class ZshShellFlavour(PosixShellFlavour):
-    """Zsh using the portable POSIX command-construction baseline."""
+    """Zsh, whose word expansions are wider than POSIX sh's."""
 
     name = "zsh"
     default_executable = "/bin/zsh"
+
+    def quote(self, value: object) -> str:
+        """Quote for zsh, which expands a word starting with `=`.
+
+        `shlex.quote` implements sh's rules, and sh leaves `=ls` alone. With
+        zsh's `equals` option -- on by default in an interactive shell and
+        in many distributions' `zshrc` -- a bare `=ls` expands to the full
+        path of `ls`, so a filename like `=report.txt` reached the command
+        as `/usr/bin/report.txt` or failed with "command not found".
+        """
+        quoted = super().quote(value)
+        if quoted.startswith("="):
+            return "'" + quoted + "'"
+        return quoted

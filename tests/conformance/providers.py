@@ -160,6 +160,63 @@ class _PopenReader:
         return self._pipe.read(size)
 
 
+def _kill_tree(popen):
+    """Kill the child and its descendants, best effort."""
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(popen.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        popen.kill()
+    except OSError:
+        pass
+
+
+def _run_like_a_channel(
+    invocation, *, shell, check, env, timeout, encoding, errors, input
+):
+    """Run a command the way an SSH channel ends one.
+
+    `subprocess.run(timeout=)` kills only the direct child and then drains
+    the pipes -- which a grandchild still holds, so a 2s deadline waited 32s
+    for a 30s sleep. AsyncSSH does not do that: a cancelled request closes
+    the channel and abandons whatever is still writing to it. Draining here
+    made the double slower AND more forgiving than the transport it stands
+    in for, which is the wrong direction in both.
+    """
+    popen = subprocess.Popen(
+        invocation,
+        shell=shell,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        encoding=encoding,
+        errors=errors,
+        text=encoding is not None,
+    )
+    try:
+        stdout, stderr = popen.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(popen)
+        empty = "" if encoding is not None else b""
+        raise subprocess.TimeoutExpired(
+            invocation, timeout, output=empty, stderr=empty
+        ) from None
+    if check and popen.returncode:
+        raise subprocess.CalledProcessError(
+            popen.returncode, invocation, stdout, stderr
+        )
+    return subprocess.CompletedProcess(invocation, popen.returncode, stdout, stderr)
+
+
 class _FakeSshChannel:
     """AsyncSSH ``create_process`` stand-in backed by a local subprocess.
 
@@ -305,16 +362,14 @@ class _FakeSshRunProcess:
                 encoding,
                 options.get("errors") or "strict",
             )
-        result = subprocess.run(
+        result = _run_like_a_channel(
             invocation,
             shell=os.name != "nt",
-            capture_output=True,
             check=check,
             env=options.get("env"),
             timeout=timeout,
             encoding=encoding,
             errors=options.get("errors"),
-            text=encoding is not None,
             input=input_value,
         )
         return type(

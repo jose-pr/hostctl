@@ -93,6 +93,21 @@ def _builtin_argument(value: object) -> str:
     return "".join(parts)
 
 
+def _program(path: str) -> str:
+    r"""Quote the PROGRAM of a command line, which cmd never parses.
+
+    `CreateProcess` reads this token, so it takes C-runtime quoting -- plain
+    double quotes. Rendered with `_argument`'s caret form, a path with a
+    space came out as `^"C:\Program Files\...^"` and Windows looked for a
+    program literally named `^`.
+    """
+    if '"' in path:
+        raise ValueError(f"cmd executable path must not contain a quote: {path!r}")
+    if any(character.isspace() for character in path):
+        return f'"{path}"'
+    return path
+
+
 class CmdShellFlavour(ShellFlavour):
     """Windows ``cmd.exe`` and BAT-compatible command construction."""
 
@@ -214,9 +229,9 @@ class CmdShellFlavour(ShellFlavour):
         env: typing.Optional[Environment] = None,
     ) -> ShellCommand:
         script = self.script(cmds, cwd=cwd, env=env)
-        executable_text = _argument(executable or self.default_executable)
         return ShellCommand(
-            f'{executable_text} /d /v:off /s /c "{script}"',
+            f"{_program(executable or self.default_executable)} "
+            f'/d /v:off /s /c "{script}"',
             None,
         )
 
