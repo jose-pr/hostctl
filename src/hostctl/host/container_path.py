@@ -100,6 +100,38 @@ _GO_MODE_CHAR_DEVICE = 1 << 21
 _GO_MODE_STICKY = 1 << 20
 
 
+def _parse_rfc3339(value: str) -> int:
+    """Seconds since the epoch from Docker's RFC3339Nano timestamp.
+
+    Go emits 0-9 fractional digits with trailing zeros trimmed
+    (`2026-09-20T12:34:56.7Z`), while `datetime.fromisoformat` accepts only 3
+    or 6 before Python 3.11. The ValueError was mapped to 0, so on the
+    declared 3.9 floor `stat().st_mtime` was epoch 0 for most container files
+    -- which silently makes every mtime comparison, and so every sync
+    decision, wrong.
+    """
+    text = value.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    head, dot, rest = text.partition(".")
+    if dot:
+        digits = ""
+        for index, char in enumerate(rest):
+            if char.isdigit():
+                digits += char
+                continue
+            rest = rest[index:]
+            break
+        else:
+            rest = ""
+        # Pad or truncate to the 6 digits every supported Python accepts.
+        text = f"{head}.{(digits + '000000')[:6]}{rest}"
+    try:
+        return int(datetime.datetime.fromisoformat(text).timestamp())
+    except ValueError:
+        return 0
+
+
 def _posix_mode(mode: int, *, link_target: bool = False) -> int:
     """Translate Docker's Go ``os.FileMode`` into a POSIX ``st_mode``.
 
@@ -254,14 +286,7 @@ class ContainerPathBackend:
         size = int(metadata.get("size", 0))
         mtime = metadata.get("mtime", 0)
         if isinstance(mtime, str):
-            try:
-                mtime = int(
-                    datetime.datetime.fromisoformat(
-                        mtime.replace("Z", "+00:00")
-                    ).timestamp()
-                )
-            except ValueError:
-                mtime = 0
+            mtime = _parse_rfc3339(mtime)
         return FileStat(st_mode=mode, st_size=size, st_mtime=int(mtime or 0))
 
     def _stat_following(self, path: str, *, hops: int) -> FileStat:
@@ -504,9 +529,23 @@ class ContainerPathBackend:
             member.size = len(value)
             try:
                 prior = self.stat(path, follow_symlinks=False)
-                member.mode = prior.st_mode & 0o7777
             except FileNotFoundError:
-                member.mode = 0o666
+                # 0644, as a local `open(path, "w")` yields under a default
+                # umask. 0666 declared every new container file
+                # world-writable.
+                member.mode = 0o644
+            else:
+                if _stat.S_ISDIR(prior.st_mode):
+                    # docker-py's put_archive omits noOverwriteDirNonDir, so
+                    # moby's untar would replace the directory with this
+                    # file rather than refuse.
+                    raise IsADirectoryError(path)
+                if _stat.S_ISLNK(prior.st_mode):
+                    # A symlink's own mode is 0o777 and means nothing; taking
+                    # it made the replacement file world-writable too.
+                    member.mode = 0o644
+                else:
+                    member.mode = _stat.S_IMODE(prior.st_mode)
             member.mtime = int(datetime.datetime.now().timestamp())
             archive.addfile(member, io.BytesIO(value))
         try:

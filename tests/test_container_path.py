@@ -68,6 +68,15 @@ class _Container:
         return True
 
 
+def _sent_member(container):
+    """The single tar member the backend uploaded."""
+    _parent, data = container.puts[-1]
+    with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+        members = archive.getmembers()
+    assert len(members) == 1
+    return members[0]
+
+
 def test_container_stat_closes_unused_archive_stream():
     class Stream:
         closed = False
@@ -292,3 +301,84 @@ def test_engine_file_modes_are_translated_from_go_to_posix():
     )
     mode = ContainerPathBackend(container).stat("/x").st_mode
     assert stat.S_IMODE(mode) == 0o4755
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_utc"),
+    (
+        ("2026-09-20T12:34:56Z", "2026-09-20T12:34:56+00:00"),
+        ("2026-09-20T12:34:56.7Z", "2026-09-20T12:34:56+00:00"),
+        ("2026-09-20T12:34:56.123456789Z", "2026-09-20T12:34:56+00:00"),
+        ("2026-09-20T12:34:56.123456Z", "2026-09-20T12:34:56+00:00"),
+    ),
+)
+def test_rfc3339nano_timestamps_parse_on_every_supported_python(value, expected_utc):
+    """Go trims trailing zeros, so it emits 0-9 fractional digits.
+
+    `datetime.fromisoformat` accepts only 3 or 6 before 3.11, and the
+    ValueError was mapped to 0 -- so on the declared 3.9 floor `st_mtime` was
+    epoch 0 for most container files, quietly wrecking every mtime comparison.
+    """
+    import datetime
+
+    from hostctl.host.container_path import _parse_rfc3339
+
+    parsed = _parse_rfc3339(value)
+
+    assert parsed > 0
+    assert (
+        datetime.datetime.fromtimestamp(parsed, datetime.timezone.utc).isoformat()
+        == expected_utc
+    )
+
+
+def test_an_unparseable_timestamp_is_still_zero():
+    from hostctl.host.container_path import _parse_rfc3339
+
+    assert _parse_rfc3339("not a timestamp") == 0
+
+
+def test_a_new_file_is_not_world_writable():
+    """0666 declared every new container file world-writable; a local
+    `open(path, "w")` yields 0644 under a default umask."""
+    container = _Container()
+    container.get_archive = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
+
+    ContainerPathBackend(container).write_bytes("/srv/new.txt", b"data")
+
+    member = _sent_member(container)
+    assert member.mode == 0o644
+
+
+def test_writing_over_a_directory_raises_instead_of_replacing_it():
+    """docker-py's put_archive omits noOverwriteDirNonDir, so moby's untar
+    would replace the directory with a regular file."""
+    container = _Container()
+    container.get_archive = lambda path: (
+        io.BytesIO(),
+        {"name": "srv", "size": 0, "mode": (1 << 31) | 0o755, "mtime": "0"},
+    )
+
+    with pytest.raises(IsADirectoryError):
+        ContainerPathBackend(container).write_bytes("/srv", b"data")
+
+    assert container.puts == []
+
+
+def test_writing_over_a_symlink_does_not_inherit_its_mode():
+    """A symlink's own mode is 0o777 and means nothing."""
+    container = _Container()
+    container.get_archive = lambda path: (
+        io.BytesIO(),
+        {
+            "name": "link",
+            "size": 0,
+            "mode": (1 << 27) | 0o777,
+            "mtime": "0",
+            "linkTarget": "/elsewhere",
+        },
+    )
+
+    ContainerPathBackend(container).write_bytes("/srv/link", b"data")
+
+    assert _sent_member(container).mode == 0o644

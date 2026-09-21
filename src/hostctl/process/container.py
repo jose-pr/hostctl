@@ -6,6 +6,7 @@ import collections
 import codecs
 import socket
 import subprocess
+import threading
 import time
 import types
 import typing
@@ -56,6 +57,12 @@ class ContainerProcess(Process):
         }
         self._eof = False
         self._closed = False
+        # One lock over the socket and the buffers it feeds. `wait()` drains
+        # opportunistically by flipping the socket to non-blocking; without
+        # this a concurrent read() got a non-blocking recv() inside that
+        # window and raised BlockingIOError, losing the rest of the output
+        # while wait() still reported success.
+        self._io_lock = threading.RLock()
         self._returncode: typing.Optional[int] = None
         self._wire_buffer = bytearray()
         self._decoders = {
@@ -83,7 +90,12 @@ class ContainerProcess(Process):
             return None
         value = state.get("ExitCode")
         if value is None:
-            return None
+            # Finished, status unknown. Returning None here made it
+            # indistinguishable from "still running", so wait() spun at ~95
+            # exec_inspect calls a second and `timeout=None` never escaped.
+            # -1 is the missing-status value the other transports use.
+            self._returncode = -1
+            return self._returncode
         self._returncode = int(value)
         return self._returncode
 
@@ -105,9 +117,14 @@ class ContainerProcess(Process):
     def write(self, data: ProcessData) -> None:
         if self._closed:
             raise ValueError("process is closed")
-        self._socket.sendall(self._encode(data))
+        with self._io_lock:
+            self._socket.sendall(self._encode(data))
 
     def _receive(self) -> None:
+        with self._io_lock:
+            self._receive_locked()
+
+    def _receive_locked(self) -> None:
         if self._eof:
             return
         if self._tty:
@@ -213,6 +230,10 @@ class ContainerProcess(Process):
             time.sleep(0.01)
 
     def _receive_available(self) -> None:
+        with self._io_lock:
+            self._receive_available_locked()
+
+    def _receive_available_locked(self) -> None:
         settimeout = getattr(self._socket, "settimeout", None)
         gettimeout = getattr(self._socket, "gettimeout", None)
         if settimeout is None:

@@ -110,7 +110,12 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
                 raise
             raise normalized from exc
 
-        returncode = typing.cast(int, getattr(result, "exit_code"))
+        # docker-py documents a null ExitCode, and `CompletedProcess`
+        # treats `None` as success -- so `check=True` used to pass silently
+        # for a command whose status the engine could not report. -1 is what
+        # the SSH executor already uses for a missing exit status.
+        exit_code = getattr(result, "exit_code")
+        returncode = -1 if exit_code is None else typing.cast(int, exit_code)
         output = getattr(result, "output")
         if isinstance(output, tuple):
             out, err = output

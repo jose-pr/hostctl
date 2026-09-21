@@ -166,3 +166,30 @@ def test_container_wait_preserves_partial_nonblocking_frames():
 
     assert process.wait(timeout=1) == 0
     assert process.read() == b"complete"
+
+
+def test_a_finished_exec_with_no_exit_code_does_not_spin_forever():
+    """`returncode` returned None both for "running" and "finished, status
+    unknown", so wait() looped at ~95 exec_inspect calls a second and
+    `timeout=None` never escaped."""
+    process = ContainerProcess(
+        _Api([{"Running": False, "ExitCode": None}]),
+        "exec",
+        _Socket(),
+        tty=True,
+        command=["sh"],
+    )
+
+    assert process.wait(timeout=5) == -1
+
+
+def test_a_running_exec_still_reports_none():
+    process = ContainerProcess(
+        _Api([{"Running": True, "ExitCode": None}]),
+        "exec",
+        _Socket(),
+        tty=True,
+        command=["sh"],
+    )
+
+    assert process.returncode is None
