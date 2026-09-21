@@ -49,10 +49,12 @@ classifiers = [
 # * `BaseSftpBackend.close()` is the public way to drop a backend's cached
 #   connections, which `SshTransport.close()` calls.
 #
-# netimps has no such case and floors at the series start. The ceilings stay
-# at the next major-ish boundary because both projects are pre-1.0, where a
-# minor may break.
-dependencies = ["pathlib_next>=0.9.10,<0.10", "netimps>=0.2.0,<0.3"]
+# netimps has no such case and floors at the series start -- 0.3.0, whose
+# breaking changes include a `resolve()` chain that no longer stops on an
+# empty answer and a `register_port` that moves a scheme instead of leaving
+# the old reverse entry behind. The ceilings stay at the next major-ish
+# boundary because both projects are pre-1.0, where a minor may break.
+dependencies = ["pathlib_next>=0.9.10,<0.10", "netimps>=0.3.0,<0.4"]
 
 [project.optional-dependencies]
 # SSH-backed run()/path(): asyncssh for shell exec, pathlib_next's SftpPath
