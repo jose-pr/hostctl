@@ -4,9 +4,15 @@ The SSH/SFTP and WinRM adapters live beside their private transport services
 (``host/_ssh.py``, ``host/_winrm.py``) because they own that transport's
 lifecycle.  The adapters here wrap backends that are *not* lifecycle owners:
 the local filesystem, the Docker archive API, and the QEMU Guest Agent file
-RPCs.  Each one declares the operations its backend can genuinely perform, so
-:class:`~hostctl.host.composite_path._CompositePathMixin` rejects an
-unsupported mutation outright instead of falling through to another provider.
+RPCs.  Each one declares the operations its backend can genuinely perform.
+
+Those declarations gate a **composed** host: when one of these providers is
+assembled into a `SystemHost`, `_CompositePathMixin` rejects an unsupported
+mutation outright instead of falling through to another provider.  They gate
+nothing on `LocalHost`, `ContainerHost` and `QemuHost`, which return their
+backend's own path type -- there the backend itself refuses, with its own
+message.  The sets are still the single source of truth for what a backend
+does, which is why the composed case can trust them.
 
 None of these adapters retries.  A backend failure is reported as-is; only a
 proven pre-dispatch refusal is raised as
@@ -166,9 +172,12 @@ class ContainerArchivePathProvider(PathProvider):
 
     The archive API has no namespace mutations.  Declaring only the operations
     it implements makes ``mkdir``/``chmod``/``unlink``/``rmdir``/``rename``
-    fail with ``NotImplementedError`` at selection time, which is the plan's
-    "read-only providers explicitly reject mutations instead of falling
-    through" rule applied to a partially writable backend.
+    fail with ``NotImplementedError`` at selection time *when this provider is
+    composed into a `SystemHost`*; `ContainerHost` returns the backend's own
+    path type, where the backend raises instead.  Either way the mutation is
+    refused -- this is the plan's "read-only providers explicitly reject
+    mutations instead of falling through" rule applied to a partially
+    writable backend.
     """
 
     def __init__(self, factory, *, name="archive", probe=None):
@@ -279,7 +288,21 @@ class DownloadPathProvider(PathProvider):
     another provider that might apply it to different state.
     """
 
-    READ_OPERATIONS = frozenset(("stat", "read", "open", "open_read", "exists"))
+    READ_OPERATIONS = frozenset(
+        (
+            "stat",
+            "read",
+            "open",
+            "open_read",
+            "exists",
+            # Both derive from `stat`, which this provider answers. Leaving
+            # them out made `via("download").is_file()` raise while
+            # `.stat()` succeeded, and broke every pathlib_next helper that
+            # asks `is_dir()` before doing anything.
+            "is_file",
+            "is_dir",
+        )
+    )
 
     def __init__(self, factory, *, name="download", available=True, reason=""):
         self._available = bool(available)

@@ -208,8 +208,9 @@ def test_commands_and_helpers_are_capability_gated():
     transport.files["/value"] = bytearray(b"x")
     with pytest.raises(NotImplementedError, match="positively probed"):
         path.stat()
+    absent = PosixQemuPath("/absent", backend=backend)
     with pytest.raises(NotImplementedError, match="exclusive"):
-        with path.open("xb") as stream:
+        with absent.open("xb") as stream:
             stream.write(b"value")
 
 

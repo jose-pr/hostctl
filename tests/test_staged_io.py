@@ -128,7 +128,9 @@ def test_append_creates_a_missing_file_but_read_still_raises():
 
 
 def test_exclusive_mode_is_forwarded_to_the_backend():
-    backend = _RecordingBackend()
+    # Absent: `x` now refuses an existing file at OPEN, so the flag's journey
+    # to the backend is only observable when there is nothing there.
+    backend = _RecordingBackend(contents=None)
     with staged_open(backend, "/x", "x", label="test") as stream:
         stream.write(b"new")
     assert backend.writes == [("/x", b"new", True)]
@@ -250,3 +252,97 @@ def test_text_reads_are_unaffected(flavour):
 
     with path.open("r", encoding="utf-8") as stream:
         assert stream.read() == "existing"
+
+
+def test_exclusive_open_refuses_an_existing_file_before_any_work():
+    """`x` was only checked by the commit, so `open("x")` on an existing file
+    succeeded and the caller's whole write was thrown away at close."""
+    backend = _RecordingBackend(contents=b"existing")
+
+    with pytest.raises(FileExistsError):
+        staged_open(backend, "/x", "x", label="test")
+
+    assert backend.writes == []
+
+
+def test_a_read_only_use_of_r_plus_uploads_nothing():
+    """`open("r+")`/`open("a")` committed on close whether or not anything
+    was written, so reading a 512-byte header re-uploaded the whole file --
+    a full transfer, a new mtime, and a clobber of concurrent changes."""
+    backend = _RecordingBackend(contents=b"0123456789")
+
+    with staged_open(backend, "/x", "r+", label="test") as stream:
+        assert stream.read(4) == b"0123"
+
+    with staged_open(backend, "/x", "a", label="test"):
+        pass
+
+    assert backend.writes == []
+
+
+def test_a_failed_commit_keeps_the_staged_bytes_for_a_retry():
+    """The buffer was closed in a `finally`, so after a transient transport
+    error the staged bytes were unrecoverable -- and a retried `close()`
+    returned silently having written nothing."""
+    attempts = []
+
+    class _Flaky(_RecordingBackend):
+        def write_bytes(self, path, value, *, exclusive=False):
+            attempts.append(value)
+            if len(attempts) == 1:
+                raise ConnectionResetError("dropped")
+            super().write_bytes(path, value, exclusive=exclusive)
+
+    backend = _Flaky(contents=b"")
+    stream = staged_open(backend, "/x", "w", label="test")
+    stream.write(b"payload")
+
+    with pytest.raises(ConnectionResetError):
+        stream.close()
+
+    assert stream.getvalue() == b"payload"
+    stream.close()
+    assert backend.writes == [("/x", b"payload", False)]
+
+
+def test_copy_from_follows_the_stdlib_contract(tmp_path):
+    """CPython 3.14 calls `destination._copy_from(source, follow_symlinks=,
+    preserve_metadata=)` and expects it to OVERWRITE and to recurse into a
+    directory. Four copies of that hook did neither: they raised
+    `FileExistsError` unless given an `overwrite` keyword stdlib never
+    passes, and opened a directory `"rb"`."""
+    from pathlib_next import Path as LocalPath
+
+    from hostctl.host._staged_io import copy_from
+
+    source = LocalPath(str(tmp_path / "source.bin"))
+    source.write_bytes(b"new")
+    target = LocalPath(str(tmp_path / "target.bin"))
+    target.write_bytes(b"old")
+
+    copy_from(target, source)
+
+    assert target.read_bytes() == b"new"
+
+    tree = LocalPath(str(tmp_path / "tree"))
+    tree.mkdir()
+    LocalPath(str(tmp_path / "tree" / "child.txt")).write_bytes(b"child")
+    copied = LocalPath(str(tmp_path / "copied"))
+
+    copy_from(copied, tree)
+
+    assert LocalPath(str(tmp_path / "copied" / "child.txt")).read_bytes() == b"child"
+
+
+def test_copy_from_still_honours_an_explicit_no_overwrite(tmp_path):
+    from pathlib_next import Path as LocalPath
+
+    from hostctl.host._staged_io import copy_from
+
+    source = LocalPath(str(tmp_path / "source.bin"))
+    source.write_bytes(b"new")
+    target = LocalPath(str(tmp_path / "target.bin"))
+    target.write_bytes(b"old")
+
+    with pytest.raises(FileExistsError):
+        copy_from(target, source, overwrite=False)

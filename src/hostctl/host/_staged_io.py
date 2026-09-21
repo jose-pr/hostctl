@@ -17,10 +17,73 @@ with any transport error swallowed by the interpreter.
 from __future__ import annotations
 
 import io
+import stat
 import typing
 import warnings
 
 Commit = typing.Callable[[bytes], None]
+
+
+def copy_from(
+    destination,
+    source,
+    *,
+    follow_symlinks: bool = True,
+    preserve_metadata: bool = False,
+    overwrite: bool = True,
+    **_unused: object,
+):
+    """CPython 3.14's `Path.copy()` destination hook, for one whole-file path.
+
+    Stdlib calls `destination._copy_from(source, follow_symlinks=...,
+    preserve_metadata=...)` and expects it to OVERWRITE an existing file and
+    to handle a directory source by recursing. The four copies of this body
+    did neither: they raised `FileExistsError` unless given an `overwrite`
+    keyword stdlib never passes, and opened a directory `"rb"`. So
+    `pathlib.Path("report.csv").copy(ssh.path("/srv/report.csv"))` failed on
+    an existing remote file while the same call onto a local path replaced
+    it.
+
+    `preserve_metadata` is best-effort: these backends carry a mode at most,
+    and a backend without `chmod` says so rather than failing the copy.
+    """
+    if not follow_symlinks and getattr(source, "is_symlink", lambda: False)():
+        link = getattr(source, "readlink", None)
+        symlink_to = getattr(destination, "symlink_to", None)
+        if callable(link) and callable(symlink_to):
+            symlink_to(str(link()))
+            return destination
+        raise NotImplementedError(
+            "copy(follow_symlinks=False) is unsupported by this backend"
+        )
+    if getattr(source, "is_dir", lambda: False)():
+        # A directory is copied as a directory, as stdlib does.
+        destination.mkdir(exist_ok=True)
+        for child in source.iterdir():
+            copy_from(
+                destination / child.name,
+                child,
+                follow_symlinks=follow_symlinks,
+                preserve_metadata=preserve_metadata,
+                overwrite=overwrite,
+            )
+        return destination
+    if not overwrite and destination.exists():
+        raise FileExistsError(str(destination))
+    with source.open("rb") as reader, destination.open("wb") as writer:
+        while chunk := reader.read(1024 * 1024):
+            writer.write(chunk)
+    if preserve_metadata:
+        try:
+            mode = source.stat().st_mode
+        except (OSError, NotImplementedError):
+            mode = None
+        if mode:
+            try:
+                destination.chmod(stat.S_IMODE(mode))
+            except (OSError, NotImplementedError):
+                pass
+    return destination
 
 
 class StagedWriteStream(io.BytesIO):
@@ -36,19 +99,48 @@ class StagedWriteStream(io.BytesIO):
         commit: typing.Optional[Commit],
         *,
         label: str,
+        truncated: bool = False,
     ) -> None:
         super().__init__(value)
         self._commit = commit
         self._label = label
+        # A mode that already replaced the file (`w`, `x`) is dirty from the
+        # start; `r+`/`a` are not until something writes.
+        self._dirty = truncated
+
+    def write(self, data) -> int:  # type: ignore[override]
+        self._dirty = True
+        return super().write(data)
+
+    def writelines(self, lines) -> None:  # type: ignore[override]
+        self._dirty = True
+        super().writelines(lines)
+
+    def truncate(self, size=None) -> int:  # type: ignore[override]
+        self._dirty = True
+        return super().truncate(size)
 
     def close(self) -> None:
         if not self.closed and self._commit is not None:
+            if not self._dirty:
+                # Nothing was written. `open("r+")` or `open("a")` used to
+                # re-upload the whole file on close -- a full transfer, a new
+                # mtime, and a clobber of whatever changed remotely in the
+                # meantime -- for a caller that only read a header.
+                self._commit = None
+                super().close()
+                return
             value = self.getvalue()
-            commit, self._commit = self._commit, None
+            commit = self._commit
             try:
                 commit(value)
-            finally:
-                super().close()
+            except BaseException:
+                # Keep the buffer AND the callback: the staged bytes are the
+                # only copy, and closing here made them unrecoverable while a
+                # retried close() returned silently having written nothing.
+                raise
+            self._commit = None
+            super().close()
         else:
             super().close()
 
@@ -83,10 +175,12 @@ class StagedWriteStream(io.BytesIO):
         # arbitrary point with its exceptions printed and discarded -- a
         # network write nobody asked for and nobody can catch.
         if getattr(self, "_commit", None) is not None and not self.closed:
+            # No `stacklevel`: this runs during finalization, where the
+            # stack is the collector's, not the opener's. Pointing at it was
+            # worse than pointing at nothing.
             warnings.warn(
                 f"unclosed {self._label} write stream discarded without committing",
                 ResourceWarning,
-                stacklevel=2,
             )
             self._commit = None
         try:
@@ -236,6 +330,28 @@ def staged_open(backend: object, path: str, mode: str, *, label: str) -> io.IOBa
     open_read = getattr(backend, "open_read", None)
     if "r" in mode and not writable and open_read is not None:
         return open_read(path)
+    if "x" in mode:
+        # Exclusive create, checked NOW. Deferring it to the commit let the
+        # caller do all its work against a stream that was never going to be
+        # written.
+        exists = getattr(backend, "exists", None)
+        present = None
+        if callable(exists):
+            try:
+                present = bool(exists(path))
+            except NotImplementedError:
+                present = None
+        if present is None:
+            try:
+                typing.cast(typing.Any, backend).read_bytes(path)
+            except FileNotFoundError:
+                present = False
+            except OSError:
+                present = True
+            else:
+                present = True
+        if present:
+            raise FileExistsError(path)
     if "r" in mode or "a" in mode:
         try:
             value = typing.cast(typing.Any, backend).read_bytes(path)
@@ -259,9 +375,11 @@ def staged_open(backend: object, path: str, mode: str, *, label: str) -> io.IOBa
             else None
         ),
         label=label,
+        # `w` and `x` have already replaced the file's contents by opening it,
+        # so an empty write is a real change; `r+` and `a` are not dirty until
+        # the caller writes something.
+        truncated="w" in mode or "x" in mode,
     )
     if "a" in mode:
         stream.seek(0, io.SEEK_END)
-    elif not readable:
-        stream.seek(0)
     return stream

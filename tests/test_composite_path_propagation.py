@@ -134,3 +134,123 @@ def test_pinning_does_not_change_the_logical_path_string(host):
 
     assert str(path.via("primary")) == str(path)
     assert str(path.via("secondary")) == str(path)
+
+
+def test_a_read_stream_does_not_pin_the_path_for_good():
+    """`docs/guide/providers.md` says a stream owns its provider "for the
+    lifetime of the stream". A read-mode `open()` pinned the path object
+    permanently, so after `with p.open("rb")` served by a read-only provider
+    every later mutation of `p` was refused -- while the unpinned
+    `read_bytes()` followed by `write_bytes()` worked."""
+    backend = MemPathBackend()
+    MemPath("data.bin", backend=backend).write_bytes(b"old")
+    read_only = PathProvider(
+        "read-only",
+        lambda *p: MemPath(*p, backend=backend),
+        capabilities=("read", "open", "open_read", "stat", "exists"),
+    )
+    writable = PathProvider("writable", lambda *p: MemPath(*p, backend=backend))
+    host = PosixHost(path_providers=(read_only, writable))
+
+    path = host.path("data.bin")
+    with path.open("rb") as stream:
+        assert stream.read() == b"old"
+
+    path.write_bytes(b"new")
+
+    assert host.path("data.bin").read_bytes() == b"new"
+
+
+def test_a_write_stream_still_owns_its_provider():
+    backend = MemPathBackend()
+    writable = PathProvider("writable", lambda *p: MemPath(*p, backend=backend))
+    other = PathProvider("other", lambda *p: MemPath(*p, backend=MemPathBackend()))
+    host = PosixHost(path_providers=(writable, other))
+
+    path = host.path("data.bin")
+    with path.open("wb") as stream:
+        stream.write(b"value")
+
+    assert path.provider.name == "writable"
+
+
+def test_a_listing_that_refuses_falls_over_to_the_next_provider():
+    """Both listing methods handed `_dispatch` an UNPRIMED generator, so
+    nothing ran inside the try: a refusal surfaced during iteration, and the
+    row's `retry_on_not_implemented` never applied to listing at all."""
+
+    class _NoListing(MemPath):
+        def _scandir(self):
+            raise NotImplementedError("listing not supported by this transport")
+            yield  # pragma: no cover - generator marker
+
+    backend = MemPathBackend()
+    MemPath("root", backend=backend).mkdir()
+    MemPath("root/a.txt", backend=backend).write_bytes(b"a")
+    host = PosixHost(
+        path_providers=(
+            PathProvider("nolist", lambda *p: _NoListing(*p, backend=backend)),
+            PathProvider("full", lambda *p: MemPath(*p, backend=backend)),
+        )
+    )
+
+    names = sorted(child.name for child in host.path("root").iterdir())
+
+    assert names == ["a.txt"]
+
+
+def test_a_composite_path_survives_being_copied(host):
+    """`copy.copy()` and `copy.deepcopy()` go through `PurePath.__reduce__`,
+    which calls the constructor with bare segments -- no provider, no
+    selector -- and the composite constructor refuses that, so a job object
+    holding a host path could not be copied at all.
+
+    A deep copy or a pickle additionally has to reproduce the providers and
+    the selector -- a live transport and a lock -- which is a property of
+    what the path is attached to, not of the path.
+    """
+    import copy
+
+    path = host.path("root/a.txt")
+
+    duplicate = copy.copy(path)
+
+    assert str(duplicate) == str(path)
+    assert duplicate.provider.name == path.provider.name
+    assert duplicate.read_bytes() == b"a"
+
+
+def test_a_string_prefix_divides_into_a_composite_path(host):
+    """`"prefix" / composite` used `PurePath.__rtruediv__`, which passed the
+    composite into the provider factory on 3.14 and produced an instance
+    with unset slots on 3.9."""
+    child = "root" / host.path("a.txt")
+
+    assert str(child).replace("\\", "/").endswith("root/a.txt")
+    assert child.read_bytes() == b"a"
+
+
+def test_joining_does_not_dial_the_provider():
+    """`p / "name"` is pure-path syntax, and `_child` called the provider
+    factory eagerly: a join raised the factory's `OperationNotStarted` after
+    a provider declined, while `with_name()` and `host.path()` fell over."""
+    calls = []
+
+    class _CountingBackend(MemPathBackend):
+        pass
+
+    backend = _CountingBackend()
+    MemPath("root", backend=backend).mkdir()
+
+    def factory(*segments):
+        calls.append(segments)
+        return MemPath(*segments, backend=backend)
+
+    host = PosixHost(path_providers=(PathProvider("memory", factory),))
+    base = host.path("root")
+    before = len(calls)
+
+    child = base / "a.txt"
+
+    assert len(calls) == before, "joining built a backend path"
+    assert str(child).replace(chr(92), "/").endswith("root/a.txt")

@@ -216,7 +216,11 @@ def test_path_contract_uses_real_transport_backend(provider, tmp_path):
     }
     with provider_context(provider) as host:
         path = conformance_path(host, provider, tmp_path, "identity")
-        backend_path = getattr(path, "_backend_path", path)
+        # Resolved, not read raw: a composite builds its backend path lazily,
+        # so a pure-path join (`p / "name"`) does not dial a provider.
+        # `_provider_path` is what every dispatch calls.
+        resolve = getattr(path, "_provider_path", None)
+        backend_path = resolve(path.provider) if callable(resolve) else path
         assert type(backend_path).__name__ in expected[provider.name]
 
 

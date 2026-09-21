@@ -795,3 +795,49 @@ def test_path_falls_back_over_every_candidate_not_just_one():
     path = host.path("/etc/hosts")
 
     assert path.provider.name == "third"
+
+
+def test_two_threads_selecting_do_not_share_a_trace():
+    """The per-operation trace and the probe/decline maps were unsynchronised
+    instance state, so concurrent operations on one host mixed trace entries
+    -- `last_selection` and `path.selection_trace` naming providers the
+    caller never tried -- and `select()` could raise "dictionary changed size
+    during iteration"."""
+    import sys
+    import threading
+
+    from hostctl.provider import ProviderSelector
+
+    providers = tuple(
+        ExecutorProvider(f"p{index}", lambda *a, **k: None) for index in range(6)
+    )
+    selector = ProviderSelector(providers)
+    errors = []
+    mixed = []
+
+    def worker(index):
+        name = f"p{index}"
+        for _ in range(500):
+            try:
+                selector.select(exclude=())
+                selector.select(exclude=[p.name for p in providers if p.name != name])
+                seen = {entry["provider"] for entry in selector.trace}
+            except Exception as exc:  # pragma: no cover - the regression
+                errors.append(exc)
+                return
+            if not seen <= {p.name for p in providers}:
+                mixed.append(seen)
+
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+    finally:
+        sys.setswitchinterval(previous)
+
+    assert not errors, errors[:3]
+    assert not mixed

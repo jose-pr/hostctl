@@ -13,7 +13,7 @@ import typing
 from pathlib import PurePath as _StdPurePath
 from pathlib_next import Path, PosixPathname, WindowsPathname
 from pathlib_next.utils.stat import FileStat
-from ._staged_io import StagedOpenMixin, staged_open
+from ._staged_io import copy_from, StagedOpenMixin, staged_open
 
 
 class ContainerArchiveClient(typing.Protocol):
@@ -587,12 +587,14 @@ class _ContainerPathMixin(StagedOpenMixin):
         return Path.move(self, target, **kwargs)
 
     def _copy_from(self, source, **kwargs):
-        if self.exists() and not kwargs.get("overwrite", False):
-            raise FileExistsError(str(self))
-        with source.open("rb") as src, self.open("wb") as dst:
-            while chunk := src.read(1024 * 1024):
-                dst.write(chunk)
-        return self
+        """CPython 3.14's `Path.copy()` destination hook.
+
+        One shared implementation (`_staged_io.copy_from`). This body used to
+        be copied verbatim into four modules, and every copy diverged from
+        what stdlib actually calls it with: it raised `FileExistsError` where
+        stdlib overwrites, and opened a directory `"rb"`.
+        """
+        return copy_from(self, source, **kwargs)
 
     @property
     def backend(self) -> ContainerPathBackend:

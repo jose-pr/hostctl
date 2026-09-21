@@ -51,7 +51,7 @@ from ._common import (
     uri_hostname,
 )
 from ._ssh import SshConfig, _SshTransport
-from ._staged_io import StagedOpenMixin, staged_open
+from ._staged_io import copy_from, StagedOpenMixin, staged_open
 
 QemuTransport = typing.Literal["libvirt", "unix", "ssh"]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
@@ -988,15 +988,14 @@ class _QgaPathMixin(StagedOpenMixin):
         return Path.move(self, target, **kwargs)
 
     def _copy_from(self, source, **kwargs):
-        # `overwrite` first: the existence probe is the expensive half, and
-        # gating it the other way round made copying INTO a helper-less guest
-        # impossible even with overwrite=True, though the write RPCs work.
-        if not kwargs.get("overwrite", False) and self.exists():
-            raise FileExistsError(str(self))
-        with source.open("rb") as src, self.open("wb") as dst:
-            while chunk := src.read(1024 * 1024):
-                dst.write(chunk)
-        return self
+        """CPython 3.14's `Path.copy()` destination hook.
+
+        One shared implementation (`_staged_io.copy_from`). This body used to
+        be copied verbatim into four modules, and every copy diverged from
+        what stdlib actually calls it with: it raised `FileExistsError` where
+        stdlib overwrites, and opened a directory `"rb"`.
+        """
+        return copy_from(self, source, **kwargs)
 
     @property
     def backend(self) -> QgaPathBackend:

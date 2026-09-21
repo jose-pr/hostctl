@@ -176,12 +176,17 @@ def test_path_syncer_skips_files_whose_stat_already_matches(provider, tmp_path):
 def test_stat_checksum_does_not_converge_after_a_copy(provider, tmp_path):
     """Pin the documented caveat so a future upstream fix is noticed.
 
-    ``pathlib_next.Path.copy()`` propagates ``st_mode`` only, so a
-    ``stat_checksum`` sync re-copies forever on interpreters without stdlib
-    timestamp preservation.  Python 3.14 added a stdlib ``Path.copy()`` that
-    DOES preserve timestamps, and a local path resolves to it there, so the
-    same sync converges.  This test pins the invariant that holds either way:
-    convergence and "a second pass would copy again" are exact opposites.
+    ``Path.copy()`` propagates ``st_mode`` and not timestamps, so a
+    ``stat_checksum`` sync re-copies forever. Measured on both supported
+    interpreters with ``pathlib_next`` 0.9.10, including the local path on
+    3.14: ``pathlib_next`` routes explicitly around CPython 3.14's own
+    ``Path.copy()`` to keep one cross-version contract, so the stdlib's
+    timestamp preservation is never reached.
+
+    The assertion is still written as the invariant rather than the
+    observation -- convergence and "a second pass would copy again" are exact
+    opposites -- so a backend that DOES preserve mtime passes without an
+    edit, while a backend that half-preserves it fails.
     """
 
     with provider_context(provider) as host:

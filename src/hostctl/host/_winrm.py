@@ -52,7 +52,7 @@ from ._common import (
     uri_hostname,
 )
 from ..shell import POWERSHELL, ShellFlavour
-from ._staged_io import StagedOpenMixin, staged_open
+from ._staged_io import copy_from, StagedOpenMixin, staged_open
 
 log = logging.getLogger("hostctl.host.winrm")
 
@@ -833,12 +833,14 @@ class WinRMPath(StagedOpenMixin, WindowsPathname, Path):
         return Path.move(self, target, **kwargs)
 
     def _copy_from(self, source, **kwargs):
-        if self.exists() and not kwargs.get("overwrite", False):
-            raise FileExistsError(str(self))
-        with source.open("rb") as src, self.open("wb") as dst:
-            while chunk := src.read(1024 * 1024):
-                dst.write(chunk)
-        return self
+        """CPython 3.14's `Path.copy()` destination hook.
+
+        One shared implementation (`_staged_io.copy_from`). This body used to
+        be copied verbatim into four modules, and every copy diverged from
+        what stdlib actually calls it with: it raised `FileExistsError` where
+        stdlib overwrites, and opened a directory `"rb"`.
+        """
+        return copy_from(self, source, **kwargs)
 
     def __init__(self, *segments, backend=None):
         # Python 3.14's pathlib.PurePath.__init__ no longer accepts kwargs.

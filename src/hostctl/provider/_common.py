@@ -11,6 +11,7 @@ import dataclasses
 import inspect
 import logging
 import re
+import threading
 import typing
 
 from pathlib_next import Path
@@ -130,6 +131,32 @@ def _redacted_command(command, args=()) -> _LazyRedaction:
     return _LazyRedaction(command, args)
 
 
+class _LazyName:
+    """One name, redacted only if a handler formats the record.
+
+    `ProviderSelector.redact(name)` as a log argument runs the regexes
+    whether or not anything is listening -- six times per `run()` with debug
+    off, against a documented promise that "the redaction work never runs at
+    all". Same shape as `_LazyRedaction`, for the scalar case.
+    """
+
+    __slots__ = ("_value",)
+
+    def __init__(self, value):
+        self._value = value
+
+    def __str__(self) -> str:
+        return ProviderSelector.redact(self._value)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"_LazyName({str(self)!r})"
+
+
+def _redacted_name(value) -> _LazyName:
+    """Wrap one value for redacted, deferred log formatting."""
+    return _LazyName(value)
+
+
 class ExecutorProvider:
     """Named callable executor with a conservative probe hook."""
 
@@ -174,7 +201,7 @@ class ExecutorProvider:
         # handler listening, `%`-style args mean the redaction never runs.
         log.debug(
             "provider %s dispatching: %s",
-            ProviderSelector.redact(self.name),
+            _redacted_name(self.name),
             _redacted_command(command, args),
         )
         return self.executor(command, *args, **options)
@@ -275,11 +302,34 @@ class ProviderSelector:
         self._declined: dict[str, str] = {}
         self._decline_causes: dict[str, BaseException] = {}
         self._generation = 0
+        # One lock over the shared dictionaries. Two threads sharing a host
+        # is ordinary, and the probe/decline maps were mutated while another
+        # thread iterated them -- reproducibly enough to raise
+        # `RuntimeError: dictionary changed size during iteration` under a
+        # short switch interval.
+        self._lock = threading.RLock()
         # Trace entries accumulated across the failover attempts of one
         # caller-level operation, keyed by provider name so a later, more
         # informative record (a decline) supersedes the earlier optimistic one
         # (chosen).  See `select` for how an attempt sequence is delimited.
-        self._attempt_trace: dict[str, dict[str, object]] = {}
+        #
+        # PER THREAD: an operation's trace describes that operation. Shared,
+        # a concurrent call's records leaked into it, so `last_selection` and
+        # `path.selection_trace` named providers the caller never tried.
+        self._traces = threading.local()
+
+    @property
+    def _attempt_trace(self) -> "dict[str, dict[str, object]]":
+        """This thread's accumulating trace for the operation it is running."""
+        trace = getattr(self._traces, "entries", None)
+        if trace is None:
+            trace = {}
+            self._traces.entries = trace
+        return trace
+
+    @_attempt_trace.setter
+    def _attempt_trace(self, value: "dict[str, dict[str, object]]") -> None:
+        self._traces.entries = value
 
     @property
     def generation(self) -> int:
@@ -295,8 +345,9 @@ class ProviderSelector:
         (sshd restarting, a network blip) and hostctl never dialled out again
         until `close()`.
         """
-        self._declined.clear()
-        self._decline_causes.clear()
+        with self._lock:
+            self._declined.clear()
+            self._decline_causes.clear()
 
     @property
     def declines(self) -> dict[str, str]:
@@ -328,9 +379,9 @@ class ProviderSelector:
             self._decline_causes[str(name)] = cause
         log.debug(
             "provider %s declined before dispatch (generation %d): %s",
-            self._safe_name(name),
+            _redacted_name(name),
             self._generation,
-            self._safe_name(reason),
+            _redacted_name(reason),
         )
 
     #: ``name=value`` and ``name: value`` credential assignments.
@@ -394,7 +445,7 @@ class ProviderSelector:
             result = ProviderProbe("unavailable", type(exc).__name__)
             log.debug(
                 "provider %s probe raised %s; treating as unavailable",
-                self._safe_name(name),
+                _redacted_name(name),
                 type(exc).__name__,
             )
         self._probe_cache[name] = result
@@ -464,10 +515,10 @@ class ProviderSelector:
             if not allowed:
                 log.debug(
                     "provider %s skipped: availability=%s capability=%s reason=%s",
-                    self._safe_name(provider.name),
+                    _redacted_name(provider.name),
                     probe.availability,
                     capability or "<any>",
-                    self._safe_name(probe.reason) or "<none>",
+                    _redacted_name(probe.reason or "<none>"),
                 )
                 continue
             result = ProviderSelection(
@@ -481,9 +532,9 @@ class ProviderSelector:
             log.debug(
                 "selected provider %s (generation %d, policy %s, pin %s) "
                 "after %d candidate(s)",
-                self._safe_name(provider.name),
+                _redacted_name(provider.name),
                 self._generation,
-                self._safe_name(policy),
+                _redacted_name(policy),
                 bool(pin),
                 len(self._attempt_trace),
             )
@@ -531,9 +582,11 @@ class ProviderSelector:
 
     def invalidate(self) -> None:
         """Start a new generation, dropping cached probes and declines."""
-        self.last_selection = None
-        self._probe_cache.clear()
-        self._declined.clear()
+        with self._lock:
+            self.last_selection = None
+            self._probe_cache.clear()
+            self._declined.clear()
+            self._decline_causes.clear()
+            self._generation += 1
         self._attempt_trace = {}
-        self._generation += 1
         log.debug("selector invalidated; generation is now %d", self._generation)

@@ -120,7 +120,11 @@ def test_winrm_path_unlink_rejects_directory_even_with_missing_ok():
         path.unlink(missing_ok=True)
 
 
-def test_winrm_path_closes_buffer_when_writeback_fails():
+def test_winrm_path_keeps_the_buffer_when_writeback_fails():
+    """The staged bytes are the only copy. Closing the buffer in a `finally`
+    made them unrecoverable after a transient upload error, while a retried
+    `close()` returned silently having written nothing."""
+
     class _FailingBackend(_MemoryBackend):
         def write_bytes(self, path, value, *, exclusive=False):
             raise OSError("upload failed")
@@ -132,7 +136,12 @@ def test_winrm_path_closes_buffer_when_writeback_fails():
     with pytest.raises(OSError, match="upload failed"):
         stream.close()
 
-    assert stream.closed
+    assert not stream.closed
+    assert stream.getvalue() == b"data"
+    with pytest.raises(OSError, match="upload failed"):
+        stream.close()
+    stream.discard()
+    stream.close()
 
 
 def test_winrm_backend_prelude_and_command_budget_for_large_write():

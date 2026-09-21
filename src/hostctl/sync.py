@@ -20,8 +20,13 @@ _HEX_DIGEST = re.compile(r"^[0-9a-fA-F]+$")
 #: Remote hashing is an optimization, never a requirement.  A host which owns
 #: the path but cannot hash it in place -- no such tool, a refused command, an
 #: unparseable answer -- must degrade to reading the content, not fail the
-#: whole sync.  Missing files and other path-level errors are deliberately not
-#: absorbed here: those are real answers about the path and must propagate.
+#: whole sync.
+#:
+#: `OSError` IS absorbed here, deliberately: a remote hash reports a missing
+#: file the same way it reports a missing tool, and telling them apart at
+#: this layer means parsing a shell's stderr. The streaming fallback opens
+#: the path, so a genuinely missing file raises there instead -- one line
+#: later, from the layer that can tell.
 _UNAVAILABLE_REMOTE_TOOL = (
     ValueError,
     OSError,
@@ -38,17 +43,19 @@ def stat_checksum(entry: PathAndStat) -> tuple[int, float]:
 
     It can *miss* a change which preserves both size and modification time.
 
-    It can also *report* a change which is not one, on interpreters where
-    ``pathlib_next.Path.copy()`` preserves ``st_mode`` but not timestamps: a
-    file this helper copies lands with a fresh modification time and compares
-    unequal on the next run, so the sync never settles.  Python 3.14 added a
-    stdlib ``Path.copy()`` which does preserve timestamps, and a local path
-    resolves to it there, so the same sync converges.  Because that difference
-    is version- and backend-dependent, use this helper where source
-    modification times are meaningful on both sides -- a tree replicated by
-    something which preserves them -- and prefer :func:`host_checksum` when
-    hostctl's own copies must converge to a no-op on every supported
-    interpreter.
+    It can also *report* a change which is not one: ``Path.copy()``
+    propagates ``st_mode`` and not timestamps, so a file this helper copies
+    lands with a fresh modification time and compares unequal on the next
+    run -- the sync never settles.  Measured on both supported interpreters
+    with ``pathlib_next`` 0.9.10: a backdated source and its fresh copy
+    differ by the full hour on 3.14 as well as on 3.9.  (CPython 3.14 added
+    its own ``Path.copy()`` which does preserve timestamps, but
+    ``pathlib_next`` routes explicitly around it to keep one cross-version
+    contract, so it is not reached.)
+
+    So: use this helper where source modification times are meaningful on
+    both sides -- a tree replicated by something which preserves them -- and
+    :func:`host_checksum` when hostctl's own copies must converge to a no-op.
     """
     if entry.stat is None:
         raise FileNotFoundError(entry.path)
@@ -83,6 +90,12 @@ def host_checksum(
     def checksum(entry: PathAndStat) -> str:
         for host, owner_token in owners:
             if _host_owns_path(host, entry.path, owner_token):
+                if _is_local_owner(host, entry.path):
+                    # A local file needs no process. Spawning `md5sum` per
+                    # file cost a fork, an exec and a shell parse to hash
+                    # bytes this process can read directly -- and on Windows
+                    # it went through certutil, which is slower still.
+                    return _stream_checksum(entry.path, normalized, chunk_size)
                 try:
                     return _remote_checksum(host, entry.path, normalized)
                 except _UNAVAILABLE_REMOTE_TOOL:
@@ -113,11 +126,63 @@ class ProgressReader:
         self.total = total
         self.bytes_read = 0
 
+    def _count(self, read: int) -> None:
+        self.bytes_read += read
+        self.callback(self.bytes_read, self.total)
+
     def read(self, size: int = -1) -> bytes:
         data = self.reader.read(size)
-        self.bytes_read += len(data)
-        self.callback(self.bytes_read, self.total)
+        self._count(len(data))
         return data
+
+    # Every other way to read. Only `read()` used to count -- the rest went
+    # through `__getattr__` uncounted, and the dunders bypass it entirely --
+    # so `hashlib.file_digest`, a `BufferedReader` wrapper, and any
+    # line-based consumer hashed or copied a whole file and reported no
+    # progress at all.
+    def read1(self, size: int = -1) -> bytes:
+        read1 = getattr(self.reader, "read1", None)
+        data = read1(size) if callable(read1) else self.reader.read(size)
+        self._count(len(data))
+        return data
+
+    def readinto(self, buffer) -> int:
+        readinto = getattr(self.reader, "readinto", None)
+        if callable(readinto):
+            read = readinto(buffer)
+        else:
+            data = self.reader.read(len(buffer))
+            read = len(data)
+            buffer[:read] = data
+        self._count(read or 0)
+        return read or 0
+
+    def readinto1(self, buffer) -> int:
+        readinto1 = getattr(self.reader, "readinto1", None)
+        if not callable(readinto1):
+            return self.readinto(buffer)
+        read = readinto1(buffer)
+        self._count(read or 0)
+        return read or 0
+
+    def readline(self, size: int = -1) -> bytes:
+        data = self.reader.readline(size)
+        self._count(len(data))
+        return data
+
+    def readlines(self, hint: int = -1) -> "list[bytes]":
+        lines = self.reader.readlines(hint)
+        self._count(sum(len(line) for line in lines))
+        return lines
+
+    def __iter__(self) -> "ProgressReader":
+        return self
+
+    def __next__(self) -> bytes:
+        line = self.readline()
+        if not line:
+            raise StopIteration
+        return line
 
     def readable(self) -> bool:
         return True
@@ -159,15 +224,49 @@ def _remote_checksum(host: Host, path: object, algorithm: str) -> str:
             )
     elif flavour == "cmd":
         result = host.run(
-            ("certutil", "-hashfile", os.fspath(path), algorithm.upper()),
+            ("certutil", "-hashfile", _hashable_path(path), algorithm.upper()),
             encoding="utf-8",
         )
     else:
         result = host.run(
-            (f"{algorithm}sum", os.fspath(path)),
+            # `--` first: without it a file named `-z` or `-b` is read as an
+            # OPTION, and `md5sum -z` hashes stdin -- which at EOF is the
+            # empty-input digest, accepted by the parser and equal on both
+            # sides, so two different files compared as identical.
+            (f"{algorithm}sum", "--", _hashable_path(path)),
             encoding="utf-8",
         )
     return _parse_digest(result.stdout, algorithm)
+
+
+def _hashable_path(path: object) -> str:
+    """The path the BACKEND reads, which is what the remote shell must hash.
+
+    A composite renders its logical text, and for SFTP that is not the same
+    string: the backend prefixes `/`, so a relative sync root hashed
+    `~/data/x` through the login shell while the transfer copied `/data/x`.
+    Files whose home-directory twins happened to match were then reported in
+    sync and never copied.
+    """
+    resolve = getattr(path, "_provider_path", None)
+    provider = getattr(path, "provider", None)
+    if callable(resolve) and provider is not None:
+        try:
+            backend = resolve(provider)
+        except Exception:
+            backend = path
+    else:
+        backend = path
+    host_fspath = getattr(backend, "host_fspath", None)
+    if callable(host_fspath):
+        try:
+            return str(host_fspath())
+        except Exception:
+            pass
+    try:
+        return os.fspath(backend)
+    except (NotImplementedError, TypeError, ValueError):
+        return str(backend)
 
 
 def _parse_digest(output: typing.Union[bytes, str, None], algorithm: str) -> str:
@@ -198,6 +297,19 @@ def _stream_checksum(path: object, algorithm: str, chunk_size: int) -> str:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _is_local_owner(host: Host, path: object) -> bool:
+    """Whether the owning host is THIS process's machine.
+
+    Deliberately the host's scheme rather than the path's `is_local()`: an
+    in-memory or otherwise process-resident backend also reports itself as
+    local, and a composed host may reach a local path through a provider
+    whose shell is the one the caller wants used. `local:` is the case where
+    spawning a process to hash bytes we can already read is pure cost.
+    """
+    del path
+    return getattr(host, "scheme", "") == "local"
 
 
 def _host_path_token(host: Host) -> typing.Optional[tuple[object, ...]]:

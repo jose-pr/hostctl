@@ -382,3 +382,119 @@ def _decoded_powershell(command):
         return text
     payload = text.split(marker, 1)[1].split()[0]
     return base64.b64decode(payload).decode("utf-16-le")
+
+
+def test_a_remote_checksum_separates_options_from_the_filename():
+    """Without `--`, a file named `-z` is read as an OPTION: `md5sum -z`
+    hashes stdin, which at EOF is the empty-input digest -- accepted by the
+    parser and equal on both sides, so two different files compared as
+    identical and were never copied."""
+    calls = []
+
+    def execute(command, *args, **options):
+        calls.append((command, args))
+        return subprocess.CompletedProcess(
+            (command, *args), 0, "d41d8cd98f00b204e9800998ecf8427e  -z\n", ""
+        )
+
+    backend = MemPathBackend()
+    _memory_file(backend, "-z", b"content")
+    host = PosixHost(
+        executor_providers=(ExecutorProvider("fake", execute),),
+        path_providers=(
+            PathProvider("memory", lambda *parts: MemPath(*parts, backend=backend)),
+        ),
+    )
+    path = host.path("-z")
+
+    host_checksum(host)(PathAndStat.from_stat(path, object()))
+
+    rendered = " ".join((str(calls[0][0]), *(str(arg) for arg in calls[0][1])))
+    assert "-- " in rendered or "'--'" in rendered
+
+
+def test_a_composite_path_reports_whether_it_is_local():
+    """`PathSyncer` applies its size+mtime quick check only when a side says
+    it is not local, and pathlib_next answers `True` for a path that does not
+    implement `is_local` -- so every remote-to-remote sync through composite
+    paths checksummed every existing pair, discarding the answer `SftpPath`
+    already had."""
+    backend = MemPathBackend()
+    _memory_file(backend, "data", b"content")
+
+    class _RemoteMemPath(MemPath):
+        def is_local(self):
+            return False
+
+    remote = PathProvider(
+        "remote", lambda *parts: _RemoteMemPath(*parts, backend=backend)
+    )
+    host = PosixHost(path_providers=(remote,))
+
+    assert host.path("data").is_local() is False
+
+
+def test_a_composite_path_without_a_backend_answer_defaults_to_local():
+    backend = MemPathBackend()
+    _memory_file(backend, "data", b"content")
+    host = PosixHost(
+        path_providers=(
+            PathProvider("memory", lambda *parts: MemPath(*parts, backend=backend)),
+        )
+    )
+
+    assert host.path("data").is_local() is True
+
+
+def test_progress_is_reported_for_every_way_of_reading(tmp_path):
+    """Only `read()` counted. `readinto`/`read1`/`readline` went through
+    `__getattr__` uncounted and the dunders bypassed it, so
+    `hashlib.file_digest`, a `BufferedReader` wrapper and any line-based
+    consumer moved a whole file and reported no progress at all."""
+    import hashlib
+
+    from hostctl.sync import ProgressReader
+
+    source = tmp_path / "data.bin"
+    source.write_bytes(b"line one\nline two\n")
+
+    events = []
+    with source.open("rb") as raw:
+        reader = ProgressReader(raw, lambda done, total: events.append(done))
+        hashlib.file_digest(reader, "sha256")
+    assert events and events[-1] == 18
+
+    events.clear()
+    with source.open("rb") as raw:
+        reader = ProgressReader(raw, lambda done, total: events.append(done))
+        assert [line for line in reader] == [b"line one\n", b"line two\n"]
+    assert events and events[-1] == 18
+
+
+def test_a_local_host_hashes_in_process(tmp_path):
+    """`host_checksum(LocalHost())` spawned `md5sum` -- or, on Windows,
+    certutil -- once per file, to hash bytes this process can read
+    directly."""
+    import hashlib
+
+    from hostctl import LocalHost
+
+    spawned = []
+
+    host = LocalHost()
+    original = host.run
+
+    def watched(*cmds, **options):
+        spawned.append(cmds)
+        return original(*cmds, **options)
+
+    host.run = watched  # type: ignore[method-assign]
+    target = tmp_path / "data.bin"
+    target.write_bytes(b"content")
+
+    digest = host_checksum(host)(
+        PathAndStat.from_stat(host.path(str(target)), object())
+    )
+
+    assert digest == hashlib.md5(b"content").hexdigest()
+    assert spawned == []

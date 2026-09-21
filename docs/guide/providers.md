@@ -206,9 +206,12 @@ URI. Those become `<redacted>`.
     **Treat hostctl debug output as sensitive** — do not ship it to a log
     aggregator you would not trust with the credentials themselves.
 
-Redaction is also lazy: log arguments are formatted with `%`-style
-interpolation, so when nobody is listening at `debug` the redaction work never
-runs at all.
+Redaction is lazy where it can be: every log argument is a wrapper whose
+`__str__` does the work, and `logging` calls that only while rendering a
+record it has decided to emit — so with nobody listening at `debug` the
+regexes do not run. Trace *records* are the exception: they are stored and
+read back through `provider_details`/`selection_trace`, so those are redacted
+as they are built.
 
 ## Backend pinning
 
@@ -310,11 +313,13 @@ selection and pinning, see `examples/application_provider.py`.
 `ProviderSelector`, `SessionInitializer`, and `OperationNotStarted`. They are
 also re-exported from top-level `hostctl`, so the two spellings agree.
 
-`hostctl.provider.transports` holds the adapters `LocalHost`, `ContainerHost`,
-and `QemuHost` assemble themselves from — `LocalExecutorProvider`,
-`LocalPathProvider`, `ContainerExecutorProvider`, `ContainerArchivePathProvider`,
-`QgaPathProvider`, `DownloadPathProvider` — plus the capability frozensets
-describing what each built-in backend can do. They are importable, and reading
+`hostctl.provider.transports` holds the adapters the built-in hosts assemble
+themselves from — `LocalExecutorProvider`, `LocalPathProvider`,
+`ContainerExecutorProvider`, `ContainerArchivePathProvider`, `QgaPathProvider`
+— plus the capability frozensets describing what each built-in backend can do.
+`DownloadPathProvider` sits beside them as a read-only example no built-in
+host uses: it is what a content-only endpoint looks like when written as a
+provider. They are importable, and reading
 them is the fastest way to see a complete provider, but they are implementation
 detail: nothing outside hostctl constructs them, and they carry no stability
 promise. Write your own `ExecutorProvider`/`PathProvider` instead of
