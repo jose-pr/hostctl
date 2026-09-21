@@ -193,3 +193,61 @@ def test_a_running_exec_still_reports_none():
     )
 
     assert process.returncode is None
+
+
+def test_a_text_read_never_answers_empty_while_the_stream_is_live():
+    """`read(n)` slices RAW bytes before decoding, so a read landing inside
+    a multi-byte character returned '' -- the conventional EOF signal --
+    while the process was still producing, and
+    `while chunk := p.read(1024)` silently lost the rest."""
+    payload = "\N{LATIN SMALL LETTER E WITH ACUTE}".encode("utf-8")
+    stream = _Socket(_frame(1, payload[:1]), _frame(1, payload[1:]))
+    process = ContainerProcess(
+        _Api([{"Running": False, "ExitCode": 0}]),
+        "exec",
+        stream,
+        tty=False,
+        command=["cat"],
+        encoding="utf-8",
+    )
+
+    assert process.read(1) == "\N{LATIN SMALL LETTER E WITH ACUTE}"
+
+
+def test_a_truncated_trailing_sequence_is_not_dropped_at_eof():
+    """`final=True` was never passed, so bytes left in the decoder when the
+    stream ended -- a command killed mid-character -- were discarded where
+    `errors="strict"` should raise."""
+    payload = "\N{LATIN SMALL LETTER E WITH ACUTE}".encode("utf-8")
+    stream = _Socket(_frame(1, payload[:1]))
+    process = ContainerProcess(
+        _Api([{"Running": False, "ExitCode": 0}]),
+        "exec",
+        stream,
+        tty=False,
+        command=["cat"],
+        encoding="utf-8",
+    )
+
+    with pytest.raises(UnicodeDecodeError):
+        process.read()
+
+
+def test_send_eof_reports_a_transport_failure_as_one():
+    """A real `OSError` was relabelled `NotImplementedError`, telling the
+    caller to stop trying when the connection had actually dropped."""
+
+    class _Broken(_Socket):
+        def shutdown(self, how):
+            raise OSError("connection reset")
+
+    process = ContainerProcess(
+        _Api([{"Running": False, "ExitCode": 0}]),
+        "exec",
+        _Broken(),
+        tty=False,
+        command=["cat"],
+    )
+
+    with pytest.raises(ConnectionError, match="connection reset"):
+        process.send_eof()

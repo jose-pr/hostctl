@@ -58,6 +58,11 @@ ARCHIVE_PATH_OPERATIONS = frozenset(
         "exists",
         "is_file",
         "is_dir",
+        # A `SYMTYPE` tar member is a faithful archive representation, so
+        # these ARE implemented -- and leaving them out of the declaration
+        # made a composed host refuse operations its backend performs.
+        "symlink_to",
+        "readlink",
     )
 )
 

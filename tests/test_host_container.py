@@ -88,6 +88,10 @@ class _Api:
     def exec_inspect(self, exec_id):
         return {"Running": False, "ExitCode": 0}
 
+    def exec_resize(self, exec_id, *, height, width):
+        self.resizes = getattr(self, "resizes", [])
+        self.resizes.append((exec_id, height, width))
+
 
 class _Client:
     def __init__(self, container):
@@ -225,3 +229,62 @@ def test_container_executor_rejects_unimplemented_streaming_options():
 def test_container_sdk_errors_are_normalized(name, expected):
     error_type = type(name, (Exception,), {})
     assert isinstance(normalize_container_error(error_type("failure")), expected)
+
+
+def test_spawn_refuses_an_executable_with_a_direct_command():
+    """`run()` refuses this; spawning ignored it, so the same call meant two
+    different things at two entry points."""
+    from hostctl import Exec
+
+    host, _client, _container = _host()
+
+    with pytest.raises(NotImplementedError, match="direct command"):
+        host.spawn(Exec("/bin/sh"), executable="/bin/bash")
+
+
+def test_spawn_selects_text_mode_from_errors_alone():
+    """`errors=` without `encoding=` was accepted and dropped, so
+    `errors="replace"` still raised on undecodable output."""
+    host, _client, _container = _host()
+
+    process = host.spawn("echo hi", errors="replace")
+
+    assert process._encoding == "utf-8"
+
+
+def test_a_requested_terminal_sends_its_term_type():
+    """`term_type` was accepted and never sent: Docker's exec API has no
+    TERM field, so it has to travel as the environment variable programs
+    actually read."""
+    host, client, _container = _host()
+
+    from hostctl import TerminalOptions
+
+    host.spawn("top", terminal=TerminalOptions(term_type="xterm-256color"))
+
+    _container_id, options = client.api.created[-1]
+    assert options["environment"]["TERM"] == "xterm-256color"
+
+
+def test_spawn_dispatches_through_the_provider_like_run_does():
+    """`spawn` reached the raw API directly, so the provider's pre-dispatch
+    inspection -- the one that turns a stopped container into a recorded
+    decline rather than an error from inside the call -- never ran. The
+    404-to-`ConnectionError` mapping happens to be on the `container`
+    property as well, so the user-visible error was already right; the
+    ordering was not.
+    """
+    host, client, container = _host()
+    provider = host.executor_providers[0]
+    connects = []
+    original = provider.connect
+
+    def watched():
+        connects.append(True)
+        return original()
+
+    provider.connect = watched
+
+    host.spawn("echo hi")
+
+    assert connects == [True]

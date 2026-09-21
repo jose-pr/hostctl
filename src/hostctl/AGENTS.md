@@ -339,8 +339,13 @@ executable=None, dialect="auto", path_flavor="auto")` uses the optional
 `container` extra and Docker Engine API. Inspection selects Linux/POSIX or
 Windows/PowerShell semantics. `ContainerHost` supports buffered exec,
 persistent sessions/TTYs, and archive-backed POSIX or Windows paths. Archive
-paths support stat/traversal/read/write/append/exclusive-create; archive-only
-mkdir/remove/rename/chmod raise `NotImplementedError`.
+paths support stat/traversal/read/write/append/exclusive-create, plus
+`symlink_to()`/`readlink()` -- a `SYMTYPE` tar member is a faithful
+representation; archive-only mkdir/remove/rename/chmod raise
+`NotImplementedError`. `run()` takes no stdin and no `timeout=` (Docker's
+buffered exec streams neither, and the exec API has no cancellable deadline).
+`iterdir()`/`walk()` pull one archive per directory, so a deep tree is
+re-downloaded level by level -- list a large one through `run()` instead.
 
 ## QEMU Guest Agent
 

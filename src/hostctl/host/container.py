@@ -554,9 +554,21 @@ class ContainerHost(Host):
         errors: typing.Optional[str] = None,
     ) -> Process:
         """Start a persistent Docker exec process with an optional TTY."""
+        # container-14: `errors=` without `encoding=` was accepted and
+        # dropped, so `errors="replace"` still raised on undecodable output.
+        # Selecting text mode from either is the rule every other transport
+        # follows (`executor.wants_text`).
+        if errors is not None and encoding is None:
+            encoding = "utf-8"
         direct = starts_direct_command(cmds)
         if direct is not None:
             command, args = direct
+            if executable is not None:
+                # `run()` refuses this; spawning silently ignored it, so the
+                # same call meant two different things at two entry points.
+                raise NotImplementedError(
+                    "executable cannot be combined with a direct command"
+                )
             invocation = [command_text(command), *(command_text(v) for v in args)]
             environment = normalize_environment(env)
         elif cmds:
@@ -576,6 +588,16 @@ class ContainerHost(Host):
 
         selected_terminal = terminal_options(terminal)
         tty = selected_terminal is not None
+        # Through the provider, as `run()` goes: it inspects the container
+        # before dispatch, so a stopped or vanished container is a proven
+        # pre-dispatch refusal (`OperationNotStarted`/`ConnectionError`)
+        # rather than the `FileNotFoundError` the raw API answers with --
+        # two different errors for one condition, depending on which entry
+        # point the caller used.
+        provider = self._executor_provider_selector.select().provider
+        connect = getattr(provider, "connect", None)
+        if callable(connect):
+            connect()
         api = typing.cast(typing.Any, self.client).api
         selected_workdir = str(cwd) if cwd is not None else self.config.workdir
         options: typing.Dict[str, object] = {
@@ -585,6 +607,12 @@ class ContainerHost(Host):
             "stderr": True,
             "tty": tty,
         }
+        if selected_terminal is not None and selected_terminal.term_type:
+            # `term_type` was accepted and never sent. Docker's exec API has
+            # no TERM field, so it travels as the environment variable every
+            # program actually reads -- without clobbering a caller's own.
+            environment = dict(environment or {})
+            environment.setdefault("TERM", selected_terminal.term_type)
         if environment is not None:
             options["environment"] = environment
         if selected_workdir is not None:

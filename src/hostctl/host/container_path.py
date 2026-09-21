@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import errno
 import io
 import ntpath
 import posixpath
@@ -30,12 +31,29 @@ class _ChunkReader(io.RawIOBase):
     """File-like adapter over Docker's chunk iterator for streaming tar reads."""
 
     def __init__(self, chunks: typing.Iterable[bytes]) -> None:
+        self._source = chunks
         self._chunks = iter(chunks)
         self._buffer = bytearray()
         self._done = False
 
     def readable(self) -> bool:
         return True
+
+    def close(self) -> None:
+        # Docker's chunk iterator IS a streaming HTTP response, and nothing
+        # closed it: a `stat()` that stopped reading after the first member,
+        # or a caller abandoning `open_read()`, left the connection held
+        # until the generator was collected -- or forever, for a generator
+        # kept alive by a traceback.
+        if not self.closed:
+            for candidate in (self._chunks, self._source):
+                release = getattr(candidate, "close", None)
+                if callable(release):
+                    try:
+                        release()
+                    except Exception:
+                        pass
+        super().close()
 
     def readinto(self, target: bytearray) -> int:
         while not self._buffer and not self._done:
@@ -52,9 +70,16 @@ class _ChunkReader(io.RawIOBase):
 class _ArchiveReadStream(io.RawIOBase):
     """Close an extracted tar member and its streaming archive together."""
 
-    def __init__(self, member: typing.BinaryIO, archive: tarfile.TarFile) -> None:
+    def __init__(
+        self,
+        member: typing.BinaryIO,
+        archive: tarfile.TarFile,
+        reader: typing.Optional[io.RawIOBase] = None,
+    ) -> None:
         self._member = member
         self._archive = archive
+        #: The chunk reader underneath, closed with everything else.
+        self._reader = reader
 
     def readable(self) -> bool:
         return True
@@ -71,17 +96,44 @@ class _ArchiveReadStream(io.RawIOBase):
             try:
                 self._member.close()
             finally:
-                self._archive.close()
+                try:
+                    self._archive.close()
+                finally:
+                    if self._reader is not None:
+                        self._reader.close()
         super().close()
 
 
+def _archive_oserror(exc: BaseException, path: str) -> typing.Optional[OSError]:
+    """Map a Docker archive failure to a filesystem error, or `None`.
+
+    The status-code extraction was written out seven times and three copies
+    had drifted -- one reading only `exc.status_code`, one only the
+    response's, one swallowing everything that was neither 404 nor 403.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 404:
+        return FileNotFoundError(errno.ENOENT, "no such file or directory", path)
+    if status == 403:
+        return PermissionError(errno.EACCES, "permission denied", path)
+    return None
+
+
 def _safe_name(name: str) -> typing.Tuple[str, ...]:
-    """Return safe POSIX tar components, rejecting archive traversal."""
+    """Return safe POSIX tar components, rejecting archive traversal.
+
+    The archive ROOT (`"."` or `"./"`) is a legal member name -- it is what
+    Docker sends for the container's own root -- and returns an empty tuple.
+    Rejecting it as a traversal attempt made `host.path()` with no segments
+    unlistable. `..` and an absolute name stay refused.
+    """
     normalized = name.replace("\\", "/")
     if normalized.startswith("/"):
         raise OSError(f"unsafe absolute archive member: {name!r}")
     parts = tuple(part for part in normalized.split("/") if part not in ("", "."))
-    if not parts or ".." in parts:
+    if ".." in parts:
         raise OSError(f"unsafe archive member: {name!r}")
     return parts
 
@@ -208,13 +260,9 @@ class ContainerPathBackend:
         except Exception as exc:
             # Docker SDK/API errors are optional dependency types. Avoid an
             # import here while still exposing ordinary filesystem failures.
-            status = getattr(exc, "status_code", None)
-            response = getattr(exc, "response", None)
-            status = status or getattr(response, "status_code", None)
-            if status == 404:
-                raise FileNotFoundError(path) from exc
-            if status == 403:
-                raise PermissionError(path) from exc
+            mapped = _archive_oserror(exc, path)
+            if mapped is not None:
+                raise mapped from exc
             raise
         archive = tarfile.open(fileobj=io.BytesIO(payload), mode="r:*")
         members = archive.getmembers()
@@ -242,20 +290,19 @@ class ContainerPathBackend:
                 value = self._metadata_stat(metadata)
                 link_target = metadata.get("linkTarget")
                 if follow_symlinks and link_target:
-                    target = str(link_target)
-                    parent = posixpath.dirname(path.rstrip("/"))
-                    if not target.startswith("/"):
-                        target = posixpath.join(parent, target)
+                    target = self._link_destination(path, str(link_target))
                     return self._stat_following(target, hops=8)
                 return value
         except Exception as exc:
-            status = getattr(exc, "status_code", None) or getattr(
-                getattr(exc, "response", None), "status_code", None
-            )
-            if status == 404:
-                raise FileNotFoundError(path) from exc
-            if status == 403:
-                raise PermissionError(path) from exc
+            mapped = _archive_oserror(exc, path)
+            if mapped is not None:
+                raise mapped from exc
+            # Anything else propagates, as it does in `_archive`, `scandir`
+            # and `open_read`. Swallowing it here meant a 500, a timeout or
+            # a decode failure silently replayed the whole archive pull --
+            # a second identical call, and then the tar fallback reporting
+            # something else entirely.
+            raise
         finally:
             close = getattr(stream, "close", None)
             if callable(close):
@@ -267,11 +314,7 @@ class ContainerPathBackend:
         try:
             member = self._root_member(members)
             if follow_symlinks and member.issym():
-                target = member.linkname
-                parent = posixpath.dirname(path.rstrip("/"))
-                target = (
-                    target if target.startswith("/") else posixpath.join(parent, target)
-                )
+                target = self._link_destination(path, member.linkname)
                 return self._stat_following(target, hops=8)
             return _file_stat(member)
         finally:
@@ -334,19 +377,19 @@ class ContainerPathBackend:
     ) -> typing.List[typing.Tuple[str, FileStat]]:
         try:
             stream, _ = self.container.get_archive(path)
-            archive = tarfile.open(fileobj=_ChunkReader(stream), mode="r|*")
+            reader = _ChunkReader(stream)
+            archive = tarfile.open(fileobj=reader, mode="r|*")
         except Exception as exc:
-            status = getattr(exc, "status_code", None) or getattr(
-                getattr(exc, "response", None), "status_code", None
-            )
-            if status == 404:
-                raise FileNotFoundError(path) from exc
-            if status == 403:
-                raise PermissionError(path) from exc
+            mapped = _archive_oserror(exc, path)
+            if mapped is not None:
+                raise mapped from exc
             raise
         try:
             root: typing.Optional[typing.Tuple[str, ...]] = None
             entries: typing.Dict[str, FileStat] = {}
+            #: Members already streamed, so a hardlink can borrow the size
+            #: and mode tar stored once on its original.
+            seen: typing.Dict[str, tarfile.TarInfo] = {}
             for member in archive:
                 parts = _safe_name(member.name)
                 if root is None:
@@ -363,25 +406,68 @@ class ContainerPathBackend:
                         return self.scandir(target, hops=hops - 1)
                     if not member.isdir():
                         raise NotADirectoryError(path)
+                seen[member.name] = member
                 if parts[: len(root)] != root or len(parts) != len(root) + 1:
                     continue
-                entries.setdefault(parts[-1], _file_stat(member))
+                entry = member
+                if member.islnk():
+                    # A `LNKTYPE` member carries no size or mode of its own
+                    # -- tar stores those once, on the member it points at --
+                    # so every hardlinked file in a listing reported size 0.
+                    original = seen.get(member.linkname)
+                    if original is not None:
+                        entry = original
+                entries.setdefault(parts[-1], _file_stat(entry))
             return sorted(entries.items())
         finally:
             archive.close()
+            reader.close()
+
+    @property
+    def _path_module(self):
+        r"""The path syntax this backend's container actually uses.
+
+        `_split` already switches on the flavour; link resolution used
+        `posixpath` unconditionally, so a Windows-flavoured backend joined a
+        relative link target with `/` and called `C:\app\current`'s target
+        absolute only if it began with `/`.
+        """
+        return ntpath if self.path_flavor == "windows" else posixpath
 
     def _link_destination(self, path: str, target: str) -> str:
         """Resolve a stored link target against the link's own parent."""
-        if target.startswith("/"):
+        path_module = self._path_module
+        if path_module.isabs(target):
             return target
-        return posixpath.join(posixpath.dirname(path.rstrip("/")), target)
+        return path_module.join(path_module.dirname(path.rstrip("/\\")), target)
 
     def read_bytes(self, path: str, *, hops: int = 8) -> bytes:
+        archive: typing.Optional[tarfile.TarFile]
         archive, members = self._archive(path)
         try:
             member = self._root_member(members)
             if member.isdir():
                 raise IsADirectoryError(path)
+            if member.islnk():
+                # A hardlink whose original is not in this archive -- which
+                # is what Docker sends for a single-file request. `tarfile`
+                # answers `StreamError`, not an `OSError`, so it escaped the
+                # filesystem error vocabulary entirely.
+                original = next(
+                    (
+                        candidate
+                        for candidate in members
+                        if candidate.name == member.linkname and candidate.isreg()
+                    ),
+                    None,
+                )
+                if original is None:
+                    raise OSError(
+                        errno.ENOENT,
+                        "hardlink target is outside this archive",
+                        path,
+                    )
+                member = original
             if member.issym():
                 # get_archive() returns the *link* member, never the target's
                 # bytes, so a read has to follow the link itself. The hop
@@ -411,15 +497,12 @@ class ContainerPathBackend:
         """
         try:
             stream, _ = self.container.get_archive(path)
-            archive = tarfile.open(fileobj=_ChunkReader(stream), mode="r|*")
+            reader = _ChunkReader(stream)
+            archive = tarfile.open(fileobj=reader, mode="r|*")
         except Exception as exc:
-            status = getattr(exc, "status_code", None) or getattr(
-                getattr(exc, "response", None), "status_code", None
-            )
-            if status == 404:
-                raise FileNotFoundError(path) from exc
-            if status == 403:
-                raise PermissionError(path) from exc
+            mapped = _archive_oserror(exc, path)
+            if mapped is not None:
+                raise mapped from exc
             raise
         try:
             member = archive.next()
@@ -433,13 +516,15 @@ class ContainerPathBackend:
                     raise OSError("too many symbolic links")
                 resolved = self._link_destination(path, member.linkname)
                 archive.close()
+                reader.close()
                 return self.open_read(resolved, hops=hops - 1)
             extracted = archive.extractfile(member)
             if extracted is None:
                 raise OSError(f"archive member has no content: {path}")
-            return io.BufferedReader(_ArchiveReadStream(extracted, archive))
+            return io.BufferedReader(_ArchiveReadStream(extracted, archive, reader))
         except BaseException:
             archive.close()
+            reader.close()
             raise
 
     def readlink(self, path: str) -> str:
@@ -454,13 +539,9 @@ class ContainerPathBackend:
                 # Metadata was authoritative and reported no link target.
                 raise OSError(f"not a symbolic link: {path}")
         except Exception as exc:
-            status = getattr(exc, "status_code", None) or getattr(
-                getattr(exc, "response", None), "status_code", None
-            )
-            if status == 404:
-                raise FileNotFoundError(path) from exc
-            if status == 403:
-                raise PermissionError(path) from exc
+            mapped = _archive_oserror(exc, path)
+            if mapped is not None:
+                raise mapped from exc
             if isinstance(exc, OSError):
                 raise
         finally:
@@ -506,13 +587,14 @@ class ContainerPathBackend:
         try:
             accepted = self.container.put_archive(parent, payload.getvalue())
         except Exception as exc:
-            status = getattr(exc, "status_code", None)
-            response = getattr(exc, "response", None)
-            status = status or getattr(response, "status_code", None)
-            if status == 404:
-                raise FileNotFoundError(parent) from exc
-            if status == 403:
-                raise PermissionError(path) from exc
+            # The parent is what a 404 is about here; the path is what a
+            # permission failure is about. The seventh copy of this idiom,
+            # and the only one that distinguished them.
+            mapped = _archive_oserror(exc, parent)
+            if isinstance(mapped, PermissionError):
+                mapped = _archive_oserror(exc, path)
+            if mapped is not None:
+                raise mapped from exc
             raise
         if not accepted:
             raise OSError(f"container rejected symlink archive for {path}")
@@ -520,7 +602,7 @@ class ContainerPathBackend:
     def _split(self, path: str) -> typing.Tuple[str, str]:
         if path.endswith(("/", "\\")):
             raise IsADirectoryError(path)
-        path_module = ntpath if self.path_flavor == "windows" else posixpath
+        path_module = self._path_module
         parent, name = path_module.split(path_module.normpath(path))
         if not name:
             raise IsADirectoryError(path)

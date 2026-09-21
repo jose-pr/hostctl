@@ -51,9 +51,9 @@ class ContainerProcess(Process):
         self._command = list(command)
         self._encoding = encoding
         self._errors = errors or "strict"
-        self._buffers = {
-            1: collections.deque(),  # type: typing.Deque[bytes]
-            2: collections.deque(),  # type: typing.Deque[bytes]
+        self._buffers: typing.Dict[int, "typing.Deque[bytes]"] = {
+            1: collections.deque(),
+            2: collections.deque(),
         }
         self._eof = False
         self._closed = False
@@ -183,8 +183,24 @@ class ContainerProcess(Process):
             # read(n) returns as soon as data is available, like SSH and
             # socket streams; callers needing exactly n bytes can loop.
             if size >= 0 and output:
-                break
-        return self._decode(bytes(output), stream)
+                decoded = self._decode(bytes(output), stream)
+                if decoded == "" and not self._eof:
+                    # A multi-byte character split across this boundary: the
+                    # decoder is holding the first half, and returning ''
+                    # here is the conventional EOF signal, so
+                    # `while chunk := p.read(1024)` exited mid-stream and
+                    # silently lost the rest. Keep reading instead.
+                    output.clear()
+                    size = max(size, 1)
+                    continue
+                return decoded
+        # EOF: flush the decoder. `final` was never passed, so bytes left
+        # inside it -- a command killed mid-character -- were dropped where
+        # `errors="strict"` should raise.
+        decoded = self._decode(bytes(output), stream)
+        if self._eof and isinstance(decoded, str):
+            decoded += typing.cast(str, self._decode(b"", stream, final=True))
+        return decoded
 
     def read(self, size: int = -1) -> ProcessData:
         return self._read_stream(1, size)
@@ -195,11 +211,17 @@ class ContainerProcess(Process):
     def send_eof(self) -> None:
         shutdown = getattr(self._socket, "shutdown", None)
         if shutdown is None:
+            # The transport genuinely cannot half-close.
             raise NotImplementedError("exec transport cannot half-close stdin")
         try:
             shutdown(socket.SHUT_WR)
-        except (OSError, ValueError) as exc:
-            raise NotImplementedError("exec transport cannot half-close stdin") from exc
+        except OSError as exc:
+            # A real transport failure is NOT "unsupported": relabelling it
+            # told the caller to stop trying when the truth was that the
+            # connection had dropped.
+            raise ConnectionError(str(exc)) from exc
+        except ValueError as exc:
+            raise ConnectionError("exec socket is closed") from exc
 
     def resize(
         self,
@@ -218,6 +240,7 @@ class ContainerProcess(Process):
 
     def wait(self, timeout: typing.Optional[float] = None) -> int:
         deadline = None if timeout is None else time.monotonic() + timeout
+        interval = 0.005
         while True:
             # Drain one available frame before polling.  Non-blocking Docker
             # sockets raise timeout/BlockingIOError when no data is ready.
@@ -229,7 +252,13 @@ class ContainerProcess(Process):
                 # Docker exec exposes no cancel, so the command is
                 # still running inside the container.
                 raise expired(self._command, timeout, orphaned=True)
-            time.sleep(0.01)
+            # Back off. A flat 10ms sleep meant one `exec_inspect` HTTP
+            # round trip per iteration -- about 95 a second, ~57,000 for a
+            # ten-minute build, every one of them pure overhead on a remote
+            # daemon. The socket reaching EOF is the real signal; until
+            # then, ask less and less often.
+            time.sleep(interval)
+            interval = min(interval * 2, 0.5)
 
     def _receive_available(self) -> None:
         with self._io_lock:

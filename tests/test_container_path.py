@@ -44,6 +44,11 @@ def _tar_entries(entries):
             elif kind == tarfile.DIRTYPE:
                 member.mode = 0o755
                 archive.addfile(member)
+            elif kind == tarfile.LNKTYPE:
+                # A hardlink member: tar stores the size and mode once, on
+                # the original, and this member carries neither.
+                member.linkname = linkname
+                archive.addfile(member)
             else:
                 member.size = len(value)
                 member.mode = 0o644
@@ -455,3 +460,105 @@ def test_stat_parses_the_timestamp_real_docker_sends():
     result = ContainerPathBackend(container).stat("/data")
 
     assert result.st_mtime == 1789907696  # 2026-09-20T12:34:56Z
+
+
+def test_a_streaming_archive_pull_closes_the_http_response():
+    """Docker's chunk iterator IS a streaming HTTP response, and nothing
+    closed it: a caller abandoning `open_read()` -- or a `scandir` that
+    stopped reading after the first member -- held the connection until the
+    generator was collected, or forever behind a traceback."""
+    closed = []
+
+    class _Stream:
+        def __init__(self, payload):
+            self._chunks = iter([payload])
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            return next(self._chunks)
+
+        def close(self):
+            closed.append(True)
+
+    container = _Container()
+    payload = _tar([("data.bin", b"value")])
+    container.get_archive = lambda path: (_Stream(payload), {})
+
+    backend = ContainerPathBackend(container)
+    with backend.open_read("/data.bin") as stream:
+        assert stream.read() == b"value"
+
+    # Closed exactly once per pull, whichever handle got there first.
+    assert closed
+
+
+def test_a_composed_archive_provider_can_reach_symlink_operations():
+    """The provider implements `symlink_to`/`readlink` -- a `SYMTYPE` tar
+    member is a faithful representation -- and did not declare them, so a
+    composed host refused operations its backend performs."""
+    from hostctl import PosixHost
+    from hostctl.provider.transports import ContainerArchivePathProvider
+
+    container = _Container()
+    container.archives["/links/link"] = _tar_entries(
+        [("link", tarfile.SYMTYPE, None, "target")]
+    )
+    backend = ContainerPathBackend(container)
+    host = PosixHost(
+        path_providers=(
+            ContainerArchivePathProvider(
+                lambda *parts: PosixContainerPath(*parts, backend=backend)
+            ),
+        )
+    )
+
+    assert str(host.path("/links/link").readlink()).endswith("target")
+
+
+def test_a_hardlinked_entry_reports_the_size_tar_stored_once():
+    """A `LNKTYPE` member carries no size or mode of its own -- tar stores
+    those on the member it points at -- so every hardlinked file in a
+    listing reported size 0."""
+    container = _Container()
+    container.archives["/links"] = _tar_entries(
+        [
+            ("links", tarfile.DIRTYPE, None, None),
+            ("links/target", tarfile.REGTYPE, b"payload", None),
+            ("links/hard-link", tarfile.LNKTYPE, None, "links/target"),
+        ]
+    )
+
+    entries = dict(ContainerPathBackend(container).scandir("/links"))
+
+    assert entries["hard-link"].st_size == len(b"payload")
+
+
+def test_the_archive_root_is_a_legal_member_name():
+    """`"."` is what Docker sends for the container's own root, and
+    rejecting it as a traversal attempt made `host.path()` with no segments
+    unlistable."""
+    from hostctl.host.container_path import _safe_name
+
+    assert _safe_name(".") == ()
+    assert _safe_name("./") == ()
+    with pytest.raises(OSError):
+        _safe_name("../escape")
+
+
+def test_a_single_member_hardlink_archive_is_an_oserror_not_a_tar_error():
+    """The only hardlink test served a three-member archive whose root
+    `_root_member` resolved to the regular file, so the `LNKTYPE` branch was
+    never reached -- and Docker's single-file request answers with the link
+    member alone, where `tarfile` raises `StreamError`, outside the
+    filesystem error vocabulary entirely."""
+    container = _Container()
+    container.archives["/links/hard-link"] = _tar_entries(
+        [("hard-link", tarfile.LNKTYPE, None, "target")]
+    )
+
+    with pytest.raises(OSError) as raised:
+        ContainerPathBackend(container).read_bytes("/links/hard-link")
+
+    assert not isinstance(raised.value, tarfile.TarError)
