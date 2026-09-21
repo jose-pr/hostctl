@@ -115,7 +115,19 @@ and dispatches it with no args, and that script is shell text, not a program.
   caches are protected implementation details.
 
 `LocalConfig`, `SshConfig`, `WinRMConfig`, and `ContainerConfig` produce their
-corresponding hosts.
+corresponding hosts. `PosixConfig`, `WindowsConfig` and `IosConfig` compose a
+system host from provider descriptors instead of owning a transport;
+`IosConfig` produces an `IosHost`, which is session/command-only -- it has no
+path grammar, so `path()` raises.
+
+`ConnectionString(value, *, scheme=None, port=None, ...)` is the parsed form
+of a target -- host, scheme, port, user, password -- with `is_local` answered
+by `netimps` rather than guessed. It exists so a caller never reimplements
+connection-string parsing. `uri_hostname(value)` returns the bare hostname of
+a URI authority, unbracketing an IPv6 literal; it is the sibling of
+`uri_host`, `redact_uri` and `parse_credentials`.
+
+`__version__` is the installed version string.
 
 ## Shell contract
 
@@ -210,6 +222,45 @@ corresponding hosts.
   required for interactive shells to submit each command.
   TTY stderr is merged into stdout.
 
+## Provider contract
+
+These are the names you implement when you add a transport, and the rules
+hostctl applies to whatever you return.
+
+- `ExecutorProvider(name, executor, *, capabilities=None, probe=None)` and
+  `PathProvider(name, factory, *, capabilities=None, probe=None)` are the two
+  provider shapes. `name` is what a trace and a `.via()` pin refer to;
+  `executor` is any callable matching the `Executor` protocol, and `factory`
+  builds a `pathlib_next.Path` from segments. `capabilities` is a set of
+  operation names -- strings, so an `ExecutorCapability` member and its
+  spelling are interchangeable. `PathProvider.DEFAULT_CAPABILITIES` is the
+  full filesystem vocabulary: `stat`, `scandir`, `open`, `open_read`,
+  `open_write`, `read`, `write`, `exists`, `is_file`, `is_dir`, `mkdir`,
+  `chmod`, `unlink`, `rmdir`, `rename`, `symlink_to`, `readlink`.
+- `ProviderProbe(availability, reason="", capabilities=frozenset(),
+  system_hint=None)` is what `probe()` returns: `"available"`, `"degraded"`
+  or `"unavailable"`. `usable` is true for the first two. A probe may narrow
+  the declared capabilities; it must not invent any.
+- `OperationNotStarted(reason, *, cause=None)` is the **only** way to decline
+  a provider for the generation, and it means exactly one thing: nothing was
+  sent, so the operation may be retried on the next provider. Raise it before
+  dispatch or not at all -- a possibly-started operation is never replayed.
+  A `NotImplementedError` from an operation that cannot mutate before raising
+  falls through to the next provider for **that call only**; it does not take
+  the provider out of service.
+- `ProviderSelector` holds the ordered providers and the per-generation
+  declines; `ProviderSelection` is one resolved choice.
+  `ProviderSelector.redact(value)` is the one redaction used in traces --
+  rendered commands routinely carry credentials, so log through it.
+- `SessionInitializer` is the hook a provider may accept to prepare a session
+  (a login, a `cd`, an environment) once per connection rather than per call.
+- `CompositePosixPath` / `CompositeWindowsPath` are the path types a composed
+  host returns. They preserve the logical path, select a provider per
+  operation, pin mutations and streams to the provider that started them, and
+  answer `pathlib_next`'s `_same_filesystem()` with the host's provider set,
+  so a cross-host copy is never mistaken for a file copied onto itself.
+  `path.via(name)` returns a path pinned to one provider.
+
 ## Host contract
 
 - `Host` is abstract. Base `run()` and `path()` raise `NotImplementedError`.
@@ -224,8 +275,11 @@ corresponding hosts.
   PowerShell script to `WinRMExecutor`.
 - `HostInfo` fields are optional; unknown system values remain `None`.
 - A usable `path()` returns `HostPath` (`pathlib_next.Path`).
-- A usable `run()` returns `subprocess.CompletedProcess`; `check=True` raises
-  `subprocess.CalledProcessError`, and command timeouts raise
+- A usable `run()` returns `subprocess.CompletedProcess`. **`check` defaults
+  to `True` and `capture_output` to `True`** -- both the opposite of
+  `subprocess.run`, deliberately: a remote command that fails is an error by
+  default, and its output is captured rather than inherited. Pass
+  `check=False` to inspect `returncode` instead. Command timeouts raise
   `subprocess.TimeoutExpired`.
 - `Host.spawn()` is the low-level persistent `Process` contract. Providers
   advertise `spawn` and `tty` separately.
@@ -276,10 +330,20 @@ ssh=None, agent_timeout=10, dialect="auto", path_flavor="auto")` creates a
 socket, or an AsyncSSH-tunneled remote Unix socket. Discovery positively probes
 QGA and its enabled command list.
 
-`QemuExecutor` uses buffered `guest-exec`/`guest-exec-status`. QGA cannot cancel
+`QemuExecutor` uses buffered `guest-exec`/`guest-exec-status`. It declares
+argv only: `guest-exec`'s `env` list is applied as the guest's whole
+environment rather than added to it, so the host embeds assignments in the
+rendered script and a direct `Exec` refuses `cwd=`/`env=`. QGA cannot cancel
 timed-out processes; `TimeoutExpired.orphaned` is true and `.pid` is retained
-when known. `QgaPathBackend` uses bounded file-handle RPCs; metadata/mutations
-without a positively available helper raise `NotImplementedError`.
+when known. `QgaPathBackend` uses bounded file-handle RPCs; `exists()` is
+answered from those RPCs alone, while metadata and namespace mutations need a
+guest helper (`QemuConfig(path_helper=...)`) and raise `NotImplementedError`
+without one.
+
+`QgaCommandError` is a guest agent error reply, carrying `.error_class` and
+`.description`; a path operation translates it into the matching `OSError`
+(`FileNotFoundError`, `PermissionError`, ...). `QgaProtocolError` is a
+malformed or oversized reply and is itself a `ConnectionError`.
 An injected `QemuSerialConsole` adds the `serial` capability and
 `QemuHost.open_serial()`. It is raw, exclusive, and makes no shell/status claim.
 
@@ -303,7 +367,9 @@ close. WinRM stdin and command
 deadlines remain unsupported. Transport timeouts are not a total command
 deadline. pywinrm Session has no guaranteed close API; hostctl calls `close()`
 only when a provided session exposes it.
-PSRP runspaces are exposed separately through the WinRM transport provider and
+`pypsrp_available()` reports whether the optional PSRP dependency imports;
+`require_pypsrp()` raises the install hint when it does not. PSRP runspaces
+are exposed separately through the WinRM transport provider and
 `RunspaceSession.invoke()`. They retain typed PowerShell streams and state, and
 are not advertised as a byte-oriented `spawn`/TTY process.
 
@@ -321,3 +387,9 @@ Streams are merged, PTY/path/status semantics are absent unless the profile
 explicitly supplies them. Optional PySerial support is the `serial` extra and
 injected serial objects remain caller-owned. Break, DTR, and RTS are available
 on `SerialProcess`/`SerialConsoleProcess`; RFC 2217 URLs are not encrypted.
+`SerialConsoleProtocol` is the profile contract, `LoginStep` one expect/send
+pair of a login sequence, and `ConsoleProtocolError` what a profile raises
+when the console does not answer the way the protocol requires.
+
+`TerminalOptions(term, columns, rows, pixel_width, pixel_height)` is the
+resolved terminal request `spawn(terminal=...)` produces.

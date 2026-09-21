@@ -883,6 +883,14 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         with other commands.  A path anywhere else is an ordinary value that
         stringifies.  Multiple top-level commands are joined by the selected
         shell's command separator.
+
+        Two defaults differ from :func:`subprocess.run` deliberately, and
+        both are the opposite of it: ``check`` is ``True``, so a non-zero
+        status raises :class:`subprocess.CalledProcessError` unless the
+        caller passes ``check=False``; and ``capture_output`` is ``True``, so
+        output is captured rather than inherited by a process that may have
+        no console.  The result type and every other keyword do follow
+        ``subprocess``.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide the 'run' capability"

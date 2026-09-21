@@ -20,8 +20,10 @@ stderr by default.  Captured streams are bytes unless `text=True` or an
 - Multiple top-level commands are joined with the shell's sequence separator.
 - `env` is additive to the provider's environment, on every transport
   including the local one. `cwd` is the process working
-  directory. `check=True` raises `CalledProcessError` for every non-zero status;
-  a provider which cannot obtain a status must use `-1`, never `None`.
+  directory. **`check` defaults to `True`**, the opposite of
+  `subprocess.run`: a non-zero status raises `CalledProcessError` unless the
+  caller passes `check=False`. A provider which cannot obtain a status must
+  use `-1`, never `None`.
 - `timeout` raises `subprocess.TimeoutExpired` and the provider must make a
   best-effort attempt to terminate and close the child.
 
@@ -73,6 +75,7 @@ they advertise.
 | Serial transport | raw profiles expose sessions only; prompt profiles opt into `run` only with explicit status framing; no filesystem | A serial byte stream has no portable command protocol. Profiles own login, prompts, line endings, and completion markers. |
 | Serial process `read(-1)` | returns bytes currently reported as available, capped at 64 KiB, rather than waiting for EOF | Physical and network serial ports normally have no EOF until disconnected; waiting for EOF would make interactive sessions unusable. |
 | WinRM persistent process | `spawn`/TTY unavailable | WinRM's buffered command API does not expose a durable bidirectional stream. |
+| `run(check=)` and `run(capture_output=)` | both default to `True`, where `subprocess.run` defaults them to `False` | A remote command that fails is an error by default rather than a return value a caller may forget to inspect, and its output is captured rather than inherited by a process that may have no console. Pass `check=False` to read `returncode` yourself. |
 | Local `Exec` of a `.bat`/`.cmd` | the invocation is quoted for cmd.exe | Windows dispatches a batch target through cmd.exe, which re-parses the C-runtime-quoted line with cmd rules (CVE-2024-24576 class). The inserted shell is the platform's, so hostctl escapes for it rather than letting an argument close the quoting or `%VAR%` expand. A `"` inside a value still cannot round-trip through a batch `%1`. |
 | `cmd` dialect over SSH | the rendered command is escaped for one cmd parse, not two | `ShellFlavour.command()` is read by the remote login shell, and Windows OpenSSH's default shell is cmd.exe -- which consumes that one layer before the inner `cmd /c` sees it. The PowerShell dialect has no such gap (it renders `-EncodedCommand`, inert under any parser), so a Windows target reached over SSH should use it. |
 | `cmd` and `invocation()` | raises `NotImplementedError` | A cmd script cannot survive argv delivery: the platform's own command-line quoting escapes the quotes cmd's parser needs, and no argv element can encode an unescaped one. Render with `command()` and submit the result as an `executor.CommandLine`. |

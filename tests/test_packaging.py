@@ -67,3 +67,21 @@ def test_the_wheel_never_ships_an_unshared_override(wheel, tmp_path):
     names = zipfile.ZipFile(wheel).namelist()
 
     assert [name for name in names if ".local." in name] == []
+
+
+def test_the_shipped_header_names_every_public_export():
+    """`src/hostctl/AGENTS.md` ships inside the wheel as `hostctl/AGENTS.md`
+    and declares itself the stable surface -- "hosts and configs you
+    construct, exceptions you catch, types you annotate with, and the
+    provider/shell contracts you implement". It named 52 of 76: the entire
+    provider-authoring contract was missing, `OperationNotStarted`'s
+    no-replay rule included, so a consuming agent reading the header instead
+    of the source could not write a provider at all.
+    """
+    import hostctl
+
+    header = (ROOT / "src" / "hostctl" / "AGENTS.md").read_text(encoding="utf-8")
+
+    missing = [name for name in hostctl.__all__ if name not in header]
+
+    assert missing == []

@@ -12,8 +12,9 @@ capabilities those providers actually support.
 ## Features
 
 - **`Host.run(...)`** — subprocess-compatible results from local shells,
-  SSH (`asyncssh`), or PowerShell over WinRM (`pywinrm`). Unsupported transport
-  options raise `NotImplementedError`.
+  SSH (`asyncssh`), or PowerShell over WinRM (`pywinrm`). Two defaults differ
+  from `subprocess.run` deliberately: `check` and `capture_output` are both
+  `True`. Unsupported transport options raise `NotImplementedError`.
 - **`Host.path(...)`** — a `pathlib_next.Path` filesystem view: local,
   remote SFTP, Windows over WinRM, container archives, or QEMU Guest Agent.
 - **Cross-host copy and sync** — use `Path.copy()`/`PathSyncer` directly;

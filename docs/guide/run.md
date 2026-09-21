@@ -130,8 +130,12 @@ ending in a `#` comment cannot swallow it.
 
 - `capture_output` may be `True` (both streams), `"stdout"`, `"stderr"`, or
   `False`.
-- SSH `input=`, `cwd=`, `env=`, `check=`, `timeout=`, and
-  `encoding=`/`errors=` follow the subprocess-shaped contract.
+- **`check` defaults to `True`**, unlike `subprocess.run`. A non-zero
+  status raises `CalledProcessError` unless you pass `check=False`; a remote
+  command that fails is an error by default rather than a return value to
+  inspect.
+- SSH `input=`, `cwd=`, `env=`, `timeout=` and `encoding=`/`errors=` follow
+  the subprocess-shaped contract.
 - WinRM buffers output to caller-owned file handles. It cannot stream stdin or
   select another executable. `read_timeout_sec` is a transport-read setting,
   not a total command deadline; native current-context remoting does not kill
