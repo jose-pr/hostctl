@@ -271,20 +271,36 @@ def test_native_winrm_cert_ignore_survives_both_port_spellings(port):
 
 
 def test_native_winrm_carries_the_remote_exit_code_through_a_marker():
-    wrapper = NativeWinRMSession("server.example")._wrapper("cmd /c exit 7")
+    from hostctl.executor.winrm import exit_marker
+
+    marker = exit_marker()
+    wrapper = NativeWinRMSession("server.example")._wrapper("cmd /c exit 7", marker)
     # The epilogue runs inside the remote script block, so the code travels
     # back as output; `Invoke-Command` never copies the remote $LASTEXITCODE.
     epilogue = base64.b64encode(
-        (
-            "Write-Output ('__HOSTCTL_LASTEXITCODE__:' + "
-            "[string]([int]$LASTEXITCODE))"
-        ).encode("utf-8")
+        (f"Write-Output ('{marker}:' + " "[string]([int]$LASTEXITCODE))").encode(
+            "utf-8"
+        )
     ).decode("ascii")
     assert epilogue in wrapper
     assert "$b=[ScriptBlock]::Create($s+[Environment]::NewLine+$e);" in wrapper
     # The marker line is consumed locally rather than reaching the caller.
-    assert "if($t.StartsWith('__HOSTCTL_LASTEXITCODE__:'))" in wrapper
+    assert f"if($t.StartsWith('{marker}:'))" in wrapper
     assert "$out;exit $c}" in wrapper
+
+
+def test_the_exit_marker_is_per_call_so_output_cannot_forge_it():
+    """`__HOSTCTL_LASTEXITCODE__` is a string any command may print -- a log
+    line, a grep over the sources -- and the wrapper removed that line from
+    stdout and took the number after it as the exit status."""
+    from hostctl.executor.winrm import exit_marker
+
+    first, second = exit_marker(), exit_marker()
+
+    assert first != second
+    assert first.startswith("__HOSTCTL_LASTEXITCODE_")
+    wrapper = NativeWinRMSession("server.example")._wrapper("echo x", first)
+    assert second not in wrapper
 
 
 @pytest.mark.skipif(
@@ -420,3 +436,81 @@ def test_a_status_managing_provider_gets_a_script_without_the_epilogue():
     assert not POWERSHELL.script(("cmd /c exit 7",), for_session=True).endswith(
         epilogue
     )
+
+
+def test_auto_prefers_the_native_path_a_password_free_config_documents(monkeypatch):
+    """The guide says a password-free WinRM config on Windows uses native
+    current-context remoting. Installing `hostctl[psrp]` silently took that
+    away: PSRP won every `auto`, and PSRP needs a credential."""
+    import hostctl.host._winrm as winrm_module
+
+    monkeypatch.setattr(winrm_module, "pypsrp_available", lambda: True)
+    monkeypatch.setattr(winrm_module.os, "name", "nt")
+
+    transport = winrm_module._WinRMTransport(WinRMConfig("server", "admin"))
+
+    assert transport._provider == "pywinrm"
+    assert transport._native_session is True
+
+    # With a password there is a credential to hand PSRP, so `auto` takes it.
+    credentialed = winrm_module._WinRMTransport(
+        WinRMConfig("server", "admin", "secret")
+    )
+    assert credentialed._provider == "psrp"
+
+
+def test_the_native_session_gets_the_configured_deadline(monkeypatch):
+    """`timeout=None` left the native path with no deadline at all, while
+    the config validated one."""
+    import hostctl.host._winrm as winrm_module
+
+    monkeypatch.setattr(winrm_module.os, "name", "nt")
+    built = {}
+
+    class _Session:
+        def __init__(self, host, **kwargs):
+            built.update(kwargs)
+
+    monkeypatch.setattr(winrm_module, "NativeWinRMSession", _Session)
+
+    import os as _os
+
+    monkeypatch.setenv("USERNAME", "admin")
+    monkeypatch.delenv("USERDOMAIN", raising=False)
+    transport = winrm_module._WinRMTransport(
+        WinRMConfig("server", "admin", read_timeout_sec=45)
+    )
+    transport.session
+    del _os
+
+    assert built["timeout"] == 45.0
+
+
+def test_the_transports_own_run_applies_the_manages_status_rule(monkeypatch):
+    """`SystemHost` leaves the flavour's exit epilogue off for a provider
+    that reports its own status; this path composes its own script and used
+    a different rule -- so the native wrapper's `exit` ended the remote
+    pipeline before its marker line could be emitted."""
+    import hostctl.host._winrm as winrm_module
+
+    monkeypatch.setattr(winrm_module.os, "name", "nt")
+    monkeypatch.setenv("USERNAME", "admin")
+    monkeypatch.delenv("USERDOMAIN", raising=False)
+
+    scripts = []
+
+    class _Session:
+        def __init__(self, host, **kwargs):
+            pass
+
+        def run_ps(self, script):
+            scripts.append(script)
+            return type("R", (), {"status_code": 0, "std_out": b"", "std_err": b""})()
+
+    monkeypatch.setattr(winrm_module, "NativeWinRMSession", _Session)
+    transport = winrm_module._WinRMTransport(WinRMConfig("server", "admin"))
+
+    transport.run("cmd /c exit 7", check=False)
+
+    assert scripts
+    assert "exit $" not in scripts[0], scripts[0]

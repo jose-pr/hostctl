@@ -627,8 +627,21 @@ class _ContainerPathMixin(StagedOpenMixin):
         del buffering
         return staged_open(self.backend, str(self), mode, label="container")
 
-    def symlink_to(self, target, target_is_directory: bool = False):
+    def _symlink_target(self, target):
+        """Normalise a `str` target WITH this path's backend.
+
+        `Path._symlink_target` builds `type(self)(target)`, and these
+        classes refuse a construction without a backend -- so the public
+        `symlink_to()` raised `TypeError` before reaching the primitive.
+        """
+        return self.with_segments(target) if isinstance(target, str) else target
+
+    def _symlink_to(self, target, target_is_directory: bool = False):
         """Create this path as a symlink to ``target``.
+
+        The PRIMITIVE: `pathlib_next`'s public wrapper supplies `force=`
+        and target normalisation, which overriding the public name made
+        unreachable.
 
         ``target_is_directory`` exists only for
         :meth:`pathlib.Path.symlink_to` signature parity; it is a local

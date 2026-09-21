@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import dataclasses
 import subprocess
+import uuid
 import typing
 
 from ._common import (
@@ -46,12 +47,24 @@ class _NativeResponse:
 #: report success locally.  Same convention as the PSRP runspace session.
 NATIVE_EXIT_MARKER = "__HOSTCTL_LASTEXITCODE__"
 
+
+def exit_marker() -> str:
+    """A marker no remote output can forge by accident.
+
+    The fixed `__HOSTCTL_LASTEXITCODE__` is a string any command may print --
+    `grep`ping the sources, echoing a log line -- and the wrapper removed
+    that line from stdout and took the number after it as the exit status.
+    A per-call nonce makes a collision require the caller's own output to
+    contain a value it cannot know.
+    """
+    return f"{NATIVE_EXIT_MARKER[:-2]}_{uuid.uuid4().hex}__"
+
+
 #: Runs *inside* the remote script block, appended on its own line so that the
 #: payload's last statement -- comment, `}` or bare expression alike -- cannot
 #: swallow it.
-_NATIVE_EXIT_EPILOGUE = (
-    f"Write-Output ('{NATIVE_EXIT_MARKER}:' + [string]([int]$LASTEXITCODE))"
-)
+def _native_exit_epilogue(marker: str) -> str:
+    return f"Write-Output ('{marker}:' + [string]([int]$LASTEXITCODE))"
 
 
 def _b64(value: str) -> str:
@@ -96,7 +109,7 @@ class NativeWinRMSession:
         else:
             self._skip_ca_check = False
 
-    def _wrapper(self, script: str) -> str:
+    def _wrapper(self, script: str, marker: typing.Optional[str] = None) -> str:
         """Build the local PowerShell program that performs one remote call.
 
         Everything variable is base64 -- the host, the payload, and the exit
@@ -106,6 +119,7 @@ class NativeWinRMSession:
         approach silently did nothing without a port and produced a hashtable
         `Invoke-Command` rejects with one.
         """
+        marker = marker or exit_marker()
         options = [
             "ComputerName=$h",
             "Authentication='Negotiate'",
@@ -129,7 +143,7 @@ class NativeWinRMSession:
             "$s=[Text.Encoding]::UTF8.GetString("
             f"[Convert]::FromBase64String('{_b64(script)}'));"
             "$e=[Text.Encoding]::UTF8.GetString("
-            f"[Convert]::FromBase64String('{_b64(_NATIVE_EXIT_EPILOGUE)}'));"
+            f"[Convert]::FromBase64String('{_b64(_native_exit_epilogue(marker))}'));"
             + prelude
             + "$o=@{"
             + ";".join(options)
@@ -139,7 +153,7 @@ class NativeWinRMSession:
             "$r=Invoke-Command @o -ScriptBlock $b;"
             "$c=[int]$global:LASTEXITCODE;$out=@();"
             "foreach($v in $r){$t=[string]$v;"
-            f"if($t.StartsWith('{NATIVE_EXIT_MARKER}:'))"
+            f"if($t.StartsWith('{marker}:'))"
             "{$c=[int]($t.Split(':')[1])}else{$out+=$v}};"
             "$out;exit $c}"
             "catch{$c=[string]$_.CategoryInfo.Category;"

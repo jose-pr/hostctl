@@ -195,7 +195,10 @@ def test_runspace_capture_exit_consumes_the_marker_line(monkeypatch):
 
         def invoke(self):
             self.pool.scripts.append(self.script)
-            return ["ok", f"__HOSTCTL_LASTEXITCODE__:{self.pool.code}"]
+            # The marker is per call now, so the fake echoes back the one it
+            # was actually given -- which is what a remote shell does.
+            marker = self.script.rsplit("Write-Output ('", 1)[1].split(":'", 1)[0]
+            return ["ok", f"{marker}:{self.pool.code}"]
 
     class Pool:
         def __init__(self, code, had_errors=False):
@@ -229,11 +232,22 @@ def test_runspace_capture_exit_consumes_the_marker_line(monkeypatch):
     pool = Pool(0)
     RunspaceSession(pool=pool).invoke("cmd", capture_exit=True)
     script = pool.scripts[0]
-    assert "__HOSTCTL_LASTEXITCODE__" in script
+    assert "__HOSTCTL_LASTEXITCODE_" in script
     assert script.startswith("$global:LASTEXITCODE=0;")
     assert script.index("$global:LASTEXITCODE=0") < script.index(
-        "__HOSTCTL_LASTEXITCODE__"
+        "__HOSTCTL_LASTEXITCODE_"
     )
+    # On its own LINE: joined with `;`, a payload ending in a `#` comment
+    # commented the epilogue out and the pipeline reported a stale status.
+    assert script.splitlines()[-1].startswith("Write-Output ('__HOSTCTL_LASTEXITCODE_")
+
+
+def test_the_runspace_marker_is_per_call():
+    """The fixed marker is a string any command may print, and the line after
+    it was removed from the output and read as the exit status."""
+    from hostctl.executor.winrm import exit_marker
+
+    assert exit_marker() != exit_marker()
 
 
 def test_runspace_does_not_close_an_injected_pool():
@@ -381,3 +395,62 @@ def test_winrm_provider_backed_host_never_double_wraps_powershell(
     assert "-command" not in sent.casefold()
     assert sent.startswith(script)
     assert result.stdout.strip() == b"9000"
+
+
+def test_an_injected_pool_is_not_reopened_after_close():
+    """`close()` deliberately leaves an injected pool alone, and `connect()`
+    then opened it again -- resetting a pool the caller was still using,
+    which is the reason to inject one at all."""
+
+    class Pool:
+        def __init__(self):
+            self.opens = 0
+
+        def open(self):
+            self.opens += 1
+
+        def close(self):
+            raise AssertionError("an injected pool must not be closed here")
+
+    injected = Pool()
+    session = RunspaceSession(pool=injected)
+    session.connect()
+    session.close()
+    session.connect()
+
+    assert injected.opens == 1
+
+
+def test_two_threads_connecting_build_one_pool(monkeypatch):
+    """Both threads built a pool on a fresh session, and the loser's was
+    opened and then dropped -- an authenticated connection nothing closes."""
+    import threading
+
+    built = []
+
+    class Pool:
+        def __init__(self):
+            built.append(self)
+
+        def open(self):
+            return None
+
+        def close(self):
+            return None
+
+    session = RunspaceSession(config=object())
+    monkeypatch.setattr(session, "_make_pool", Pool)
+
+    barrier = threading.Barrier(4)
+
+    def connect():
+        barrier.wait(5)
+        session.connect()
+
+    threads = [threading.Thread(target=connect) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+
+    assert len(built) == 1

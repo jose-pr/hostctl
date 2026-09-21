@@ -2,6 +2,7 @@
 
 import os
 import stat
+import base64
 import subprocess
 import json
 
@@ -214,7 +215,19 @@ def test_winrm_backend_hostile_path_is_encoded_and_json_stat_is_parsed():
 
 
 @pytest.mark.parametrize("size", [0, 1535, 1536, 1537, 3072])
-def test_winrm_backend_write_chunk_boundaries_stay_within_budget(size):
+@pytest.mark.parametrize(
+    "path",
+    [
+        r"C:\boundary.bin",
+        # A long path: a script's fixed cost is its PRELUDE, which
+        # carries the base64 of the path itself, so a flat reserve was
+        # smaller than the real overhead here and the emitted script
+        # broke the very budget this test exists to check.
+        "C:\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\directory-with-a-long-name\\payload.bin",
+    ],
+    ids=["short", "long"],
+)
+def test_winrm_backend_write_chunk_boundaries_stay_within_budget(size, path):
     scripts = []
 
     def run(script, **kwargs):
@@ -222,7 +235,7 @@ def test_winrm_backend_write_chunk_boundaries_stay_within_budget(size):
         return subprocess.CompletedProcess(script, 0, "", "")
 
     backend = WinRMPathBackend(run)
-    backend.write_bytes(r"C:\boundary.bin", b"x" * size)
+    backend.write_bytes(path, b"x" * size)
     assert all(
         len(script.encode("utf-8")) <= backend.max_script_bytes for script in scripts
     )
@@ -301,3 +314,107 @@ def test_the_old_null_backup_form_is_the_one_that_failed(tmp_path):
 
     assert result.returncode != 0 or "Exception" in result.stderr
     assert target.read_text(encoding="utf-8") == "old"
+
+
+def test_symlink_to_force_reaches_the_backend():
+    """The override took the PUBLIC name, so `pathlib_next`'s wrapper --
+    which is where `force=` (remove an existing entry first) and target
+    normalisation live -- never ran: `symlink_to(target, force=True)`
+    silently ignored `force`."""
+    removed = []
+
+    class _Backend(_MemoryBackend):
+        def symlink(self, path, target):
+            self.files[path] = b""
+
+        def unlink(self, path, *, missing_ok=False):
+            removed.append(path)
+            self.files.pop(path, None)
+
+        def stat(self, path, *, follow_symlinks=True):
+            import stat as stat_module
+
+            from pathlib_next.utils.stat import FileStat
+
+            if path not in self.files:
+                raise FileNotFoundError(path)
+            return FileStat(st_mode=stat_module.S_IFREG | 0o644, st_size=0)
+
+    backend = _Backend()
+    backend.files[r"C:\link"] = b"existing"
+    path = WinRMPath(r"C:\link", backend=backend)
+
+    path.symlink_to(r"C:\target", force=True)
+
+    assert removed == [r"C:\link"]
+
+
+def test_a_mapped_error_carries_errno_and_the_path():
+    """The mapped subclasses were raised with only a message, so
+    `exc.errno == errno.ENOENT` was False and `exc.filename` was None -- a
+    caller had the class and whatever text the remote happened to send."""
+    import errno
+
+    def run(script, **kwargs):
+        marker = base64.b64encode(b"no such file").decode("ascii")
+        return subprocess.CompletedProcess(
+            script, 0, f"HOSTCTL_ERROR:missing:{marker}", ""
+        )
+
+    backend = WinRMPathBackend(run)
+
+    with pytest.raises(FileNotFoundError) as raised:
+        backend.read_bytes(r"C:\absent.txt")
+
+    assert raised.value.errno == errno.ENOENT
+    assert raised.value.filename == r"C:\absent.txt"
+    assert "no such file" in str(raised.value)
+
+
+def test_a_relative_link_target_resolves_against_the_links_directory():
+    r"""Windows resolves a relative link target against the LINK's directory.
+    Re-stating it as an absolute path looked it up from the drive root, so
+    `C:\app\current -> releases\v3` stat'd `releases\v3`."""
+    import stat as stat_module
+
+    seen = []
+
+    class _Backend(WinRMPathBackend):
+        def __init__(self):
+            super().__init__(lambda script, **kwargs: None)
+
+        def _execute(self, path, body, **kwargs):
+            seen.append(path)
+            if path == r"C:\app\current":
+                return json.dumps({"mode": "l", "link": True, "target": r"releases\v3"})
+            return json.dumps({"mode": "d", "size": 0})
+
+        def _stat_value(self, value):
+            if value.get("link"):
+                return FileStat(st_mode=stat_module.S_IFLNK | 0o777)
+            return FileStat(st_mode=stat_module.S_IFDIR | 0o755, is_dir=True)
+
+    backend = _Backend()
+    backend.stat(r"C:\app\current", follow_symlinks=True)
+
+    assert seen == [r"C:\app\current", r"C:\app\releases\v3"]
+
+
+def test_a_self_referential_link_stops_rather_than_recursing():
+    import errno
+    import stat as stat_module
+
+    class _Backend(WinRMPathBackend):
+        def __init__(self):
+            super().__init__(lambda script, **kwargs: None)
+
+        def _execute(self, path, body, **kwargs):
+            return json.dumps({"mode": "l", "link": True, "target": path})
+
+        def _stat_value(self, value):
+            return FileStat(st_mode=stat_module.S_IFLNK | 0o777)
+
+    with pytest.raises(OSError) as raised:
+        _Backend().stat(r"C:\loop", follow_symlinks=True)
+
+    assert raised.value.errno == errno.ELOOP

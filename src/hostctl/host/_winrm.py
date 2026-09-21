@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import errno
 import io
 import json
+import ntpath
 import logging
 import os
 import stat as _stat
@@ -211,10 +213,16 @@ class _WinRMTransport:
         self.config = config
         self._session: typing.Optional[WinRMSession] = None
         self._runspace: typing.Optional[RunspaceSession] = None
+        # `auto` prefers the NATIVE current-context path when it applies --
+        # a password-free config on Windows -- because that is what the docs
+        # promise ("a password-free WinRM config uses native current-context
+        # PowerShell remoting"). Installing `hostctl[psrp]` used to silently
+        # take that away: PSRP won every `auto`, and PSRP needs a credential.
+        native = self.config.password is None and os.name == "nt"
         self._provider = (
             "psrp"
             if self.config.provider == "psrp"
-            or (self.config.provider == "auto" and pypsrp_available())
+            or (self.config.provider == "auto" and not native and pypsrp_available())
             else "pywinrm"
         )
         self._executor = WinRMExecutor(
@@ -230,7 +238,7 @@ class _WinRMTransport:
         #: `__HOSTCTL_LASTEXITCODE__` marker line, so the flavour's
         #: `; exit $LASTEXITCODE` epilogue must not be appended -- the `exit`
         #: ends the remote pipeline before the marker can be emitted.
-        self._native_session = self.config.password is None and os.name == "nt"
+        self._native_session = native and self._provider != "psrp"
         script_budget = (
             256_000
             if self._provider == "psrp" or self._native_session
@@ -304,7 +312,12 @@ class _WinRMTransport:
                     self.config.host,
                     ssl=self.config.ssl,
                     port=self.config.port,
-                    timeout=None,
+                    # The config's read timeout IS the deadline here: the
+                    # local powershell.exe relays the call, so its own wall
+                    # clock is the only bound available. `timeout=None` left
+                    # the native path with no deadline at all while the
+                    # config validated one.
+                    timeout=float(self.config.read_timeout_sec),
                     transport=self.config.transport,
                     server_cert_validation=self.config.server_cert_validation,
                     message_encryption=self.config.message_encryption,
@@ -413,7 +426,18 @@ class _WinRMTransport:
         if direct is not None:
             command, args = direct
             cmds = ((command, *args),)
-        script = POWERSHELL.script(cmds, cwd=cwd, env=env)
+        # `for_session` when the session reports its own status: the native
+        # wrapper carries the remote code back on its marker line, and the
+        # flavour's own `exit` epilogue ends the remote pipeline BEFORE that
+        # marker can be emitted. `SystemHost` applies this rule from the
+        # provider's `manages_status` capability; this path composes its own
+        # script and has to apply the same rule rather than a different one.
+        script = POWERSHELL.script(
+            cmds,
+            cwd=cwd,
+            env=env,
+            for_session=ExecutorCapability.MANAGES_STATUS.value in self.capabilities,
+        )
         return self.executor(
             script,
             bufsize=bufsize,
@@ -528,14 +552,18 @@ class WinRMPathBackend:
                     message = message.decode("utf-8", "replace")
                 detail = message
                 kind = "oserror"
-            error_type = {
-                "missing": FileNotFoundError,
-                "permission": PermissionError,
-                "exists": FileExistsError,
-                "isdir": IsADirectoryError,
-                "notdir": NotADirectoryError,
-            }.get(kind, OSError)
-            raise error_type(detail or path)
+            error_type, code = {
+                "missing": (FileNotFoundError, errno.ENOENT),
+                "permission": (PermissionError, errno.EACCES),
+                "exists": (FileExistsError, errno.EEXIST),
+                "isdir": (IsADirectoryError, errno.EISDIR),
+                "notdir": (NotADirectoryError, errno.ENOTDIR),
+            }.get(kind, (OSError, errno.EIO))
+            # The full tuple: an `OSError` with no `errno` and no `filename`
+            # cannot be handled generically (`exc.errno == errno.ENOENT`) and
+            # cannot name the path in a message -- a caller had only the
+            # class and whatever text the remote happened to send.
+            raise error_type(code, detail or "remote error", path)
         return output
 
     @staticmethod
@@ -566,7 +594,9 @@ class WinRMPathBackend:
             st_mtime=typing.cast(int, value["mtime"]),
         )
 
-    def stat(self, path: str, *, follow_symlinks: bool = True) -> FileStat:
+    def stat(
+        self, path: str, *, follow_symlinks: bool = True, _hops: int = 8
+    ) -> FileStat:
         body = (
             self._metadata_script("Get-Item -LiteralPath $p -Force")
             + "|ConvertTo-Json -Compress"
@@ -577,9 +607,19 @@ class WinRMPathBackend:
             target = typing.cast(str, value.get("target") or "")
             if not target:
                 raise OSError(f"cannot resolve reparse point: {path}")
+            # A link's target is stored as written, and Windows resolves a
+            # relative one against the LINK's directory. Re-stating it as an
+            # absolute path looked it up from the drive root instead, so
+            # `C:\app\current -> releases\v3` stat'd `releases\v3`.
+            if not ntpath.isabs(target) and not target.startswith("\\\\"):
+                target = ntpath.join(ntpath.dirname(path), target)
+            if _hops <= 0:
+                raise OSError(errno.ELOOP, "too many levels of symbolic links", path)
             try:
-                return self.stat(target, follow_symlinks=True)
+                return self.stat(target, follow_symlinks=True, _hops=_hops - 1)
             except OSError as exc:
+                if getattr(exc, "errno", None) == errno.ELOOP:
+                    raise
                 raise OSError(f"cannot resolve reparse point: {path}") from exc
         return result
 
@@ -645,7 +685,19 @@ class WinRMPathBackend:
             batch: typing.List[str] = []
             batch_size = 0
             payload_size = min(self.chunk_size, 1536)
-            script_budget = max(1024, self.max_script_bytes - 1_200)
+            # MEASURED, not guessed: the fixed cost is this path's own
+            # prelude, which carries the base64 of the path itself. A flat
+            # 1200-byte reserve was smaller than that for a long path, so the
+            # emitted script exceeded the very budget this loop exists to
+            # respect, and the command line was rejected by the far end.
+            overhead = len(self._script(temporary, "", target=path).encode("utf-8"))
+            script_budget = self.max_script_bytes - overhead
+            if script_budget < payload_size * 2:
+                raise OSError(
+                    f"the WinRM script budget ({self.max_script_bytes} bytes) "
+                    f"cannot hold this path's prelude ({overhead} bytes); "
+                    "raise max_script_bytes or use a shorter path"
+                )
             for offset in range(0, len(value), payload_size):
                 encoded = base64.b64encode(
                     value[offset : offset + payload_size]
@@ -894,8 +946,23 @@ class WinRMPath(StagedOpenMixin, WindowsPathname, Path):
         del buffering
         return staged_open(self.backend, str(self), mode, label="WinRM")
 
-    def symlink_to(self, target, target_is_directory: bool = False):
+    def _symlink_target(self, target):
+        """Normalise a `str` target WITH this path's backend.
+
+        `Path._symlink_target` builds `type(self)(target)`, and these
+        classes refuse a construction without a backend -- so the public
+        `symlink_to()` raised `TypeError` before reaching the primitive.
+        """
+        return self.with_segments(target) if isinstance(target, str) else target
+
+    def _symlink_to(self, target, target_is_directory: bool = False):
         """Create this path as a symbolic link to ``target``.
+
+        The PRIMITIVE, not the public method: `pathlib_next`'s wrapper adds
+        `force=` (remove an existing entry first) and normalises a `str`
+        target without re-parsing it as URI syntax. Overriding the public
+        name made both unreachable, so `symlink_to(target, force=True)`
+        silently ignored `force`.
 
         Windows only permits this from an elevated session or with
         Developer Mode enabled; otherwise the backend raises

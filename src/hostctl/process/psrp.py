@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import threading
 import types
 import typing
 
@@ -88,6 +89,11 @@ class RunspaceSession:
         self._pool = pool
         self._owns_pool = pool is None
         self._open = False
+        #: Whether this session has ever opened its pool; see `connect`.
+        self._opened = False
+        #: Guards `connect()`/`close()`: a provider owns its own locking, and
+        #: two threads on a fresh session each built and opened a pool.
+        self._lifecycle = threading.RLock()
 
     def _make_pool(self) -> object:
         if self._pool is not None:
@@ -128,15 +134,29 @@ class RunspaceSession:
         return RunspacePool(wsman)
 
     def connect(self) -> None:
-        if self._open:
-            return
-        self._pool = self._make_pool()
-        open_method = getattr(self._pool, "open", None)
-        if open_method is not None:
-            open_method()
-        self._open = True
+        # One lock: two threads calling `connect()` on a fresh session each
+        # built a pool, and the loser's pool was opened and then dropped --
+        # an authenticated connection nothing closes.
+        with self._lifecycle:
+            if self._open:
+                return
+            if self._pool is None:
+                self._pool = self._make_pool()
+            open_method = getattr(self._pool, "open", None)
+            # An injected pool is opened ONCE, on the first connect. Opening
+            # it again after a `close()` -- which deliberately leaves an
+            # injected pool alone -- reset a pool the caller was still using
+            # elsewhere, which is the reason to inject one at all.
+            if open_method is not None and (self._owns_pool or not self._opened):
+                open_method()
+            self._opened = True
+            self._open = True
 
     def close(self) -> None:
+        with self._lifecycle:
+            self._close_locked()
+
+    def _close_locked(self) -> None:
         if not self._open and self._pool is None:
             return
         pool = self._pool
@@ -185,7 +205,12 @@ class RunspaceSession:
             script_text = "& {} {}".format(command, values)
         else:
             script_text = str(script)
-        marker = "__HOSTCTL_LASTEXITCODE__"
+        from ..executor.winrm import exit_marker
+
+        # A per-call nonce, for the same reason the native wrapper uses one:
+        # the fixed marker is a string any command may print, and the line
+        # after it was removed from stdout and read as the exit status.
+        marker = exit_marker()
         if capture_exit:
             # Reset first: this runspace is persistent, so `$LASTEXITCODE`
             # survives from one pipeline to the next. A pure-PowerShell
@@ -193,9 +218,14 @@ class RunspaceSession:
             # *native* command had left behind -- a succeeding command raising
             # CalledProcessError with a stale status.
             # `NativeWinRMSession._wrapper` resets it for the same reason.
+            # The epilogue goes on its OWN LINE: joined with `;` after the
+            # payload, a script ending in a `#` comment commented it out,
+            # and the pipeline then reported whatever status the previous
+            # one had left behind.
             script_text = (
-                f"$global:LASTEXITCODE=0; {script_text}; "
-                f"Write-Output ('{marker}:' + [string]([int]$LASTEXITCODE))"
+                f"$global:LASTEXITCODE=0; {script_text}"
+                + "\n"
+                + f"Write-Output ('{marker}:' + [string]([int]$LASTEXITCODE))"
             )
         from pypsrp.powershell import PowerShell
 
