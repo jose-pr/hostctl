@@ -66,7 +66,17 @@ class PowerShellFlavour(ShellFlavour):
     default_executable = "powershell.exe"
     command_separator = ";"
     context_order = ("cwd", "env", "command")
-    execution_epilogue = "; exit $LASTEXITCODE"
+    # Both channels, on a line of its own. `$LASTEXITCODE` alone is set only
+    # by NATIVE commands: a pure-cmdlet script that failed left it $null, and
+    # `exit $null` is 0 -- so `Get-Item <missing>` returned success and
+    # check=True never fired. It is also stale, so a native failure followed
+    # by a successful cmdlet reported the native code. `$?` covers the cmdlet
+    # half and `$LASTEXITCODE` keeps a native command's real code. The
+    # leading newline is not cosmetic: appended after `;` on the same line, a
+    # script ending in a `#` comment commented the whole epilogue out.
+    execution_epilogue = (
+        "\nexit $(if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 })"
+    )
     structured_command_prefix = "& "
     path_flavor = PureWindowsPath
     info_script = (

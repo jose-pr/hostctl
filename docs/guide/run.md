@@ -104,18 +104,27 @@ host.run(Path("/bin/a"), Path("/bin/b"))       # two shell commands
 
 ### Validation
 
-An empty structured command and any control character (including a newline
-inside a value, which could otherwise smuggle in a second command) raise
-`ValueError`. An empty raw string is skipped when joining.
+An empty structured command raises `ValueError`, and so does a control
+character in a *value* -- including a newline, which could otherwise smuggle
+in a second command. Raw strings are shell source rather than values, so they
+may span lines; NUL and the other non-whitespace control characters are still
+refused. An empty raw string is skipped when joining.
 
 ### PowerShell targets
 
 PowerShell flavours render a structured command through the `&` call operator
-and append `; exit $LASTEXITCODE` so the remote status propagates:
+and append an exit epilogue so the remote status propagates:
 
 ```
-& 'Get-Item' 'C:/a b'; exit $LASTEXITCODE
+& 'Get-Item' 'C:/a b'
+exit $(if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 })
 ```
+
+Both channels are consulted because `$LASTEXITCODE` is set only by *native*
+commands: a failing cmdlet leaves it `$null` (so `exit $LASTEXITCODE` reported
+success), and it goes stale, so a native failure followed by a successful
+cmdlet reported the old code. The epilogue is on its own line so a script
+ending in a `#` comment cannot swallow it.
 
 `run()` returns a `subprocess.CompletedProcess`. Highlights:
 

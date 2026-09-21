@@ -165,5 +165,5 @@ def test_powershell_structured_command_still_renders_through_the_call_operator()
     # `Exec` changes direct execution only; structured commands are untouched.
     assert (
         POWERSHELL.script([["Get-Item", "C:/a b"]])
-        == "& 'Get-Item' 'C:/a b'; exit $LASTEXITCODE"
+        == "& 'Get-Item' 'C:/a b'" + POWERSHELL.execution_epilogue
     )

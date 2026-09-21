@@ -141,6 +141,9 @@ class ShellSession(Process):
         return self.process.__exit__(exc_type, exc_value, traceback)
 
 
+#: Control characters that are ordinary syntax in raw shell source.
+_RAW_WHITESPACE = frozenset(("\t", "\n", "\r"))
+
 class ShellFlavour(abc.ABC):
     """Construct scripts and commands for one explicitly selected target shell."""
 
@@ -178,6 +181,26 @@ class ShellFlavour(abc.ABC):
         if any(ord(char) < 32 or ord(char) == 127 for char in text):
             raise ValueError("shell values cannot contain control characters")
         return text
+
+    @staticmethod
+    def _raw_source(value: str) -> str:
+        """Validate raw shell *source*, which is not a value.
+
+        A quoted value must not carry control characters -- that is what
+        `_text` enforces. Raw text is the opposite case: it is shell source
+        the caller wrote deliberately, where a newline is ordinary syntax
+        (and where a generated script, such as PowerShell's multi-line exit
+        epilogue, may legitimately be handed back for a second render). Only
+        NUL and the other non-whitespace control characters are refused --
+        nothing in any supported shell needs them and they defeat terminal
+        and log inspection.
+        """
+        if any(
+            (ord(char) < 32 and char not in _RAW_WHITESPACE) or ord(char) == 127
+            for char in value
+        ):
+            raise ValueError("shell text cannot contain control characters")
+        return value
 
     @abc.abstractmethod
     def quote(self, value: object) -> str:
@@ -220,7 +243,7 @@ class ShellFlavour(abc.ABC):
         if isinstance(value, (bytes, PurePath, Path, os.PathLike)):
             return self.quote(value)
         if isinstance(value, str):
-            return self._text(value)
+            return self._raw_source(value)
         if isinstance(value, collections.abc.Iterable):
             values = tuple(value)
             if not values:

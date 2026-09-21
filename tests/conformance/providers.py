@@ -143,8 +143,13 @@ class _FakeSshChannel:
     """
 
     def __init__(self, command):
+        # The Windows fake speaks PowerShell, because `FakeSshHost` renders
+        # with the PowerShell flavour there. Running that text through
+        # `cmd.exe` was a double narrower than reality: it silently accepted
+        # a script no real target would have run, and reported a status for
+        # a shell that never saw the command.
         argv = (
-            ["cmd.exe", "/c", command]
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command]
             if os.name == "nt"
             else ["/bin/sh", "-c", command]
         )

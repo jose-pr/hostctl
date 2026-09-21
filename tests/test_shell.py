@@ -279,7 +279,7 @@ def test_shell_environment_invalid_bytes_key_is_value_error():
 def test_powershell_execution_has_native_exit_status_epilogue():
     calls = []
     Shell(POWERSHELL, calls.append).run("Write-Output ok")
-    assert calls[-1].endswith("; exit $LASTEXITCODE")
+    assert calls[-1].endswith(POWERSHELL.execution_epilogue)
 
 
 def test_cmd_disables_delayed_expansion_and_batch_percent_doubling():
@@ -359,7 +359,8 @@ def test_powershell_7_supports_pipeline_chain_operators():
         PWSH.script(
             (("Write-Output", "first"), ShellOperator.AND, ("Write-Output", "second"))
         )
-        == "& 'Write-Output' 'first' && & 'Write-Output' 'second'; exit $LASTEXITCODE"
+        == "& 'Write-Output' 'first' && & 'Write-Output' 'second'"
+        + PWSH.execution_epilogue
     )
 
 

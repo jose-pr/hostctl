@@ -387,7 +387,8 @@ def test_a_status_managing_provider_gets_a_script_without_the_epilogue():
     """The consequence the capability exists for, at the flavour boundary."""
     from hostctl.shell import POWERSHELL
 
-    assert POWERSHELL.script(("cmd /c exit 7",)).endswith("; exit $LASTEXITCODE")
+    epilogue = POWERSHELL.execution_epilogue
+    assert POWERSHELL.script(("cmd /c exit 7",)).endswith(epilogue)
     assert not POWERSHELL.script(("cmd /c exit 7",), for_session=True).endswith(
-        "; exit $LASTEXITCODE"
+        epilogue
     )
