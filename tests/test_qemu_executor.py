@@ -221,7 +221,7 @@ def test_a_missing_guest_program_is_a_filenotfounderror():
     """
     executor = QemuExecutor(
         lambda: _RefusingTransport(
-            "Failed to execute child process \"/usr/bin/absent\": "
+            'Failed to execute child process "/usr/bin/absent": '
             "No such file or directory"
         ),
         sleep=lambda _: None,
@@ -237,7 +237,7 @@ def test_a_missing_guest_program_is_a_filenotfounderror():
 def test_a_refused_guest_program_is_a_permissionerror():
     executor = QemuExecutor(
         lambda: _RefusingTransport(
-            "Failed to execute child process \"/root/tool\": Permission denied"
+            'Failed to execute child process "/root/tool": Permission denied'
         ),
         sleep=lambda _: None,
     )

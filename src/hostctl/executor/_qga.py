@@ -444,6 +444,10 @@ class LibvirtGuestAgentTransport:
         self._connection: typing.Optional[object] = None
         self._domain: typing.Optional[object] = None
         self._ids = itertools.count(1)
+        # `connect()` is reached from every `execute()`, so two threads
+        # using one transport each opened a libvirt connection and one was
+        # then overwritten still open.
+        self._lock = threading.RLock()
 
     def __enter__(self) -> LibvirtGuestAgentTransport:
         self.connect()
@@ -459,6 +463,12 @@ class LibvirtGuestAgentTransport:
         return False
 
     def connect(self) -> None:
+        if self._domain is not None:
+            return
+        with self._lock:
+            self._connect_locked()
+
+    def _connect_locked(self) -> None:
         if self._domain is not None:
             return
         connect_factory = self._connect_factory

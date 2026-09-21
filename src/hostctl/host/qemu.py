@@ -7,6 +7,7 @@ import binascii
 import dataclasses
 import io
 import subprocess
+import threading
 import typing
 import warnings
 import uuid
@@ -92,6 +93,13 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
     socket_path: typing.Optional[str] = None
     ssh: typing.Optional[SshConfig] = dataclasses.field(default=None, repr=False)
     agent_timeout: float = 10.0
+    #: Largest QGA reply this host will accept, in bytes. qemu-ga caps its
+    #: own captured output at 16 MiB per stream and sends it Base64-encoded
+    #: inside JSON, so a command producing that much needed roughly 21 MiB
+    #: of reply to survive -- against a hard-wired 8 MiB the transports
+    #: could not be told to raise. A rejected reply is not recoverable: the
+    #: output is already gone.
+    max_reply_size: int = 48 * 1024 * 1024
     dialect: QemuShellSelection = "auto"
     path_flavor: QemuPathSelection = "auto"
     transport_factory: typing.Optional[typing.Callable[[], GuestAgentTransport]] = (
@@ -118,6 +126,8 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             raise ValueError(f"unsupported QEMU transport: {self.transport}")
         if self.agent_timeout <= 0:
             raise ValueError("agent_timeout must be positive")
+        if self.max_reply_size <= 0:
+            raise ValueError("max_reply_size must be positive")
         if self.transport == "unix" and not self.socket_path:
             raise ValueError("unix QGA transport requires socket_path")
         if self.transport == "ssh" and self.ssh is None:
@@ -156,6 +166,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         )
         query: typing.Dict[str, object] = {
             "agent_timeout": self.agent_timeout,
+            "max_reply_size": self.max_reply_size,
             "dialect": dialect,
             "path_flavor": path_flavor,
         }
@@ -190,6 +201,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
                 "connection",
                 "dialect",
                 "domain",
+                "max_reply_size",
                 "path_flavor",
                 "socket_path",
             ),
@@ -198,8 +210,13 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             timeout = float(query.get("agent_timeout", "10"))
         except ValueError as exc:
             raise ValueError("agent_timeout must be numeric") from exc
+        try:
+            max_reply_size = int(query.get("max_reply_size", cls.max_reply_size))
+        except ValueError as exc:
+            raise ValueError("max_reply_size must be an integer") from exc
         common = {
             "agent_timeout": timeout,
+            "max_reply_size": max_reply_size,
             "dialect": (
                 "auto"
                 if query.get("dialect", "auto") == "auto"
@@ -260,17 +277,30 @@ class QemuHost(Host):
 
     def __init__(self, config: QemuConfig) -> None:
         self.config = config
+        # Lazy initialisation is racy without this. Two threads reaching
+        # `transport` first each built a transport, each opened its own SSH
+        # connection, and the loser's was dropped on the floor still open --
+        # a connection nobody owned and `close()` could not reach.
+        self._lock = threading.RLock()
         self._transport: typing.Optional[GuestAgentTransport] = None
         self._ssh_transport: typing.Optional[_SshTransport] = None
         self._commands: typing.Optional[typing.FrozenSet[str]] = None
         self._os_info: typing.Mapping[str, object] = {}
         self._hostname: typing.Optional[str] = None
-        self._executor = QemuExecutor(lambda: self.transport)
+        self._executor = QemuExecutor(
+            lambda: self.transport, agent_timeout=config.agent_timeout
+        )
         self._path_backend: typing.Optional[QgaPathBackend] = None
         self._path_provider: typing.Optional[object] = None
 
     @property
     def transport(self) -> GuestAgentTransport:
+        if self._transport is not None:
+            return self._transport
+        with self._lock:
+            return self._build_transport()
+
+    def _build_transport(self) -> GuestAgentTransport:
         if self._transport is None:
             if self.config.transport_factory is not None:
                 self._transport = self.config.transport_factory()
@@ -284,6 +314,7 @@ class QemuHost(Host):
                 self._transport = UnixSocketGuestAgentTransport(
                     typing.cast(str, self.config.socket_path),
                     timeout=self.config.agent_timeout,
+                    max_reply_size=self.config.max_reply_size,
                 )
             else:
                 ssh_transport = typing.cast(
@@ -305,6 +336,7 @@ class QemuHost(Host):
                     socket_path,
                     lambda: ssh_transport.ssh,
                     timeout=self.config.agent_timeout,
+                    max_reply_size=self.config.max_reply_size,
                 )
         return self._transport
 
@@ -338,6 +370,12 @@ class QemuHost(Host):
         return self.config.serial_console.open()
 
     def connect(self) -> None:
+        if self._commands is not None:
+            return
+        with self._lock:
+            self._discover()
+
+    def _discover(self) -> None:
         if self._commands is not None:
             return
         transport = self.transport
@@ -378,11 +416,22 @@ class QemuHost(Host):
         self._commands = discovered
 
     def close(self) -> None:
+        with self._lock:
+            self._close_locked()
+
+    def _close_locked(self) -> None:
         self._commands = None
         self._os_info = {}
         self._hostname = None
-        self._path_backend = None
+        backend, self._path_backend = self._path_backend, None
         self._path_provider = None
+        if backend is not None:
+            # A path handed out earlier still holds this backend, and the
+            # backend still holds the transport. Dropping the host's
+            # reference did nothing to that path: its next operation
+            # reconnected the transport -- a fresh SSH connection nobody
+            # owned and no `close()` could reach.
+            backend.invalidate()
         transport, self._transport = self._transport, None
         ssh, self._ssh_transport = self._ssh_transport, None
         try:
@@ -595,12 +644,19 @@ class QgaPathBackend:
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
         self.transport = transport
+        self._closed = False
         self.supported_commands = frozenset(supported_commands)
         self.helper = helper
         self.timeout = timeout
         self.chunk_size = chunk_size
 
+    def invalidate(self) -> None:
+        """Refuse further work: the host that owned this backend is closed."""
+        self._closed = True
+
     def _require(self, commands: typing.Iterable[str]) -> None:
+        if self._closed:
+            raise ValueError("the QEMU host that owns this path is closed")
         missing = set(commands) - self.supported_commands
         if missing:
             values = ", ".join(sorted(missing))
@@ -789,6 +845,8 @@ class QgaPathBackend:
             raise
 
     def _helper_method(self, operation: str):
+        if self._closed:
+            raise ValueError("the QEMU host that owns this path is closed")
         if self.helper is None:
             raise NotImplementedError(
                 f"QGA {operation} requires a positively probed guest helper"

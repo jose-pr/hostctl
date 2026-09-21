@@ -85,6 +85,7 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
         self,
         transport: typing.Callable[[], GuestAgentTransport],
         *,
+        agent_timeout: typing.Optional[float] = None,
         poll_interval: float = 0.01,
         max_poll_interval: float = 0.25,
         clock: typing.Callable[[], float] = time.monotonic,
@@ -94,6 +95,15 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
             raise ValueError("poll_interval must be positive")
         if max_poll_interval < poll_interval:
             raise ValueError("max_poll_interval must be at least poll_interval")
+        if agent_timeout is not None and agent_timeout <= 0:
+            raise ValueError("agent_timeout must be positive")
+        #: How long ONE guest-agent round trip may take. Every RPC here
+        #: answers immediately when the agent is healthy -- `guest-exec`
+        #: returns a pid, `guest-exec-status` a snapshot -- so a request
+        #: that does not come back is a wedged agent, not a slow command.
+        #: Passing the command's whole `timeout=` down meant a `timeout=600`
+        #: build could not notice a dead agent for ten minutes.
+        self._agent_timeout = agent_timeout
         self._transport = transport
         self._poll_interval = poll_interval
         self._max_poll_interval = max_poll_interval
@@ -229,9 +239,26 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
         timeout: typing.Optional[float] = None,
     ) -> object:
         remaining = self._remaining(deadline, command, timeout=timeout)
+        budget = remaining
+        if self._agent_timeout is not None:
+            budget = (
+                self._agent_timeout
+                if remaining is None
+                else min(remaining, self._agent_timeout)
+            )
         try:
-            return self._transport().execute(request, timeout=remaining)
+            return self._transport().execute(request, timeout=budget)
         except (TimeoutError, subprocess.TimeoutExpired) as exc:
+            if remaining is None or (budget is not None and budget < remaining):
+                # The agent's own deadline expired while the command still
+                # had time left: the guest agent is not answering. That is a
+                # different failure from "the command ran too long", and
+                # reporting it as a command timeout hid a wedged agent
+                # behind whatever deadline the caller happened to pass.
+                raise ConnectionError(
+                    "the guest agent stopped responding to "
+                    f"{request.get('execute')!r} within {budget}s"
+                ) from exc
             raise expired(
                 command,
                 remaining,
@@ -268,6 +295,18 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
             except subprocess.TimeoutExpired as exc:
                 self._annotate_timeout(exc, pid, timeout, partial_out, partial_err)
                 raise
+            except QgaProtocolError as exc:
+                if "size limit" not in str(exc):
+                    raise
+                # The reply was refused whole, so the captured output is
+                # gone -- there is no second chance to ask for it, and the
+                # bare "reply exceeded size limit" named neither the
+                # process nor the setting that would have admitted it.
+                raise GuestAgentProtocolError(
+                    f"the guest-exec-status reply for pid {pid} exceeded the "
+                    "QGA reply size limit and its captured output was lost; "
+                    "raise max_reply_size on the host config"
+                ) from exc
             if not isinstance(result, typing.Mapping):
                 raise GuestAgentProtocolError(
                     "guest-exec-status returned a non-object result"
