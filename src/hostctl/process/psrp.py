@@ -56,6 +56,23 @@ def _pipeline_state_name(value: object) -> str:
     return str(value)
 
 
+#: `WinRMConfig.transport` spelled the way pypsrp's WSMan names it.
+#:
+#: The pool used to hardcode "negotiate", so a config that validates and
+#: advertises `credssp` (or `basic`) authenticated with Negotiate instead --
+#: and the same config behaved differently depending only on whether the psrp
+#: extra happened to be installed. `plaintext` is pywinrm's name for basic
+#: over http, and `ssl` is its name for certificate auth.
+_PSRP_AUTH = {
+    "basic": "basic",
+    "plaintext": "basic",
+    "credssp": "credssp",
+    "kerberos": "kerberos",
+    "ntlm": "ntlm",
+    "ssl": "certificate",
+}
+
+
 class RunspaceSession:
     """A persistent PSRP runspace with typed PowerShell pipeline streams.
 
@@ -90,7 +107,9 @@ class RunspaceSession:
             "username": getattr(config, "username"),
             "password": getattr(config, "password", None),
             "ssl": ssl,
-            "auth": "negotiate",
+            "auth": _PSRP_AUTH.get(
+                str(getattr(config, "transport", "") or "").casefold(), "negotiate"
+            ),
             "cert_validation": getattr(config, "server_cert_validation", "validate")
             == "validate",
             "encryption": getattr(config, "message_encryption", "auto"),

@@ -472,8 +472,20 @@ class WinRMPathBackend:
         values.append(
             "try {" + body + "} catch {"
             "$e=$_.Exception;"
+            # PowerShell wraps a .NET static-method failure in a
+            # MethodInvocationException whose category is NotSpecified, so
+            # every test below used to miss and every error from an
+            # `[IO.File]`/`[IO.Directory]` body degraded to bare OSError. The
+            # worst of it: read_bytes() on a missing file raised OSError, which
+            # defeats staged_open's `except FileNotFoundError`, so open("ab")
+            # on a missing file raised instead of creating it.
+            "while($e.InnerException -and ($e -is "
+            "[System.Management.Automation.MethodInvocationException]))"
+            "{$e=$e.InnerException};"
             "$c=[string]$_.CategoryInfo.Category;"
-            "$k=if($c -eq 'ObjectNotFound'){'missing'}"
+            "$k=if([IO.Directory]::Exists($p) -and "
+            "($e -is [UnauthorizedAccessException])){'isdir'}"
+            "elseif($c -eq 'ObjectNotFound'){'missing'}"
             "elseif($c -eq 'PermissionDenied' -or "
             "$e -is [UnauthorizedAccessException]){'permission'}"
             "elseif($c -eq 'ResourceExists'){'exists'}"
@@ -568,7 +580,13 @@ class WinRMPathBackend:
         return result
 
     def scandir(self, path: str) -> typing.List[typing.Tuple[str, FileStat]]:
-        current = self.stat(path, follow_symlinks=False)
+        # Follow the link, as `os.scandir` and `pathlib.Path.iterdir` do. The
+        # guard used to stat without following, and every reparse point is
+        # reported as S_IFLNK whatever it points at -- so listing a directory
+        # symlink or a junction (a redirected profile folder, a DFS-style
+        # mount point, "C:\Users\All Users") raised NotADirectoryError while
+        # `is_dir()` on the same path returned True.
+        current = self.stat(path, follow_symlinks=True)
         if not _stat.S_ISDIR(current.st_mode):
             raise NotADirectoryError(path)
         metadata = self._metadata_script("$_")
