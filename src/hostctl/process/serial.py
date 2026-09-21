@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import threading
 import types
@@ -53,10 +54,22 @@ class SerialProcess(Process):
                 raise
             raise normalized from exc
 
-    def read(self, size: int = -1) -> bytes:
+    def read(self, size: int = -1, *, timeout: typing.Optional[float] = None) -> bytes:
+        """Read up to `size` bytes, bounded by `timeout` when one is given.
+
+        The port's own `timeout` is what actually bounds a backend read, and
+        `SerialConfig(read_timeout=None)` -- a supported setting that
+        round-trips through the URI -- is pyserial's "block forever". A
+        caller's `run(timeout=)` was only checked *between* reads, so such a
+        host blocked inside the backend instead of raising `TimeoutExpired`.
+        The port setting is clamped for the duration of this read and then
+        restored; a backend that has no settable `timeout` is read as before.
+        """
         self._require_open()
         if size < -1:
             raise ValueError("read size must be -1 or non-negative")
+        if timeout is not None and timeout < 0:
+            raise ValueError("read timeout must not be negative")
         if size == -1:
             available = getattr(self._serial, "in_waiting", None)
             if available is not None:
@@ -70,9 +83,31 @@ class SerialProcess(Process):
                 size = 1
         try:
             with self._io_lock:
-                return self._serial.read(size)
+                with self._bounded(timeout):
+                    return self._serial.read(size)
         except Exception as exc:
             raise_normalized(exc, normalize_serial_error)
+
+    @contextlib.contextmanager
+    def _bounded(self, timeout: typing.Optional[float]):
+        if timeout is None or not hasattr(self._serial, "timeout"):
+            yield
+            return
+        previous = self._serial.timeout
+        try:
+            self._serial.timeout = timeout
+        except Exception:
+            # A read-only or exotic backend attribute: fall back to whatever
+            # the port was configured with rather than failing the read.
+            yield
+            return
+        try:
+            yield
+        finally:
+            try:
+                self._serial.timeout = previous
+            except Exception:
+                pass
 
     def read_stderr(self, size: int = -1) -> bytes:
         raise NotImplementedError("serial has one merged byte stream")

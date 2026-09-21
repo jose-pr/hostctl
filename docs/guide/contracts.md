@@ -73,6 +73,7 @@ they advertise.
 | Provider/operation | Deliberate divergence | Rationale |
 | --- | --- | --- |
 | Serial transport | raw profiles expose sessions only; prompt profiles opt into `run` only with explicit status framing; no filesystem | A serial byte stream has no portable command protocol. Profiles own login, prompts, line endings, and completion markers. |
+| Serial framed `run()` | output past `max_buffer` raises instead of truncating | A console transcript cut from the front mid-line and returned as complete is a corrupt result reported as success, and `error_patterns` in the discarded part stopped setting a status. The cap is a profile setting; raising it is the caller's decision to make, not the library's to make silently. |
 | Serial process `read(-1)` | returns bytes currently reported as available, capped at 64 KiB, rather than waiting for EOF | Physical and network serial ports normally have no EOF until disconnected; waiting for EOF would make interactive sessions unusable. |
 | WinRM persistent process | `spawn`/TTY unavailable | WinRM's buffered command API does not expose a durable bidirectional stream. |
 | `run(check=)` and `run(capture_output=)` | both default to `True`, where `subprocess.run` defaults them to `False` | A remote command that fails is an error by default rather than a return value a caller may forget to inspect, and its output is captured rather than inherited by a process that may have no console. Pass `check=False` to read `returncode` yourself. |

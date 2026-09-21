@@ -188,3 +188,23 @@ def test_prompt_profile_uses_status_parser():
     with pytest.raises(subprocess.CalledProcessError) as raised:
         host.run("cmd")
     assert raised.value.returncode == 7
+
+
+def test_closing_a_host_under_a_live_session_releases_the_lease():
+    """`SerialHost.close()` closed the port without releasing the exclusive
+    lease, so a session the caller did not close -- an exception inside
+    `with host:` is enough -- held it forever, and every later `connect()`,
+    `spawn()` and `run()` on that host raised RuntimeError. The host cannot
+    even reconnect, because `connect()` itself opens a process."""
+    console = _Console()
+    host = SerialHost(SerialConfig("loop://", serial_port=console))
+
+    session = host.shell.session()
+    assert session is not None
+    host.close()
+
+    console.is_open = True  # the caller reopens the same injected port
+    with host.shell.session("show version") as reopened:
+        reopened.send("show interfaces")
+
+    assert console.writes[-1] == b"show interfaces\r\n"

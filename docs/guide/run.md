@@ -253,7 +253,25 @@ serial break, DTR, and RTS controls, but no filesystem or command status. A
 `PromptConsoleProfile(prompt=..., status_marker=..., reliable_status=True)` can
 opt into framed `host.run()` after defining the device's prompt and completion
 marker. Login steps and credentials are supplied programmatically and are never
-placed in the URI. Device names are opaque (native ports, `loop://`, `socket://`,
+placed in the URI.
+
+A framed exchange owns a **window**: it starts after the command the profile
+echoed back and ends at the first prompt following the completion marker.
+That is what makes framing trustworthy on a stream with no request/response
+correlation:
+
+- Whatever the previous exchange left behind is discarded before the command
+  is sent, so a timed-out `run()` cannot hand its tail to the next one.
+- A prompt-shaped or marker-shaped string in the echo or in the output is
+  output. The read ends at the marker the device appended last, then at the
+  prompt after it.
+- Paged output accumulates: each `--More--` is removed, the page is kept.
+- Nothing is dropped silently. Output past `max_buffer` raises
+  `ConsoleProtocolError` naming the cap rather than returning a truncated
+  transcript with status 0; raise `max_buffer` on the profile to read more.
+- `run(timeout=)` bounds the backend read itself, so a
+  `SerialConfig(read_timeout=None)` host raises `TimeoutExpired` instead of
+  blocking inside the driver. Device names are opaque (native ports, `loop://`, `socket://`,
 and RFC 2217 URLs are passed to PySerial); RFC 2217 provides no encryption or
 authentication and must be protected by an external secure transport.
 

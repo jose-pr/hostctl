@@ -284,10 +284,26 @@ class SerialExecutor:
         )
 
     def _release(self) -> None:
-        self._lease.release()
+        # Tolerant for the same reason `close()` is: whichever of the two
+        # runs second must not raise about a lease the first already freed.
+        try:
+            self._lease.release()
+        except RuntimeError:
+            pass
 
     def close(self) -> None:
         serial_port = self._serial
+        # The lease goes with the connection it guards. Closing the port
+        # under a live process used to leave the lease held forever -- an
+        # exception inside `with host:` is enough -- and since `connect()`
+        # itself opens a process, the host could never be used again: every
+        # later connect/spawn/run raised "serial connection already has an
+        # active process". Releasing an unheld lock is not an error here;
+        # `_release` may already have run.
+        try:
+            self._lease.release()
+        except RuntimeError:
+            pass
         if serial_port is not None and self._owns_serial:
             self._serial = None
             try:
