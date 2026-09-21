@@ -70,6 +70,19 @@ MessageEncryption = typing.Literal["auto", "always", "never"]
 WinRMProviderName = typing.Literal["auto", "pywinrm", "psrp"]
 
 
+#: Script bytes pywinrm can actually carry, derived rather than guessed.
+#:
+#: `Session.run_ps` base64-encodes the script as UTF-16-LE and sends it as one
+#: `powershell -encodedcommand <b64>` string, which the WinRS server runs
+#: through cmd.exe (WINRS_SKIP_CMD_SHELL=FALSE). Base64 of UTF-16-LE is 8/3 of
+#: the script's ASCII length, cmd.exe rejects a command line beyond ~8180
+#: characters, and the fixed prefix costs ~31 -- so the ceiling is
+#: (8180 - 31) * 3 / 8 ~= 3055 bytes. The previous 6000 was over twice what
+#: fits, and any write batching more than one chunk failed with
+#: `OSError('The command line is too long.')`.
+_PYWINRM_SCRIPT_BUDGET = 3_000
+
+
 @dataclasses.dataclass
 class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     """Connection and transport settings for the Windows provider."""
@@ -215,7 +228,9 @@ class _WinRMTransport:
         #: ends the remote pipeline before the marker can be emitted.
         self._native_session = self.config.password is None and os.name == "nt"
         script_budget = (
-            256_000 if self._provider == "psrp" or self._native_session else 6_000
+            256_000
+            if self._provider == "psrp" or self._native_session
+            else _PYWINRM_SCRIPT_BUDGET
         )
         self._path_backend = WinRMPathBackend(
             self.run,
@@ -637,8 +652,15 @@ class WinRMPathBackend:
                     "throw [IO.IOException]::new('Path exists',-2147024816)};"
                     "[IO.File]::Move($p,$t)"
                     if exclusive
+                    # `[NullString]::Value`, not `$null`: PowerShell's .NET
+                    # binder turns `$null` into "" for a `string` parameter,
+                    # so `Replace` received an empty backup name and threw on
+                    # every PowerShell version -- overwriting an existing file
+                    # through a WinRM path could never succeed, and the old
+                    # contents stayed put.
                     else "if([IO.File]::Exists($t)){"
-                    "[IO.File]::Replace($p,$t,$null)}else{[IO.File]::Move($p,$t)}"
+                    "[IO.File]::Replace($p,$t,[NullString]::Value)}"
+                    "else{[IO.File]::Move($p,$t)}"
                 ),
                 target=path,
             )

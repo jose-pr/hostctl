@@ -1,5 +1,6 @@
 """Windows path semantics and pathlib operations over a fake WinRM backend."""
 
+import os
 import stat
 import subprocess
 import json
@@ -231,3 +232,63 @@ def test_winrm_open_read_uses_lazy_range_requests():
         assert stream.read(2) == b"ab"
     assert len(scripts) == 1
     assert "Seek(0" in scripts[0]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="runs the generated script in PowerShell")
+def test_the_overwrite_commit_actually_replaces_a_file(tmp_path):
+    """`[IO.File]::Replace($p,$t,$null)` throws on every PowerShell version.
+
+    PowerShell's .NET binder turns `$null` into "" for a `string` parameter,
+    so `Replace` got an empty backup name and raised -- meaning `write_bytes`
+    over an existing file, and `open('wb'/'ab'/'r+b')`, could never succeed.
+    Only a first write to a missing path worked. This runs the committed form
+    through a real PowerShell rather than asserting on its text.
+    """
+    import subprocess
+
+    target = tmp_path / "target.txt"
+    staged = tmp_path / "staged.tmp"
+    target.write_text("old", encoding="utf-8")
+    staged.write_text("new", encoding="utf-8")
+
+    script = (
+        f"$p='{staged}'; $t='{target}'; "
+        "if([IO.File]::Exists($t)){"
+        "[IO.File]::Replace($p,$t,[NullString]::Value)}"
+        "else{[IO.File]::Move($p,$t)}"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert target.read_text(encoding="utf-8") == "new"
+    assert not staged.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="runs the generated script in PowerShell")
+def test_the_old_null_backup_form_is_the_one_that_failed(tmp_path):
+    """The positive control for the fix above."""
+    import subprocess
+
+    target = tmp_path / "target.txt"
+    staged = tmp_path / "staged.tmp"
+    target.write_text("old", encoding="utf-8")
+    staged.write_text("new", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            f"[IO.File]::Replace('{staged}','{target}',$null)",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0 or "Exception" in result.stderr
+    assert target.read_text(encoding="utf-8") == "old"

@@ -168,9 +168,15 @@ class RunspaceSession:
             script_text = str(script)
         marker = "__HOSTCTL_LASTEXITCODE__"
         if capture_exit:
+            # Reset first: this runspace is persistent, so `$LASTEXITCODE`
+            # survives from one pipeline to the next. A pure-PowerShell
+            # command never sets it, and used to report whatever an earlier
+            # *native* command had left behind -- a succeeding command raising
+            # CalledProcessError with a stale status.
+            # `NativeWinRMSession._wrapper` resets it for the same reason.
             script_text = (
-                f"{script_text}; Write-Output ('{marker}:' + "
-                "[string]([int]$LASTEXITCODE))"
+                f"$global:LASTEXITCODE=0; {script_text}; "
+                f"Write-Output ('{marker}:' + [string]([int]$LASTEXITCODE))"
             )
         from pypsrp.powershell import PowerShell
 

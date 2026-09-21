@@ -173,7 +173,12 @@ def test_winrm_config_exposes_secure_transport_settings():
 def test_winrm_path_budget_tracks_provider(monkeypatch):
     monkeypatch.setattr("hostctl.host._winrm.pypsrp_available", lambda: False)
     pywinrm = _WinRMTransport(WinRMConfig("host", "user", "secret", provider="pywinrm"))
-    assert pywinrm._path_backend.max_script_bytes == 6000
+    # Derived from what pywinrm actually sends: the script is base64 UTF-16-LE
+    # (8/3 of its length) inside a `powershell -encodedcommand` command line
+    # that cmd.exe caps at ~8180 characters. 6000 was over twice what fits.
+    assert pywinrm._path_backend.max_script_bytes == 3000
+    encoded = pywinrm._path_backend.max_script_bytes * 8 / 3
+    assert encoded + len("powershell.exe -encodedcommand ") < 8180
     monkeypatch.setattr("hostctl.host._winrm.pypsrp_available", lambda: True)
     psrp = _WinRMTransport(WinRMConfig("host", "user", "secret", provider="psrp"))
     assert psrp._path_backend.max_script_bytes == 256000

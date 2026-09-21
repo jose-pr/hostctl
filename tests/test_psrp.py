@@ -222,10 +222,18 @@ def test_runspace_capture_exit_consumes_the_marker_line(monkeypatch):
     )
     assert failed.returncode == 1
 
-    # The script the pipeline received carries the epilogue.
+    # The script the pipeline received carries the epilogue, and resets
+    # `$LASTEXITCODE` first: this runspace is persistent, so a pure-PowerShell
+    # command -- which never sets it -- used to report whatever an earlier
+    # native command had left behind, failing a command that succeeded.
     pool = Pool(0)
     RunspaceSession(pool=pool).invoke("cmd", capture_exit=True)
-    assert "__HOSTCTL_LASTEXITCODE__" in pool.scripts[0]
+    script = pool.scripts[0]
+    assert "__HOSTCTL_LASTEXITCODE__" in script
+    assert script.startswith("$global:LASTEXITCODE=0;")
+    assert script.index("$global:LASTEXITCODE=0") < script.index(
+        "__HOSTCTL_LASTEXITCODE__"
+    )
 
 
 def test_runspace_does_not_close_an_injected_pool():
