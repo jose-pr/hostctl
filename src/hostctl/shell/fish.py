@@ -9,6 +9,11 @@ from pathlib import Path, PurePath, PurePosixPath
 from ..executor import Environment, PathLike
 from ._common import ShellCommand, ShellFlavour, ShellOperator, ShellToken
 
+#: Characters that need no quoting, matching `shlex.quote`'s own set.
+_SAFE = frozenset(
+    "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789" "@%+=:,./-_"
+)
+
 
 class FishShellFlavour(ShellFlavour):
     name = "fish"
@@ -24,15 +29,30 @@ class FishShellFlavour(ShellFlavour):
     def quote(self, value: object) -> str:
         if isinstance(value, (PurePath, Path)):
             value = value.as_posix()
-        return shlex.quote(self._text(value))
+        text = self._text(value)
+        if not text:
+            return "''"
+        if all(char in _SAFE for char in text):
+            return text
+        # NOT shlex.quote: POSIX single quotes are literal throughout, but
+        # fish honours a backslash escape inside them. A value ending in a
+        # backslash therefore rendered as 'a\', whose closing quote fish
+        # consumed as an escape -- merging it with the next argument and
+        # leaving the remainder as fish source to execute.
+        escaped = text.replace("\\", r"\\").replace("'", r"\'")
+        return "'" + escaped + "'"
+
+    def group(self, command: str) -> str:
+        """fish has no `{ ...; }`; `begin; ...; end` is its block."""
+        return "begin; " + command + "; end"
 
     def operator(self, value: ShellOperator) -> str:
         return {
             ShellOperator.PIPE: "|",
             ShellOperator.AND: "; and ",
             ShellOperator.OR: "; or ",
-            ShellOperator.REDIRECT: ">",
-            ShellOperator.APPEND: ">>",
+            ShellOperator.REDIRECT: " > ",
+            ShellOperator.APPEND: " >> ",
             ShellOperator.SEQUENCE: self.command_separator,
         }[value]
 

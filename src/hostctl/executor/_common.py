@@ -178,10 +178,25 @@ def write_output(
         try:
             stream.write(value)
         except TypeError:
+            # A text stream (`sys.stdout`, which is what stdout=None means)
+            # cannot take bytes. Prefer its binary buffer: that passes the
+            # output through byte for byte, which is what the caller asked
+            # for. Decoding instead used errors="strict", so a completed
+            # command whose output was not valid UTF-8 died with
+            # UnicodeDecodeError -- and the mirror direction died with
+            # UnicodeEncodeError on a narrow console codepage.
+            buffer = getattr(stream, "buffer", None)
             if isinstance(value, bytes):
-                stream.write(value.decode(encoding or "utf-8", errors or "strict"))
+                if buffer is not None:
+                    buffer.write(value)
+                else:
+                    stream.write(value.decode(encoding or "utf-8", errors or "replace"))
             else:
-                stream.write(value.encode(encoding or "utf-8", errors or "strict"))
+                encoded = value.encode(encoding or "utf-8", errors or "replace")
+                if buffer is not None:
+                    buffer.write(encoded)
+                else:
+                    stream.write(encoded)
         flush = getattr(stream, "flush", None)
         if flush is not None:
             flush()

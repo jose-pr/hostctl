@@ -292,9 +292,20 @@ class ShellFlavour(abc.ABC):
     def change_directory(self, cwd: PathLike) -> str:
         """Render a directory change which fails if the directory is absent."""
 
+    def group(self, command: str) -> str:
+        """Wrap `command` so an operator applies to all of it, not its head."""
+        return "{ " + command + "; }"
+
     def join_cwd(self, changed: str, command: str) -> str:
-        """Join cwd setup and payload with the shell's AND operator."""
-        return f"{changed}{self.operator(ShellOperator.AND)}{command}"
+        """Join cwd setup and payload with the shell's AND operator.
+
+        The payload is grouped first. Fused on directly, the AND bound to the
+        *first* command only, so `cd /srv && a; b` ran `b` in the login
+        directory and exited 0 -- reachable through QGA (which always embeds
+        cwd), fish or cmd over SSH, and any Shell over a capability-less
+        executor.
+        """
+        return f"{changed}{self.operator(ShellOperator.AND)}{self.group(command)}"
 
     @abc.abstractmethod
     def command(

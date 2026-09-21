@@ -167,13 +167,17 @@ class CmdShellFlavour(ShellFlavour):
             return " ".join(escape(self._text(value)) for value in values)
         return super().structured_command(values)
 
+    def group(self, command: str) -> str:
+        """cmd groups with parentheses."""
+        return "(" + command + ")"
+
     def operator(self, value: ShellOperator) -> str:
         return {
             ShellOperator.PIPE: "|",
             ShellOperator.AND: "&&",
             ShellOperator.OR: "||",
-            ShellOperator.REDIRECT: ">",
-            ShellOperator.APPEND: ">>",
+            ShellOperator.REDIRECT: " > ",
+            ShellOperator.APPEND: " >> ",
             ShellOperator.SEQUENCE: self.command_separator,
         }[value]
 

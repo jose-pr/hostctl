@@ -331,7 +331,9 @@ def test_explicit_shell_operators_compose_structured_commands():
         )
     )
 
-    assert script == ("printf %s first&&printf %s second|cat>" "'/tmp/output file'")
+    # Spaces around the redirect: fused, a command ending in a digit
+    # ("tail -n 50 log>>report") reads as a file-descriptor number.
+    assert script == ("printf %s first&&printf %s second|cat > " "'/tmp/output file'")
 
 
 def test_shell_operators_must_be_infix():
@@ -388,7 +390,9 @@ def test_cmd_shell_renders_environment_cwd_args_and_operators():
         # and a quoted `cd` target, so a path with a space stays one operand.
         "set NAME=100^%&"
         'cd /d "C:\\Program Files"&&'
-        'tool.exe ^"value ^& data^"&&echo done'
+        # Grouped, so the `&&` guards every command rather than only the
+        # first: `cd X && a & b` used to run `b` in the login directory.
+        '(tool.exe ^"value ^& data^"&&echo done)'
     )
 
 
@@ -902,3 +906,67 @@ def test_powershell_7_does_not_add_c_runtime_escaping():
     """pwsh passes native arguments through without PS 5's rewrite."""
     assert PWSH.structured_command(("tool", 'a"b')) == "& 'tool' 'a\"b'"
     assert POWERSHELL.structured_command(("tool", 'a"b')) == "& 'tool' 'a\\\"b'"
+
+
+def test_fish_quotes_a_trailing_backslash_without_escaping_its_own_quote():
+    """fish honours a backslash escape inside single quotes; POSIX does not.
+
+    `shlex.quote` therefore produced 'a\' whose closing quote fish consumed,
+    merging the value with the next argument and leaving the remainder as
+    fish source to execute.
+    """
+    backslash = chr(92)
+
+    rendered = FISH.quote("a" + backslash)
+
+    assert rendered == "'a" + backslash * 2 + "'"
+    assert FISH.quote("it's") == "'it" + backslash + "'s'"
+    assert FISH.quote("") == "''"
+
+
+def test_a_cwd_guard_covers_every_command_not_just_the_first():
+    """`cd X && a; b` ran `b` in the login directory and exited 0."""
+    script = POSIX_SHELL.script((("a",), ("b",)), cwd="/srv")
+
+    assert script.startswith("cd ")
+    assert "&&" in script
+    guarded = script.split("&&", 1)[1]
+    assert guarded.startswith("{") and guarded.endswith("}")
+    assert "a" in guarded and "b" in guarded
+
+
+def test_fish_and_cmd_group_with_their_own_block_syntax():
+    fish_script = FISH.script((("a",), ("b",)), cwd="/srv")
+    assert "begin; a;b; end" in fish_script
+
+    cmd_script = CMD.script((("a",), ("b",)), cwd=r"C:\tmp")
+    assert "(a&b)" in cmd_script
+
+
+def test_redirect_operators_do_not_fuse_with_a_trailing_digit():
+    """`tail -n 50 log>>report` read 50 as a file-descriptor number."""
+    script = POSIX_SHELL.script(
+        (("tail", "-n", "50", "log"), ShellOperator.APPEND, ("report",))
+    )
+
+    assert " >> " in script
+
+
+def test_binary_output_reaches_a_text_stream_untouched():
+    """stdout=None means sys.stdout, which cannot take bytes.
+
+    Decoding with errors="strict" killed a completed command whose output
+    was not valid UTF-8 -- the binary case the caller asked to pass through.
+    """
+    import io
+
+    from hostctl.executor import write_output
+
+    buffer = io.BytesIO()
+    text_stream = io.TextIOWrapper(buffer, encoding="utf-8")
+
+    payload = bytes([0xFF, 0xFE]) + b" not utf-8"
+    write_output(text_stream, payload, encoding=None, errors=None)
+    text_stream.flush()
+
+    assert buffer.getvalue() == payload

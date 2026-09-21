@@ -34,8 +34,8 @@ class PosixShellFlavour(ShellFlavour):
             ShellOperator.PIPE: "|",
             ShellOperator.AND: "&&",
             ShellOperator.OR: "||",
-            ShellOperator.REDIRECT: ">",
-            ShellOperator.APPEND: ">>",
+            ShellOperator.REDIRECT: " > ",
+            ShellOperator.APPEND: " >> ",
             ShellOperator.SEQUENCE: self.command_separator,
         }[value]
 
