@@ -8,8 +8,9 @@ operations.
 ## Command execution
 
 `Host.run(*cmds)` returns `subprocess.CompletedProcess` and captures stdout and
-stderr by default.  Captured streams are bytes unless `text=True` or an
-`encoding` is supplied. A CAPTURED stream that produced no output is `b""`,
+stderr by default.  Captured streams are bytes unless `text=True`, an
+`encoding`, or an `errors=` is supplied -- `errors=` alone selects text mode
+on every transport, which is the rule 0.2.6 made uniform. A CAPTURED stream that produced no output is `b""`,
 never `None`; a stream excluded by `capture_output=False` (or routed to a
 target) is `None`, exactly as `subprocess` reports one it did not capture.
 

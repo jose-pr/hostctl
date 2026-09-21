@@ -37,6 +37,12 @@ CLAUDE*
 # so `.github/` itself has to be un-ignored, not just the files under it.
 !/.github/
 
+# Run logs. `summarize_run.py` writes `run.log` into the working directory,
+# and the sdist target excludes only dotfiles -- so a test run from the repo
+# root followed by `python -m build` published that log once already.
+run.log
+*.log
+
 # OS and editor droppings.
 .DS_Store
 Thumbs.db
