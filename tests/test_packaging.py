@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -85,3 +86,69 @@ def test_the_shipped_header_names_every_public_export():
     missing = [name for name in hostctl.__all__ if name not in header]
 
     assert missing == []
+
+
+@pytest.fixture(scope="module")
+def sdist(tmp_path_factory):
+    """The other artifact. Both packaging leaks so far were found by hand.
+
+    The wheel is what most consumers install, but the sdist is what a
+    distro or a `--no-binary` build uses, and it is assembled by a
+    different code path with a different exclusion list.
+    """
+    pytest.importorskip("hatchling", reason="the build backend is not installed")
+    pytest.importorskip("build", reason="the build frontend is not installed")
+    output = tmp_path_factory.mktemp("sdist")
+    planted = ROOT / "src" / "hostctl" / "AGENTS.local.md"
+    planted_existed = planted.exists()
+    if not planted_existed:
+        planted.write_text("machine-specific notes" + chr(10), encoding="utf-8")
+    built = subprocess.run(
+        [sys.executable, "-m", "build", "--sdist", "-n", "-o", str(output)],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if built.returncode != 0:
+        if not planted_existed:
+            planted.unlink(missing_ok=True)
+        pytest.skip(
+            f"sdist build unavailable: {built.stdout[-400:]}{built.stderr[-400:]}"
+        )
+    archives = sorted(output.glob("*.tar.gz"))
+    assert archives, built.stdout
+    try:
+        yield archives[-1]
+    finally:
+        if not planted_existed:
+            planted.unlink(missing_ok=True)
+
+
+def _sdist_names(archive):
+    with tarfile.open(archive) as value:
+        # Strip the leading `hostctl-<version>/` component every sdist has.
+        return [name.partition("/")[2] for name in value.getnames()]
+
+
+def test_the_wheel_ships_the_typing_marker(wheel):
+    """Without `py.typed`, an installed consumer's type checker ignores every
+    annotation in the package -- silently, and only for installs."""
+    assert "hostctl/py.typed" in zipfile.ZipFile(wheel).namelist()
+
+
+def test_the_sdist_ships_what_a_source_build_needs(sdist):
+    names = _sdist_names(sdist)
+
+    assert "pyproject.toml" in names
+    assert "src/hostctl/py.typed" in names
+    assert "src/hostctl/AGENTS.md" in names
+    assert "README.md" in names
+    assert "LICENSE" in names
+
+
+def test_the_sdist_never_ships_private_or_unshared_files(sdist):
+    names = _sdist_names(sdist)
+
+    assert [name for name in names if ".local." in name] == []
+    assert [name for name in names if name.split("/")[0] == ".agents"] == []
+    assert [name for name in names if name.startswith("CLAUDE")] == []

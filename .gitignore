@@ -24,10 +24,22 @@ CLAUDE*
 # paths, hostnames and sometimes credentials. The manifest excludes the same
 # pattern; both teeth are needed, and neither is automatic.
 *.local.*
-.*
-!.gitignore
-!.gitattributes
+
+# Root dotfiles only. Unanchored, `.*` also matched every nested dotfile and
+# dot-directory -- a `tests/.golden/` fixture or a vendored `.config` would
+# have been ignored with nothing to say so. The slashless `.agents`,
+# `CLAUDE*` and `.claude` rules above are deliberately NOT anchored, because
+# a nested copy of those is exactly what must not be committed.
+/.*
+!/.gitignore
+!/.gitattributes
 # Directory form: git cannot re-include a file below an excluded directory,
 # so `.github/` itself has to be un-ignored, not just the files under it.
-!.github/
+!/.github/
+
+# OS and editor droppings.
+.DS_Store
+Thumbs.db
+*.swp
+*~
 

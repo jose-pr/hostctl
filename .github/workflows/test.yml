@@ -64,7 +64,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package with all extras
-        run: python -m pip install -e ".[dev,ssh,winrm,psrp,container,serial]"
+        run: python -m pip install -e ".[dev]"
+      - name: Check formatting
+        # One leg: formatting is platform- and version-independent, and
+        # running it on all six would report the same thing six times.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14'
+        run: python -m black --check src tests
       - name: Run tests
         run: python -m pytest -q -rs
 
@@ -72,7 +77,12 @@ jobs:
     name: Cross-transport conformance (live Linux legs)
     runs-on: ubuntu-latest
     steps:
+      # The dispatched ref, like the test job above. Without it this job
+      # silently tested the default branch, so a `workflow_dispatch` on a
+      # feature ref reported live results for code that ref did not contain.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -89,7 +99,7 @@ jobs:
       - name: Start Docker conformance container
         run: docker run -d --name hostctl-conformance alpine:3.20 sleep 600
       - name: Install package with transport extras
-        run: python -m pip install -e ".[dev,ssh,winrm,psrp,container,serial]"
+        run: python -m pip install -e ".[dev]"
       - name: Run conformance battery and live gates
         env:
           HOSTCTL_TEST_DOCKER: "1"

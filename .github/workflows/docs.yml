@@ -1,0 +1,75 @@
+name: Docs
+
+# This workflow owns EVERY Pages deploy. The release workflow only gates on a
+# strict docs build, so a docs fix reaches the site without cutting a tag, and
+# a transient Pages/OIDC failure can never turn a release red after the package
+# has already been published.
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "README.md"
+      - "CHANGELOG.md"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ref to build and deploy (default: this workflow's ref)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build documentation site
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      # Self-enabling, every run: a job that assumes a setting a human clicked
+      # once fails on a fresh fork with a 404 naming a REST endpoint rather
+      # than the missing setting.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - name: Install package with docs tooling
+        run: python -m pip install -e ".[dev,docs]"
+      - name: Build docs
+        run: mkdocs build --strict
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+  deploy:
+    name: Deploy documentation to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    # A YAML schema linter flags `github-pages` as an invalid environment
+    # value. That is a false positive -- GitHub reserves the name.
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

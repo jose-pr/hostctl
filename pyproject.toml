@@ -59,7 +59,10 @@ dependencies = ["pathlib_next>=0.9.10,<0.10", "netimps>=0.3.0,<0.4"]
 [project.optional-dependencies]
 # SSH-backed run()/path(): asyncssh for shell exec, pathlib_next's SftpPath
 # (asyncssh-only since 0.8.2) for the remote path backend.
-ssh = ["asyncssh", "pathlib_next[sftp-async]>=0.9.10,<0.10"]
+# The floor is the oldest asyncssh this package is exercised against;
+# the ceiling is the next major. Left unbounded, these two were the only
+# dependencies that could install a version nobody had ever run.
+ssh = ["asyncssh>=2.14,<3", "pathlib_next[sftp-async]>=0.9.10,<0.10"]
 # Windows Remote Management command execution.
 winrm = ["pywinrm>=0.5.0,<0.6"]
 # PowerShell Remoting Protocol runspaces (Python 3.10+ only).  The marker
@@ -70,12 +73,23 @@ container = ["docker>=7.1,<8"]
 # Raw native, RFC 2217, socket, and virtual serial transports.
 serial = ["pyserial>=3.5,<4"]
 # Local libvirt domain lookup and arbitrary QGA commands.
-qemu-libvirt = ["libvirt-python"]
+qemu-libvirt = ["libvirt-python>=9.0,<12"]
 # Optional pywinrm authentication providers. The base winrm extra already
 # supports basic/plaintext/ssl and NTLM.
 winrm-credssp = ["pywinrm[credssp]>=0.5.0,<0.6"]
 winrm-kerberos = ["pywinrm[kerberos]>=0.5.0,<0.6"]
-dev = ["black", "build", "pytest"]
+# Self-sufficient on purpose: the transport extras were listed by hand in
+# four places (README, test.yml, release.yml's two jobs) and had already
+# drifted -- `psrp` was missing from two of them, so a capability test
+# skipped silently. `hostctl[...]` is a self-reference, which PEP 508
+# permits and pip resolves; `psrp`'s own `python_version >= "3.10"` marker
+# still keeps it off the 3.9 floor.
+dev = [
+    "black",
+    "build",
+    "pytest",
+    "hostctl[ssh,winrm,psrp,container,serial]",
+]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 
 [project.urls]

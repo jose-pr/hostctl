@@ -1,5 +1,6 @@
 [![Version](https://img.shields.io/pypi/v/hostctl.svg)](https://pypi.org/project/hostctl/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python versions](https://img.shields.io/pypi/pyversions/hostctl.svg)](https://pypi.org/project/hostctl/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jose-pr/hostctl/blob/main/LICENSE)
 [![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://jose-pr.github.io/hostctl/)
 [![CI](https://img.shields.io/github/actions/workflow/status/jose-pr/hostctl/release.yml?label=release%20gate)](https://github.com/jose-pr/hostctl/actions/workflows/release.yml)
 
@@ -187,7 +188,7 @@ print(path.provider.name)
 ```
 
 Application-specific adapters can follow the SFTP/RPC/download pattern in
-[`examples/application_provider.py`](examples/application_provider.py). The
+[`examples/application_provider.py`](https://github.com/jose-pr/hostctl/blob/main/examples/application_provider.py). The
 [Systems and providers](https://jose-pr.github.io/hostctl/guide/providers/)
 guide covers selection traces, backend pinning, per-operation capabilities,
 provider authoring, and the no-replay safety rule in full.
@@ -238,9 +239,15 @@ and exit statuses.
 
 ```bash
 py -3.14 -m venv .venv/3.14-nt-amd64
-.venv/3.14-nt-amd64/Scripts/python -m pip install -e ".[dev,ssh,winrm,container,serial]"
+.venv/3.14-nt-amd64/Scripts/python -m pip install -e ".[dev,docs]"
 .venv/3.14-nt-amd64/Scripts/python -m pytest -q
+# The docs gate the release runs, locally:
+.venv/3.14-nt-amd64/Scripts/python -m mkdocs build --strict
 ```
+
+Every extra, so the documented environment is a superset of CI's: without
+`psrp` a capability test skips silently, and without `docs` the gate that can
+block a release cannot be run at all.
 
 Python 3.14 is the default development interpreter. Python 3.9 remains the
 supported compatibility floor and should be selected explicitly with
@@ -249,8 +256,11 @@ supported compatibility floor and should be selected explicitly with
 ### Releasing
 
 This project follows [Semantic Versioning](https://semver.org/) and keeps a
-[`CHANGELOG.md`](CHANGELOG.md). Pushing a tag matching `v*` triggers the release
-workflow: test gate → build → publish → docs deploy.
+[`CHANGELOG.md`](https://github.com/jose-pr/hostctl/blob/main/CHANGELOG.md). Pushing a tag matching `v*` triggers the release
+workflow: test gate → build → publish, with a strict docs build as a gate.
+The docs site itself is deployed by `docs.yml`, which also redeploys on a push
+to `main` touching docs sources and on manual dispatch -- so a docs fix reaches
+the site without cutting a tag.
 
 To prepare a release, update `pyproject.toml` and move the complete
 `[Unreleased]` section to `## [X.Y.Z] - YYYY-MM-DD` in the same commit. Keep
@@ -262,4 +272,4 @@ the next cycle.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/jose-pr/hostctl/blob/main/LICENSE).

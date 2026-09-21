@@ -304,7 +304,7 @@ Declare only the operations you actually implement. Anything you leave out is
 refused explicitly instead of being attempted and failing deeper in the stack.
 
 For a worked example composing metadata, download, and SFTP legs with ordered
-selection and pinning, see `examples/application_provider.py`.
+selection and pinning, see [`examples/application_provider.py`](https://github.com/jose-pr/hostctl/blob/main/examples/application_provider.py).
 
 ### What is public
 

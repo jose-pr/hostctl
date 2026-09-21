@@ -25,7 +25,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package with all extras
-        run: python -m pip install -e ".[dev,ssh,winrm,psrp,container,serial]"
+        run: python -m pip install -e ".[dev]"
+      - name: Check formatting
+        # One leg: formatting is platform- and version-independent, and
+        # running it on all six would report the same thing six times.
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14'
+        run: python -m black --check src tests
       - name: Run tests
         run: python -m pytest -q -rs
 
@@ -48,43 +53,24 @@ jobs:
           name: dist
           path: dist/
 
-  docs-build:
-    name: Build documentation site
+  # A GATE, not a deploy. A broken docs site must block the release; owning
+  # the deployment here meant a docs fix could not reach the site without a
+  # tag, and a transient Pages/OIDC failure turned an otherwise-successful
+  # release red AFTER the package was published. `docs.yml` deploys, on the
+  # `release: published` this run produces.
+  docs-gate:
+    name: Build documentation strictly (gate only)
     needs: test
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - name: Install package with docs tooling
-        run: python -m pip install -e ".[dev,docs,ssh,winrm,psrp,container,serial]"
+        run: python -m pip install -e ".[dev,docs]"
       - name: Build docs
         run: mkdocs build --strict
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site/
-
-  docs-deploy:
-    name: Deploy documentation to GitHub Pages
-    needs: docs-build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
 
   github-release:
     name: Create GitHub Release
@@ -146,3 +132,9 @@ jobs:
           path: dist/
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Re-run-safe: without it, a release that failed after uploading
+          # some files cannot be retried -- PyPI rejects the whole upload
+          # with "File already exists" and the only way forward is a new
+          # version number.
+          skip-existing: true
