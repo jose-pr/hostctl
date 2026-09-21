@@ -181,8 +181,30 @@ class _FakeSshChannel:
         self._popen.terminate()
 
     async def wait(self, check=False, timeout=None):
+        """Drain into the result, as asyncssh's own `wait()` does.
+
+        `SSHClientProcess.wait()` calls `communicate()` and *clears* the
+        channel's receive buffers into the returned object. A fake that
+        reported only a return code hid the fact that hostctl was discarding
+        that output.
+        """
         returncode = self._popen.wait(timeout=timeout)
-        return type("Completed", (), {"returncode": returncode})()
+        collected = {}
+        for name in ("stdout", "stderr"):
+            pipe = getattr(self._popen, name, None)
+            try:
+                collected[name] = pipe.read() if pipe is not None else b""
+            except (ValueError, OSError):
+                collected[name] = b""
+        return type(
+            "Completed",
+            (),
+            {
+                "returncode": returncode,
+                "stdout": collected["stdout"],
+                "stderr": collected["stderr"],
+            },
+        )()
 
     async def wait_closed(self):
         return None

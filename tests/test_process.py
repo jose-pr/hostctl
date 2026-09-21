@@ -37,7 +37,11 @@ class _Writer:
 
 
 class _Completed:
+    """asyncssh's wait() result: it carries the output it drained."""
+
     returncode = 7
+    stdout = b""
+    stderr = b""
 
 
 class _Process:
@@ -121,14 +125,20 @@ def test_ssh_spawn_renders_command_and_requests_terminal():
     assert isinstance(process, Process)
 
 
-def test_ssh_spawn_without_command_opens_default_shell():
+def test_ssh_spawn_without_command_opens_the_configured_shell():
+    """It used to pass None, which starts the account's *login* shell.
+
+    The configured dialect, `SshConfig.executable`, and the executable
+    recovered by `dialect="auto"` were all ignored, while `send()` kept
+    rendering in the configured flavour.
+    """
     host = _SshTransport(SshConfig("host"))
     ssh = _SSH()
     host._ssh = ssh
 
     host.spawn(terminal=TerminalOptions())
 
-    assert ssh.calls[0][0] is None
+    assert ssh.calls[0][0] == "/bin/sh"
 
 
 def test_ssh_process_controls_streams_lifecycle_and_terminal():

@@ -640,17 +640,32 @@ def test_a_shell_less_host_refuses_context_it_cannot_apply():
 
 
 class _TransportProvider(PathProvider):
-    """A path provider whose transport records its connect/close calls."""
+    """A path provider whose transport reconnects lazily, as SSH's does.
+
+    The real transport does not reconnect when the host connects a provider;
+    it reconnects behind whatever operation needs it, which is why a
+    connection opened after `close()` has to be noticed some other way.
+    """
 
     def __init__(self, backend, events):
-        super().__init__("mem", lambda *parts: MemPath(*parts, backend=backend))
+        def factory(*parts):
+            if self.closed:
+                self.closed = False
+                self.events.append("connect")
+            return MemPath(*parts, backend=backend)
+
+        super().__init__("mem", factory)
         self.events = events
+        self.closed = False
         self.transport = self
 
     def connect(self):
+        if self.closed:
+            self.closed = False
         self.events.append("connect")
 
     def close(self):
+        self.closed = True
         self.events.append("close")
 
 
@@ -667,7 +682,7 @@ def test_a_connection_reopened_through_path_is_closed_again():
 
     host.connect()
     host.close()
-    host.path("x")
+    host.path("x")  # the transport reconnects behind this
     host.close()
 
     assert events == ["connect", "close", "connect", "close"]

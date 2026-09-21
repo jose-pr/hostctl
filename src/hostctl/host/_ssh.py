@@ -376,6 +376,25 @@ class _SshTransport:
         # cached and leaves it usable, so the next path() reconnects.
         backend.close()
 
+    def warm_sftp(self) -> None:
+        """Establish the SFTP client from the *calling* thread.
+
+        pathlib_next's native recursive operations (`rm`, `copy`) run as
+        coroutines on the shared bridge loop and resolve the client from
+        there. With nothing cached that waits on a future only that loop can
+        complete, so the loop parks for the full 60s connect timeout, the
+        removal never happens, and every later SFTP operation in the process
+        -- on any path, on any host -- queues behind it. Warming it here costs
+        the connection that is about to be made anyway.
+        """
+        path = self.path()
+        backend = self._sftp_backend
+        client = getattr(backend, "client", None)
+        source = getattr(path, "source", None)
+        if client is None or source is None:
+            return
+        client(source)
+
     def path(self, *segments: PathLike) -> HostPath:
         from pathlib_next.uri.schemes.sftp import AsyncsshSftpBackend, SftpPath
 
@@ -482,7 +501,21 @@ class _SshTransport:
         else:
             if cwd is not None or env is not None:
                 raise ValueError("cwd and env require a command when spawning")
-            command = executable
+            # Resolve the remote program the same way the command branch does.
+            # It used to be just the per-call `executable=`, so a bare
+            # `with host.shell as session:` started the account's *login*
+            # shell and ignored SshConfig.executable, the flavour's default,
+            # and the executable recovered by dialect="auto" -- while send()
+            # went on rendering in the configured dialect.
+            command = executable or self.config.executable
+            if command is None:
+                flavour = self.shell_flavour
+                if self.config.dialect == "auto":
+                    resolved = self._resolved_dialect
+                    if resolved is not None:
+                        command = resolved[2]
+                if command is None:
+                    command = getattr(flavour, "default_executable", None)
             remote_env = None
 
         from ..process import terminal_options
@@ -509,7 +542,12 @@ class _SshTransport:
             if normalized is exc:
                 raise
             raise normalized from exc
-        return SshProcess(typing.cast(typing.Any, process), command)
+        return SshProcess(
+            typing.cast(typing.Any, process),
+            command,
+            encoding=typing.cast(typing.Optional[str], options.get("encoding")),
+            errors=typing.cast(typing.Optional[str], options.get("errors")),
+        )
 
 
 class SshExecutorProvider(ExecutorProvider):
@@ -573,7 +611,22 @@ class SftpPathProvider(PathProvider):
             "sftp", lambda *segments: transport.path(*segments), capabilities=("path",)
         )
 
-    # Lifecycle is owned by SshExecutorProvider for the shared transport.
+    # Closing is owned by SshExecutorProvider for the shared transport;
+    # connecting is not, because the SFTP client has to be established from
+    # the caller's thread before any native recursive operation runs.
+    def connect(self):
+        try:
+            self.transport.connect()
+            self.transport.warm_sftp()
+        except (OSError, TimeoutError) as exc:
+            log.debug(
+                "SFTP provider declining before dispatch: %s: %s",
+                type(exc).__name__,
+                ProviderSelector.redact(exc),
+            )
+            raise OperationNotStarted(
+                "SFTP connection failed before dispatch", cause=exc
+            ) from exc
 
 
 def ssh_providers(

@@ -43,7 +43,7 @@ class _StubSSH:
     async def create_process(self, command, **kwargs):
         """asyncssh's real shape: `run()` is create_process + process.wait()."""
         self.calls.append((command, kwargs))
-        self.process = _StubProcess(self.result)
+        self.process = _StubProcess(getattr(self, "wait_result", None) or self.result)
         return self.process
 
     def close(self):
@@ -51,6 +51,29 @@ class _StubSSH:
 
     async def wait_closed(self):
         self.waited = True
+
+
+class _StubWriter:
+    def __init__(self):
+        self.written = []
+
+    def write(self, data):
+        self.written.append(data)
+
+    async def drain(self):
+        return None
+
+    def write_eof(self):
+        self.written.append(b"")
+
+
+class _StubReader:
+    def __init__(self, data=b""):
+        self._data = data
+
+    async def read(self, size=-1):
+        value, self._data = self._data, b""
+        return value
 
 
 class _StubProcess:
@@ -62,6 +85,10 @@ class _StubProcess:
         self.waits = []
         self.terminated = False
         self.closed = False
+        self.stdin = _StubWriter()
+        self.stdout = _StubReader()
+        self.stderr = _StubReader()
+        self.returncode = getattr(result, "returncode", None)
 
     async def wait(self, check=False, timeout=None):
         self.waits.append({"check": check, "timeout": timeout})
@@ -422,3 +449,51 @@ def test_auto_posix_probe_preserves_shell_executable():
     host.run("echo hello")
     command, _ = stub.calls[-1]
     assert "/usr/local/bin/bash" in command
+
+
+def test_a_session_starts_the_configured_shell_not_the_login_shell():
+    """`spawn()` with no command used to pass only the per-call executable.
+
+    So a bare `with host.shell as session:` started the account's login shell
+    and ignored SshConfig.executable, the flavour's default and the executable
+    recovered by dialect="auto" -- while send() kept rendering in the
+    configured dialect.
+    """
+    for config, expected in (
+        (SshConfig("h", username="root"), "/bin/sh"),
+        (SshConfig("h", username="root", executable="/bin/zsh"), "/bin/zsh"),
+        (SshConfig("h", username="root", dialect="powershell"), "powershell.exe"),
+    ):
+        transport = _SshTransport(config)
+        stub = _StubSSH()
+        transport._ssh = stub
+
+        transport.spawn()
+
+        assert stub.calls[-1][0] == expected
+
+
+def test_a_session_write_encodes_for_a_binary_channel():
+    """asyncssh does `bytearray(data)` on a str, so the documented
+    `session.send("echo hi")` raised TypeError from inside a third party."""
+    transport = _SshTransport(SshConfig("h", username="root"))
+    stub = _StubSSH()
+    transport._ssh = stub
+
+    process = transport.spawn()
+    process.write("echo hi" + chr(10))
+
+    assert stub.process.stdin.written == [("echo hi" + chr(10)).encode()]
+
+
+def test_wait_keeps_output_the_caller_had_not_read():
+    """asyncssh's wait() clears the receive buffers into its result; only the
+    return code was kept, so a later read() returned b"" -- EOF, apparently."""
+    transport = _SshTransport(SshConfig("h", username="root"))
+    stub = _StubSSH()
+    stub.wait_result = _Result(returncode=0, stdout=b"late output", stderr=b"")
+    transport._ssh = stub
+
+    process = transport.spawn()
+    assert process.wait() == 0
+    assert process.read() == b"late output"

@@ -52,11 +52,22 @@ class SshProcess(Process):
     """Synchronous facade over a process owned by hostctl's AsyncSSH loop."""
 
     def __init__(
-        self, process: _AsyncsshProcess, command: typing.Optional[str]
+        self,
+        process: _AsyncsshProcess,
+        command: typing.Optional[str],
+        *,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
     ) -> None:
         self._process = process
         self._command = command
         self._closed = False
+        # The channel's mode: asyncssh gives str when an encoding was
+        # requested at create_process() time and bytes otherwise.
+        self._encoding = encoding
+        self._errors = errors
+        self._buffered_stdout: ProcessData = "" if encoding is not None else b""
+        self._buffered_stderr: ProcessData = "" if encoding is not None else b""
 
     @property
     def returncode(self) -> typing.Optional[int]:
@@ -82,15 +93,36 @@ class SshProcess(Process):
     def write(self, data: ProcessData) -> None:
         async def operation() -> None:
             writer = self._process.stdin
-            writer.write(data)
+            writer.write(self._encode(data))
             await writer.drain()
 
         self._call(operation)
 
+    def _encode(self, data: ProcessData) -> ProcessData:
+        """Match the channel's mode, rather than leaking asyncssh's TypeError.
+
+        With no `encoding` the channel is binary, and asyncssh does
+        `bytearray(data)` on a `str` -- so the documented
+        `with host.shell as session: session.send("echo hi")` raised
+        `TypeError: string argument without an encoding` from inside a third
+        party. Container and serial adapters both encode here.
+        """
+        if isinstance(data, str) and self._encoding is None:
+            return data.encode("utf-8")
+        if isinstance(data, (bytes, bytearray)) and self._encoding is not None:
+            return bytes(data).decode(self._encoding, self._errors or "strict")
+        return data
+
     def read(self, size: int = -1) -> ProcessData:
+        buffered = self._take_buffered("_buffered_stdout", size)
+        if buffered:
+            return buffered
         return self._call(lambda: self._process.stdout.read(size))
 
     def read_stderr(self, size: int = -1) -> ProcessData:
+        buffered = self._take_buffered("_buffered_stderr", size)
+        if buffered:
+            return buffered
         return self._call(lambda: self._process.stderr.read(size))
 
     def send_eof(self) -> None:
@@ -130,7 +162,34 @@ class SshProcess(Process):
             if normalized is exc:
                 raise
             raise normalized from exc
+        # asyncssh's wait() *clears* the receive buffers into the result. Only
+        # the return code used to be kept, so every byte the caller had not
+        # already read was destroyed and a later read() returned b"" --
+        # indistinguishable from EOF. Hold it so read() can still serve it,
+        # which is what ContainerProcess does.
+        self._buffered_stdout += self._as_buffer(result.stdout)
+        self._buffered_stderr += self._as_buffer(result.stderr)
         return -1 if result.returncode is None else result.returncode
+
+    def _as_buffer(self, value: object) -> ProcessData:
+        empty: ProcessData = "" if self._encoding is not None else b""
+        if value is None:
+            return empty
+        if isinstance(value, str) and self._encoding is None:
+            return value.encode("utf-8")
+        if isinstance(value, (bytes, bytearray)) and self._encoding is not None:
+            return bytes(value).decode(self._encoding, self._errors or "strict")
+        return value
+
+    def _take_buffered(self, name: str, size: int) -> ProcessData:
+        buffered = getattr(self, name)
+        if not buffered:
+            return buffered
+        if size is None or size < 0 or size >= len(buffered):
+            setattr(self, name, buffered[:0])
+            return buffered
+        setattr(self, name, buffered[size:])
+        return buffered[:size]
 
     def terminate(self) -> None:
         self._call(self._process.terminate)

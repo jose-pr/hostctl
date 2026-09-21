@@ -590,11 +590,13 @@ class SystemHost(Host):
                 ),
             )
         try:
-            # Bookkeeping first: a path provider reconnects its transport
-            # lazily, and going straight to it left the reopened connection on
+            # Note the provider as in use WITHOUT connecting: building a path
+            # is I/O-free, and `host.path()` on a host that was never
+            # connected must stay that way. The marker is what matters here --
+            # a transport these paths later reopen lazily was left on
             # `_closed_targets`, so every later close() skipped it and the
             # connection lived until process exit.
-            self._ensure_provider_connected(selected.provider)
+            self._note_provider_in_use(selected.provider)
             value = selected.provider.path(*segments)
             path_type = (
                 CompositeWindowsPath
@@ -616,7 +618,7 @@ class SystemHost(Host):
             fallback = self._path_selector.select(
                 exclude=(selected.provider.name,)
             ).provider
-            self._ensure_provider_connected(fallback)
+            self._note_provider_in_use(fallback)
             value = fallback.path(*segments)
             path_type = (
                 CompositeWindowsPath
@@ -808,6 +810,17 @@ class SystemHost(Host):
         )
         invocation = flavour.invocation(script, executable=shell_executable)
         return provider.execute(invocation[0], *invocation[1:], **options)
+
+    def _note_provider_in_use(self, provider) -> None:
+        """Mark a provider's transport as live again, without connecting it.
+
+        `close()` skips a transport it has already closed; a transport that
+        reconnects lazily behind an operation would otherwise never be closed
+        again.
+        """
+        with self._lifecycle_lock:
+            target = getattr(provider, "transport", provider)
+            self._closed_targets.discard(id(target))
 
     def _ensure_provider_connected(self, provider):
         # The check and the append must be one atomic step; see the lock's
