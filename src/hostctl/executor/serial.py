@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import errno
-import contextlib
 import threading
 import time
 import types
@@ -42,109 +41,6 @@ class SerialLike(typing.Protocol):
 
 
 SerialFactory = typing.Callable[..., SerialLike]
-
-
-class SerialTransport:
-    """Locked byte transport used by protocol profiles and tests."""
-
-    def __init__(
-        self,
-        serial_port: SerialLike,
-        *,
-        lock: typing.Optional["_ReentrantLock"] = None,
-    ) -> None:
-        self.serial = serial_port
-        self.lock = lock or threading.RLock()
-
-    @property
-    def connected(self) -> bool:
-        return bool(self.serial.is_open)
-
-    @contextlib.contextmanager
-    def _deadline_timeout(
-        self, attribute: str, deadline: typing.Optional[float]
-    ) -> typing.Iterator[None]:
-        if deadline is None:
-            yield
-            return
-        if not hasattr(self.serial, attribute):
-            raise NotImplementedError(
-                f"serial backend cannot enforce a finite {attribute.replace('_', ' ')}"
-            )
-        previous = getattr(self.serial, attribute)
-        remaining = max(0.0, deadline - time.monotonic())
-        setattr(self.serial, attribute, remaining)
-        try:
-            yield
-        finally:
-            setattr(self.serial, attribute, previous)
-
-    def read(
-        self, size: int = 4096, *, timeout: typing.Optional[float] = None
-    ) -> bytes:
-        if size < 0:
-            raise ValueError("read size must not be negative")
-        deadline = None if timeout is None else time.monotonic() + timeout
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout must not be negative")
-        with self.lock:
-            while True:
-                with self._deadline_timeout("timeout", deadline):
-                    value = self.serial.read(size)
-                if value or deadline is None or time.monotonic() >= deadline:
-                    return value
-
-    def write(self, data: bytes, *, timeout: typing.Optional[float] = None) -> None:
-        deadline = None if timeout is None else time.monotonic() + timeout
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout must not be negative")
-        offset = 0
-        with self.lock:
-            while offset < len(data):
-                with self._deadline_timeout("write_timeout", deadline):
-                    written = self.serial.write(data[offset:])
-                if written <= 0:
-                    raise TimeoutError("serial write made no progress")
-                offset += written
-                if (
-                    deadline is not None
-                    and time.monotonic() >= deadline
-                    and offset < len(data)
-                ):
-                    raise TimeoutError("serial write timed out")
-            self.serial.flush()
-
-    def reset_input_buffer(self) -> None:
-        reset = getattr(self.serial, "reset_input_buffer", None)
-        if callable(reset):
-            with self.lock:
-                reset()
-
-    @property
-    def dtr(self) -> bool:
-        return bool(self.serial.dtr)
-
-    @dtr.setter
-    def dtr(self, value: bool) -> None:
-        with self.lock:
-            self.serial.dtr = bool(value)
-
-    @property
-    def rts(self) -> bool:
-        return bool(self.serial.rts)
-
-    @rts.setter
-    def rts(self, value: bool) -> None:
-        with self.lock:
-            self.serial.rts = bool(value)
-
-    def send_break(self, duration: float = 0.25) -> None:
-        with self.lock:
-            self.serial.send_break(duration)
-
-    def close(self) -> None:
-        with self.lock:
-            self.serial.close()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -251,12 +147,6 @@ class SerialExecutor:
     @property
     def connected(self) -> bool:
         return self._serial is not None and self._serial.is_open
-
-    @property
-    def transport(self) -> SerialTransport:
-        """Return the locked transport for protocol/profile integrations."""
-        serial_port = self.connect()
-        return SerialTransport(serial_port, lock=self._io_lock)
 
     def connect(self) -> SerialLike:
         with self._connect_lock:

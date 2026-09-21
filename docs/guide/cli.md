@@ -52,3 +52,9 @@ that cannot allocate a terminal — a raw serial console, which is what a
 Output stops when the session ends, not when a read comes back empty: a serial
 line answers `b""` whenever its read timeout expires and the device has simply
 said nothing.
+
+A `serial:` URI is **session-only from the CLI**. `shell` and `info` work;
+`run`, `ls`, `cat` and `cp` do not, because a framed `run()` needs a console
+profile (prompt, login, status marker) and there is no URI spelling for one --
+a profile is Python, passed as `SerialConfig(protocol=...)`. Reach a device
+that needs framing through the library, not the CLI.

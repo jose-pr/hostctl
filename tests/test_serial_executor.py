@@ -12,7 +12,6 @@ from hostctl.executor.serial import (
     SerialExecutor,
     SerialSettings,
     normalize_serial_error,
-    SerialTransport,
 )
 from hostctl.process import Process
 from hostctl.process.serial import SerialProcess
@@ -197,19 +196,19 @@ def test_factory_error_retains_cause():
     assert raised.value.__cause__ is serial_error
 
 
-def test_serial_transport_deadlines_reset_and_line_controls():
+def test_serial_process_deadlines_reset_and_line_controls():
     serial_port = _Serial()
-    transport = SerialTransport(serial_port)
-    transport.write(b"abc", timeout=1)
-    assert transport.read(0, timeout=0) == b""
-    transport.reset_input_buffer()
-    transport.dtr = True
-    transport.rts = True
+    process = SerialExecutor(SerialSettings("injected"), serial_port=serial_port).open()
+    process.write(b"abc", timeout=1)
+    assert process.read(0, timeout=0) == b""
+    process.reset_input_buffer()
+    process.dtr = True
+    process.rts = True
     assert serial_port.resets == 1
-    assert transport.dtr and transport.rts
+    assert process.dtr and process.rts
 
 
-def test_serial_transport_applies_deadlines_to_blocking_backend_calls():
+def test_serial_reads_and_writes_apply_deadlines_to_the_backend():
     class DeadlineSerial(_Serial):
         def __init__(self):
             super().__init__()
@@ -226,12 +225,12 @@ def test_serial_transport_applies_deadlines_to_blocking_backend_calls():
             return len(data)
 
     serial_port = DeadlineSerial()
-    transport = SerialTransport(serial_port)
+    process = SerialExecutor(SerialSettings("injected"), serial_port=serial_port).open()
 
     started = time.monotonic()
-    assert transport.read(1, timeout=0.03) == b""
+    assert process.read(1, timeout=0.03) == b""
     assert time.monotonic() - started < 0.15
-    transport.write(b"x", timeout=0.25)
+    process.write(b"x", timeout=0.25)
 
     assert serial_port.seen_read_timeouts
     # The per-call timeout is the deadline's remaining budget, so it is never
@@ -256,12 +255,12 @@ def test_serial_process_read_all_means_current_available_bytes():
     assert process.read() == b"avai"
 
 
-def test_serial_transport_rejects_negative_deadlines():
-    transport = SerialTransport(_Serial())
+def test_serial_process_rejects_negative_deadlines():
+    process = SerialExecutor(SerialSettings("injected"), serial_port=_Serial()).open()
     with pytest.raises(ValueError, match="timeout"):
-        transport.read(timeout=-1)
+        process.read(timeout=-1)
     with pytest.raises(ValueError, match="timeout"):
-        transport.write(b"x", timeout=-1)
+        process.write(b"x", timeout=-1)
 
 
 def test_loopback_pyserial_round_trip():

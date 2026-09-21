@@ -224,3 +224,31 @@ def test_a_serial_uri_refuses_a_credential_nothing_reads():
         Host("serial:///dev/ttyUSB0", password="s3cret")
 
     assert not hasattr(SerialConfig("loop://"), "password")
+
+
+def test_an_unimplemented_process_member_fails_loudly():
+    """Protocol members are not abstract, so a gap used to return `None`.
+
+    Five adapters inherit `Process` explicitly. An inherited-but-missing
+    member was a real method returning `None`: instantiation succeeded,
+    `isinstance(x, Process)` passed, and `if process.wait():` read a
+    missing implementation as "exited 0".
+    """
+    from hostctl.process import Process
+
+    class _Half(Process):
+        def read(self, size=-1):
+            return b""
+
+    half = _Half()
+    assert isinstance(half, Process)
+    assert half.read() == b""
+
+    with pytest.raises(NotImplementedError, match="_Half.wait"):
+        half.wait()
+    with pytest.raises(NotImplementedError, match="_Half.close"):
+        half.close()
+    # `returncode` deliberately still answers `None`: on the 3.9 floor
+    # `isinstance` evaluates a protocol property, so raising there breaks the
+    # runtime check itself.
+    assert half.returncode is None

@@ -43,15 +43,26 @@ class SerialProcess(Process):
         if self._closed.is_set() or not self._serial.is_open:
             raise ConnectionError("serial process is closed")
 
-    def write(self, data: ProcessData) -> None:
+    def write(
+        self, data: ProcessData, *, timeout: typing.Optional[float] = None
+    ) -> None:
+        """Write `data`, bounded by `timeout` when one is given.
+
+        Like `read`, the port's own `write_timeout` is what actually bounds
+        a backend write, so a deadline is applied by clamping it for the
+        duration and restoring it afterwards.
+        """
         if isinstance(data, str):
             raise TypeError("raw serial process writes require bytes")
+        if timeout is not None and timeout < 0:
+            raise ValueError("write timeout must not be negative")
         self._require_open()
         offset = 0
         try:
             with self._io_lock:
                 while offset < len(data):
-                    written = self._serial.write(data[offset:])
+                    with self._bounded(timeout, "write_timeout"):
+                        written = self._serial.write(data[offset:])
                     if written <= 0:
                         raise TimeoutError("serial write made no progress")
                     offset += written
@@ -94,23 +105,23 @@ class SerialProcess(Process):
             raise_normalized(exc, normalize_serial_error)
 
     @contextlib.contextmanager
-    def _bounded(self, timeout: typing.Optional[float]):
-        if timeout is None or not hasattr(self._serial, "timeout"):
+    def _bounded(self, timeout: typing.Optional[float], attribute: str = "timeout"):
+        if timeout is None or not hasattr(self._serial, attribute):
             yield
             return
-        previous = self._serial.timeout
+        previous = getattr(self._serial, attribute)
         try:
-            self._serial.timeout = timeout
+            setattr(self._serial, attribute, timeout)
         except Exception:
             # A read-only or exotic backend attribute: fall back to whatever
-            # the port was configured with rather than failing the read.
+            # the port was configured with rather than failing the call.
             yield
             return
         try:
             yield
         finally:
             try:
-                self._serial.timeout = previous
+                setattr(self._serial, attribute, previous)
             except Exception:
                 pass
 
