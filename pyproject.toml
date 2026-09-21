@@ -87,10 +87,14 @@ Issues = "https://github.com/jose-pr/hostctl/issues"
 hostctl = "hostctl._cli:main"
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/.*"]
+# `*.local.*` as well as root dotfiles: an `AGENTS.local.md` beside the
+# shipped API header is inside the package directory, which `/.*` does not
+# reach. Publishing one is a one-way leak of machine-specific notes.
+exclude = ["/.*", "*.local.*"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hostctl"]
+exclude = ["*.local.*"]
 
 [tool.hatch.build.targets.wheel.force-include]
 # Inside the package, so an installed consumer can read it through

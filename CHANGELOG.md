@@ -108,6 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   composite `symlink_to` could never work. `netimps` needs nothing past
   `0.2.0` and floors at the series start.
 
+## [0.2.6] - 2026-08-16
+
 ### Added
 
 - `wants_text(text, encoding, errors)` is exported from `hostctl.executor`,

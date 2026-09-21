@@ -17,6 +17,13 @@ site/
 .agents
 CLAUDE*
 .claude
+
+# Unshared per-machine overrides. `AGENTS.local.md` is the dangerous one: it
+# sits beside an `AGENTS.md` that is *supposed* to ship, under a nearly
+# identical name and with the opposite destination, and it carries local
+# paths, hostnames and sometimes credentials. The manifest excludes the same
+# pattern; both teeth are needed, and neither is automatic.
+*.local.*
 .*
 !.gitignore
 !.gitattributes
