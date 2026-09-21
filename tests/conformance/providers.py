@@ -262,6 +262,20 @@ class _FakeSshChannel:
                 pipe.close()
             except Exception:
                 pass
+        # And END the child, as closing a real channel does. Nothing reaped
+        # it before, so every `spawn` test left a live subprocess behind and
+        # a `ResourceWarning` with it -- which is also why the suite could
+        # not turn warnings into errors.
+        if self._popen.poll() is None:
+            try:
+                self._popen.terminate()
+            except OSError:
+                pass
+        try:
+            self._popen.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._popen.kill()
+            self._popen.wait(timeout=5)
 
     def kill(self):
         self._popen.kill()
@@ -296,6 +310,11 @@ class _FakeSshChannel:
         )()
 
     async def wait_closed(self):
+        # The call production makes second, and the one a real channel uses
+        # to settle. Reaping here as well keeps a caller that closes without
+        # waiting from leaving a zombie behind.
+        if self._popen.poll() is not None:
+            self._popen.wait()
         return None
 
 
@@ -346,6 +365,10 @@ class _FakeSshRunProcess:
 
     async def wait(self, check=False, timeout=None):
         command, options = self._command, self._options
+        # AsyncSSH hands the target ONE finalized command line, so the fake
+        # passes it through unchanged on both platforms. The real platform
+        # differences are the direct-argv branch just below and
+        # `shell=os.name != "nt"` at the call itself.
         invocation = command
         encoding = options.get("encoding")
         stdin = options.get("stdin")
@@ -411,9 +434,17 @@ class FakeWinRMSession(_FakeTransport):
 
 
 class _ExecResult:
-    def __init__(self, result):
+    def __init__(self, result, *, demux=True):
         self.exit_code = result.returncode
-        self.output = (result.stdout or b"", result.stderr or b"")
+        stdout = result.stdout or b""
+        stderr = result.stderr or b""
+        # The SDK returns a 2-tuple only for `demux=True`; with `demux=False`
+        # it returns one concatenated bytestring. Answering a tuple either
+        # way meant the conformance battery never ran the executor's
+        # merge-stderr branch at all -- `stderr=subprocess.STDOUT` went
+        # through the demultiplexed path, which is not what a real engine
+        # sends.
+        self.output = (stdout, stderr) if demux else stdout + stderr
 
 
 class _FakeDockerContainer:
@@ -440,7 +471,8 @@ class _FakeDockerContainer:
                 cwd=cwd,
                 capture_output=True,
                 check=False,
-            )
+            ),
+            demux=bool(options.get("demux", False)),
         )
 
     def get_archive(self, path):
@@ -669,6 +701,10 @@ class FakeQemuHost:
             supported_commands=QGA_FILE_COMMANDS,
             helper=LocalQgaPathHelper(transport),
         )
+        # Without this the fake's sandbox was never closed, so its temporary
+        # directory was collected instead of removed -- a `ResourceWarning`
+        # that only became visible once the suite made warnings errors.
+        host._conformance_cleanup = transport.close
         return host
 
 
@@ -1022,31 +1058,3 @@ def provider_context(provider: Provider) -> Iterator[object]:
                 close()
         finally:
             cleanup()
-
-
-def test_provider_registry_is_capability_explicit() -> None:
-    providers = fake_providers()
-    assert {item.name for item in providers} >= {"local", "ssh", "winrm"}
-    for provider in providers:
-        assert provider.capabilities
-        assert callable(provider.factory)
-        # A path provider either advertises symlink support or names the
-        # transport limitation; an unexplained gap is a registry bug.
-        if "path" in provider.capabilities:
-            assert ("symlink" in provider.capabilities) != bool(provider.symlink_gap)
-
-
-def test_transport_fakes_are_not_local_host_aliases() -> None:
-    """Registry entries must not silently collapse back to ``LocalHost``."""
-
-    for provider in fake_providers():
-        value = provider.factory()
-        host = value[0] if isinstance(value, tuple) else value
-        try:
-            if provider.name != "local":
-                assert not isinstance(host, LocalHost)
-                assert type(host) is not LocalHost
-        finally:
-            close = getattr(host, "close", None)
-            if close:
-                close()

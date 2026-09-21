@@ -11,7 +11,11 @@ from hostctl import HostConfig, SerialConfig
 
 @pytest.mark.skipif(
     not os.environ.get("HOSTCTL_TEST_SERIAL_URI"),
-    reason="set HOSTCTL_TEST_SERIAL_URI to enable live serial smoke coverage",
+    reason=(
+        "set HOSTCTL_TEST_SERIAL_URI to enable the live serial leg "
+        "(pyserial's loopback needs no hardware: "
+        "HOSTCTL_TEST_SERIAL_URI=serial:///loop%3A%2F%2F)"
+    ),
 )
 def test_live_serial_uri_connects_and_closes():
     uri = os.environ["HOSTCTL_TEST_SERIAL_URI"]

@@ -7,6 +7,7 @@ environment variables in CI and skipped transparently otherwise.
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -102,3 +103,37 @@ def test_live_sftp_addresses_uri_syntax_filenames(name):
 )
 def test_docker_gate_is_explicit():
     assert os.environ["HOSTCTL_TEST_DOCKER"] == "1"
+
+
+@pytest.mark.parametrize("provider", live_providers(), ids=lambda p: p.name)
+def test_live_provider_path_round_trip(provider):
+    """Every live provider advertises `path`, and none exercised it.
+
+    The conformance-live job proved a live transport could run a command
+    and nothing else: the only live path case was the SFTP
+    percent-encoding guard, which is about one URI construction. This is
+    the ordinary round trip -- write, read back, and ask for metadata --
+    against a real server, engine or guest.
+    """
+    if "path" not in provider.capabilities:
+        pytest.skip(f"{provider.name} does not advertise path")
+    with provider_context(provider) as host:
+        root = (
+            host.path("/tmp")
+            if provider.name != "local"
+            else host.path(os.environ.get("TEMP") or "/tmp")
+        )
+        target = root / f"hostctl-live-{provider.name}.txt"
+        try:
+            target.write_bytes(b"round trip")
+            assert target.read_bytes() == b"round trip"
+            assert target.exists()
+
+            value = target.stat()
+            assert value.st_size == len(b"round trip")
+            assert stat.S_ISREG(value.st_mode)
+        finally:
+            try:
+                target.unlink()
+            except (FileNotFoundError, NotImplementedError):
+                pass

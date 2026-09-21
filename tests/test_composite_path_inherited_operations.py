@@ -16,6 +16,7 @@ the failure mode of trading one for the other is invisible.
 """
 
 import inspect
+import stat
 
 import pytest
 from pathlib_next.mempath import MemPath, MemPathBackend
@@ -83,17 +84,23 @@ def test_backend_override_of_touch_runs(host):
 
 
 @pytest.mark.parametrize(
-    "operation",
+    ("operation", "expected"),
     [
-        pytest.param(lambda p: p.lstat(), id="lstat"),
-        pytest.param(lambda p: p.is_symlink(), id="is_symlink"),
-        pytest.param(lambda p: p.read_text(), id="read_text"),
-        pytest.param(lambda p: p.exists(), id="exists"),
+        pytest.param(lambda p: stat.S_ISREG(p.lstat().st_mode), True, id="lstat"),
+        pytest.param(lambda p: p.is_symlink(), False, id="is_symlink"),
+        pytest.param(lambda p: p.read_text(), "a", id="read_text"),
+        pytest.param(lambda p: p.exists(), True, id="exists"),
     ],
 )
-def test_operations_work_without_a_composite_declaration(host, operation):
-    """None of these need a hand-written method in composite_path.py."""
-    operation(host.path("root", "a.txt"))
+def test_operations_work_without_a_composite_declaration(host, operation, expected):
+    """None of these need a hand-written method in composite_path.py.
+
+    The expected ANSWER is carried in the parametrization: calling each
+    operation and discarding the result proved only that nothing raised, so
+    a composite that routed `read_text` to the wrong file, or answered
+    `is_symlink()` from the wrong stat, passed unchanged.
+    """
+    assert operation(host.path("root", "a.txt")) == expected
 
 
 def test_chown_reaches_the_backend_without_a_composite_method(host):

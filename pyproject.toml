@@ -104,6 +104,13 @@ exclude = ["*.local.*"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# `--strict-markers`/`--strict-config` turn a typo into a failure instead of a
+# silently-ignored marker; `filterwarnings = ["error"]` is what keeps a
+# `ResourceWarning` from a leaked subprocess, or a `DeprecationWarning` from a
+# dependency, from scrolling past unread. Add a targeted `ignore::` line with a
+# reason rather than softening the default.
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = ["error"]
 
 [tool.black]
 target-version = ["py39"]

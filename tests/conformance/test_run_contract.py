@@ -36,7 +36,12 @@ def test_direct_argv_and_capture(provider):
             )
         )
     assert result.returncode == 0
-    assert result.stdout == b"a & b\r\n" if os.name == "nt" else b"a & b\n"
+    # Parenthesised: a conditional expression binds tighter than `assert`, so
+    # `assert X == a if cond else b` asserted the non-empty CONSTANT `b` on
+    # every non-Windows interpreter -- the only stdout-content assertion here,
+    # dead on 9 of 12 CI legs and the whole conformance-live job.
+    expected = b"a & b\r\n" if os.name == "nt" else b"a & b\n"
+    assert result.stdout == expected
     assert result.stderr.startswith(b"err")
 
 

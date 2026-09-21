@@ -38,7 +38,12 @@ class _Sandbox:
         self._link_targets: Dict[str, str] = {}
 
     def close(self) -> None:
-        self._temporary.cleanup()
+        # Idempotent: a host closes its transport and the battery closes the
+        # fake, so this runs twice, and `TemporaryDirectory.cleanup()` on an
+        # already-removed directory raises.
+        temporary, self._temporary = self._temporary, None
+        if temporary is not None:
+            temporary.cleanup()
 
     def symlink(self, remote: str, remote_target: str) -> None:
         """Create a link at ``remote`` storing ``remote_target`` verbatim."""
@@ -393,12 +398,36 @@ class LocalQgaTransport:
         self.sandbox = _Sandbox("posix")
         self._handles: Dict[int, object] = {}
         self._next_handle = 1
-        self._exec_result = None
+        self._exec_process = None
+        self._exec_output = None
+        self._exec_pid = 0
 
     def close(self) -> None:
         for stream in tuple(self._handles.values()):
             stream.close()
         self._handles.clear()
+        # A timed-out guest command is ORPHANED by contract -- the executor
+        # gives up and nobody calls `communicate()` -- so the fake has to be
+        # the thing that ends it. Otherwise the pipes are finalized by the
+        # collector, which is a `ResourceWarning` and, with warnings as
+        # errors, a failure attributed to whatever test ran next.
+        process, self._exec_process = self._exec_process, None
+        if process is not None:
+            if process.poll() is None:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            try:
+                process.communicate(timeout=5)
+            except Exception:
+                pass
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                try:
+                    if pipe is not None:
+                        pipe.close()
+                except Exception:
+                    pass
         self.sandbox.close()
 
     def execute(self, request, timeout=None):
@@ -428,30 +457,51 @@ class LocalQgaTransport:
         if command == "guest-get-host-name":
             return {"host-name": "fake-qemu"}
         if command == "guest-exec":
+            # Start it and RETURN, as qemu-ga does. Running the child
+            # synchronously here and reporting `exited: True` from the first
+            # status made the executor's poll loop unreachable through this
+            # fake -- the backoff, the partial-output accumulation and the
+            # deadline that raises with the guest pid were all dead code in
+            # the battery, and the qemu timeout leg was really testing the
+            # fake's own `subprocess.run(timeout=)`.
             environment = os.environ.copy()
             for item in arguments.get("env", ()):
                 key, value = item.split("=", 1)
                 environment[key] = value
             input_data = arguments.get("input-data")
             payload = base64.b64decode(input_data) if input_data is not None else None
-            self._exec_result = subprocess.run(
+            process = subprocess.Popen(
                 [arguments["path"], *arguments.get("arg", ())],
-                capture_output=True,
-                check=False,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 env=environment,
-                input=payload,
-                timeout=timeout,
             )
-            return {"pid": 1}
+            if payload:
+                process.stdin.write(payload)
+            process.stdin.close()
+            self._exec_process = process
+            self._exec_output = None
+            self._exec_pid += 1
+            return {"pid": self._exec_pid}
         if command == "guest-exec-status":
-            result = self._exec_result
-            if result is None:
+            process = self._exec_process
+            if process is None:
                 raise AssertionError("guest-exec-status preceded guest-exec")
+            if process.poll() is None:
+                # Still running. qemu-ga answers the same way, and the
+                # caller is expected to ask again.
+                return {"exited": False}
+            if self._exec_output is None:
+                # Safe after exit for the small outputs this battery
+                # produces; a fake is not a guest agent's ring buffer.
+                self._exec_output = process.communicate()
+            stdout, stderr = self._exec_output
             return {
                 "exited": True,
-                "exitcode": result.returncode,
-                "out-data": base64.b64encode(result.stdout or b"").decode("ascii"),
-                "err-data": base64.b64encode(result.stderr or b"").decode("ascii"),
+                "exitcode": process.returncode,
+                "out-data": base64.b64encode(stdout or b"").decode("ascii"),
+                "err-data": base64.b64encode(stderr or b"").decode("ascii"),
             }
         if command == "guest-file-open":
             path = self.sandbox.local(arguments["path"])

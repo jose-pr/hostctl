@@ -194,7 +194,7 @@ def test_a_failed_probe_does_not_freeze_the_guest_family(monkeypatch):
         QemuConfig("vm", transport="libvirt", transport_factory=lambda: transport)
     )
 
-    with pytest.raises(Exception):
+    with pytest.raises(ConnectionError, match="agent busy"):
         host.connect()
 
     # The failure must not have been cached as a successful discovery.

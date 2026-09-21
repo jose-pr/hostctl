@@ -97,4 +97,8 @@ jobs:
           HOSTCTL_TEST_SSH_USER: runner
           HOSTCTL_TEST_SSH_KEY: /home/runner/.ssh/hostctl_conformance
           HOSTCTL_TEST_DOCKER_CONTAINER: hostctl-conformance
-        run: python -m pytest -q -rs tests/conformance
+          # pyserial's own loopback URL: no hardware, no device node. The
+          # gate was written as if it needed a real port and was therefore
+          # set nowhere, so the live serial leg had never run.
+          HOSTCTL_TEST_SERIAL_URI: "serial:///loop%3A%2F%2F"
+        run: python -m pytest -q -rs tests/conformance tests/test_serial_live.py

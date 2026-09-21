@@ -103,7 +103,10 @@ def test_no_uncertain_executor_failure_is_ever_replayed(fault):
         )
     )
 
-    with pytest.raises(Exception):
+    # The injected type itself, not "something went wrong": a bare
+    # `Exception` also accepts a failure the code should never produce --
+    # an AttributeError inside the dispatcher would have passed this.
+    with pytest.raises(type(fault())):
         host.run("rm -rf /var/cache/app", check=False)
 
     assert injector.calls == ["primary"]
