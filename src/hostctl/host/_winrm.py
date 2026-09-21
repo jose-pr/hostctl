@@ -47,7 +47,6 @@ from ._common import (
     PathLike,
     parse_host_info,
     starts_direct_command,
-    strict_uri_credentials,
     strict_uri_query,
     uri_host,
     uri_hostname,
@@ -86,6 +85,12 @@ _PYWINRM_SCRIPT_BUDGET = 3_000
 @dataclasses.dataclass
 class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     """Connection and transport settings for the Windows provider."""
+
+    #: Declared rather than enforced inside `_from_parsed_uri`, so the
+    #: whitelist can be read before a config is built: an ambient
+    #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
+    #: is accepted. The base dispatcher enforces it.
+    uri_credentials = ("password",)
 
     host: str
     username: str
@@ -153,7 +158,6 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> WinRMConfig:
-        strict_uri_credentials(credentials, ("password",))
         query = strict_uri_query(
             parsed,
             {

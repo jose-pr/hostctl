@@ -16,7 +16,7 @@ import typing
 
 from pathlib_next import Path as NextPath
 
-from .host import Exec, Host, HostPath
+from .host import Exec, Host, HostConfig, HostPath
 
 _URI_OPERAND = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
@@ -45,8 +45,28 @@ def _credentials(args: argparse.Namespace) -> dict[str, object]:
     return {"password": password} if password is not None else {}
 
 
+def _usable_credentials(uri: str, credentials: dict[str, object]) -> dict[str, object]:
+    """Keep only what the target scheme can accept.
+
+    `HOSTCTL_PASSWORD` is ambient: the guide tells the user to export it, so
+    it is set for a shell session rather than for one command. Splatting it
+    into every `Host(...)` made `hostctl run local: ...` -- the guide own
+    example -- fail with `unknown credential argument: password` and exit 125
+    the moment that variable existed, because `LocalConfig` declares no
+    credentials at all. A credential named explicitly by a config still fails
+    closed; only the ambient one is filtered.
+    """
+    try:
+        accepted = HostConfig.supported_credentials(uri)
+    except ValueError:
+        return credentials
+    if accepted is None:
+        return credentials
+    return {key: value for key, value in credentials.items() if key in accepted}
+
+
 def _open_host(stack: contextlib.ExitStack, uri: str, credentials: dict[str, object]):
-    return stack.enter_context(Host(uri, **credentials))
+    return stack.enter_context(Host(uri, **_usable_credentials(uri, credentials)))
 
 
 def _port_colon(value: str, scheme_end: int, authority_end: int) -> int:
@@ -106,7 +126,7 @@ def _command_run(args: argparse.Namespace, stdout, stderr) -> int:
         command.pop(0)
     if not command:
         raise ValueError("run requires a command after --")
-    with Host(args.uri, **_credentials(args)) as host:
+    with Host(args.uri, **_usable_credentials(args.uri, _credentials(args))) as host:
         # `Exec` marks direct execution and takes the program verbatim, so the
         # operand needs no path flavour: a bare name resolves through the
         # target's PATH and an absolute path is used as given.
@@ -121,14 +141,14 @@ def _command_run(args: argparse.Namespace, stdout, stderr) -> int:
 
 
 def _command_ls(args: argparse.Namespace, stdout, stderr) -> int:
-    with Host(args.uri, **_credentials(args)) as host:
+    with Host(args.uri, **_usable_credentials(args.uri, _credentials(args))) as host:
         for child in host.path(args.path).iterdir():
             _write(stdout, f"{child.name}\n")
     return 0
 
 
 def _command_cat(args: argparse.Namespace, stdout, stderr) -> int:
-    with Host(args.uri, **_credentials(args)) as host:
+    with Host(args.uri, **_usable_credentials(args.uri, _credentials(args))) as host:
         _write(stdout, host.path(args.path).read_bytes())
     return 0
 
@@ -151,7 +171,7 @@ def _command_cp(args: argparse.Namespace, stdout, stderr) -> int:
 
 
 def _command_info(args: argparse.Namespace, stdout, stderr) -> int:
-    with Host(args.uri, **_credentials(args)) as host:
+    with Host(args.uri, **_usable_credentials(args.uri, _credentials(args))) as host:
         info = host.info()
     value = dataclasses.asdict(info) if dataclasses.is_dataclass(info) else vars(info)
     _write(stdout, json.dumps(value, sort_keys=True) + "\n")
@@ -159,7 +179,7 @@ def _command_info(args: argparse.Namespace, stdout, stderr) -> int:
 
 
 def _command_shell(args: argparse.Namespace, stdout, stderr) -> int:
-    with Host(args.uri, **_credentials(args)) as host:
+    with Host(args.uri, **_usable_credentials(args.uri, _credentials(args))) as host:
         session = host.shell.session(terminal=True)
         stopped = threading.Event()
 

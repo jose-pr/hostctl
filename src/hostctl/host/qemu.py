@@ -46,7 +46,6 @@ from ._common import (
     Input,
     PathLike,
     starts_direct_command,
-    strict_uri_credentials,
     strict_uri_query,
     uri_host,
     uri_hostname,
@@ -74,6 +73,19 @@ def _path_selection(value: str) -> QemuPathSelection:
 @dataclasses.dataclass
 class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
     """Guest identity, QGA transport, and guest semantic selections."""
+
+    #: Declared rather than enforced inside `_from_parsed_uri`, so the
+    #: whitelist can be read before a config is built: an ambient
+    #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
+    #: is accepted. The base dispatcher enforces it.
+    uri_credentials = (
+        "password",
+        "client_keys",
+        "known_hosts",
+        "transport_factory",
+        "serial_console",
+        "path_helper",
+    )
 
     domain: str
     transport: QemuTransport = "libvirt"
@@ -172,17 +184,6 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> QemuConfig:
-        strict_uri_credentials(
-            credentials,
-            (
-                "password",
-                "client_keys",
-                "known_hosts",
-                "transport_factory",
-                "serial_console",
-                "path_helper",
-            ),
-        )
         query = strict_uri_query(
             parsed,
             (

@@ -1,6 +1,7 @@
 import io
 import json
 import subprocess
+import sys
 import types
 import pytest
 
@@ -212,3 +213,25 @@ def test_shell_uses_session_and_submits_input(monkeypatch):
         ("eof",),
         ("close",),
     ]
+
+
+def test_an_exported_password_does_not_break_a_local_command(monkeypatch, capsys):
+    """`HOSTCTL_PASSWORD` is ambient -- the guide says to export it -- and it
+    was splatted into every `Host(...)`, so the guide's own `local:` examples
+    failed with `unknown credential argument: password` and exit 125 the
+    moment the variable existed."""
+    monkeypatch.setenv("HOSTCTL_PASSWORD", "hunter2")
+
+    code = main(["run", "local:", "--", sys.executable, "-c", "print('ok')"])
+
+    assert code == 0
+    assert "ok" in capsys.readouterr().out
+
+
+def test_an_explicit_unknown_credential_still_fails_closed():
+    """Filtering is for the ambient channel only: a name a config does not
+    know, passed deliberately, is a typo worth reporting."""
+    from hostctl import HostConfig
+
+    with pytest.raises(ValueError, match="unknown credential argument"):
+        HostConfig("local:", passwrd="typo")

@@ -516,6 +516,27 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         return implementation._from_parsed_uri(parsed, **credentials)
 
     @classmethod
+    def supported_credentials(cls, uri: str) -> _ty.Optional[_ty.Tuple[str, ...]]:
+        """Credential names the implementation selected by `uri` accepts.
+
+        `None` means the implementation declares no whitelist and takes
+        whatever it is given. Use this for an *ambient* credential -- one
+        supplied for a session rather than for a single call, such as the
+        CLI's `HOSTCTL_PASSWORD` -- which should be offered only where it can
+        be used. An explicitly passed credential still fails closed, because
+        there a name the config does not know is a typo worth reporting.
+        """
+        parsed = _urlsplit(_encode_stripped_characters(uri))
+        matches = [
+            implementation
+            for implementation in cls._uri_implementations(parsed.scheme)
+            if implementation._matches_uri(parsed)
+        ]
+        if len(matches) != 1:
+            return None
+        return matches[0].uri_credentials
+
+    @classmethod
     def _matches_uri(cls, parsed: _SplitResult) -> bool:
         """Whether this implementation accepts a parsed URI."""
         return parsed.scheme.casefold() in cls._uri_schemes

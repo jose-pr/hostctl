@@ -43,7 +43,6 @@ from ._common import (
     PathLike,
     parse_host_info,
     starts_direct_command,
-    strict_uri_credentials,
     strict_uri_query,
     uri_host,
     uri_hostname,
@@ -88,6 +87,12 @@ def _path_flavor_from_connection_string(value: str) -> PathnameConstructor:
 @dataclasses.dataclass
 class SshConfig(HostConfig, schemes=("ssh",)):
     """Explicit SSH transport, authentication, and target-shell settings."""
+
+    #: Declared rather than enforced inside `_from_parsed_uri`, so the
+    #: whitelist can be read before a config is built: an ambient
+    #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
+    #: is accepted. The base dispatcher enforces it.
+    uri_credentials = ("password", "client_keys", "known_hosts")
 
     host: str
     port: int = 22
@@ -155,7 +160,6 @@ class SshConfig(HostConfig, schemes=("ssh",)):
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> SshConfig:
-        strict_uri_credentials(credentials, ("password", "client_keys", "known_hosts"))
         query = strict_uri_query(parsed, {"dialect", "path_flavor", "executable"})
         if not parsed.hostname or parsed.path not in ("", "/"):
             raise ValueError("SSH URI requires a host and no path")

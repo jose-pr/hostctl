@@ -23,12 +23,17 @@ from ._common import (
     PathLike,
     starts_direct_command,
     normalize_os_family,
-    strict_uri_credentials,
 )
 from ..shell import POSIX_SHELL, POWERSHELL, ShellFlavour
 
 
 class LocalConfig(HostConfig, schemes=("local",)):
+    #: Declared rather than enforced inside `_from_parsed_uri`, so the
+    #: whitelist can be read before a config is built: an ambient
+    #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
+    #: is accepted. The base dispatcher enforces it.
+    uri_credentials = ()
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -38,7 +43,6 @@ class LocalConfig(HostConfig, schemes=("local",)):
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> LocalConfig:
-        strict_uri_credentials(credentials, ())
         if parsed.netloc or parsed.path or parsed.query:
             raise ValueError("local URI must be exactly 'local:'")
         return cls()

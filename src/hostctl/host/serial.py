@@ -30,7 +30,6 @@ from ._common import (
     HostInfo,
     PathLike,
     starts_direct_command,
-    strict_uri_credentials,
     strict_uri_query,
 )
 
@@ -60,6 +59,18 @@ def _format_number(value: typing.Optional[float]) -> str:
 @dataclasses.dataclass
 class SerialConfig(HostConfig, schemes=("serial",)):
     """Serial transport settings; credentials and profiles stay out of URIs."""
+
+    #: Declared rather than enforced inside `_from_parsed_uri`, so the
+    #: whitelist can be read before a config is built: an ambient
+    #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
+    #: is accepted. The base dispatcher enforces it.
+    uri_credentials = (
+        "protocol",
+        "username",
+        "password",
+        "serial_factory",
+        "serial_port",
+    )
 
     port: str
     baudrate: int = 115200
@@ -130,10 +141,6 @@ class SerialConfig(HostConfig, schemes=("serial",)):
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> "SerialConfig":
-        strict_uri_credentials(
-            credentials,
-            ("protocol", "username", "password", "serial_factory", "serial_port"),
-        )
         port = unquote(parsed.path.lstrip("/"))
         if parsed.netloc:
             raise ValueError("serial URI must not contain an authority")

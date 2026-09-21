@@ -48,7 +48,6 @@ from ._common import (
     PathLike,
     starts_direct_command,
     parse_host_info,
-    strict_uri_credentials,
     strict_uri_query,
 )
 from .container_path import (
@@ -76,6 +75,12 @@ def _path_selection(value: str) -> ContainerPathSelection:
 @dataclasses.dataclass
 class ContainerConfig(HostConfig, schemes=("docker",)):
     """Docker Engine target and in-container execution defaults."""
+
+    #: Declared rather than enforced inside `_from_parsed_uri`, so the
+    #: whitelist can be read before a config is built: an ambient
+    #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
+    #: is accepted. The base dispatcher enforces it.
+    uri_credentials = ("client_factory",)
 
     container: str
     engine_url: typing.Optional[str] = None
@@ -134,7 +139,6 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> ContainerConfig:
-        strict_uri_credentials(credentials, ("client_factory",))
         query = strict_uri_query(
             parsed,
             {
