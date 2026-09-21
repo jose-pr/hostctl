@@ -1,0 +1,98 @@
+{
+  "interpreter": "py3.14",
+  "machine": "ARM64",
+  "metrics": [
+    {
+      "iterations": 2000,
+      "max_ms": 0.026461749977897853,
+      "median_ms": 0.022178700019139796,
+      "min_ms": 0.021070800023153424,
+      "name": "path.build",
+      "samples": 7
+    },
+    {
+      "iterations": 2000,
+      "max_ms": 0.014858049980830401,
+      "median_ms": 0.013313849980477244,
+      "min_ms": 0.012944650021381676,
+      "name": "path.exists",
+      "samples": 7
+    },
+    {
+      "iterations": 2000,
+      "max_ms": 0.015635350020602345,
+      "median_ms": 0.015086699975654483,
+      "min_ms": 0.014712249976582825,
+      "name": "path.read_bytes",
+      "samples": 7
+    },
+    {
+      "iterations": 2000,
+      "max_ms": 0.043668549973517656,
+      "median_ms": 0.0426766499876976,
+      "min_ms": 0.04054454999277368,
+      "name": "path.iterdir",
+      "samples": 7
+    },
+    {
+      "iterations": 2000,
+      "max_ms": 0.0025550000136718154,
+      "median_ms": 0.002527699980419129,
+      "min_ms": 0.0024659999762661755,
+      "name": "path.truediv",
+      "samples": 7
+    },
+    {
+      "iterations": 2000,
+      "max_ms": 0.011069050000514835,
+      "median_ms": 0.010565750009845942,
+      "min_ms": 0.010274650005158037,
+      "name": "shell.posix.script(argv)",
+      "samples": 7
+    },
+    {
+      "iterations": 2000,
+      "max_ms": 0.013341899961233139,
+      "median_ms": 0.012823850032873452,
+      "min_ms": 0.012601650028955191,
+      "name": "shell.posix.script(raw+cwd+env)",
+      "samples": 7
+    },
+    {
+      "iterations": 2000,
+      "max_ms": 0.014775799994822592,
+      "median_ms": 0.014634050021413714,
+      "min_ms": 0.014325500000268221,
+      "name": "shell.powershell5.structured_command",
+      "samples": 7
+    },
+    {
+      "iterations": 2000,
+      "max_ms": 0.009707299992442131,
+      "median_ms": 0.009571550006512552,
+      "min_ms": 0.009427000011783093,
+      "name": "shell.powershell7.structured_command",
+      "samples": 7
+    },
+    {
+      "iterations": 500,
+      "max_ms": 0.06558119994588196,
+      "median_ms": 0.06194859999231994,
+      "min_ms": 0.051229799864813685,
+      "name": "shell.powershell.command(encoded)",
+      "samples": 7
+    },
+    {
+      "iterations": 2000,
+      "max_ms": 0.0216311999829486,
+      "median_ms": 0.020672000013291836,
+      "min_ms": 0.020389450015500188,
+      "name": "shell.cmd.script(argv)",
+      "samples": 7
+    }
+  ],
+  "package": "hostctl",
+  "platform": "Windows-11-10.0.28000-SP0",
+  "python": "3.14.6",
+  "version": "0.2.7"
+}

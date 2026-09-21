@@ -251,7 +251,16 @@ block a release cannot be run at all.
 
 Python 3.14 is the default development interpreter. Python 3.9 remains the
 supported compatibility floor and should be selected explicitly with
-`py -3.9` when running floor-specific checks.
+`py -3.9` when running floor-specific checks; name that environment
+`.venv/3.9-nt-amd64` so the two agree.
+
+The venv names carry the platform `sysconfig.get_platform()` reports, so a
+checkout on an ARM64 Windows machine still names them `amd64`: `cryptography`
+publishes no `win_arm64` wheel and building it from source needs a Rust
+toolchain, so `asyncssh` -- and with it the whole `ssh` extra -- cannot be
+installed under a native ARM64 interpreter. If that changes, the native
+interpreter is `py -V:3.14-arm64` and the environment should be named
+`.venv/3.14-nt-arm64`.
 
 ### Releasing
 
