@@ -256,11 +256,12 @@ with config as guest:
     result = guest.run(["printf", "%s", "hello"], encoding="utf-8")
 ```
 
-QGA execution is buffered. It supports argv, environment, Base64 stdin,
-separate captured output, exit status, and polling. A timeout cannot cancel the
-guest process; `TimeoutExpired.orphaned` is true and its QGA PID is retained
-when known. QGA has no native cwd, so shell commands embed cwd while direct
-executable paths reject it.
+QGA execution is buffered. It supports argv, Base64 stdin, separate captured
+output, exit status, and polling. A timeout cannot cancel the guest process;
+`TimeoutExpired.orphaned` is true and its QGA PID is retained when known. QGA
+has no native cwd, and its `env` list *replaces* the guest environment instead
+of adding to it, so shell commands embed both cwd and env in the rendered
+script while direct executable paths reject both.
 
 An optional injected `QemuSerialConsole` exposes raw rescue-console access
 through `guest.open_serial()`. It is exclusive, merged-stream, and does not

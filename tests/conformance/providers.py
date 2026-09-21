@@ -675,7 +675,12 @@ def fake_providers() -> tuple[Provider, ...]:
         Provider(
             "qemu",
             lambda: _fake(FakeQemuHost),
-            frozenset(("run", "path", "args", "env", "input", "timeout")),
+            # No "cwd" and no "env": guest-exec has neither. It carries an
+            # `env` list, but the guest agent applies it as envp, which
+            # REPLACES the environment -- so hostctl embeds assignments in a
+            # rendered script and a direct `Exec` refuses them, exactly as it
+            # already refused cwd.
+            frozenset(("run", "path", "args", "input", "timeout")),
             symlink_gap=(
                 "QEMU Guest Agent has no symlink RPC (guest-file-* covers only "
                 "open/read/write/seek/flush/close)"

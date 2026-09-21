@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 
 import pytest
 
@@ -123,3 +125,45 @@ def test_ssh_unix_qga_rejects_invalid_requests_and_settings():
     transport = SshUnixGuestAgentTransport("/run/qga.sock", lambda: connection)
     with pytest.raises(ValueError, match="execute"):
         transport.execute({})
+
+
+class _HangingWriter(_Writer):
+    """A writer whose channel close is never acknowledged by the peer."""
+
+    def __init__(self, reader, **options):
+        super().__init__(reader, **options)
+        self.wait_closed_awaited = False
+
+    async def wait_closed(self):
+        self.wait_closed_awaited = True
+        await asyncio.Event().wait()
+
+
+class _HangingConnection(_Connection):
+    def __init__(self, **writer_options):
+        super().__init__(**writer_options)
+        self.writer = _HangingWriter(self.reader, **writer_options)
+
+
+def test_closing_a_partitioned_ssh_stream_is_bounded():
+    """A peer that never acknowledges the channel close must not turn
+    `close()` -- and therefore every `execute(timeout=...)` that fails -- into
+    an unbounded wait while the session lock is held."""
+    connection = _HangingConnection()
+    transport = SshUnixGuestAgentTransport("/run/qga.sock", lambda: connection)
+    transport.close_timeout = 0.05
+    transport.execute({"execute": "guest-ping"})
+
+    finished = threading.Event()
+
+    def close():
+        transport.close()
+        finished.set()
+
+    worker = threading.Thread(target=close, daemon=True)
+    worker.start()
+    worker.join(10.0)
+
+    assert finished.is_set(), "close() never returned on a partitioned link"
+    assert connection.writer.wait_closed_awaited
+    assert connection.writer.closed

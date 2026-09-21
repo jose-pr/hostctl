@@ -406,6 +406,19 @@ class LibvirtGuestAgentTransport:
             )
         except Exception as exc:
             normalized = normalize_libvirt_error(exc)
+            # A transport-level failure means the cached connection is dead --
+            # libvirtd restarted, the socket went away, the domain vanished.
+            # Keeping the handle made one restart fatal for the life of the
+            # process, while the framed transports reconnect transparently on
+            # the next request. A QgaCommandError is the guest answering and
+            # keeps the connection.
+            if isinstance(
+                normalized, (ConnectionError, FileNotFoundError, PermissionError)
+            ):
+                try:
+                    self.close()
+                except Exception:
+                    pass
             if normalized is exc:
                 raise
             raise normalized from exc
@@ -540,17 +553,33 @@ async def _wait(awaitable: typing.Awaitable[object], timeout: float) -> object:
     return await asyncio.wait_for(awaitable, timeout)
 
 
-async def _close_writer(writer: _Writer) -> None:
+#: How long a channel close may wait for the peer's acknowledgement.
+#: Teardown runs while `_session_lock` is held and is reached from every
+#: failed `execute()`, so an unbounded wait here makes `timeout=` meaningless
+#: -- the deadline expires and the thread then blocks forever on a partitioned
+#: link, taking every other user of the host with it.
+_CLOSE_BUDGET = 5.0
+
+
+async def _close_writer(writer: _Writer, timeout: float = _CLOSE_BUDGET) -> None:
     writer.close()
     wait_closed = getattr(writer, "wait_closed", None)
     if wait_closed is not None:
         result = wait_closed()
         if hasattr(result, "__await__"):
-            await result
+            try:
+                await asyncio.wait_for(result, timeout)
+            except (asyncio.TimeoutError, TimeoutError):
+                # `close()` has already been issued; the peer simply never
+                # answered. Dropping the handle is the whole of what is left.
+                pass
 
 
 class SshUnixGuestAgentTransport(_QgaFramedSession):
     """Persistent QGA stream opened on a remote Unix socket over SSH."""
+
+    #: Seconds the teardown waits for the peer to acknowledge the close.
+    close_timeout: float = _CLOSE_BUDGET
 
     def __init__(
         self,
@@ -639,7 +668,7 @@ class SshUnixGuestAgentTransport(_QgaFramedSession):
         self._reader = None
         if writer is not None:
             try:
-                _async.async_to_sync(_close_writer(writer))
+                _async.async_to_sync(_close_writer(writer, self.close_timeout))
             except Exception:
                 pass
 

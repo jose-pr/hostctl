@@ -105,7 +105,24 @@ def test_qemu_host_shell_run_embeds_cwd_and_uses_guest_exec():
     assert arguments["path"] == "/bin/sh"
     assert "cd -- '/tmp/a b'" in arguments["arg"][-1]
     assert arguments["arg"][-1].count("cd -- ") == 1
-    assert arguments["env"] == ["NUMBER=7"]
+    # Embedded in the script, NOT sent as guest-exec's `env` list: qemu-ga
+    # passes that list to g_spawn_async_with_pipes as envp, which REPLACES
+    # the child environment. `env` is additive on every hostctl transport
+    # (docs/guide/contracts.md), so a guest process must keep its PATH.
+    assert "env" not in arguments
+    assert "NUMBER=7" in arguments["arg"][-1]
+
+
+def test_direct_qga_argv_refuses_env_rather_than_replacing_it():
+    """There is no shell to embed additive assignments into, and QGA's own
+    env list would wipe PATH/HOME. Refusing is the honest answer, and it
+    matches the rule already applied to cwd."""
+    from hostctl import Exec
+
+    host, _ = _host()
+
+    with pytest.raises(NotImplementedError, match="env"):
+        host.run(Exec("/usr/bin/id"), env={"LC_ALL": "C"})
 
 
 def test_qemu_ssh_uri_round_trip_is_secret_safe():
@@ -176,3 +193,49 @@ def test_a_failed_probe_does_not_freeze_the_guest_family(monkeypatch):
     host.connect()
 
     assert "guest-get-osinfo" in calls
+
+
+def test_degraded_provider_is_probed_once_not_once_per_path(caplog):
+    """A loop over 500 guest files emitted 500 identical WARNING lines,
+    because `path()` re-probed the provider on every call."""
+    host, _ = _host()
+    caplog.set_level("WARNING", logger="hostctl")
+
+    for index in range(4):
+        host.path(f"/tmp/file{index}")
+
+    degraded = [
+        record for record in caplog.records if "degraded" in record.getMessage()
+    ]
+    assert len(degraded) == 1
+
+
+def test_a_supplied_path_helper_reaches_the_backend_and_lifts_the_degradation():
+    """The helper surface existed on the backend and nothing could supply
+    one, so every real QemuHost path was metadata-less."""
+    import stat as stat_module
+
+    from pathlib_next.utils.stat import FileStat
+
+    class _Helper:
+        def stat(self, path, *, follow_symlinks=True):
+            return FileStat(st_mode=stat_module.S_IFREG | 0o644, st_size=3)
+
+        def scandir(self, path):
+            return []
+
+    transport = _Transport()
+    host = QemuHost(
+        QemuConfig(
+            "guest",
+            transport="libvirt",
+            transport_factory=lambda: transport,
+            path_helper=_Helper(),
+        )
+    )
+
+    path = host.path("/etc/motd")
+
+    assert path.backend.helper is not None
+    assert path.stat().st_size == 3
+    assert host.path_provider.probe().availability == "available"

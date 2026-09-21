@@ -203,6 +203,7 @@ class QgaPathProvider(PathProvider):
     def __init__(self, factory, backend, *, name="qga"):
         self.backend = backend
         capabilities = self._backend_capabilities(backend)
+        self._probed: typing.Optional[typing.Tuple[bool, ProviderProbe]] = None
         super().__init__(name, factory, capabilities=capabilities)
 
     @staticmethod
@@ -235,11 +236,24 @@ class QgaPathProvider(PathProvider):
         return frozenset(values)
 
     def probe(self) -> ProviderProbe:
+        # Memoized on the one thing the answer depends on. The verdict is a
+        # property of the backend, not of the call, and recomputing it per
+        # `QemuHost.path()` meant a loop over 500 guest files emitted 500
+        # identical degraded-provider warnings.
+        helper_missing = getattr(self.backend, "helper", None) is None
+        cached = self._probed
+        if cached is not None and cached[0] == helper_missing:
+            return cached[1]
+        result = self._compute_probe(helper_missing)
+        self._probed = (helper_missing, result)
+        return result
+
+    def _compute_probe(self, helper_missing: bool) -> ProviderProbe:
         if not self.capabilities:
             return ProviderProbe(
                 "unavailable", "guest agent provides no usable file RPCs"
             )
-        if getattr(self.backend, "helper", None) is None:
+        if helper_missing:
             # Warning, not debug: the provider stays usable, so the operation
             # proceeds and nothing surfaces an error -- but the caller silently
             # loses stat/scandir and every namespace mutation.  Degrading

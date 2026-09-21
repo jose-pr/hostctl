@@ -307,3 +307,69 @@ def test_an_unreachable_qga_socket_is_a_transport_error(error):
     # FileNotFoundError for mode "a", and would stage an empty buffer.
     assert not isinstance(raised.value, FileNotFoundError)
     assert stream.closed
+
+
+def test_libvirt_transport_drops_a_dead_connection_and_reconnects():
+    """A libvirtd restart must not poison the host forever: the framed
+    transports reconnect transparently, and this one cached its handle."""
+    connections = []
+    live = {"value": False}
+
+    def connect(uri):
+        connection = _Connection()
+        connections.append(connection)
+        live["value"] = True
+        return connection
+
+    def command(domain, payload, timeout, flags):
+        if not live["value"]:
+            raise RuntimeError("internal error: client socket is closed")
+        request = json.loads(payload)
+        return json.dumps({"return": {"ok": True}, "id": request["id"]})
+
+    transport = LibvirtGuestAgentTransport(
+        "guest",
+        connect_factory=connect,
+        command_factory=command,
+    )
+
+    assert transport.execute({"execute": "guest-ping"}) == {"ok": True}
+
+    live["value"] = False  # libvirtd restarts under an unattended upgrade
+    with pytest.raises(ConnectionError, match="client socket is closed"):
+        transport.execute({"execute": "guest-ping"})
+    assert connections[0].closed, "the dead connection was kept"
+
+    assert transport.execute({"execute": "guest-ping"}) == {"ok": True}
+    assert len(connections) == 2
+
+
+def test_libvirt_transport_keeps_the_connection_for_a_guest_error():
+    """Only transport-level failures drop the handle; a guest-side error
+    (agent not running, command disabled) must not force a reconnect."""
+    connections = []
+
+    def connect(uri):
+        connection = _Connection()
+        connections.append(connection)
+        return connection
+
+    def command(domain, payload, timeout, flags):
+        request = json.loads(payload)
+        return json.dumps(
+            {
+                "error": {"class": "GuestAgentNotAvailable", "desc": "offline"},
+                "id": request["id"],
+            }
+        )
+
+    transport = LibvirtGuestAgentTransport(
+        "guest", connect_factory=connect, command_factory=command
+    )
+    with pytest.raises(QgaCommandError):
+        transport.execute({"execute": "guest-ping"})
+    with pytest.raises(QgaCommandError):
+        transport.execute({"execute": "guest-ping"})
+
+    assert len(connections) == 1
+    assert not connections[0].closed

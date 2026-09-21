@@ -201,6 +201,11 @@ def test_commands_and_helpers_are_capability_gated():
 
     with pytest.raises(NotImplementedError, match="guest-file-read"):
         path.read_bytes()
+    with pytest.raises(FileNotFoundError):
+        # Absence is provable with the file RPCs alone, so it is reported as
+        # absence rather than as a missing helper.
+        path.stat()
+    transport.files["/value"] = bytearray(b"x")
     with pytest.raises(NotImplementedError, match="positively probed"):
         path.stat()
     with pytest.raises(NotImplementedError, match="exclusive"):
@@ -316,3 +321,53 @@ def test_open_modes_are_strict(mode):
     # `validate_open_mode`'s message is pinned in tests/test_staged_io.py.
     with pytest.raises(ValueError):
         path.open(mode)
+
+
+def test_helperless_guest_paths_answer_exists_with_the_file_rpcs(tmp_path):
+    """`exists()` is a boolean probe (docs/guide/contracts.md), and the file
+    RPCs can answer it -- a guest helper is only needed for metadata."""
+    transport = _Transport()
+    transport.files["/etc/motd"] = bytearray(b"welcome\n")
+    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
+
+    assert PosixQemuPath("/etc/motd", backend=backend).exists() is True
+    assert PosixQemuPath("/etc/nope", backend=backend).exists() is False
+
+
+def test_copying_a_local_file_into_a_helperless_guest_works(tmp_path):
+    """The documented way to push a file into a VM. It raised
+    NotImplementedError on every QemuHost hostctl can actually build, because
+    a helper-less `stat()` could not say "absent" -- so the generic copy
+    could not tell "create it" from "this backend is crippled"."""
+    transport = _Transport()
+    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
+    source = tmp_path / "report.csv"
+    source.write_bytes(b"id,value\n1,2\n")
+
+    target = PosixQemuPath("/srv/report.csv", backend=backend)
+    Path(source).copy(target)
+
+    assert bytes(transport.files["/srv/report.csv"]) == b"id,value\n1,2\n"
+
+    # Replacing one still needs a helper -- hostctl knows the entry is there
+    # and cannot describe or unlink it. The error says so rather than
+    # claiming the guest has no such file.
+    with pytest.raises(NotImplementedError, match="guest helper"):
+        Path(source).copy(target, overwrite=True)
+
+
+def test_copy_into_a_guest_with_a_helper_replaces_the_target(tmp_path):
+    transport = _Transport()
+    helper = _Helper(transport)
+    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
+    source = tmp_path / "report.csv"
+    source.write_bytes(b"id,value\n1,2\n")
+    target = PosixQemuPath("/srv/report.csv", backend=backend)
+
+    Path(source).copy(target)
+    source.write_bytes(b"id,value\n3,4\n")
+    with pytest.raises(FileExistsError):
+        Path(source).copy(target)
+    Path(source).copy(target, overwrite=True)
+
+    assert bytes(transport.files["/srv/report.csv"]) == b"id,value\n3,4\n"

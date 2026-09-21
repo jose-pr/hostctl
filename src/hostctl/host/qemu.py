@@ -89,6 +89,15 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
     serial_console: typing.Optional[QemuSerialConsole] = dataclasses.field(
         default=None, repr=False, compare=False
     )
+    #: Guest-side helper supplying the metadata and namespace operations QGA
+    #: has no RPC for. QGA's file RPCs move bytes and nothing else, so without
+    #: one `stat`, `scandir` and every mutation are unavailable and the path
+    #: provider reports `degraded`. hostctl ships no implementation yet (see
+    #: `.agents/plans/qga_guest_path_helper.md`); supplying one is how a
+    #: caller with a known guest gets a complete path surface today.
+    path_helper: typing.Optional["GuestPathHelper"] = dataclasses.field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
@@ -171,6 +180,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
                 "known_hosts",
                 "transport_factory",
                 "serial_console",
+                "path_helper",
             ),
         )
         query = strict_uri_query(
@@ -198,6 +208,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             "path_flavor": _path_selection(query.get("path_flavor", "auto")),
             "transport_factory": credentials.get("transport_factory"),
             "serial_console": credentials.get("serial_console"),
+            "path_helper": credentials.get("path_helper"),
         }
         scheme = parsed.scheme.casefold()
         if scheme == "qemu+libvirt":
@@ -425,6 +436,7 @@ class QemuHost(Host):
             self._path_backend = QgaPathBackend(
                 self.transport,
                 supported_commands=self.supported_commands,
+                helper=self.config.path_helper,
                 timeout=self.config.agent_timeout,
             )
         path_backend = self._path_backend
@@ -491,8 +503,15 @@ class QemuHost(Host):
                 )
             if cwd is not None:
                 raise NotImplementedError("QGA direct argv execution cannot apply cwd")
+            if env is not None:
+                # guest-exec's `env` list is handed to the guest agent as
+                # envp, which REPLACES the child environment -- no PATH, no
+                # HOME, no SystemRoot. hostctl's contract is additive, and a
+                # direct argv execution has no shell to embed assignments
+                # into, so this is refused exactly as cwd is.
+                raise NotImplementedError("QGA direct argv execution cannot apply env")
         else:
-            script = self.shell_flavour.script(cmds, cwd=cwd, env=None)
+            script = self.shell_flavour.script(cmds, cwd=cwd, env=env)
             selected_executable = executable
             if selected_executable is None and self._windows:
                 selected_executable = {
@@ -517,7 +536,9 @@ class QemuHost(Host):
             stdin=stdin,
             stdout=stdout,
             stderr=stderr,
-            env=env,
+            # Never natively: the assignments are already in the script, and
+            # sending them again would replace the guest environment.
+            env=None,
             capture_output=capture_output,
             check=check,
             encoding=encoding,
@@ -816,7 +837,50 @@ class QgaPathBackend:
             raise NotImplementedError(f"QGA helper does not support {operation}")
         return method
 
+    def exists(self, path: str, *, follow_symlinks: bool = True) -> bool:
+        """Answer existence with whatever the guest agent actually offers.
+
+        `stat` needs a probed helper, but existence does not: opening a path
+        for reading distinguishes "absent" from "there but unreadable" using
+        only the file RPCs every QGA build has. Without this, `exists()` on
+        every host hostctl can build raised `NotImplementedError` instead of
+        returning a boolean, which `docs/guide/contracts.md` requires -- and
+        that is what made `Path.copy()` into a guest impossible.
+        """
+        if self.helper is not None:
+            try:
+                self.stat(path, follow_symlinks=follow_symlinks)
+            except (FileNotFoundError, NotADirectoryError):
+                return False
+            return True
+        try:
+            handle = self._open(path, "r")
+        except FileNotFoundError:
+            return False
+        except NotImplementedError:
+            raise
+        except OSError:
+            # Permission denied, EISDIR on a Windows guest: something is
+            # there, it just cannot be opened this way.
+            return True
+        try:
+            return True
+        finally:
+            try:
+                self._close(handle, path)
+            except Exception:
+                pass
+
     def stat(self, path: str, *, follow_symlinks: bool = True) -> FileStat:
+        if self.helper is None and not self.exists(path):
+            # Absence the file RPCs can prove is reported as absence, not as
+            # "this build cannot describe files". Only that distinction lets
+            # a generic `Path.copy()` push a file into a helper-less guest:
+            # it reads FileNotFoundError as "create it" and anything else as
+            # a failure. An entry that *is* there still raises
+            # NotImplementedError below -- hostctl knows it exists and
+            # genuinely cannot describe it.
+            raise FileNotFoundError(path)
         return self._helper_method("stat")(path, follow_symlinks=follow_symlinks)
 
     def scandir(self, path: str) -> typing.List[typing.Tuple[str, FileStat]]:
@@ -910,6 +974,12 @@ class _QgaReadStream(io.RawIOBase):
 class _QgaPathMixin(StagedOpenMixin):
     __slots__ = ()
 
+    def exists(self, *, follow_symlinks: bool = True) -> bool:
+        # pathlib_next answers this from `stat()`, swallowing OSError but not
+        # NotImplementedError -- so on a helper-less guest the documented
+        # boolean probe raised. The backend can still answer with file RPCs.
+        return self.backend.exists(str(self), follow_symlinks=follow_symlinks)
+
     def copy(self, target, **kwargs):
         return Path.copy(self, target, **kwargs)
 
@@ -917,7 +987,10 @@ class _QgaPathMixin(StagedOpenMixin):
         return Path.move(self, target, **kwargs)
 
     def _copy_from(self, source, **kwargs):
-        if self.exists() and not kwargs.get("overwrite", False):
+        # `overwrite` first: the existence probe is the expensive half, and
+        # gating it the other way round made copying INTO a helper-less guest
+        # impossible even with overwrite=True, though the write RPCs work.
+        if not kwargs.get("overwrite", False) and self.exists():
             raise FileExistsError(str(self))
         with source.open("rb") as src, self.open("wb") as dst:
             while chunk := src.read(1024 * 1024):

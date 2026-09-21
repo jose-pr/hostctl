@@ -65,9 +65,20 @@ def _decode_output(value: object, field: str) -> bytes:
 
 
 class QemuExecutor(Executor[subprocess.CompletedProcess]):
-    """Execute direct argv through QGA's buffered ``guest-exec`` RPC."""
+    """Execute direct argv through QGA's buffered ``guest-exec`` RPC.
 
-    executor_capabilities = frozenset((ExecutorCapability.ARGS, ExecutorCapability.ENV))
+    ``ENV`` is deliberately **not** declared. ``guest-exec`` does carry an
+    ``env`` list, but the guest agent hands it to
+    ``g_spawn_async_with_pipes`` as ``envp``, which *replaces* the child
+    environment rather than augmenting it -- a guest process would start with
+    no ``PATH``, ``HOME`` or ``SystemRoot``. hostctl's cross-transport
+    contract is that ``env`` is additive (docs/guide/contracts.md), so any
+    host layer above this executor embeds the assignments in the rendered
+    script instead. Passing ``env=`` straight to this executor still sends
+    the native list, with QGA's replacing semantics.
+    """
+
+    executor_capabilities = frozenset((ExecutorCapability.ARGS,))
 
     def __init__(
         self,
