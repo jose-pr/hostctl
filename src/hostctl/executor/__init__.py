@@ -3,6 +3,7 @@
 from ._common import (
     CaptureOutput as CaptureOutput,
     CommandArgument as CommandArgument,
+    CommandLine as CommandLine,
     Environment as Environment,
     ExecutionOptions as ExecutionOptions,
     Executor as Executor,
@@ -51,6 +52,7 @@ from .psrp import (
 
 __all__ = [
     "CaptureOutput",
+    "CommandLine",
     "ContainerExecutor",
     "ContainerLike",
     "CommandArgument",

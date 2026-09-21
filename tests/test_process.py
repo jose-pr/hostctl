@@ -163,3 +163,19 @@ def test_ssh_process_controls_streams_lifecycle_and_terminal():
     assert remote.killed
     assert remote.closed
     assert remote.waited_closed
+
+
+def test_a_binary_session_takes_the_str_a_shell_renders():
+    """`with host.shell as session: session.send("uptime")` is the documented
+    shorthand, and `Shell.session()` defaults `encoding` to None -- a binary
+    channel. asyncssh does `bytearray(data)` on an unencoded channel, so the
+    str a `ShellSession` renders raised `TypeError: string argument without
+    an encoding` from inside a third party."""
+    from hostctl.shell import POSIX_SHELL, ShellSession
+
+    remote = _Process()
+    session = ShellSession(POSIX_SHELL, SshProcess(remote, "command"))
+
+    session.send("uptime")
+
+    assert remote.stdin.values == [b"uptime;\n"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import subprocess
 import typing
 from pathlib import PureWindowsPath
@@ -164,9 +165,22 @@ class PowerShellFlavour(ShellFlavour):
         env: typing.Optional[Environment] = None,
     ) -> ShellCommand:
         script = self.script(cmds, cwd=cwd, env=env)
-        command = self.invocation(
-            script,
-            executable=executable,
+        # `-EncodedCommand`, not `-Command`: this string is submitted to an
+        # SSH exec channel, where the REMOTE login shell parses it first --
+        # and Windows OpenSSH's default shell is cmd.exe. The previous
+        # spelling escaped with `subprocess.list2cmdline`, which implements
+        # the CreateProcess rule and escapes nothing for a shell: measured
+        # against a real outer cmd.exe, all 7 adversarial values failed, one
+        # of them by running injected text. Base64 of UTF-16LE is inert under
+        # cmd.exe, PowerShell and a POSIX login shell alike, which is the
+        # same reason `NativeWinRMSession._wrapper()` uses it.
+        payload = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        command = (
+            executable or self.default_executable,
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            payload,
         )
         return ShellCommand(subprocess.list2cmdline(command), None)
 

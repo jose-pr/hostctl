@@ -453,6 +453,76 @@ def test_cmd_builtin_arguments_do_not_leak_escaping():
     assert result.stdout.strip() == "%PATH% & bang!"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="needs a real PowerShell and cmd.exe")
+@pytest.mark.parametrize(
+    "value",
+    ("plain", "a b", "%OS%", "100%", "c^d", "(x)"),
+)
+def test_powershell_command_survives_a_remote_cmd_login_shell(value):
+    """`command()` is the string an SSH exec channel submits, and Windows
+    OpenSSH's default shell is cmd.exe, which parses it before PowerShell
+    ever sees it. Escaping with `subprocess.list2cmdline` -- a CreateProcess
+    rule that escapes nothing for a shell -- failed all 7 measured values,
+    one of them by running text an argument carried. Base64 of UTF-16LE is
+    inert under cmd.exe, PowerShell and a POSIX login shell alike."""
+    code = "import sys; print(ascii(sys.argv[1]))"
+    rendered = POWERSHELL.command(((sys.executable, "-c", code, value),))
+
+    # Exactly what a stock Windows OpenSSH server does with the string.
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/s", "/c", rendered.command],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ascii(value)
+
+
+def test_powershell_command_is_inert_under_any_parser():
+    rendered = POWERSHELL.command((("Write-Output", 'a" & echo INJECTED & "'),))
+
+    assert "-EncodedCommand" in rendered.command
+    assert "INJECTED" not in rendered.command
+    assert "&" not in rendered.command
+
+
+def test_cmd_declines_argv_invocation_rather_than_corrupting_it():
+    """`invocation()` returns argv, and a cmd script cannot survive it.
+
+    Every consumer delivers argv through an exec-style API; on Windows that
+    applies CreateProcess quoting, which escapes the quotes cmd's own parser
+    needs. The argv form corrupted 14 of 16 adversarial values, and no argv
+    element can encode an unescaped quote, so it is refused.
+    """
+    with pytest.raises(NotImplementedError, match="CommandLine"):
+        CMD.invocation("echo hi")
+    assert CMD.argv_invocation is False
+    assert POSIX_SHELL.argv_invocation is True
+    assert POWERSHELL.argv_invocation is True
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.parametrize(
+    "value",
+    ("plain", "a b", "%OS%", "a&b", 'say "hi"', "c^d", "(x)", "100%"),
+)
+def test_a_cmd_configured_windows_host_runs_structured_commands(value):
+    """The public consequence: a WindowsHost with shell='cmd' over an
+    args-capable provider could not run a structured command at all --
+    it reported success while the child saw carets and backslashes."""
+    from hostctl import HostConfig
+
+    host = HostConfig("windows://node?executor=local&shell=cmd")._create_host()
+    code = "import sys; print(ascii(sys.argv[1]))"
+
+    result = host.run((sys.executable, "-c", code, value), check=False, text=True)
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == ascii(value)
+
+
 def test_fish_uses_native_environment_and_boolean_syntax():
     script = FISH.script(
         (("echo", "first"), ShellOperator.AND, ("echo", "second")),

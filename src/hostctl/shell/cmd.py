@@ -98,6 +98,7 @@ class CmdShellFlavour(ShellFlavour):
 
     name = "cmd"
     default_executable = "cmd.exe"
+    argv_invocation = False
     command_separator = "&"
     path_flavor = PureWindowsPath
     info_script = (
@@ -222,11 +223,20 @@ class CmdShellFlavour(ShellFlavour):
     def invocation(
         self, script: str, *, executable: typing.Optional[str] = None
     ) -> typing.Sequence[str]:
-        return (
-            executable or self.default_executable,
-            "/d",
-            "/v:off",
-            "/s",
-            "/c",
-            script,
+        """cmd has no argv spelling; render with `command()` instead.
+
+        The argv this used to return carried a script quoted for *cmd's* own
+        parser (`^"`, `^&`, `^%`). Every consumer delivers argv through an
+        exec-style API, and on Windows that means `CreateProcess` quoting:
+        the script element is wrapped in quotes and each inner `"` is escaped
+        with a backslash, which cmd passes to the child as literal data.
+        Measured against a real `cmd.exe`, 14 of 16 adversarial values came
+        back corrupted -- and there is provably no argv element whose encoded
+        form yields an unescaped quote, so this is not a fixable escaping
+        rule but a missing spelling.
+        """
+        raise NotImplementedError(
+            "cmd cannot be invoked as argv: CreateProcess quoting escapes the "
+            "quotes a cmd script needs. Render with command() and submit the "
+            "result as an executor.CommandLine."
         )

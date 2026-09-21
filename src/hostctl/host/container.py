@@ -566,9 +566,7 @@ class ContainerHost(Host):
                 raise ValueError("cwd and env require a command when spawning")
             selected = executable or self.config.executable
             invocation = (
-                [selected]
-                if selected
-                else list(self.shell_flavour.invocation("", executable=None)[:1])
+                [selected] if selected else [self.shell_flavour.default_executable]
             )
             environment = None
 

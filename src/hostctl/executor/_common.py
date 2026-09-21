@@ -18,6 +18,28 @@ Input = typing.Optional[typing.Union[bytes, str]]
 PathLike = typing.Union[str, os.PathLike[str]]
 Environment = typing.Mapping[typing.Union[str, bytes], object]
 CaptureOutput = typing.Literal[True, False, "stdout", "stderr"]
+
+
+class CommandLine(str):
+    """A command line already quoted for the target's own command parser.
+
+    Most shells render as argv -- a program plus elements an exec-style API
+    delivers verbatim -- and `ShellFlavour.invocation()` returns that. `cmd`
+    cannot: Windows builds a child's command line with `CreateProcess`
+    quoting (`subprocess.list2cmdline`), which escapes every `"` it is given,
+    and cmd reads those escapes as literal data. There is provably no argv
+    element whose encoded form carries an unescaped quote, so a cmd script
+    containing quoting cannot survive argv delivery at all -- measured
+    against a real `cmd.exe`, 14 of 16 adversarial values were corrupted.
+
+    This marker says "submit this text as the command line, do not re-quote
+    it". It subclasses `str` so a transport that already submits shell text
+    (an SSH exec channel, WinRM) needs no special case: it is the text.
+    """
+
+    __slots__ = ()
+
+
 ExecutorCommand = typing.Union[str, PurePath, Pathname]
 CommandArgument = typing.Union[str, bytes, PurePath, Pathname]
 

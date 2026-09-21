@@ -7,7 +7,7 @@ import platform as _platform
 import subprocess as _subprocess
 import typing as _ty
 
-from ..executor import LocalExecutor
+from ..executor import CommandLine, LocalExecutor
 from ..provider import OperationNotStarted, ProviderSelector
 from ..provider.transports import LocalExecutorProvider, LocalPathProvider
 from ._common import (
@@ -234,14 +234,19 @@ class LocalHost(Host):
                 timeout=timeout,
                 text=text,
             )
-        script = self.shell_flavour.script(cmds, cwd=None, env=None)
-        invocation = self.shell_flavour.invocation(
-            script,
-            executable=executable,
-        )
+        flavour = self.shell_flavour
+        if not flavour.argv_invocation:
+            # cmd: argv delivery cannot carry its quoting (see
+            # `CmdShellFlavour.invocation`), so submit the rendered command
+            # line and let the target parse it once.
+            rendered = flavour.command(cmds, executable=executable)
+            leading: _ty.Tuple[object, ...] = (CommandLine(rendered.command),)
+        else:
+            script = flavour.script(cmds, cwd=None, env=None)
+            leading = tuple(flavour.invocation(script, executable=executable))
         return provider.execute(
-            invocation[0],
-            *invocation[1:],
+            leading[0],
+            *leading[1:],
             bufsize=bufsize,
             stdin=stdin,
             stdout=stdout,

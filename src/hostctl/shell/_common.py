@@ -144,6 +144,7 @@ class ShellSession(Process):
 #: Control characters that are ordinary syntax in raw shell source.
 _RAW_WHITESPACE = frozenset(("\t", "\n", "\r"))
 
+
 class ShellFlavour(abc.ABC):
     """Construct scripts and commands for one explicitly selected target shell."""
 
@@ -159,6 +160,15 @@ class ShellFlavour(abc.ABC):
     def command_path(self, value: PathLike) -> PurePath:
         """Return a direct-command marker using the target shell's path syntax."""
         return self.path_flavor(value)
+
+    #: Whether `invocation()` can express this shell as argv.
+    #:
+    #: False for `cmd`: Windows builds a child's command line with
+    #: `CreateProcess` quoting, which escapes every `"` an argv element
+    #: carries, and cmd reads those escapes as literal data. A caller holding
+    #: a flavour that says False must render with `command()` and submit the
+    #: result as a command line (`executor.CommandLine`).
+    argv_invocation: typing.ClassVar[bool] = True
 
     @staticmethod
     def _text(value: object) -> str:
@@ -339,7 +349,19 @@ class ShellFlavour(abc.ABC):
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
     ) -> ShellCommand:
-        """Build the command submitted to an SSH exec channel."""
+        """Build the command submitted to an SSH exec channel.
+
+        The returned string is read by the **remote login shell**, so each
+        flavour must say which parser it escaped for:
+
+        * POSIX and fish quote with `shlex`, for a POSIX login shell.
+        * PowerShell renders `-EncodedCommand <base64 utf-16le>`, which is
+          inert under cmd.exe (Windows OpenSSH's default shell), PowerShell
+          and a POSIX shell alike.
+        * `cmd` escapes exactly one cmd layer, which makes it a command LINE
+          for direct submission rather than text for a remote login shell --
+          see the divergence ledger in `docs/guide/contracts.md`.
+        """
 
     @abc.abstractmethod
     def invocation(
@@ -348,7 +370,11 @@ class ShellFlavour(abc.ABC):
         *,
         executable: typing.Optional[str] = None,
     ) -> typing.Sequence[str]:
-        """Build local-process argv which invokes this shell for one script."""
+        """Build local-process argv which invokes this shell for one script.
+
+        Raises `NotImplementedError` when this shell cannot be invoked that
+        way -- see `argv_invocation`, and use `command()` instead.
+        """
 
     def __str__(self) -> str:
         return self.name

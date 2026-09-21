@@ -9,7 +9,7 @@ from urllib.parse import parse_qsl, quote, urlencode
 
 from pathlib_next import Path
 
-from ..executor._common import command_text
+from ..executor._common import CommandLine, command_text
 from ..provider import (
     ExecutorProvider,
     OperationNotStarted,
@@ -104,6 +104,22 @@ register_system_provider("local", _local_provider)
 register_system_provider("ssh", _ssh_provider)
 register_system_provider("sftp", _ssh_provider)
 register_system_provider("winrm", _winrm_provider)
+
+
+def _shell_invocation(flavour, cmds, *, cwd, env, for_session, executable):
+    """One shell layer, as argv or as a command line.
+
+    Most flavours render as argv. `cmd` cannot -- an argv element's quotes
+    are escaped by the platform's own command-line quoting before cmd ever
+    sees them (`CmdShellFlavour.invocation`), which silently corrupted every
+    value carrying a quote or a metacharacter. For those the rendered command
+    line is submitted instead, marked so the executor does not re-quote it.
+    """
+    if not flavour.argv_invocation:
+        rendered = flavour.command(cmds, executable=executable, cwd=cwd, env=env)
+        return (CommandLine(rendered.command),)
+    script = flavour.script(cmds, cwd=cwd, env=env, for_session=for_session)
+    return tuple(flavour.invocation(script, executable=executable))
 
 
 class SystemConfig(HostConfig):
@@ -740,14 +756,15 @@ class SystemHost(Host):
                 )
                 return provider.execute(script, **options)
             if "args" in provider.capabilities:
-                script = flavour.script(
+                leading = _shell_invocation(
+                    flavour,
                     ((command, *args),),
                     cwd=None if "cwd" in provider.capabilities else cwd,
                     env=None if "env" in provider.capabilities else env,
                     for_session="manages_status" in provider.capabilities,
+                    executable=shell_executable,
                 )
-                invocation = flavour.invocation(script, executable=shell_executable)
-                return provider.execute(invocation[0], *invocation[1:], **options)
+                return provider.execute(leading[0], *leading[1:], **options)
             if not args and native_cwd and native_env:
                 # Nothing to embed. Send the program itself when it needs no
                 # quoting -- a provider that is not a shell (a bare callable,
@@ -802,14 +819,15 @@ class SystemHost(Host):
         # `-Command "...; exit $LASTEXITCODE"` as its own double-quoted string,
         # so the status never came back and `check=True` passed for a command
         # that failed.
-        script = flavour.script(
+        leading = _shell_invocation(
+            flavour,
             cmds,
             cwd=None if "cwd" in provider.capabilities else cwd,
             env=None if "env" in provider.capabilities else env,
             for_session="manages_status" in provider.capabilities,
+            executable=shell_executable,
         )
-        invocation = flavour.invocation(script, executable=shell_executable)
-        return provider.execute(invocation[0], *invocation[1:], **options)
+        return provider.execute(leading[0], *leading[1:], **options)
 
     def _note_provider_in_use(self, provider) -> None:
         """Mark a provider's transport as live again, without connecting it.

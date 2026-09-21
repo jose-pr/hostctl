@@ -309,8 +309,9 @@ def test_powershell_dialect_uses_powershell_quoting_cwd_and_environment():
         cwd=r"C:\Program Files",
         env={"NAME": "a'b"},
     )
-    command, options = stub.calls[0]
-    assert "powershell.exe" in command
+    submitted, options = stub.calls[0]
+    assert "powershell.exe" in submitted
+    command = _decoded_powershell(submitted)
     assert "Set-Location -LiteralPath 'C:\\Program Files'" in command
     assert "$env:NAME='a''b'" in command
     assert "'Write-Output' 'a''b'" in command
@@ -497,3 +498,20 @@ def test_wait_keeps_output_the_caller_had_not_read():
     process = transport.spawn()
     assert process.wait() == 0
     assert process.read() == b"late output"
+
+
+def _decoded_powershell(command):
+    """The script inside a rendered PowerShell command.
+
+    `PowerShellFlavour.command()` submits `-EncodedCommand <base64 utf-16le>`
+    so the remote login shell -- cmd.exe on a stock Windows OpenSSH server --
+    cannot reinterpret it. Assertions about what was rendered look inside.
+    """
+    import base64
+
+    text = str(command)
+    marker = "-EncodedCommand "
+    if marker not in text:
+        return text
+    payload = text.split(marker, 1)[1].split()[0]
+    return base64.b64decode(payload).decode("utf-16-le")

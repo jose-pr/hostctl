@@ -58,7 +58,9 @@ def test_host_checksum_uses_owned_provider_and_shell(
     entry = PathAndStat.from_stat(path, object())
 
     assert host_checksum(host)(entry) == "a" * 32
-    invocation = " ".join((str(calls[0][0]), *(str(arg) for arg in calls[0][1])))
+    invocation = " ".join(
+        (_decoded_powershell(calls[0][0]), *(str(arg) for arg in calls[0][1]))
+    )
     assert command_fragment in invocation
 
 
@@ -156,7 +158,7 @@ def test_powershell_checksum_falls_back_to_certutil():
 
     assert result == "a" * 32
     assert len(calls) == 2
-    assert "certutil.exe" in str(calls[1])
+    assert "certutil.exe" in _decoded_powershell(calls[1][0])
 
 
 def test_host_checksum_degrades_to_reading_when_the_remote_tool_fails():
@@ -363,3 +365,20 @@ def test_the_default_sync_policy_runs_between_two_composite_paths():
     PathSyncer().sync(source, target, dry_run=True)
 
     assert MemPath("app.conf", backend=target_backend).read_bytes() == b"old"
+
+
+def _decoded_powershell(command):
+    """The script inside a rendered PowerShell command.
+
+    `PowerShellFlavour.command()` submits `-EncodedCommand <base64 utf-16le>`
+    so a remote login shell cannot reinterpret it; assertions about what was
+    rendered look inside rather than at the wrapper.
+    """
+    import base64
+
+    text = str(command)
+    marker = "-EncodedCommand "
+    if marker not in text:
+        return text
+    payload = text.split(marker, 1)[1].split()[0]
+    return base64.b64decode(payload).decode("utf-16-le")
