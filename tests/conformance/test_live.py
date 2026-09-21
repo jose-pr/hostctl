@@ -35,6 +35,21 @@ def test_live_provider_direct_command(provider):
     assert result.stdout.strip() == b"live"
 
 
+def test_every_gate_registers_the_provider_its_tests_look_up(monkeypatch):
+    """Guard the guards: a live test that selects a provider by name is
+    invisible until CI turns its gate on, and the SFTP percent-encoding guard
+    selected `"ssh"` -- a name `live_providers()` never registers -- so it
+    raised StopIteration on every parametrization the moment the gate was
+    enabled, and had never once run.
+    """
+    monkeypatch.setenv("HOSTCTL_TEST_SSH_LOCAL", "1")
+    monkeypatch.setenv("HOSTCTL_TEST_SSH_URI", "ssh://user@example.invalid")
+
+    names = {p.name for p in live_providers()}
+
+    assert any(name.split("-")[0] == "ssh" for name in names), names
+
+
 @pytest.mark.skipif(
     os.environ.get("HOSTCTL_TEST_SSH_LOCAL") != "1",
     reason="set HOSTCTL_TEST_SSH_LOCAL=1 to enable localhost sshd leg",
@@ -58,7 +73,16 @@ def test_live_sftp_addresses_uri_syntax_filenames(name):
     is proven here and by `tests/test_host_remote.py`, not by the fake
     conformance leg.
     """
-    provider = next(p for p in live_providers() if p.name == "ssh")
+    # Any registered SSH leg, by prefix: the localhost sshd leg is named
+    # "ssh-local" and the URI-driven one "ssh-uri". Looking up the bare name
+    # "ssh" matched neither, so `next()` raised StopIteration before
+    # `provider_context` was ever entered -- the designated live guard for the
+    # SFTP percent-encoding fix had never once run.
+    provider = next(
+        (p for p in live_providers() if p.name.split("-")[0] == "ssh"), None
+    )
+    if provider is None:
+        pytest.skip("no live SSH provider is registered")
     with provider_context(provider) as host:
         path = host.path("/tmp", f"hostctl-{name}")
         try:

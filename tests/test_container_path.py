@@ -431,3 +431,27 @@ def test_a_symlink_loop_in_scandir_is_bounded():
 
     with pytest.raises(OSError, match="too many symbolic links"):
         ContainerPathBackend(container).scandir("/a")
+
+
+def test_stat_parses_the_timestamp_real_docker_sends():
+    """The Engine API marshals `Mtime` as Go's `time.RFC3339Nano`, and that
+    string branch is the one production always takes -- yet every test fed
+    the parser the literal "0", which is not RFC3339 and lands in the error
+    fallback, while the conformance fake sent an int. So the branch Docker
+    exercises on every stat was covered by nothing, and on the 3.9 floor it
+    yielded epoch 0: every mtime comparison, and so every sync decision,
+    silently wrong."""
+    container = _Container()
+    container.get_archive = lambda path: (
+        iter((b"",)),
+        {
+            "name": "data",
+            "size": 4,
+            "mode": 0o644,
+            "mtime": "2026-09-20T12:34:56.123456789Z",
+        },
+    )
+
+    result = ContainerPathBackend(container).stat("/data")
+
+    assert result.st_mtime == 1789907696  # 2026-09-20T12:34:56Z

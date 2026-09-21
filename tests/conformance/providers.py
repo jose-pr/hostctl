@@ -52,6 +52,21 @@ def _direct_powershell_argv(command: str):
     return values or None
 
 
+def _rfc3339_nano(seconds: float) -> str:
+    """Go's `time.RFC3339Nano`, as Docker's Engine API sends it.
+
+    Trailing zeros in the fraction are trimmed, which is why the digit count
+    varies between 0 and 9 -- and why `datetime.fromisoformat` alone cannot
+    parse it before Python 3.11.
+    """
+    import datetime
+
+    moment = datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc)
+    fraction = f"{moment.microsecond:06d}000".rstrip("0")
+    stamp = moment.strftime("%Y-%m-%dT%H:%M:%S")
+    return f"{stamp}.{fraction}Z" if fraction else f"{stamp}Z"
+
+
 def _go_file_mode(st_mode: int) -> int:
     """Convert a POSIX st_mode to Go's os.FileMode, as Docker reports it.
 
@@ -373,7 +388,11 @@ class _FakeDockerContainer:
             # Sending the POSIX one made this fake kinder than Docker and hid
             # a bug where every ordinary file reported is_file() False.
             "mode": _go_file_mode(value.st_mode),
-            "mtime": int(value.st_mtime),
+            # A real engine marshals this as Go's time.RFC3339Nano -- a
+            # string with up to 9 fractional digits -- not an int. Sending an
+            # int exercised a branch production never takes, and left the one
+            # it always takes covered by nothing.
+            "mtime": _rfc3339_nano(value.st_mtime),
             "linkTarget": os.readlink(path) if os.path.islink(path) else "",
         }
         return [stream.getvalue()], metadata
