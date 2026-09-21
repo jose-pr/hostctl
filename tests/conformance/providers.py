@@ -121,13 +121,25 @@ class _FakeTransport:
 
 
 class _PopenWriter:
-    """asyncssh-shaped stdin over a local pipe."""
+    """asyncssh-shaped stdin over a local pipe.
 
-    def __init__(self, pipe):
+    Deliberately as strict as asyncssh: an unencoded channel does
+    `bytearray(data)` on a `str` and raises `TypeError`. Encoding here
+    instead made the double kinder than the real thing, which is why the
+    documented `with host.shell as session: session.send("...")` shorthand
+    passed the conformance battery while raising over a real connection.
+    """
+
+    def __init__(self, pipe, encoding=None):
         self._pipe = pipe
+        self._encoding = encoding
 
     def write(self, data):
-        self._pipe.write(data.encode() if isinstance(data, str) else data)
+        if isinstance(data, str):
+            if self._encoding is None:
+                raise TypeError("string argument without an encoding")
+            data = data.encode(self._encoding)
+        self._pipe.write(data)
 
     async def drain(self):
         self._pipe.flush()

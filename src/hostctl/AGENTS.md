@@ -315,7 +315,19 @@ connection. Provider close performs all AsyncSSH operations through the
 shared bridge. Omitted `run()` stdin is an explicit EOF stream, `bufsize=0` is
 rejected, and a missing remote exit status is reported as return code `-1`.
 Timeouts raise `subprocess.TimeoutExpired` with an `orphaned` flag indicating
-whether a process/channel termination hook was available. `dialect="auto"`
+whether a process/channel termination hook was available.
+A composed SSH host opens **two** connections and authenticates twice: the
+exec leg is hostctl's own, the path leg is `pathlib_next`'s SFTP backend,
+which takes connect options rather than a live connection. `bufsize` is
+asyncssh's stdin CHUNK size here, not `subprocess`'s buffering policy, so
+values below 512 are refused rather than obeyed. `run()` buffers the whole
+response in memory even when `stdout=` names a sink, and a file-object
+`stdin=` is read fully before dispatch; both are memory characteristics of
+the buffered contract, not of the channel.
+An SSH host is **not fork-safe** in the sense of inheriting a usable
+connection: a child notices the loop it belongs to has changed and drops the
+inherited connection without closing it (closing would tear down a socket the
+parent still uses), then reconnects on its own. `dialect="auto"`
 retains the executable path reported by the successful probe. Persistent SSH
 process reads, writes, EOF, and close operations use the same transport-error
 normalization as `wait()`.

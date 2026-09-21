@@ -13,7 +13,7 @@ from urllib.parse import quote, unquote, urlencode
 
 from pathlib_next import Pathname, PosixPathname, WindowsPathname
 
-from ..executor import SshConnection, SshExecutor
+from ..executor import SshConnection, SshExecutor, wants_text
 from ..provider import (
     ExecutorProvider,
     OperationNotStarted,
@@ -211,6 +211,8 @@ class _SshTransport:
         self.config = config
         self._ssh: typing.Optional[SshConnection] = None
         self._ssh_lock = threading.RLock()
+        #: The process the cached connection belongs to; see `ssh`.
+        self._loop_generation: typing.Optional[int] = None
         self._executor = SshExecutor(lambda: self.ssh)
         self._resolved_dialect: typing.Optional[
             typing.Tuple[typing.Tuple[object, ...], ShellFlavour, typing.Optional[str]]
@@ -314,9 +316,21 @@ class _SshTransport:
     def ssh(self) -> SshConnection:
         """The lazily opened and reused asyncssh connection."""
         with self._ssh_lock:
-            if self._ssh is None or self._ssh.is_closed():
-                from .. import _async
+            from .. import _async
 
+            generation = _async.loop_generation()
+            if self._loop_generation is None:
+                self._loop_generation = generation
+            elif self._loop_generation != generation:
+                # `fork()`: this connection belongs to the parent's loop,
+                # which does not exist here, and the child rebuilt its own.
+                # Dropping WITHOUT closing is the only safe move -- closing
+                # would run asyncssh's teardown against a socket the parent
+                # still uses.
+                self._ssh = None
+                self._sftp_backend = None
+                self._loop_generation = generation
+            if self._ssh is None or self._ssh.is_closed():
                 log.debug(
                     "opening SSH connection to %s",
                     ProviderSelector.redact(self.config.connection_uri),
@@ -350,8 +364,19 @@ class _SshTransport:
 
     def close(self) -> None:
         with self._ssh_lock:
-            self._invalidate_sftp()
+            # The SFTP invalidation runs first but must not decide whether
+            # the SSH connection gets closed: a backend whose own close
+            # raised left the connection open AND unreachable -- `_ssh` was
+            # still set, so a later `close()` tried the same failing
+            # invalidation again and never reached the connection either.
+            first_error: typing.Optional[BaseException] = None
+            try:
+                self._invalidate_sftp()
+            except BaseException as exc:  # noqa: BLE001 - re-raised below
+                first_error = exc
             if self._ssh is None:
+                if first_error is not None:
+                    raise first_error
                 return
             connection, self._ssh = self._ssh, None
             log.debug(
@@ -371,6 +396,9 @@ class _SshTransport:
                 if normalized is exc:
                     raise
                 raise normalized from exc
+            finally:
+                if first_error is not None:
+                    raise first_error
 
     def _invalidate_sftp(self) -> None:
         backend, self._sftp_backend = self._sftp_backend, None
@@ -445,7 +473,11 @@ class _SshTransport:
         if direct is not None:
             command, args = direct
             cmds = ((command, *args),)
-        if text and encoding is None:
+        if wants_text(text, encoding, errors) and encoding is None:
+            # `wants_text`, not a local `if text`: `errors="replace"` selects
+            # text mode too, and deciding it here differently from the
+            # exported rule is exactly how SSH, PSRP and serial came to
+            # disagree with the other four transports.
             encoding = "utf-8"
         selected_flavour = self.shell_flavour
         selected_executable = executable or self.config.executable

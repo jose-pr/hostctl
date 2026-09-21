@@ -515,3 +515,92 @@ def _decoded_powershell(command):
         return text
     payload = text.split(marker, 1)[1].split()[0]
     return base64.b64decode(payload).decode("utf-16-le")
+
+
+def test_closing_a_host_whose_sftp_invalidation_fails_still_closes_ssh():
+    """The invalidation ran first and decided whether the connection was
+    closed at all: a backend whose own close raised left the SSH connection
+    open AND unreachable, because `_ssh` was still set and the next
+    `close()` tried the same failing invalidation again."""
+    host, stub = _host()
+
+    class _FailingBackend:
+        def close(self):
+            raise OSError("sftp close failed")
+
+    host._sftp_backend = _FailingBackend()
+
+    with pytest.raises(OSError, match="sftp close failed"):
+        host.close()
+
+    assert stub.closed, "the SSH connection was left open"
+    assert host._ssh is None
+
+
+def test_a_forked_child_does_not_reuse_the_parents_connection(monkeypatch):
+    """A connection is bound to the loop that opened it, and `fork()` leaves
+    the child with the parent's objects and a dead loop thread. The child
+    rebuilds the loop, but the transport kept the inherited connection and
+    failed with a raw asyncio error."""
+    from hostctl import _async
+
+    host, stub = _host()
+    assert host.ssh is stub
+
+    # What the child sees: a different process, so a different loop.
+    monkeypatch.setattr(_async, "loop_generation", lambda: 424242)
+
+    opened = []
+
+    def connect(*args, **kwargs):
+        opened.append(True)
+
+        async def make():
+            return _StubSSH()
+
+        return make()
+
+    monkeypatch.setattr(_async, "asyncssh", lambda: type("M", (), {"connect": connect}))
+
+    fresh = host.ssh
+
+    assert opened == [True]
+    assert fresh is not stub
+    # The parent's connection is dropped, never closed: the socket is still
+    # the parent's.
+    assert not stub.closed
+
+
+def test_the_default_verifies_the_host_key_on_both_legs():
+    """Nothing pinned the default, on either leg -- and the SFTP leg's
+    default is the opposite of the exec leg's, which is how `path()` came to
+    accept any host key while `run()` verified it."""
+    options = SshConfig("h").connect_opts()
+
+    assert options == {"username": "root", "known_hosts": ()}
+
+    # The SFTP leg gets the same dict, which is the point: pathlib_next's
+    # backend seeds `known_hosts=None` -- verification OFF -- for options it
+    # is not handed.
+    import pathlib_next.uri.schemes.sftp as sftp
+
+    seen = {}
+
+    class _Backend:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+        def close(self):
+            return None
+
+    original = sftp.AsyncsshSftpBackend
+    sftp.AsyncsshSftpBackend = _Backend
+    try:
+        transport = _SshTransport(SshConfig("h"))
+        transport.path("/tmp/x")
+    except Exception:
+        pass
+    finally:
+        sftp.AsyncsshSftpBackend = original
+
+    assert "known_hosts" in seen.get("connect_opts", {}), seen

@@ -109,3 +109,58 @@ def test_an_asyncio_command_timeout_still_becomes_timeout_expired():
 
     assert isinstance(result, subprocess.TimeoutExpired)
     assert result.timeout == 5
+
+
+def test_an_interrupted_bridge_call_cancels_the_coroutine(monkeypatch):
+    """`async_to_sync` never cancelled: an exception out of `result()` --
+    a Ctrl-C during `run()` is the ordinary one -- returned to the caller
+    while the coroutine kept running on the bridge loop, so the remote
+    command continued and its channel stayed open."""
+    import asyncio
+
+    from hostctl import _async
+
+    cancelled = []
+
+    class _Future:
+        def result(self, timeout=None):
+            raise KeyboardInterrupt
+
+        def cancel(self):
+            cancelled.append(True)
+            return True
+
+    async def work():
+        await asyncio.sleep(0)
+
+    coroutine = work()
+    monkeypatch.setattr(
+        _async._asyncio,
+        "run_coroutine_threadsafe",
+        lambda coro, loop: (coro.close(), _Future())[1],
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        _async.async_to_sync(coroutine)
+
+    assert cancelled == [True]
+
+
+def test_an_undecodable_byte_is_not_reported_as_a_broken_connection():
+    """asyncssh decodes with the requested encoding, so a byte the remote
+    command emitted that utf-8 cannot decode arrived as `ProtocolError` and
+    was mapped to `ConnectionError` -- which reads as "the link broke" and
+    invites a reconnect loop that decodes the same byte again forever. The
+    answer is `errors=`, so the caller must see that."""
+    failure = asyncssh.ProtocolError("'utf-8' codec can't decode byte 0xff")
+
+    result = _async.normalize_asyncssh_error(failure)
+
+    assert not isinstance(result, ConnectionError)
+    assert "errors=" in str(result)
+
+
+def test_a_genuine_protocol_error_is_still_a_connection_error():
+    result = _async.normalize_asyncssh_error(asyncssh.ProtocolError("bad packet"))
+
+    assert isinstance(result, ConnectionError)

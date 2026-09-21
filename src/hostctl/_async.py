@@ -99,6 +99,23 @@ def normalize_asyncssh_error(
         module.ProtocolError,
     )
     if isinstance(exc, connection_errors):
+        # ...unless the "protocol error" is really the caller's text mode.
+        # asyncssh decodes with the requested encoding, so a byte the remote
+        # command emitted that `utf-8` cannot decode surfaced as
+        # `ConnectionError` -- which reads as "the link broke" and invites a
+        # reconnect loop that will decode the same byte again forever. The
+        # answer is `errors=`, so the caller has to see the real error.
+        unicode_error = exc if isinstance(exc, UnicodeError) else None
+        cause = getattr(exc, "__cause__", None)
+        if unicode_error is None and isinstance(cause, UnicodeError):
+            unicode_error = cause
+        if unicode_error is None and "codec can't decode" in str(exc):
+            return ValueError(
+                f"{exc}; pass errors= (for example errors='replace') to read "
+                "output this transport cannot decode"
+            )
+        if unicode_error is not None:
+            return unicode_error
         return ConnectionError(str(exc))
     return exc
 
@@ -111,6 +128,19 @@ def _new_loop() -> _asyncio.AbstractEventLoop:
         # "Exception ignored in _ProactorBasePipeTransport.__del__" on GC.
         return _asyncio.SelectorEventLoop()
     return _asyncio.new_event_loop()
+
+
+def loop_generation() -> int:
+    """Identify the process the bridge loop belongs to.
+
+    A connection is bound to the loop that opened it, and `fork()` leaves
+    the child with the parent's objects and a dead loop thread. The child
+    rebuilds the loop here, but a transport holding a connection has no way
+    to know -- so it kept using one whose loop is gone and failed with a raw
+    asyncio error. Comparing this value tells a transport its cached
+    connection belongs to somebody else's process.
+    """
+    return _os.getpid()
 
 
 def _ensure_loop() -> _asyncio.AbstractEventLoop:
@@ -166,7 +196,17 @@ def async_to_sync(
             awaitable.close()
         raise RuntimeError("hostctl async bridge thread is not alive")
     future = _asyncio.run_coroutine_threadsafe(_ensure_coro(awaitable), loop)
-    return future.result()
+    try:
+        return future.result()
+    except BaseException:
+        # Cancel what is still pending. `KeyboardInterrupt` (or any exception
+        # raised out of `result()`) used to leave the coroutine running on
+        # the bridge loop, so a Ctrl-C during `run()` returned to the prompt
+        # while the remote command kept going and its channel stayed open.
+        # Cancelling propagates into the task, and asyncssh closes the
+        # channel from there.
+        future.cancel()
+        raise
 
 
 def _ensure_coro(

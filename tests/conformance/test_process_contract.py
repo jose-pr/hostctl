@@ -175,3 +175,17 @@ def test_spawn_capability_matches_the_host_implementation(provider):
         # than raising AttributeError from somewhere deeper in the transport.
         with pytest.raises(NotImplementedError):
             host.spawn("echo process")
+
+
+@pytest.mark.parametrize("provider", _spawn_providers(), ids=lambda p: p.name)
+def test_a_session_takes_the_str_a_shell_renders(provider):
+    """`ShellSession.send()` writes the `str` a flavour rendered, and the
+    channel may be binary -- the default, since `Shell.session()` passes no
+    encoding. Every adapter must encode for its own channel; the SSH one did
+    not, so the documented `with host.shell as session:` raised `TypeError`
+    from inside asyncssh."""
+    if "session" in provider.capabilities:
+        pytest.skip("a console session has its own send/framing contract")
+    with provider_context(provider) as host:
+        with host.shell as session:
+            session.send("echo hi")

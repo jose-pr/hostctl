@@ -129,6 +129,16 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             raise NotImplementedError("SshExecutor does not support native arguments")
         if bufsize == 0:
             raise ValueError("bufsize=0 is unsupported by the buffered SSH executor")
+        if 0 < bufsize < 512:
+            # NOT subprocess's buffering policy: asyncssh reads stdin in
+            # chunks of this size, so `bufsize=1` -- "line buffered" in
+            # `subprocess` -- means one syscall per BYTE. A transport that
+            # buffers the whole response has no line-buffering to express,
+            # so the pathological spellings are refused rather than obeyed.
+            raise ValueError(
+                "SSH reads bufsize as a stdin chunk size, not a buffering "
+                "policy; use -1 (the default) or a chunk of at least 512 bytes"
+            )
         command = command_text(command)
         reject_stdin_conflict(input, stdin)
         if wants_text(text, encoding, errors) and encoding is None:
