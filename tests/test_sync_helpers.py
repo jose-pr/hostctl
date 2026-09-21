@@ -461,7 +461,14 @@ def test_progress_is_reported_for_every_way_of_reading(tmp_path):
     events = []
     with source.open("rb") as raw:
         reader = ProgressReader(raw, lambda done, total: events.append(done))
-        hashlib.file_digest(reader, "sha256")
+        if hasattr(hashlib, "file_digest"):  # 3.11+
+            hashlib.file_digest(reader, "sha256")
+        else:
+            # What `file_digest` does, and the path a `BufferedReader`
+            # wrapper takes: `readinto` into a reusable buffer.
+            buffer = bytearray(8)
+            while reader.readinto(buffer):
+                pass
     assert events and events[-1] == 18
 
     events.clear()
