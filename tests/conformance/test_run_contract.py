@@ -51,13 +51,35 @@ def test_text_env_and_nonzero_check(provider):
         # subprocess ``env`` is a replacement mapping. CPython 3.9 needs
         # SystemRoot to initialize its Windows entropy provider.
         environment["SystemRoot"] = os.environ["SystemRoot"]
+    inherited = "HOSTCTL_INHERITED"
+    os.environ[inherited] = "kept"
+    try:
+        with provider_context(provider) as host:
+            result = host.run(
+                Exec(sys.executable, "-c", code),
+                env=environment,
+                text=True,
+            )
+            assert result.stdout.splitlines()[0] == "42"
+            # ADDITIVE, on every transport: asserting only that the injected
+            # variable is visible is true under replace semantics too, which
+            # is how the local executor came to replace the environment while
+            # every other transport added to it.
+            survived = host.run(
+                Exec(
+                    sys.executable,
+                    "-c",
+                    "import os; print(os.environ.get('HOSTCTL_INHERITED', '<gone>'))",
+                ),
+                env={"HOSTCTL_CONFORMANCE": "1"},
+                text=True,
+            )
+            assert (
+                survived.stdout.splitlines()[0] == "kept"
+            ), f"{provider.name} replaced the environment instead of adding to it"
+    finally:
+        os.environ.pop(inherited, None)
     with provider_context(provider) as host:
-        result = host.run(
-            Exec(sys.executable, "-c", code),
-            env=environment,
-            text=True,
-        )
-        assert result.stdout.splitlines()[0] == "42"
         failed = host.run(
             Exec(sys.executable, "-c", "raise SystemExit(3)"), check=False
         )
@@ -180,3 +202,63 @@ def test_timeout_and_input_are_subprocess_compatible(provider):
             host.run(
                 Exec(sys.executable, "-c", "import time; time.sleep(2)"), timeout=0.01
             )
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_every_timeout_carries_the_same_payload(provider):
+    """`subprocess.TimeoutExpired` is the shared type, and the attributes
+    hung off it were per-transport: `.orphaned` and `.pid` existed only on
+    the SSH and QGA paths, so a supervisor writing
+    `if exc.orphaned: alert(exc.pid)` -- what the API header documented --
+    crashed with `AttributeError` when the same host timed out over local,
+    serial or WinRM. The output payload diverged too: `b''` here, `None`
+    there.
+    """
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
+    if "timeout" not in provider.capabilities:
+        pytest.skip(f"{provider.name} does not support timeout")
+    with provider_context(provider) as host:
+        with pytest.raises(subprocess.TimeoutExpired) as raised:
+            host.run(
+                Exec(sys.executable, "-c", "import time; time.sleep(30)"),
+                timeout=0.5,
+            )
+
+    error = raised.value
+    assert isinstance(error.orphaned, bool)
+    assert error.pid is None or isinstance(error.pid, int)
+    assert error.output is not None
+    assert error.stderr is not None
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_the_registry_capabilities_match_the_host_that_was_built(provider):
+    """The registry's capability strings are hand-written in parallel with the
+    hosts, and every case in this battery skips itself when a capability is
+    absent -- so a host whose real capabilities drift from the registry
+    silently stops being tested instead of failing.
+
+    Only the four that name a whole surface are compared. The rest (`args`,
+    `cwd`, `env`, `input`, `timeout`, `symlink`) mean "this contract is
+    exercisable here", which is deliberately broader than the provider's
+    NATIVE capability set -- WinRM applies cwd and env by rendering them into
+    its script, and must still honour them.
+    """
+    with provider_context(provider) as host:
+        actual = set(host.capabilities)
+
+    claimed = set(provider.capabilities)
+    # A console reports `session`, which IS its spawn: `SerialHost.spawn()`
+    # opens the exclusive stream. The two names describe the same surface
+    # from the two ends, so the guard compares the surface.
+    if "session" in claimed or "session" in actual:
+        claimed = (claimed - {"spawn"}) | {"session"}
+        actual = (actual - {"spawn"}) | {"session"}
+    for capability in ("run", "path", "spawn", "session"):
+        registry = capability in claimed
+        real = capability in actual
+        assert registry == real, (
+            f"{provider.name}: the registry says {capability}={registry} "
+            f"while the host reports {real}"
+        )

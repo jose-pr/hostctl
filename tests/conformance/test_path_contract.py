@@ -97,8 +97,13 @@ def test_path_error_types(provider, tmp_path):
         pytest.skip(f"{provider.name} has no path capability")
     with provider_context(provider) as host:
         missing = conformance_path(host, provider, tmp_path, "missing")
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(FileNotFoundError) as raised:
             missing.read_bytes()
+        # One field deeper than the class: an error that does not name the
+        # path is not usable in a message, and every transport builds this
+        # one differently.
+        detail = str(raised.value) + str(getattr(raised.value, "filename", "") or "")
+        assert "missing" in detail, f"{provider.name}: {raised.value!r}"
         directory = conformance_path(host, provider, tmp_path, "dir")
         if provider.name == "container":
             # Docker's archive API can inspect but cannot create directories.

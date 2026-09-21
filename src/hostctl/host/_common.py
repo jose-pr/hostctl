@@ -10,16 +10,14 @@ import threading as _threading
 import typing as _ty
 import unicodedata as _unicodedata
 import types as _types
-from pathlib import PurePath as _PurePath
 from urllib.parse import (
     SplitResult as _SplitResult,
     parse_qsl as _parse_qsl,
-    quote as _quote,
     unquote as _unquote,
     urlsplit as _urlsplit,
 )
 
-from pathlib_next import Path as HostPath, Pathname as _Pathname
+from pathlib_next import Path as HostPath
 
 from ..executor import (
     CaptureOutput,
@@ -27,8 +25,11 @@ from ..executor import (
     FileHandle,
     Input,
     PathLike,
-    capture_streams,
-    reject_stdin_conflict,
+    # Explicitly re-exported, in the `name as name` spelling the package
+    # `__init__` files use: the transport modules import it from here rather
+    # than reaching into `..executor` themselves, and a bare import here is
+    # indistinguishable from a dead one.
+    reject_stdin_conflict as reject_stdin_conflict,
 )
 
 if _ty.TYPE_CHECKING:
@@ -36,81 +37,12 @@ if _ty.TYPE_CHECKING:
     from ..process import Process, TerminalRequest
     from ..shell import Shell, ShellFlavour
 
-#: One argv value. Everything reaching a transport is text, so a program or
-#: argument may be spelled as a string, bytes, or a path object
-#: interchangeably -- the spelling records how the caller held the value, not
-#: what crosses the wire.
-ExecValue = _ty.Union[str, bytes, _PurePath, _Pathname]
-
-
-@_dc.dataclass(frozen=True)
-class Exec:
-    """One command executed directly, with no shell layer.
-
-    ``Exec(program, *args)`` names a program and its argv. The program may be
-    an absolute path or a bare name the target resolves through ``PATH``; a
-    bare name has no other spelling, since a plain string is always shell text.
-
-    This is the explicit marker for direct execution. A path used anywhere
-    else is an ordinary value that stringifies, so several commands can be
-    written without one of them silently becoming an executable::
-
-        host.run(Exec("/bin/ls", "-l"))       # one direct command
-        host.run(Exec("ls", "-l"))            # PATH-resolved, no shell
-        host.run(Exec("/bin/a"), Exec("/bin/b"))   # two direct commands
-        host.run(PurePosixPath("/bin/a"), PurePosixPath("/bin/b"))
-                                              # two ordinary shell commands
-
-    Arguments are argv values, never nested commands: a list or tuple raises
-    ``TypeError`` rather than blurring argv and shell semantics.
-
-    A deliberately non-iterable container. `ShellFlavour.command_text`
-    dispatches structured commands on ``Iterable``, so an iterable marker
-    would be quoted into an argv string instead of taking the direct branch.
-    """
-
-    program: ExecValue
-    args: _ty.Tuple[ExecValue, ...]
-
-    def __init__(self, program: ExecValue, *args: ExecValue) -> None:
-        if not isinstance(program, (str, bytes, _PurePath, _Pathname)):
-            raise TypeError("Exec program must be a str, bytes, or path value")
-        for value in args:
-            if isinstance(value, (tuple, list)):
-                raise TypeError("direct command arguments must be scalar values")
-            if not isinstance(value, (str, bytes, _PurePath, _Pathname)):
-                raise TypeError(
-                    "direct command arguments must be str, bytes, or path values"
-                )
-        object.__setattr__(self, "program", program)
-        object.__setattr__(self, "args", tuple(args))
-
-
-Command = _ty.Union[str, PathLike, Exec, _ty.Sequence[object]]
-
-
-def starts_direct_command(
-    cmds: _ty.Sequence[Command],
-) -> _ty.Optional[_ty.Tuple[ExecValue, _ty.Tuple[object, ...]]]:
-    """Split an :class:`Exec` call into one executable and its argv arguments.
-
-    Returns ``None`` unless the call is exactly one `Exec`. Direct execution
-    replaces the whole command list rather than joining with anything, so an
-    `Exec` alongside other commands is rejected: there is no shell to join
-    them with, and silently running only one would lose the rest.
-    """
-    if not cmds:
-        return None
-    marked = [value for value in cmds if isinstance(value, Exec)]
-    if not marked:
-        return None
-    if len(cmds) > 1:
-        raise TypeError(
-            "a direct Exec command cannot be combined with other commands; "
-            "run it in its own call"
-        )
-    command = marked[0]
-    return command.program, command.args
+from ..shell._grammar import (  # noqa: F401  (re-exported below)
+    Command as Command,
+    Exec as Exec,
+    ExecValue as ExecValue,
+    starts_direct_command as starts_direct_command,
+)
 
 
 @_dc.dataclass(frozen=True)

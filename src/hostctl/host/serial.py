@@ -19,10 +19,11 @@ from ..executor import (
     SerialSettings,
     capture_streams,
     dispatch_output,
+    expired,
     wants_text,
 )
 from ..process import Process, SerialConsoleProcess, terminal_options
-from ..serial import PromptConsoleProfile, RawConsoleProfile, SerialConsoleProtocol
+from ..serial import RawConsoleProfile, SerialConsoleProtocol
 from ._common import (
     Command,
     Host,
@@ -311,6 +312,7 @@ class SerialHost(Host):
             raw,
             self.config.protocol,
             encoding or getattr(self.config.protocol, "encoding", "utf-8"),
+            errors,
         )
 
     def run(
@@ -360,8 +362,15 @@ class SerialHost(Host):
                 process, command, timeout=timeout
             )
         except TimeoutError as exc:
-            raise subprocess.TimeoutExpired(
-                command, timeout, output=getattr(exc, "output", None)
+            # `orphaned=True`: a serial console has no way to stop what the
+            # device is doing, so the command is still running there. One
+            # payload shape for every transport (see `executor.expired`).
+            raise expired(
+                command,
+                timeout,
+                output=getattr(exc, "output", None),
+                orphaned=True,
+                text=bool(text or encoding or errors),
             ) from exc
         finally:
             process.close()
@@ -394,10 +403,20 @@ class SerialHost(Host):
 
 
 class _SerialShell:
-    """Minimal shell binding for consoles with no declared OS shell."""
+    """Minimal shell binding for consoles with no declared OS shell.
+
+    Not a `Shell`: there is no flavour to bind, so quoting, `cwd`, `env` and
+    the encoding defaults a `Shell` carries have no meaning here. What it
+    does supply is the two spellings a caller reaches for -- `run()` (only
+    when the profile frames a reliable status) and `session()` -- plus the
+    documented `with host.shell as session:` shorthand, which is a serial
+    console's primary mode and used to raise `TypeError: object does not
+    support the context manager protocol`.
+    """
 
     def __init__(self, host: SerialHost) -> None:
         self.host = host
+        self._session = None
 
     def run(self, *cmds, **options):
         return self.host.run(*cmds, **options)
@@ -408,6 +427,34 @@ class _SerialShell:
             for command in cmds:
                 process.send_command(command)
         return process
+
+    def __enter__(self):
+        if self._session is not None:
+            raise RuntimeError("this shell already has an open session")
+        self._session = self.session()
+        return self._session
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        session, self._session = self._session, None
+        if session is not None:
+            session.close()
+        return False
+
+    def __call__(self, *args, **options):
+        raise NotImplementedError(
+            "a serial console has no shell flavour, so cwd/env/encoding "
+            "defaults cannot be bound; use host.spawn(...) or "
+            "host.shell.session(...)"
+        )
+
+    def configure(self, **options):
+        return self(**options)
+
+    def execute(self, command, *args, **options):
+        raise NotImplementedError(
+            "a serial console has no shell flavour to quote an argv with; "
+            "send the command text through run() or a session"
+        )
 
 
 __all__ = ["SerialConfig", "SerialHost"]

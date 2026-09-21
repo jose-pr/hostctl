@@ -275,6 +275,14 @@ hostctl applies to whatever you return.
   PowerShell script to `WinRMExecutor`.
 - `HostInfo` fields are optional; unknown system values remain `None`.
 - A usable `path()` returns `HostPath` (`pathlib_next.Path`).
+- A timeout raises `subprocess.TimeoutExpired` carrying the SAME payload on
+  every transport: `.orphaned` (a bool -- `True` when the transport could not
+  stop the command, so it is still running there), `.pid` (`None` unless the
+  transport knows one), and `.output`/`.stderr` as `b""`/`""` rather than
+  `None`. Build one with `executor.expired(...)` rather than
+  `subprocess.TimeoutExpired(...)`, so a caller's
+  `if exc.orphaned: alert(exc.pid)` cannot raise `AttributeError` depending
+  on which provider answered.
 - A usable `run()` returns `subprocess.CompletedProcess`. **`check` defaults
   to `True` and `capture_output` to `True`** -- both the opposite of
   `subprocess.run`, deliberately: a remote command that fails is an error by

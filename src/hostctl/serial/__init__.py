@@ -7,7 +7,6 @@ never claim filesystem or process semantics which the device cannot provide.
 
 from __future__ import annotations
 
-import abc
 import dataclasses
 import re
 import time

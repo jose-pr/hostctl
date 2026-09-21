@@ -10,6 +10,7 @@ import typing
 
 from ._qga import GuestAgentTransport, QgaProtocolError
 from ._common import (
+    expired,
     CaptureOutput,
     command_text,
     CommandArgument,
@@ -231,9 +232,11 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
         try:
             return self._transport().execute(request, timeout=remaining)
         except (TimeoutError, subprocess.TimeoutExpired) as exc:
-            expired = subprocess.TimeoutExpired(command, remaining)
-            expired.orphaned = request.get("execute") == "guest-exec"
-            raise expired from exc
+            raise expired(
+                command,
+                remaining,
+                orphaned=request.get("execute") == "guest-exec",
+            ) from exc
 
     def _wait(
         self,
@@ -308,8 +311,4 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
         remaining = deadline - self._clock()
         if remaining > 0:
             return remaining
-        expired = subprocess.TimeoutExpired(command, timeout)
-        expired.orphaned = pid is not None
-        if pid is not None:
-            expired.pid = pid
-        raise expired
+        raise expired(command, timeout, orphaned=pid is not None, pid=pid)

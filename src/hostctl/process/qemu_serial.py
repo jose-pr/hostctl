@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import errno
-import subprocess
 import threading
 import types
 import typing
 
+from ..executor import expired
 from ._common import IncrementalTextDecoder, Process, ProcessData, raise_normalized
 
 
@@ -207,7 +207,7 @@ class QemuSerialProcess(Process):
         if timeout is not None and timeout < 0:
             raise ValueError("timeout must not be negative")
         if not self._closed.wait(timeout):
-            raise subprocess.TimeoutExpired("QEMU serial console", timeout)
+            raise expired("QEMU serial console", timeout, orphaned=True)
         return 0
 
     def terminate(self) -> None:

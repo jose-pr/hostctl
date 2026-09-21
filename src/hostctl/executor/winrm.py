@@ -8,6 +8,7 @@ import subprocess
 import typing
 
 from ._common import (
+    expired,
     CaptureOutput,
     command_text,
     CommandArgument,
@@ -166,7 +167,8 @@ class NativeWinRMSession:
             )
         except subprocess.TimeoutExpired as exc:
             # Never expose the local powershell argv as the remote command.
-            raise subprocess.TimeoutExpired(self.host, self.timeout) from exc
+            # The remote command keeps running: WinRS has no cancel.
+            raise expired(self.host, self.timeout, orphaned=True) from exc
         return _NativeResponse(result.returncode, result.stdout, result.stderr)
 
     def close(self) -> None:
@@ -267,6 +269,14 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
         return completed
 
     def _normalize_error(self, exc: Exception, command: str) -> Exception:
+        # The dependency-free cases FIRST. Returning early on the optional
+        # import also disabled this branch, so on a native-only install --
+        # the documented password-free Windows path, which needs no winrm
+        # extra -- a timeout crossed the boundary as a builtin `TimeoutError`
+        # and `except subprocess.TimeoutExpired` did not catch it.
+        if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)):
+            timeout = self._transport_timeout() if self._transport_timeout else None
+            return expired(command, timeout, orphaned=True)
         try:
             import requests
             import winrm.exceptions
@@ -277,14 +287,13 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
         if isinstance(
             exc,
             (
-                TimeoutError,
-                subprocess.TimeoutExpired,
                 requests.exceptions.Timeout,
                 winrm.exceptions.WinRMOperationTimeoutError,
             ),
         ):
             timeout = self._transport_timeout() if self._transport_timeout else None
-            return subprocess.TimeoutExpired(command, timeout)
+            # WinRS has no cancel, so the remote command keeps running.
+            return expired(command, timeout, orphaned=True)
         if isinstance(
             exc,
             (

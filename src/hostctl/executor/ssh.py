@@ -206,7 +206,17 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
                 timeout=timeout,
             )
             if isinstance(normalized, subprocess.TimeoutExpired):
+                # The full payload, whatever raised it: a timeout that came
+                # from the transport rather than from the normalizer (a
+                # stdlib `TimeoutExpired` out of the channel) otherwise
+                # reached the caller without `.orphaned`/`.pid` at all.
                 normalized.orphaned = not terminated
+                if getattr(normalized, "pid", None) is None:
+                    normalized.pid = None
+                if normalized.output is None:
+                    normalized.output = b""
+                if normalized.stderr is None:
+                    normalized.stderr = b""
             if normalized is exc:
                 raise
             raise normalized from exc

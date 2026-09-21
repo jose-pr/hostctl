@@ -25,7 +25,10 @@ stderr by default.  Captured streams are bytes unless `text=True` or an
   caller passes `check=False`. A provider which cannot obtain a status must
   use `-1`, never `None`.
 - `timeout` raises `subprocess.TimeoutExpired` and the provider must make a
-  best-effort attempt to terminate and close the child.
+  best-effort attempt to terminate and close the child. The exception carries
+  the same payload on every transport: `.orphaned` (`True` when the command
+  could not be stopped and is still running), `.pid` (`None` unless the
+  transport knows one), and `.output`/`.stderr` as empty rather than `None`.
 
 ## Persistent processes
 
@@ -73,6 +76,8 @@ they advertise.
 | Provider/operation | Deliberate divergence | Rationale |
 | --- | --- | --- |
 | Serial transport | raw profiles expose sessions only; prompt profiles opt into `run` only with explicit status framing; no filesystem | A serial byte stream has no portable command protocol. Profiles own login, prompts, line endings, and completion markers. |
+| Local uncaptured output | inherits the parent's file descriptor rather than writing to `sys.stdout` | That is `subprocess.run`'s own `stdout=None` behaviour and it costs nothing to keep: the child writes where the parent writes. A buffered transport has the bytes in hand instead, so it must route them, and `dispatch_output` sends them to `sys.stdout`. |
+| WinRM, PSRP and container `timeout=` | raises `NotImplementedError` | Neither WinRS, PSRP nor Docker exec exposes a cancellable command deadline, so a `timeout` there could only be a read deadline that leaves the remote command running -- which is not what the keyword means anywhere else. |
 | Serial framed `run()` | output past `max_buffer` raises instead of truncating | A console transcript cut from the front mid-line and returned as complete is a corrupt result reported as success, and `error_patterns` in the discarded part stopped setting a status. The cap is a profile setting; raising it is the caller's decision to make, not the library's to make silently. |
 | Serial process `read(-1)` | returns bytes currently reported as available, capped at 64 KiB, rather than waiting for EOF | Physical and network serial ports normally have no EOF until disconnected; waiting for EOF would make interactive sessions unusable. |
 | WinRM persistent process | `spawn`/TTY unavailable | WinRM's buffered command API does not expose a durable bidirectional stream. |

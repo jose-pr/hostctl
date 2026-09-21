@@ -208,3 +208,39 @@ def test_closing_a_host_under_a_live_session_releases_the_lease():
         reopened.send("show interfaces")
 
     assert console.writes[-1] == b"show interfaces\r\n"
+
+
+def test_the_documented_session_shorthand_works_on_a_serial_host():
+    """`with host.shell as session:` is a serial console's primary mode and
+    raised `TypeError: object does not support the context manager
+    protocol`, because the binding is not a `Shell`."""
+    console = _Console()
+    host = SerialHost(SerialConfig("loop://", serial_port=console))
+
+    with host.shell as session:
+        session.send("show version")
+
+    assert console.writes == [b"show version\r\n"]
+
+
+def test_a_serial_shell_refuses_what_it_cannot_mean():
+    console = _Console()
+    host = SerialHost(SerialConfig("loop://", serial_port=console))
+
+    with pytest.raises(NotImplementedError, match="no shell flavour"):
+        host.shell(cwd="/srv")
+    with pytest.raises(NotImplementedError, match="quote an argv"):
+        host.shell.execute("ls", "-l")
+
+
+def test_a_spawned_console_honours_the_errors_it_was_given():
+    """`spawn(errors=...)` was accepted and dropped, so a console whose
+    device cannot represent a character answered `errors="replace"` with a
+    `UnicodeEncodeError`."""
+    console = _Console()
+    host = SerialHost(SerialConfig("loop://", serial_port=console))
+
+    with host.spawn(encoding="ascii", errors="replace") as session:
+        session.write("caf\N{LATIN SMALL LETTER E WITH ACUTE}\n")
+
+    assert console.writes == [b"caf?\n"]

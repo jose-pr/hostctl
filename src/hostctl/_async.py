@@ -62,11 +62,18 @@ def normalize_asyncssh_error(
     # into `OperationNotStarted` for the next provider.
     if isinstance(exc, (TimeoutError, _asyncio.TimeoutError, module.TimeoutError)):
         if command is not None:
-            return _subprocess.TimeoutExpired(
+            from .executor._common import expired
+
+            # One payload shape for every transport: `.orphaned` and `.pid`
+            # always exist, and the output defaults to `b''` rather than
+            # `None`. The caller sets `.orphaned` afterwards when it knows
+            # whether the remote command was actually stopped.
+            return expired(
                 command,
                 timeout,
                 output=getattr(exc, "stdout", None),
                 stderr=getattr(exc, "stderr", None),
+                orphaned=True,
             )
         # Connection/open timeouts have no subprocess command to attach, but
         # must still cross the public boundary as a builtin timeout rather

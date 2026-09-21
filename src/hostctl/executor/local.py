@@ -8,6 +8,7 @@ import subprocess
 import typing
 
 from ._common import (
+    expired,
     CaptureOutput,
     CommandLine,
     command_text,
@@ -128,8 +129,15 @@ def _run_bounded(
                 out, err = process.communicate(timeout=_DRAIN_BUDGET)
             except subprocess.TimeoutExpired:
                 out = err = None
-            raise subprocess.TimeoutExpired(
-                argv, timeout, output=out, stderr=err
+            # `orphaned=False`: the tree was killed above, so nothing
+            # survives this timeout. One payload shape for every transport.
+            raise expired(
+                argv,
+                timeout,
+                output=out,
+                stderr=err,
+                orphaned=False,
+                text=bool(text or encoding or errors),
             ) from None
         except BaseException:
             _kill_tree(process)

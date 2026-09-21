@@ -169,6 +169,42 @@ def command_text(
     return str(value)
 
 
+def expired(
+    command: object,
+    timeout: typing.Optional[float],
+    *,
+    output: typing.Optional[typing.Union[bytes, str]] = None,
+    stderr: typing.Optional[typing.Union[bytes, str]] = None,
+    orphaned: bool = False,
+    pid: typing.Optional[int] = None,
+    text: bool = False,
+) -> subprocess.TimeoutExpired:
+    """Build the one `TimeoutExpired` shape every hostctl transport raises.
+
+    `subprocess.TimeoutExpired` is the shared type, but the attributes hung
+    off it used to be per-transport: `.orphaned` and `.pid` existed only on
+    the SSH and QGA paths, so a supervisor writing
+    `if exc.orphaned: alert(exc.pid)` -- exactly what the API header
+    documented -- crashed with `AttributeError` when the same `SystemHost`
+    timed out over local, serial or WinRM. The payload diverged too: local
+    and QGA reported `b''` where serial reported `None`.
+
+    `orphaned` is `True` when the transport could NOT stop the command, so
+    it is still running somewhere; `pid` is its identifier where the
+    transport knows one.
+    """
+    empty: typing.Union[bytes, str] = "" if text else b""
+    error = subprocess.TimeoutExpired(
+        command,
+        timeout,
+        output=empty if output is None else output,
+        stderr=empty if stderr is None else stderr,
+    )
+    error.orphaned = bool(orphaned)  # type: ignore[attr-defined]
+    error.pid = pid  # type: ignore[attr-defined]
+    return error
+
+
 def normalize_environment(
     env: typing.Optional[Environment],
 ) -> typing.Optional[typing.Dict[str, str]]:

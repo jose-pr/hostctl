@@ -20,15 +20,14 @@ from ..executor import (
     ExecutorCapability,
     ExecutorCommand,
 )
-from ..host._common import (
+from ..executor import (
     CaptureOutput,
-    Command,
     Environment,
-    Exec,
     FileHandle,
     Input,
     PathLike,
 )
+from ._grammar import Command, Exec
 from ..process import Process, TerminalRequest
 
 _Result = typing.TypeVar("_Result", covariant=True)

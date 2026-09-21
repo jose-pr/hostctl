@@ -5,12 +5,12 @@ from __future__ import annotations
 import collections
 import codecs
 import socket
-import subprocess
 import threading
 import time
 import types
 import typing
 
+from ..executor import expired
 from ._common import Process, ProcessData
 
 
@@ -226,7 +226,9 @@ class ContainerProcess(Process):
             if returncode is not None:
                 return returncode
             if deadline is not None and time.monotonic() >= deadline:
-                raise subprocess.TimeoutExpired(self._command, timeout)
+                # Docker exec exposes no cancel, so the command is
+                # still running inside the container.
+                raise expired(self._command, timeout, orphaned=True)
             time.sleep(0.01)
 
     def _receive_available(self) -> None:

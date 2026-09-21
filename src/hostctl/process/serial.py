@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import contextlib
-import subprocess
 import threading
 import types
 import typing
 
+from ..executor import expired
 from ._common import Process, ProcessData, raise_normalized
 from ..executor.serial import SerialLike, normalize_serial_error
 
@@ -128,7 +128,7 @@ class SerialProcess(Process):
         if timeout is not None and timeout < 0:
             raise ValueError("timeout must not be negative")
         if not self._closed.wait(timeout):
-            raise subprocess.TimeoutExpired("serial session", timeout)
+            raise expired("serial session", timeout, orphaned=True)
         return 0
 
     def terminate(self) -> None:
@@ -210,11 +210,19 @@ class SerialConsoleProcess(Process):
     """
 
     def __init__(
-        self, process: SerialProcess, profile: object, encoding: str = "utf-8"
+        self,
+        process: SerialProcess,
+        profile: object,
+        encoding: str = "utf-8",
+        errors: typing.Optional[str] = None,
     ) -> None:
         self.process = process
         self.profile = profile
         self.encoding = encoding
+        # `SerialHost.spawn` accepted `errors=` and dropped it here, so a
+        # console with a non-UTF-8 device answered `errors="replace"` with a
+        # `UnicodeEncodeError`. `QemuSerialProcess` already carried both.
+        self.errors = errors or "strict"
 
     @property
     def returncode(self):
@@ -222,7 +230,7 @@ class SerialConsoleProcess(Process):
 
     def write(self, data: ProcessData) -> None:
         if isinstance(data, str):
-            data = data.encode(self.encoding)
+            data = data.encode(self.encoding, self.errors)
         self.process.write(data)
 
     def read(self, size: int = -1) -> bytes:
