@@ -10,6 +10,12 @@ import typing
 from ..executor import expired
 from ._common import IncrementalTextDecoder, Process, ProcessData, raise_normalized
 
+#: What `threading.RLock()` returns. `threading.RLock` itself is a
+#: FACTORY FUNCTION, not a class, so it cannot annotate anything --
+#: a re-entrant lock's only portable spelling is the protocol it
+#: satisfies.
+_ReentrantLock = typing.ContextManager[bool]
+
 
 class QemuConsoleStream(typing.Protocol):
     """Minimal libvirt-stream-like console channel."""
@@ -87,10 +93,7 @@ class QemuSerialConsole:
                 self._stream = stream
         except Exception as exc:
             self._lease.release()
-            normalized = normalize_qemu_console_error(exc)
-            if normalized is exc:
-                raise
-            raise normalized from exc
+            raise_normalized(exc, normalize_qemu_console_error)
         return QemuSerialProcess(
             stream,
             io_lock=self._io_lock,
@@ -112,7 +115,7 @@ class QemuSerialProcess(Process):
         self,
         stream: QemuConsoleStream,
         *,
-        io_lock: typing.Optional[threading.RLock] = None,
+        io_lock: typing.Optional["_ReentrantLock"] = None,
         release: typing.Callable[[], None],
         close_stream: bool = True,
         resize: typing.Optional[ConsoleResize] = None,

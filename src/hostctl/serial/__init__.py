@@ -155,6 +155,24 @@ class PromptConsoleProfile:
         self.status_parser = status_parser
         self.encoding = "utf-8"
 
+    def redact(self, transcript: bytes) -> bytes:
+        """Remove `secret=True` login values from a console transcript.
+
+        Consoles echo what they are sent, so a transcript captured during
+        `negotiate()` holds the password itself -- and `_read_until`
+        attaches that transcript to the `TimeoutError` it raises, which
+        `run()` then copies onto `TimeoutExpired.output`: a value callers
+        routinely log. `LoginStep.__repr__` goes out of its way to print
+        `<redacted>`; this is the same promise on the other exit.
+        """
+        for step in self.login:
+            if not step.secret:
+                continue
+            value = step.send
+            if value:
+                transcript = transcript.replace(value, b"<redacted>")
+        return transcript
+
     @staticmethod
     def _compile(value: bytes | str) -> typing.Pattern[bytes]:
         raw = value.encode() if isinstance(value, str) else bytes(value)
@@ -226,7 +244,7 @@ class PromptConsoleProfile:
                 )
             if timeout is not None and time.monotonic() - started >= timeout:
                 error = TimeoutError("serial console prompt timed out")
-                error.output = bytes(buffer)  # type: ignore[attr-defined]
+                error.output = self.redact(bytes(buffer))  # type: ignore[attr-defined]
                 raise error
             remaining = (
                 None
@@ -292,9 +310,13 @@ class PromptConsoleProfile:
                 pass
         if self.wakeup:
             process.write(self.wakeup)
-        for step in self.login:
+        # The patterns were compiled once in `__init__` and then recompiled
+        # here on every connect, while `_login_patterns` sat unused -- two
+        # compilation sites for one expression, which is one too many to
+        # keep in agreement.
+        for step, pattern in zip(self.login, self._login_patterns):
             transcript = self._read_until(
-                process, self._compile(step.expect), timeout=10, initial=transcript
+                process, pattern, timeout=10, initial=transcript
             )
             process.write(step.send + self.line_terminator)
         self._read_until(process, self._prompt, timeout=10, initial=transcript)

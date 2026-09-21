@@ -8,8 +8,16 @@ import types
 import typing
 
 from ..executor import expired
-from ._common import Process, ProcessData, raise_normalized
+from ._common import (
+    IncrementalTextDecoder,
+    Process,
+    ProcessData,
+    raise_normalized,
+)
 from ..executor.serial import SerialLike, normalize_serial_error
+
+if typing.TYPE_CHECKING:  # pragma: no cover - import cycle at runtime
+    from ..serial import SerialConsoleProtocol
 
 
 class SerialProcess(Process):
@@ -49,10 +57,7 @@ class SerialProcess(Process):
                     offset += written
                 self._serial.flush()
         except Exception as exc:
-            normalized = normalize_serial_error(exc)
-            if normalized is exc:
-                raise
-            raise normalized from exc
+            raise_normalized(exc, normalize_serial_error)
 
     def read(self, size: int = -1, *, timeout: typing.Optional[float] = None) -> bytes:
         """Read up to `size` bytes, bounded by `timeout` when one is given.
@@ -145,10 +150,7 @@ class SerialProcess(Process):
             with self._io_lock:
                 self._serial.send_break(duration)
         except Exception as exc:
-            normalized = normalize_serial_error(exc)
-            if normalized is exc:
-                raise
-            raise normalized from exc
+            raise_normalized(exc, normalize_serial_error)
 
     def reset_input_buffer(self) -> None:
         """Discard stale bytes before a protocol negotiation or command."""
@@ -212,9 +214,11 @@ class SerialConsoleProcess(Process):
     def __init__(
         self,
         process: SerialProcess,
-        profile: object,
+        profile: "SerialConsoleProtocol",
         encoding: str = "utf-8",
         errors: typing.Optional[str] = None,
+        *,
+        text: bool = False,
     ) -> None:
         self.process = process
         self.profile = profile
@@ -223,6 +227,14 @@ class SerialConsoleProcess(Process):
         # console with a non-UTF-8 device answered `errors="replace"` with a
         # `UnicodeEncodeError`. `QemuSerialProcess` already carried both.
         self.errors = errors or "strict"
+        #: Set when the caller asked for text. `read()` used to return
+        #: `bytes` whatever `encoding=` said, so the same
+        #: `spawn(encoding="utf-8")` gave `str` from SSH and a QEMU console
+        #: and `bytes` from here -- a `TypeError` in any code that works
+        #: against both.
+        self._decoder = (
+            IncrementalTextDecoder(self.encoding, self.errors) if text else None
+        )
 
     @property
     def returncode(self):
@@ -233,9 +245,11 @@ class SerialConsoleProcess(Process):
             data = data.encode(self.encoding, self.errors)
         self.process.write(data)
 
-    def read(self, size: int = -1) -> bytes:
-        value = self.process.read(size)
-        return typing.cast(bytes, value)
+    def read(self, size: int = -1) -> ProcessData:
+        value = typing.cast(bytes, self.process.read(size))
+        if self._decoder is None:
+            return value
+        return self._decoder.decode(value, final=not value)
 
     def read_stderr(self, size: int = -1) -> bytes:
         return self.process.read_stderr(size)

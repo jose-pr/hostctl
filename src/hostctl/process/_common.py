@@ -7,17 +7,9 @@ import typing
 import types
 import codecs
 
+from ..executor._common import raise_normalized as raise_normalized
+
 ProcessData = typing.Union[str, bytes]
-
-
-def raise_normalized(
-    exc: Exception, normalizer: typing.Callable[[Exception], Exception]
-) -> typing.NoReturn:
-    """Raise a normalized transport error while preserving its cause."""
-    normalized = normalizer(exc)
-    if normalized is exc:
-        raise exc
-    raise normalized from exc
 
 
 class IncrementalTextDecoder:

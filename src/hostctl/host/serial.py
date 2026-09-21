@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
-import shlex
 import subprocess
+import time
 import typing
 from urllib.parse import quote, unquote, urlencode
 
@@ -23,7 +23,7 @@ from ..executor import (
     wants_text,
 )
 from ..process import Process, SerialConsoleProcess, terminal_options
-from ..serial import RawConsoleProfile, SerialConsoleProtocol
+from ..serial import ConsoleProtocolError, RawConsoleProfile, SerialConsoleProtocol
 from ._common import (
     Command,
     Host,
@@ -65,10 +65,15 @@ class SerialConfig(HostConfig, schemes=("serial",)):
     #: whitelist can be read before a config is built: an ambient
     #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
     #: is accepted. The base dispatcher enforces it.
+    #: No `username`/`password`. A console credential lives in the
+    #: profile's `login=` steps and nowhere else: the two fields that used
+    #: to be here were stored, whitelisted, and read by nothing, so
+    #: `Host("serial:///dev/ttyUSB0", password=...)` and every
+    #: `HOSTCTL_PASSWORD`-carrying CLI invocation accepted a credential
+    #: that had no effect. Refusing the name is what `uri_credentials`
+    #: exists for.
     uri_credentials = (
         "protocol",
-        "username",
-        "password",
         "serial_factory",
         "serial_port",
     )
@@ -88,17 +93,23 @@ class SerialConfig(HostConfig, schemes=("serial",)):
     protocol: SerialConsoleProtocol = dataclasses.field(
         default_factory=RawConsoleProfile, repr=False, compare=False
     )
-    username: typing.Optional[str] = dataclasses.field(default=None, repr=False)
-    password: typing.Optional[str] = dataclasses.field(default=None, repr=False)
     serial_factory: typing.Optional[SerialFactory] = dataclasses.field(
         default=None, repr=False, compare=False
     )
     serial_port: typing.Optional[SerialLike] = dataclasses.field(
         default=None, repr=False, compare=False
     )
+    #: The validated transport settings, assembled in `__post_init__`.
+    settings: typing.Optional[SerialSettings] = dataclasses.field(
+        default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
+        # Built ONCE, here, and kept: `SerialHost.__init__` used to build a
+        # second one from the same fields as a 12-argument positional call,
+        # so the two constructions could drift and the positional one had
+        # no names to check against.
         settings = SerialSettings(
             self.port,
             baudrate=self.baudrate,
@@ -122,6 +133,7 @@ class SerialConfig(HostConfig, schemes=("serial",)):
         )
         if not isinstance(self.protocol, SerialConsoleProtocol):
             raise TypeError("protocol must implement SerialConsoleProtocol")
+        object.__setattr__(self, "settings", settings)
 
     @property
     def connection_uri(self) -> str:
@@ -196,8 +208,6 @@ class SerialConfig(HostConfig, schemes=("serial",)):
             protocol=typing.cast(
                 SerialConsoleProtocol, credentials.get("protocol", RawConsoleProfile())
             ),
-            username=typing.cast(typing.Optional[str], credentials.get("username")),
-            password=typing.cast(typing.Optional[str], credentials.get("password")),
             serial_factory=typing.cast(
                 typing.Optional[SerialFactory], credentials.get("serial_factory")
             ),
@@ -215,27 +225,18 @@ class SerialHost(Host):
 
     def __init__(self, config: SerialConfig) -> None:
         self.config = config
-        settings = SerialSettings(
-            config.port,
-            config.baudrate,
-            config.bytesize,
-            config.parity,
-            config.stopbits,
-            config.xonxoff,
-            config.rtscts,
-            config.dsrdtr,
-            config.read_timeout,
-            config.write_timeout,
-            config.inter_byte_timeout,
-            config.exclusive,
-        )
         self._executor = SerialExecutor(
-            settings,
+            typing.cast(SerialSettings, config.settings),
             serial_factory=config.serial_factory,
             serial_port=config.serial_port,
             owns_serial_port=False if config.serial_port is not None else True,
         )
-        self._negotiated = False
+        #: The transport the negotiation was performed on, not a bare
+        #: flag. `executor.close()` -- a public property's public method --
+        #: dropped the port without touching a flag on this object, so the
+        #: next `run()` opened a fresh port, skipped every `LoginStep`, and
+        #: typed the command at the device's `login:` prompt.
+        self._negotiated_on: typing.Optional[object] = None
 
     @property
     def executor(self) -> SerialExecutor:
@@ -257,18 +258,29 @@ class SerialHost(Host):
         return _SerialShell(self)
 
     def connect(self) -> None:
-        if self._negotiated:
+        port = self._executor.connect()
+        if self._negotiated_on is port:
             return
-        self._executor.connect()
         process = self._executor.open()
         try:
             self.config.protocol.negotiate(process)
-            self._negotiated = True
+        except TimeoutError as exc:
+            # A negotiation timeout is a PROTOCOL failure, not a command
+            # timeout: `negotiate()` has its own budget, and the raw
+            # `TimeoutError` escaped `connect()`, `run()`, `spawn()` and
+            # `with config as host:` alike -- past every
+            # `except subprocess.TimeoutExpired` a caller had written, and
+            # indistinguishable from a port-open failure under `OSError`.
+            raise ConsoleProtocolError(
+                "serial console did not complete its login exchange"
+            ) from exc
+        else:
+            self._negotiated_on = port
         finally:
             process.close()
 
     def close(self) -> None:
-        self._negotiated = False
+        self._negotiated_on = None
         self._executor.close()
 
     def info(self) -> HostInfo:
@@ -313,6 +325,12 @@ class SerialHost(Host):
             self.config.protocol,
             encoding or getattr(self.config.protocol, "encoding", "utf-8"),
             errors,
+            # Text only when the caller ASKED for it. The profile's encoding
+            # is a write-side default; promoting it to a read mode would
+            # turn every existing byte session into a text one. With either
+            # keyword given, reads decode -- as they already do on the SSH
+            # and QEMU console adapters, where the same call returns `str`.
+            text=bool(encoding or errors),
         )
 
     def run(
@@ -347,33 +365,68 @@ class SerialHost(Host):
             raise NotImplementedError("serial console profile does not support cwd/env")
         if input is not None:
             raise NotImplementedError("serial framed run does not support stdin input")
-        command = ";".join(
-            (
-                shlex.join([str(item) for item in value])
-                if isinstance(value, (tuple, list))
-                else str(value)
+        if stdin is not None:
+            # Accepted and dropped, this looked like a second way to feed a
+            # command -- while `input=` right above refuses explicitly.
+            raise NotImplementedError(
+                "serial framed run does not support stdin redirection"
             )
-            for value in cmds
-        )
+        if bufsize != -1:
+            raise NotImplementedError(
+                "serial framed run has no pipe to size: bufsize is not supported"
+            )
+        rendered = []
+        for value in cmds:
+            if isinstance(value, (tuple, list)):
+                # `shlex.join` is POSIX quoting, and this host refuses to
+                # name a shell flavour at all. On a Cisco-style console
+                # `["show", "run | include hostname"]` went on the wire as
+                # `show 'run | include hostname'`, which the device takes
+                # literally and rejects. The profile owns the device's
+                # grammar; nothing here knows it.
+                raise NotImplementedError(
+                    "a serial console profile defines no argv quoting: pass "
+                    "the command as text, spelled the way the device expects"
+                )
+            rendered.append(str(value))
         self.connect()
         process = self._executor.open()
+        deadline = None if timeout is None else time.monotonic() + timeout
+        outputs = []
+        returncode = 0
+        command = rendered[0] if len(rendered) == 1 else list(rendered)
         try:
-            output, returncode = self.config.protocol.run(
-                process, command, timeout=timeout
-            )
-        except TimeoutError as exc:
-            # `orphaned=True`: a serial console has no way to stop what the
-            # device is doing, so the command is still running there. One
-            # payload shape for every transport (see `executor.expired`).
-            raise expired(
-                command,
-                timeout,
-                output=getattr(exc, "output", None),
-                orphaned=True,
-                text=bool(text or encoding or errors),
-            ) from exc
+            for index, single in enumerate(rendered):
+                remaining = (
+                    None if deadline is None else max(0.0, deadline - time.monotonic())
+                )
+                try:
+                    # One framed exchange per command. Joined with `";"` they
+                    # went out as one line, which most device consoles parse
+                    # as a single malformed command rather than two -- and a
+                    # profile that frames status per exchange could only
+                    # report one status for all of them.
+                    output, returncode = self.config.protocol.run(
+                        process, single, timeout=remaining
+                    )
+                except TimeoutError as exc:
+                    # `orphaned=True`: a serial console has no way to stop
+                    # what the device is doing, so the command is still
+                    # running there. One payload shape for every transport
+                    # (see `executor.expired`).
+                    partial = b"".join(outputs) + (getattr(exc, "output", None) or b"")
+                    raise expired(
+                        command,
+                        timeout,
+                        output=partial,
+                        orphaned=True,
+                        text=bool(text or encoding or errors),
+                    ) from exc
+                outputs.append(output)
+                del index
         finally:
             process.close()
+        output = b"".join(outputs)
         output_stream, _error_stream = capture_streams(capture_output, stdout, stderr)
         if wants_text(text, encoding, errors):
             output_value: typing.Union[str, bytes] = output.decode(

@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import typing
 
 from pathlib_next import Path as NextPath
@@ -99,7 +100,10 @@ def _path_operand(
         search_end = len(value) if authority_end < 0 else authority_end
         separator = value.rfind(":", 0, search_end)
         if separator < scheme_end:
-            raise ValueError("remote path operand must be URI:PATH")
+            raise ValueError(
+                f"remote path operand must be URI:PATH: {value!r} has no "
+                "path separator"
+            )
         if (
             separator == _port_colon(value, scheme_end, search_end)
             and value[separator + 1 : search_end].isdigit()
@@ -109,14 +113,25 @@ def _path_operand(
             # `ssh://host` plus the relative path `2222/x` -- the wrong host
             # and the wrong file, with nothing said. The grammar wants
             # `ssh://host:2222:/x`.
-            raise ValueError("remote path operand must be URI:PATH")
+            raise ValueError(
+                f"remote path operand must be URI:PATH: {value!r} ends at a "
+                "port, not a path (write it as ssh://host:2222:/x)"
+            )
+        uri, path = value[:separator], value[separator + 1 :]
     else:
-        separator = value.find(":", value.find(":") + 1)
-        if separator < 0:
-            raise ValueError("remote path operand must be URI:PATH")
-    uri, path = value[:separator], value[separator + 1 :]
+        # An opaque URI has no authority, so the scheme's own colon ends it
+        # and everything after is the path: `local:/tmp/x` is the spelling
+        # every other subcommand documents, and looking for a SECOND colon
+        # rejected it outright. The scheme keeps its colon -- `local` is not
+        # a URI, `local:` is -- and a path containing colons survives.
+        scheme_end = value.find(":")
+        uri, path = value[: scheme_end + 1], value[scheme_end + 1 :]
     if not path:
-        raise ValueError("remote path operand requires a path")
+        raise ValueError(
+            f"remote path operand requires a path: {value!r} names a host "
+            "and no file (write it as URI:PATH, e.g. local:/tmp/x or "
+            "ssh://host:22:/srv/app)"
+        )
     return _open_host(stack, uri, credentials).path(path)
 
 
@@ -180,16 +195,31 @@ def _command_info(args: argparse.Namespace, stdout, stderr) -> int:
 
 def _command_shell(args: argparse.Namespace, stdout, stderr) -> int:
     with Host(args.uri, **_usable_credentials(args.uri, _credentials(args))) as host:
-        session = host.shell.session(terminal=True)
+        try:
+            session = host.shell.session(terminal=True)
+        except NotImplementedError:
+            # A raw serial console cannot allocate a PTY, and a URI-built
+            # serial host always gets the raw profile -- so `hostctl shell`
+            # against a `serial:` URI could never open a session at all. A
+            # console without a terminal is still a console.
+            session = host.shell.session()
         stopped = threading.Event()
 
         def pump() -> None:
             try:
                 while not stopped.is_set():
                     data = session.read(65536)
-                    if not data:
+                    if data:
+                        _write(stdout, data)
+                        continue
+                    # An empty read is EOF on a pipe-like transport. On a
+                    # serial line it is an idle moment: the read timeout
+                    # expired and the device said nothing, which used to end
+                    # the pump and leave a live console silent. The process
+                    # itself is the authority on whether anything is left.
+                    if getattr(session, "returncode", 0) is not None:
                         return
-                    _write(stdout, data)
+                    time.sleep(0.01)
             except (OSError, ValueError):
                 if not stopped.is_set():
                     raise
@@ -212,36 +242,91 @@ def _command_shell(args: argparse.Namespace, stdout, stderr) -> int:
     return 0
 
 
+_EPILOG = """\
+connection URIs:
+  local:                      this machine
+  ssh://user@host:22          SSH (asyncssh)
+  winrm://user@host:5985      WinRM
+  psrp://user@host:5985       PowerShell Remoting
+  docker://container          a running container
+  qemu+libvirt:///domain      a guest, through libvirt
+  serial:///dev/ttyUSB0       a raw serial console
+
+remote path operands (cp):
+  URI:PATH -- the colon after the URI separates it from the path.
+  local:/tmp/x   ssh://host:/srv/app   ssh://host:2222:/srv/app
+  A bare filesystem path (./x, C:\\x) is this machine.
+
+credentials:
+  A password comes from the HOSTCTL_PASSWORD environment variable, or from
+  --ask-password, and never from the command line, where it would reach the
+  process table and the shell history. It is offered only to schemes that
+  accept one.
+
+exit status:
+  0    the command succeeded (for `run`, the remote command's own status)
+  125  connection, timeout, usage, or an unsupported operation
+  126  permission denied
+  127  not found
+  130  interrupted
+"""
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hostctl")
+    parser = argparse.ArgumentParser(
+        prog="hostctl",
+        description="Run commands and move files on a host named by a URI.",
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     subcommands = parser.add_subparsers(dest="subcommand", required=True)
 
-    def host_command(name: str, handler):
-        command = subcommands.add_parser(name)
-        command.add_argument("--ask-password", action="store_true")
-        command.add_argument("uri")
+    def host_command(name: str, handler, help_text: str):
+        command = subcommands.add_parser(name, help=help_text, description=help_text)
+        command.add_argument(
+            "--ask-password",
+            action="store_true",
+            help="prompt for a password instead of reading HOSTCTL_PASSWORD",
+        )
+        command.add_argument("uri", help="connection URI (see `hostctl --help`)")
         command.set_defaults(handler=handler)
         return command
 
-    run = host_command("run", _command_run)
-    run.add_argument("command", nargs=argparse.REMAINDER)
+    run = host_command("run", _command_run, "run one command directly, without a shell")
+    run.add_argument(
+        "command",
+        nargs=argparse.REMAINDER,
+        help="the program and its arguments, after `--`",
+    )
 
-    ls = host_command("ls", _command_ls)
-    ls.add_argument("path")
+    ls = host_command("ls", _command_ls, "list a directory on the host")
+    ls.add_argument("path", help="a path on the host, not a URI:PATH operand")
 
-    cat = host_command("cat", _command_cat)
-    cat.add_argument("path")
+    cat = host_command("cat", _command_cat, "write a file's bytes to stdout")
+    cat.add_argument("path", help="a path on the host, not a URI:PATH operand")
 
-    info = host_command("info", _command_info)
+    host_command("info", _command_info, "print the host's identity as JSON")
 
-    shell = host_command("shell", _command_shell)
+    host_command("shell", _command_shell, "open an interactive session on the host")
 
-    cp = subcommands.add_parser("cp")
-    cp.add_argument("--ask-password", action="store_true")
-    cp.add_argument("--overwrite", action="store_true")
-    cp.add_argument("--recursive", action="store_true")
-    cp.add_argument("source")
-    cp.add_argument("target")
+    cp = subcommands.add_parser(
+        "cp",
+        help="copy between hosts",
+        description="Copy a file or tree; either operand may be URI:PATH.",
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    cp.add_argument(
+        "--ask-password",
+        action="store_true",
+        help="prompt for a password instead of reading HOSTCTL_PASSWORD",
+    )
+    cp.add_argument(
+        "--overwrite", action="store_true", help="replace an existing target"
+    )
+    cp.add_argument("--recursive", action="store_true", help="copy a whole tree")
+    cp.add_argument("source", help="URI:PATH, or a local filesystem path")
+    cp.add_argument("target", help="URI:PATH, or a local filesystem path")
     cp.set_defaults(handler=_command_cp)
     return parser
 

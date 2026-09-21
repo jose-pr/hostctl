@@ -16,7 +16,7 @@ from ..executor.container import (
     normalize_container_error,
 )
 from ..executor import normalize_environment
-from ..executor._common import command_text
+from ..executor._common import command_text, raise_normalized
 from ..provider import OperationNotStarted, ProviderSelector
 from ..provider.transports import (
     ContainerArchivePathProvider,
@@ -304,10 +304,7 @@ class ContainerHost(Host):
                     raise ConnectionError(
                         f"container {self.config.container!r} not found"
                     ) from exc
-                normalized = normalize_container_error(exc)
-                if normalized is exc:
-                    raise
-                raise normalized from exc
+                raise_normalized(exc, normalize_container_error)
             attrs = typing.cast(typing.Mapping[str, object], container.attrs)
             state = typing.cast(typing.Mapping[str, object], attrs.get("State", {}))
             if not state.get("Running", False):
@@ -637,10 +634,7 @@ class ContainerHost(Host):
                     _close_hijacked(stream)
                     raise
         except Exception as exc:
-            normalized = normalize_container_error(exc)
-            if normalized is exc:
-                raise
-            raise normalized from exc
+            raise_normalized(exc, normalize_container_error)
         try:
             return ContainerProcess(
                 api,

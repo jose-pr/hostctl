@@ -10,8 +10,17 @@ import time
 import types
 import typing
 
+from ._common import raise_normalized
+
 if typing.TYPE_CHECKING:
     from ..process.serial import SerialProcess
+
+
+#: What `threading.RLock()` returns. `threading.RLock` itself is a
+#: FACTORY FUNCTION, not a class, so it cannot annotate anything --
+#: a re-entrant lock's only portable spelling is the protocol it
+#: satisfies.
+_ReentrantLock = typing.ContextManager[bool]
 
 
 class SerialLike(typing.Protocol):
@@ -42,7 +51,7 @@ class SerialTransport:
         self,
         serial_port: SerialLike,
         *,
-        lock: typing.Optional[threading.RLock] = None,
+        lock: typing.Optional["_ReentrantLock"] = None,
     ) -> None:
         self.serial = serial_port
         self.lock = lock or threading.RLock()
@@ -260,10 +269,7 @@ class SerialExecutor:
                     self.settings.port, **self.settings.factory_options()
                 )
             except Exception as exc:
-                normalized = normalize_serial_error(exc)
-                if normalized is exc:
-                    raise
-                raise normalized from exc
+                raise_normalized(exc, normalize_serial_error)
             return typing.cast(SerialLike, self._serial)
 
     def open(self) -> SerialProcess:
@@ -309,10 +315,7 @@ class SerialExecutor:
             try:
                 serial_port.close()
             except Exception as exc:
-                normalized = normalize_serial_error(exc)
-                if normalized is exc:
-                    raise
-                raise normalized from exc
+                raise_normalized(exc, normalize_serial_error)
 
     def __enter__(self) -> SerialExecutor:
         self.connect()

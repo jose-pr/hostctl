@@ -365,6 +365,17 @@ answered from those RPCs alone, while metadata and namespace mutations need a
 guest helper (`QemuConfig(path_helper=...)`) and raise `NotImplementedError`
 without one.
 
+`SerialHost.run()` frames each command as its own profile exchange and
+refuses a structured (argv) command: the host names no shell flavour, so it has
+no quoting rule to apply. `stdin=`, `bufsize=` and `input=` all raise.
+`spawn()` reads `bytes` unless `encoding=`/`errors=` asks for text. A failed
+login raises `ConsoleProtocolError`, never a bare `TimeoutError`, and a
+transcript attached to an error has `secret=True` login values replaced with
+`<redacted>`. Negotiation is cached against the transport it ran on, so
+`host.executor.close()` forces a fresh login. `SerialConfig` takes no
+`username`/`password`: console credentials live in the profile's `login=`
+steps.
+
 `QemuConfig.max_reply_size` (default 48 MiB) bounds one QGA reply, and
 `agent_timeout` bounds one round trip independently of a command's `timeout=`:
 an agent that stops answering raises `ConnectionError`, not a command timeout.

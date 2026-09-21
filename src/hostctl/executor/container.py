@@ -7,6 +7,7 @@ import typing
 
 from ._common import (
     CaptureOutput,
+    raise_normalized,
     command_text,
     CommandArgument,
     Environment,
@@ -105,10 +106,7 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
         except Exception as exc:
             if _is_not_found(exc):
                 raise ConnectionError("container not found") from exc
-            normalized = normalize_container_error(exc)
-            if normalized is exc:
-                raise
-            raise normalized from exc
+            raise_normalized(exc, normalize_container_error)
 
         # docker-py documents a null ExitCode, and `CompletedProcess`
         # treats `None` as success -- so `check=True` used to pass silently

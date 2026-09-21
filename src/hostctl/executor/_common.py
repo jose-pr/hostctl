@@ -81,6 +81,23 @@ def reject_stdin_conflict(input: Input, stdin: typing.Optional[FileHandle]) -> N
         raise ValueError("stdin and input arguments may not both be used")
 
 
+def raise_normalized(
+    exc: Exception, normalizer: typing.Callable[[Exception], Exception]
+) -> "typing.NoReturn":
+    """Raise a normalized transport error while preserving its cause.
+
+    Lives here rather than in `process._common` because the executors need
+    it too, and `executor` is the layer `process` already imports from --
+    the other direction is a cycle. Nine call sites had inlined its three
+    lines verbatim, which is how two of them ended up dropping the
+    `from exc`.
+    """
+    normalized = normalizer(exc)
+    if normalized is exc:
+        raise exc
+    raise normalized from exc
+
+
 def normalize_input(
     input: Input,
     *,
