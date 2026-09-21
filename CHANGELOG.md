@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **`SerialTransport`** and its `hostctl.executor` export. It duplicated
+  `SerialProcess`'s locked, deadline-clamping byte path and had no caller
+  outside its own tests, so the two could drift with nothing to notice.
+  `SerialProcess` keeps the job -- it is what every console profile reads
+  through -- and gained the `write(timeout=)` it lacked.
+- **`SerialConfig.username` and `SerialConfig.password`.** They were stored,
+  whitelisted for URI dispatch, and read by nothing: console credentials live
+  in the profile's `login=` steps. An explicit one is now refused rather than
+  silently ignored, and `HOSTCTL_PASSWORD` is no longer offered to a `serial:`
+  URI.
+
 ### Changed
 
 - The `pathlib_next` floor moves to `>=0.9.10` in both `dependencies` and
@@ -17,6 +30,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   another was refused with `OSError [Errno 22] Source and target are the
   same file` (and `PathSyncer` with "source and target overlap"). 0.9.10
   adds the `_same_filesystem()` hook this release answers.
+- **`LocalExecutor` merges `env` over the inherited environment** instead of
+  replacing it, so the documented cross-transport rule -- "`env` is additive
+  to the provider's environment" -- now holds locally too. A child no longer
+  starts without `PATH`, `HOME` or `SystemRoot` because one variable was set.
+- **A serial `run()` frames each command as its own profile exchange** and
+  refuses a structured (argv) command: a serial host names no shell flavour,
+  so it has no quoting rule to apply, and joining commands with `;` put two
+  on one line where most device consoles read a single malformed one.
+  `stdin=` and `bufsize=` raise instead of being ignored, as `input=` already
+  did.
+- **A serial `spawn(encoding=...)` reads text**, matching the SSH and QEMU
+  console adapters; without either text keyword it still reads bytes.
+- **QEMU `dialect="auto"`/`path_flavor="auto"` need positive evidence** of the
+  guest's family -- `guest-get-osinfo`, or a family-exclusive command in
+  `guest-info` -- and raise naming the explicit settings when neither is
+  available. An agent with `guest-get-osinfo` blocklisted used to be read as
+  POSIX, silently, including on Windows.
+- **`QemuHost.info().os_family` is a family** (`linux`, `windows`,
+  `freebsd`), taken from `kernel-name`. It carried `guest-get-osinfo`'s `id`,
+  so the same machine reported `linux` over SSH and `ubuntu` over QGA.
+- **Each guest-agent request is bounded by `agent_timeout`**, separately from
+  a command's own `timeout=`: an agent that stops answering is a
+  `ConnectionError` saying so, not a command timeout ten minutes later.
+- **A truncated QGA `run()` result warns.** `stdout_truncated`/
+  `stderr_truncated` were set and documented nowhere, so a shortened
+  transcript looked complete.
+- **`hostctl shell` opens a console that cannot allocate a terminal**, so a
+  `serial:` URI works; **`hostctl cp local:/tmp/x`** is accepted, the
+  spelling every other subcommand documents; and `hostctl --help` carries the
+  URI forms, the `URI:PATH` grammar, the `HOSTCTL_PASSWORD` rule and the exit
+  codes.
+- **`asyncssh` and `libvirt-python` are bounded** (`>=2.14,<3`, `>=9.0,<12`);
+  the `dev` extra now pulls every transport, so `pip install -e ".[dev]"` is
+  the whole development environment.
 
 ### Fixed
 
@@ -87,6 +134,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   path of that host failed with `no path provider supports open_read`. The
   refusal is now scoped to the call that raised it. `OperationNotStarted`
   still declines the provider for the generation, as before.
+- **A `cmd.exe` at a path containing a space is launchable.** The program
+  slot of a Windows command line is read by `CreateProcess`, not by cmd, and
+  rendering it with cmd's caret quoting made Windows look for a program named
+  `^` -- measured as `FileNotFoundError: [WinError 2]`.
+- **A structured PowerShell command can bind a named parameter.**
+  `["Remove-Item", "-LiteralPath", path]` rendered every token as a quoted
+  string, which PowerShell's binder reads positionally: measured against a
+  real `powershell.exe`, it returned 1 and left the file in place. A token
+  that is exactly a parameter name is now unquoted.
+- **`ShellSession.send()` does not append a separator the text already has**,
+  so `send("echo hi;")` is not `echo hi;;` and `send("sleep 5 &")` is not
+  `sleep 5 &;`.
+- **`zsh` quoting covers a leading `=`**, which zsh expands to a program path
+  where POSIX `sh` leaves it alone.
+- **`PowerShellFlavour(7, executable=...)` is named `pwsh`.** The name was
+  derived only when no executable was given, so an explicit path left the
+  flavour identifying as `powershell`.
+- **`Shell(..., env={})` forwards no environment**, rather than an empty one
+  that starts a child with nothing.
+- **`normalize_input` covers `bytearray` and `memoryview`** -- the deadlock
+  it exists to prevent, for the two buffer types it did not check.
+- **Container archive reads no longer lie about links, sizes or errors**: a
+  single-member hardlink archive raises `OSError(ENOENT)` instead of
+  `tarfile.StreamError`, a hardlinked file in a listing reports its real
+  size, the archive root (`"."`) is listable, and every Docker status code
+  maps through one helper that populates `errno`.
+- **A container exec stream no longer returns `''` mid-character**, and a
+  closed container process reads EOF instead of raising the operating
+  system's raw socket error.
+- **QGA failures speak one error vocabulary**: a guest error is classified on
+  the `strerror` tail (a file named `notfound.log` was reported missing
+  whatever actually failed), `host.run()` of a missing guest program raises
+  `FileNotFoundError`, libvirt-relayed guest errors stay guest errors, and a
+  guest error no longer tears down and re-handshakes the connection.
+- **One transport per QEMU host.** Lazy initialisation was unguarded:
+  measured with six threads, six transports were built where one was wanted,
+  each SSH one opening a connection nobody owned. A path handed out before
+  `close()` now refuses instead of silently reconnecting.
+- **A serial login failure raises `ConsoleProtocolError`**, not a bare
+  `TimeoutError` that slipped past every documented handler, and a transcript
+  attached to an error has `secret=True` login values redacted -- consoles
+  echo what they are sent.
+- **A QGA reader is seekable** where the agent advertises `guest-file-seek`,
+  so `zipfile` and `tarfile` work against a guest path, and an exclusive
+  `open("x")` is refused at `open()` rather than after the whole payload has
+  been staged.
 
 ## [0.2.7] - 2026-08-16
 
