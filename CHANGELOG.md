@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-22
+
 ### Fixed
 
 - **A composite path falls back when SFTP cannot connect.** Nothing on the
@@ -760,7 +762,9 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/jose-pr/hostctl/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/jose-pr/hostctl/compare/v0.2.7...v0.3.0
 [0.2.7]: https://github.com/jose-pr/hostctl/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/jose-pr/hostctl/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/jose-pr/hostctl/compare/v0.2.4...v0.2.5
