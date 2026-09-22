@@ -104,6 +104,17 @@ def guest_oserror(exc: Exception, path: str) -> OSError:
     """
     if isinstance(exc, (QgaTimeoutError, QgaDisconnectedError)):
         return exc
+    if isinstance(exc, OSError) and exc.errno is not None:
+        # Already classified BY THE OS, which knows better than a text
+        # match. Re-deriving it got this wrong: `str(exc)` for an errno
+        # error is "[Errno 21] Is a directory: '<path>'", so the last
+        # ": " segment -- the strerror tail this reads -- is the PATH, no
+        # needle matched, and a perfectly good `IsADirectoryError` was
+        # downgraded to a bare `OSError`. Windows hid it, because it
+        # raises EACCES for opening a directory and "denied" happens to
+        # match. The text ladder below is for `QgaCommandError`, which is
+        # the guest's own words and carries no errno at all.
+        return exc
     name = str(
         getattr(exc, "error_class", "")
         or getattr(exc, "name", "")

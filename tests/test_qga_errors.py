@@ -226,3 +226,32 @@ def test_an_ssh_connect_deadline_is_a_qga_timeout_on_every_python():
 
     with pytest.raises(QgaTimeoutError):
         transport.execute({"execute": "guest-ping"})
+
+
+def test_an_oserror_that_already_knows_what_it_is_is_kept():
+    """The OS classified it; re-deriving from text got it wrong.
+
+    `str(OSError)` for an errno error is `[Errno 21] Is a directory:
+    '<path>'`, so the strerror TAIL this classifier reads is the PATH --
+    no needle matched and a perfectly good `IsADirectoryError` was
+    downgraded to a bare `OSError`. It only showed on POSIX: Windows
+    raises EACCES for opening a directory, and "denied" happens to match.
+    """
+    import errno
+
+    original = IsADirectoryError(errno.EISDIR, "Is a directory", "/srv/notfound/dir")
+
+    mapped = guest_oserror(original, "/srv/notfound/dir")
+
+    assert mapped is original
+    assert isinstance(mapped, IsADirectoryError)
+
+
+def test_a_guest_error_without_an_errno_is_still_classified_by_text():
+    """`QgaCommandError` is the guest's own words and carries no errno."""
+    mapped = guest_oserror(
+        QgaCommandError("GenericError", "Failed to open '/x': Is a directory"),
+        "/x",
+    )
+
+    assert isinstance(mapped, IsADirectoryError)
