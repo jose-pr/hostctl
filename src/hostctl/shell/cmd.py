@@ -7,7 +7,13 @@ import typing
 from pathlib import PureWindowsPath
 
 from ..executor import Environment, PathLike
-from ._common import ShellCommand, ShellFlavour, ShellOperator, ShellToken
+from ._common import (
+    ShellCommand,
+    ShellFlavour,
+    ShellOperator,
+    ShellTarget,
+    ShellToken,
+)
 
 
 def _argument(value: object) -> str:
@@ -166,21 +172,42 @@ class CmdShellFlavour(ShellFlavour):
     )
 
     def quote(self, value: object) -> str:
+        """The default layering: cmd, then the child's C runtime."""
         return _argument(self._text(value))
+
+    def argument(
+        self, value: object, *, target: ShellTarget = ShellTarget.NATIVE
+    ) -> str:
+        """Three genuinely different parsers, named.
+
+        This is the flavour the distinction exists for: cmd splits a
+        builtin's operands itself and never involves a C runtime, a child
+        program re-parses the line cmd rebuilt, and the program slot is read
+        by `CreateProcess` before cmd runs at all. One rule cannot serve
+        three, and picking the wrong one has cost data -- `del /q "a b.txt"`
+        deleting two other files, and a spaced `cmd.exe` path that would not
+        launch at all.
+        """
+        text = self._text(value)
+        if target is ShellTarget.PROGRAM:
+            return _program(text)
+        if target is ShellTarget.SHELL:
+            return _builtin_argument(text)
+        return _argument(text)
+
+    def command_target(self, values: typing.Sequence[object]) -> ShellTarget:
+        if values and self._text(values[0]).casefold() in self.builtins:
+            return ShellTarget.SHELL
+        return ShellTarget.NATIVE
 
     def structured_command(self, values: typing.Iterable[object]) -> str:
         values = tuple(values)
-        if values and self._text(values[0]).casefold() in self.builtins:
-            # `echo` is the one builtin that does not consume quotes: it
-            # prints them, so quoting would change the output it exists to
-            # produce. It also takes its whole tail as one operand, which is
-            # what the quoting protects everywhere else.
-            escape = (
-                _echo_argument
-                if self._text(values[0]).casefold() == "echo"
-                else _builtin_argument
-            )
-            return " ".join(escape(self._text(value)) for value in values)
+        if values and self._text(values[0]).casefold() == "echo":
+            # `echo` is not a different TARGET -- it is a different escape
+            # for the same one. Alone among the builtins it does not consume
+            # quotes, it prints them, so quoting would change the output it
+            # exists to produce, while its tail is still one operand.
+            return " ".join(_echo_argument(self._text(value)) for value in values)
         return super().structured_command(values)
 
     def group(self, command: str) -> str:
@@ -229,9 +256,14 @@ class CmdShellFlavour(ShellFlavour):
         env: typing.Optional[Environment] = None,
     ) -> ShellCommand:
         script = self.script(cmds, cwd=cwd, env=env)
+        # Bound out of the f-string on purpose: a multi-line expression
+        # inside one is PEP 701, which the 3.9 floor does not parse.
+        program = self.argument(
+            executable or self.default_executable,
+            target=ShellTarget.PROGRAM,
+        )
         return ShellCommand(
-            f"{_program(executable or self.default_executable)} "
-            f'/d /v:off /s /c "{script}"',
+            f'{program} /d /v:off /s /c "{script}"',
             None,
         )
 

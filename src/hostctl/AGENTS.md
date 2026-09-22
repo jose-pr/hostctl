@@ -30,6 +30,25 @@ their concrete flavours. Executor code follows the same layout under
 `hostctl.executor`: `_common.py` owns contracts and option types; `ssh.py` and
 `winrm.py` own `SshExecutor` and `WinRMExecutor`. Each package re-exports its
 own contracts; only the stable subset above reaches top-level `hostctl`.
+A shell flavour answers TWO quoting questions, not one. `quote(value)` is
+syntactic -- enough that this shell sees one word and expands nothing.
+`argument(value, *, target=ShellTarget...)` quotes for whatever parses the token
+NEXT: `SHELL` (a cmd builtin, split by cmd itself), `NATIVE` (a child's own argv
+parser -- the C runtime on Windows, nothing on POSIX), `CMDLET` (PowerShell's
+binder) or `PROGRAM` (the program slot, read by `CreateProcess`). Where the two
+layers coincide -- every POSIX-family shell, since `execve` takes a vector --
+the default `argument()` is just `quote()`. `command_target(values)` infers the
+target where it is decidable (cmd knows its own builtin list) and answers
+`NATIVE` otherwise; PowerShell deliberately does NOT guess whether a name is a
+cmdlet, because that needs a runspace.
+
+`cwd_guard` declares how a failed `cd` is stopped from running the payload:
+`"operator"` fuses the change onto a GROUPED payload with the AND operator,
+`"statement"` is for a flavour whose change-directory statement aborts the
+script itself (PowerShell's `-ErrorAction Stop`). It is declared rather than
+inferred from `context_order`'s ordering, which is how PowerShell's `join_cwd`
+override stayed unreachable for years.
+
 `hostctl.executor`'s public helpers are the ones a transport adapter needs to
 behave like the others; an executor that skips them is where cross-transport
 divergence comes from:

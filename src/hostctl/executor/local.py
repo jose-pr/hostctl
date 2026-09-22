@@ -174,9 +174,12 @@ def _batch_safe(argv):
     program = argv[0]
     if not str(program).casefold().endswith(_BATCH_SUFFIXES):
         return argv
-    from ..shell.cmd import _argument
+    from ..shell import CMD, ShellTarget
 
-    return " ".join(_argument(value) for value in argv)
+    # The public hook, not a private helper reached across packages: the
+    # inserted shell is cmd, and what re-parses the line after it is the
+    # batch file's own C runtime -- which is exactly `ShellTarget.NATIVE`.
+    return " ".join(CMD.argument(value, target=ShellTarget.NATIVE) for value in argv)
 
 
 class LocalExecutor(Executor[subprocess.CompletedProcess]):

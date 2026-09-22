@@ -8,6 +8,7 @@ from ._common import (
     ShellCommand as ShellCommand,
     ShellFlavour as ShellFlavour,
     ShellOperator as ShellOperator,
+    ShellTarget as ShellTarget,
     ShellSession as ShellSession,
     ShellToken as ShellToken,
 )
@@ -115,6 +116,7 @@ __all__ = [
     "ShellFlavour",
     "ShellFlavourSelection",
     "ShellOperator",
+    "ShellTarget",
     "ShellSession",
     "ShellToken",
     "ZshShellFlavour",

@@ -37,6 +37,33 @@ if typing.TYPE_CHECKING:
     from ..host._common import Host
 
 
+class ShellTarget(str, enum.Enum):
+    """Who parses a token *after* the shell has finished splitting it.
+
+    A rendered command passes through two parsers, not one: the shell's, and
+    then whatever the shell hands the token to. Where those coincide -- POSIX
+    sh, where `execve` takes a vector and nothing re-parses -- one rule
+    serves. Where they do not, each flavour had grown its own private answer
+    and the rule a value got depended on which call path found it.
+
+    The member is a `str`, like `ExecutorCapability`, so a flavour may accept
+    a spelling this enum does not know.
+    """
+
+    #: The shell itself consumes it -- a `cmd` builtin, whose operands are
+    #: split by cmd and never reach a C runtime.
+    SHELL = "shell"
+    #: A child program's own argv parser: the C runtime on Windows, nothing
+    #: at all on POSIX.
+    NATIVE = "native"
+    #: PowerShell's parameter binder, which is neither of the above: it reads
+    #: typed arguments and does not re-quote a native command line.
+    CMDLET = "cmdlet"
+    #: The program slot of a command line, read by `CreateProcess` before any
+    #: shell sees it.
+    PROGRAM = "program"
+
+
 class ShellOperator(enum.Enum):
     """A command operator, spelled by each shell flavour in its own syntax.
 
@@ -169,6 +196,23 @@ class ShellFlavour(abc.ABC):
     #: `script()` reads an attribute instead of duck-probing with `getattr`.
     execution_epilogue: str = ""
     context_order = ("env", "cwd", "command")
+    #: How a failed `cd` is stopped from running the payload anyway.
+    #:
+    #: `"operator"` fuses the directory change onto a GROUPED payload with
+    #: this flavour's AND operator, so the guard covers all of it: fused
+    #: onto the payload directly, the AND bound to the first command only,
+    #: and `cd /srv && a; b` ran `b` in the login directory and exited 0.
+    #:
+    #: `"statement"` is for a flavour whose change-directory statement
+    #: aborts the script by itself -- PowerShell's `-ErrorAction Stop` --
+    #: where there is nothing to fuse, and PowerShell 5 has no `&&` to fuse
+    #: with anyway.
+    #:
+    #: Declared, because it used to be INFERRED from whether `command`
+    #: happened to sit next to `cwd` in `context_order`. PowerShell's order
+    #: puts `env` between them, so its `join_cwd` override was unreachable
+    #: for years and nothing failed to say so.
+    cwd_guard: typing.ClassVar[str] = "operator"
     structured_command_prefix = ""
     path_flavor: type[PurePath] = PurePath
 
@@ -247,15 +291,48 @@ class ShellFlavour(abc.ABC):
 
     @abc.abstractmethod
     def quote(self, value: object) -> str:
-        """Quote one structured argument for this shell."""
+        """Quote one value for THIS SHELL's parser.
+
+        The syntactic layer only: enough that the shell sees one word and
+        expands nothing. What the token meets after that is
+        :meth:`argument`'s question.
+        """
+
+    def argument(
+        self, value: object, *, target: ShellTarget = ShellTarget.NATIVE
+    ) -> str:
+        """Quote one value for `target`, the parser that reads it next.
+
+        The default is every flavour whose shell hands tokens straight to
+        `execve`: there is no second parser, so `quote()` is the whole
+        answer. `cmd` and PowerShell override it, because on Windows the
+        child re-parses its own command line and the two layers disagree.
+        """
+        del target
+        return self.quote(value)
+
+    def command_target(self, values: typing.Sequence[object]) -> ShellTarget:
+        """Which parser this command's arguments will meet.
+
+        Inferred where it is decidable -- `cmd` knows its own builtin list --
+        and `NATIVE` otherwise. It is deliberately NOT inferred for
+        PowerShell: whether `Remove-Item` is a cmdlet or an executable on the
+        guest's PATH cannot be known without a runspace, and guessing is the
+        class of mistake this package has been removing. A caller who knows
+        passes `target=` to :meth:`argument` directly.
+        """
+        del values
+        return ShellTarget.NATIVE
 
     @abc.abstractmethod
     def operator(self, value: ShellOperator) -> str:
         """Render one supported command operator."""
 
     def structured_command(self, values: typing.Iterable[object]) -> str:
+        values = tuple(values)
+        target = self.command_target(values)
         return self.structured_command_prefix + " ".join(
-            self.quote(value) for value in values
+            self.argument(value, target=target) for value in values
         )
 
     @abc.abstractmethod
@@ -336,17 +413,14 @@ class ShellFlavour(abc.ABC):
             "cwd": changed,
             "command": command,
         }
-        if (
-            "cwd" in self.context_order
-            and "command" in self.context_order
-            and cwd is not None
-            and command
-        ):
-            cwd_index = self.context_order.index("cwd")
-            command_index = self.context_order.index("command")
-            if command_index == cwd_index + 1:
-                rendered["cwd"] = self.join_cwd(changed, command)
-                rendered["command"] = ""
+        if cwd is not None and command and self.cwd_guard == "operator":
+            if "cwd" not in self.context_order or "command" not in self.context_order:
+                raise ValueError(
+                    f"{self.name}: cwd_guard='operator' needs both 'cwd' and "
+                    f"'command' in context_order, found {self.context_order!r}"
+                )
+            rendered["cwd"] = self.join_cwd(changed, command)
+            rendered["command"] = ""
         parts = [rendered[name] for name in self.context_order if rendered[name]]
         script = self.command_separator.join(parts)
         epilogue = self.execution_epilogue
@@ -365,11 +439,11 @@ class ShellFlavour(abc.ABC):
     def join_cwd(self, changed: str, command: str) -> str:
         """Join cwd setup and payload with the shell's AND operator.
 
-        The payload is grouped first. Fused on directly, the AND bound to the
-        *first* command only, so `cd /srv && a; b` ran `b` in the login
-        directory and exited 0 -- reachable through QGA (which always embeds
-        cwd), fish or cmd over SSH, and any Shell over a capability-less
-        executor.
+        Reached only under `cwd_guard = "operator"`. The payload is grouped
+        first: fused on directly, the AND bound to the *first* command only,
+        so `cd /srv && a; b` ran `b` in the login directory and exited 0 --
+        reachable through QGA (which always embeds cwd), fish or cmd over
+        SSH, and any Shell over a capability-less executor.
         """
         return f"{changed}{self.operator(ShellOperator.AND)}{self.group(command)}"
 

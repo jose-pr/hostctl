@@ -218,3 +218,98 @@ def test_a_powershell_structured_argument_reaches_a_real_program(value, version)
 
     assert completed.returncode == 0, completed.stderr[:400]
     assert completed.stdout.strip() == ascii(value)
+
+
+def test_a_flavour_names_the_parser_each_token_meets():
+    """One hook answered two questions, and each flavour had its own answer.
+
+    `quote()` is shell-syntactic; `argument(value, target=...)` is for
+    whatever reads the token next. On POSIX those coincide -- `execve` takes
+    a vector, nothing re-parses -- so every target renders alike. On Windows
+    they genuinely differ, which is what the distinction exists for.
+    """
+    from hostctl.shell import ShellTarget
+
+    value = "a b.txt"
+    posix = {
+        target: POSIX_SHELL.argument(value, target=target) for target in ShellTarget
+    }
+    assert set(posix.values()) == {POSIX_SHELL.quote(value)}
+
+    windows = {target: CMD.argument(value, target=target) for target in ShellTarget}
+    # cmd's three parsers must not agree: a builtin operand is quoted so cmd
+    # stops splitting it, a native argument carries the caret layer through
+    # to the child's C runtime, and the program slot is plain C quoting.
+    assert windows[ShellTarget.SHELL] == '"a b.txt"'
+    assert windows[ShellTarget.NATIVE] == '^"a b.txt^"'
+    assert windows[ShellTarget.PROGRAM] == '"a b.txt"'
+    assert windows[ShellTarget.SHELL] != windows[ShellTarget.NATIVE]
+
+
+def test_powershell_5_escapes_for_a_native_line_and_not_for_a_cmdlet():
+    """PowerShell 5 rebuilds a NATIVE command line; a cmdlet call is not one.
+
+    Applied to a cmdlet argument the C-runtime layer would be visible in the
+    bound parameter.
+    """
+    from hostctl.shell import PowerShellFlavour, ShellTarget
+
+    five = PowerShellFlavour(5)
+    value = 'a "quoted" value'
+
+    assert five.argument(value, target=ShellTarget.NATIVE) != five.quote(value)
+    assert five.argument(value, target=ShellTarget.CMDLET) == five.quote(value)
+
+    seven = PowerShellFlavour(7)
+    # 7 does not rebuild the line, so there is nothing to compensate for.
+    assert seven.argument(value, target=ShellTarget.NATIVE) == seven.quote(value)
+
+
+def test_the_target_is_inferred_where_it_is_decidable():
+    """cmd knows its own builtin list; PowerShell cannot know a cmdlet."""
+    from hostctl.shell import POWERSHELL, ShellTarget
+
+    assert CMD.command_target(("del", "/q", "x")) is ShellTarget.SHELL
+    assert CMD.command_target(("tool.exe", "x")) is ShellTarget.NATIVE
+    # Deliberately not guessed: it needs a runspace to answer.
+    assert POWERSHELL.command_target(("Remove-Item", "x")) is ShellTarget.NATIVE
+
+
+def test_the_cwd_guard_covers_the_whole_payload_by_declaration():
+    """It used to be inferred from a tuple's ordering.
+
+    `script()` fused cwd onto the payload only when `command` happened to
+    sit next to `cwd` in `context_order`. PowerShell's order puts `env`
+    between them, so its `join_cwd` override was unreachable for years and
+    nothing said so. The strategy is now declared.
+    """
+    from hostctl.shell import BASH, FISH, PowerShellFlavour
+
+    # Fused onto a GROUPED payload: the AND has to cover `b`, not just `a`.
+    for flavour in (POSIX_SHELL, BASH, FISH, CMD):
+        assert flavour.cwd_guard == "operator"
+        script = flavour.script(("a", "b"), cwd="/srv/app")
+        assert flavour.group(flavour.join(("a", "b"))) in script
+
+    # PowerShell guards statement-wise, which is why it has no `join_cwd`.
+    for flavour in (PowerShellFlavour(5), PowerShellFlavour(7)):
+        assert flavour.cwd_guard == "statement"
+        script = flavour.script(("a", "b"), cwd="/srv/app")
+        assert "-ErrorAction Stop" in script
+        assert "&&" not in script
+
+
+def test_an_operator_guard_without_a_command_slot_is_refused():
+    """The inference failed silently; the declaration cannot.
+
+    A flavour declaring `operator` but leaving `command` out of
+    `context_order` would render a cwd change and drop the payload. That
+    was reachable before only by accident of ordering, and unreported.
+    """
+
+    class _Broken(type(POSIX_SHELL)):
+        name = "broken"
+        context_order = ("env", "cwd")
+
+    with pytest.raises(ValueError, match="context_order"):
+        _Broken().script(("a",), cwd="/srv")

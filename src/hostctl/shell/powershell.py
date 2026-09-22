@@ -9,7 +9,13 @@ import typing
 from pathlib import PureWindowsPath
 
 from ..executor import Environment, PathLike
-from ._common import ShellCommand, ShellFlavour, ShellOperator, ShellToken
+from ._common import (
+    ShellCommand,
+    ShellFlavour,
+    ShellOperator,
+    ShellTarget,
+    ShellToken,
+)
 
 
 def _literal(value: object) -> str:
@@ -79,6 +85,9 @@ class PowerShellFlavour(ShellFlavour):
     default_executable = "powershell.exe"
     command_separator = ";"
     context_order = ("cwd", "env", "command")
+    # `Set-Location -ErrorAction Stop` terminates the script itself, so
+    # there is nothing to fuse -- and PowerShell 5 has no `&&` to fuse with.
+    cwd_guard = "statement"
     # Both channels, on a line of its own. `$LASTEXITCODE` alone is set only
     # by NATIVE commands: a pure-cmdlet script that failed left it $null, and
     # `exit $null` is 0 -- so `Get-Item <missing>` returned success and
@@ -144,15 +153,34 @@ class PowerShellFlavour(ShellFlavour):
         without that rewrite, so the escaping would be visible in the child
         and is not applied.
         """
+        values = tuple(values)
+        target = self.command_target(values)
         rendered = []
         for index, value in enumerate(values):
+            # Positional, not a target: the FIRST element is the command, so
+            # a `-Name`-shaped first element is a command named `-Name`.
             if index and _is_parameter_name(value):
                 rendered.append(typing.cast(str, value))
-            elif self.major_version >= 7:
-                rendered.append(self.quote(value))
             else:
-                rendered.append(_literal(_crt_escape(self._text(value))))
+                rendered.append(self.argument(value, target=target))
         return self.structured_command_prefix + " ".join(rendered)
+
+    def argument(
+        self, value: object, *, target: ShellTarget = ShellTarget.NATIVE
+    ) -> str:
+        """PowerShell 5 rebuilds a NATIVE command line; a cmdlet call is not one.
+
+        So the C-runtime layer belongs to `NATIVE` on PowerShell 5 and
+        nowhere else: applied to a cmdlet argument it would be visible in
+        the bound parameter, and PowerShell 7 does not rebuild the line at
+        all. `command_target` deliberately does not try to tell the two
+        apart -- whether `Remove-Item` is a cmdlet or an executable on the
+        target's PATH needs a runspace to answer -- so a caller who knows
+        passes `target=ShellTarget.CMDLET` here.
+        """
+        if target is ShellTarget.NATIVE and self.major_version < 7:
+            return _literal(_crt_escape(self._text(value)))
+        return self.quote(value)
 
     def operator(self, value: ShellOperator) -> str:
         if self.major_version >= 7 and value in (
