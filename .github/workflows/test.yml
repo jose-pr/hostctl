@@ -105,6 +105,10 @@ jobs:
           HOSTCTL_TEST_DOCKER: "1"
           HOSTCTL_TEST_SSH_LOCAL: "1"
           HOSTCTL_TEST_SSH_USER: runner
+          # POSIX here; `windows` points the same fixture at a Windows
+          # OpenSSH server, which is the only way to exercise a `cmd`
+          # command line delivered to a `cmd.exe` login shell.
+          HOSTCTL_TEST_SSH_FLAVOUR: posix
           HOSTCTL_TEST_SSH_KEY: /home/runner/.ssh/hostctl_conformance
           HOSTCTL_TEST_DOCKER_CONTAINER: hostctl-conformance
           # pyserial's own loopback URL: no hardware, no device node. The

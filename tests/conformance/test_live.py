@@ -18,6 +18,14 @@ from hostctl import Exec
 
 from .providers import live_providers, provider_context
 
+#: One command per shell flavour that prints exactly `live`.
+_POSIX_SMOKE = "printf '%s\\n' live"
+_SMOKE_COMMANDS = {
+    "powershell": "Write-Output live",
+    "pwsh": "Write-Output live",
+    "cmd": "echo live",
+}
+
 
 @pytest.mark.parametrize("provider", live_providers(), ids=lambda p: p.name)
 def test_live_provider_direct_command(provider):
@@ -27,10 +35,13 @@ def test_live_provider_direct_command(provider):
         if provider.name == "local":
             result = host.run(Exec(sys.executable, "-c", "print('live')"))
         else:
-            command = (
-                "Write-Output live"
-                if getattr(host.shell_flavour, "name", "") == "powershell"
-                else "printf '%s\\n' live"
+            # By FLAVOUR, not by "powershell or assume POSIX": a `cmd`
+            # target fell through to a `printf` that cmd.exe cannot run,
+            # so the leg failed for the fixture's reason rather than the
+            # transport's.
+            command = _SMOKE_COMMANDS.get(
+                getattr(host.shell_flavour, "name", ""),
+                _POSIX_SMOKE,
             )
             result = host.run(command)
     assert result.stdout.strip() == b"live"
@@ -84,6 +95,13 @@ def test_live_sftp_addresses_uri_syntax_filenames(name):
     )
     if provider is None:
         pytest.skip("no live SSH provider is registered")
+    if os.environ.get("HOSTCTL_TEST_SSH_FLAVOUR") == "windows":
+        # The premise does not survive the move: these names are about a
+        # POSIX filesystem holding characters that are URI syntax. Windows
+        # cannot put `?` in a filename at all, and there is no `/tmp`, so a
+        # failure here would be the filesystem's rule rather than the
+        # encoding this test exists to prove.
+        pytest.skip("URI-syntax filenames are a POSIX filesystem's question")
     with provider_context(provider) as host:
         path = host.path("/tmp", f"hostctl-{name}")
         try:
