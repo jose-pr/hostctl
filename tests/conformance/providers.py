@@ -206,6 +206,22 @@ def _run_like_a_channel(
         stdout, stderr = popen.communicate(input, timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_tree(popen)
+        # Killing it is not reaping it. `_kill_tree` ends the process but
+        # leaves this `Popen` unwaited with its stdout and stderr still
+        # open, so the collector later reports `ResourceWarning: subprocess
+        # N is still running` and two unclosed files -- against whatever
+        # test happens to run next, which is how this read as an unrelated
+        # failure. Windows GC timing hid it entirely.
+        try:
+            popen.communicate(timeout=5)
+        except Exception:
+            pass
+        for pipe in (popen.stdin, popen.stdout, popen.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except Exception:
+                pass
         empty = "" if encoding is not None else b""
         raise subprocess.TimeoutExpired(
             invocation, timeout, output=empty, stderr=empty
