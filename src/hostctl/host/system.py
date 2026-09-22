@@ -109,7 +109,38 @@ register_system_provider("sftp", _ssh_provider)
 register_system_provider("winrm", _winrm_provider)
 
 
-def _shell_invocation(flavour, cmds, *, cwd, env, for_session, executable):
+def _for_login_shell(flavour, command, provider) -> str:
+    """Escape a rendered command line for the shell that will parse it.
+
+    A command line is rendered for exactly ONE parse. A transport that
+    delivers it to a login shell -- SSH does; `CreateProcess` does not --
+    makes that shell parse it first, consuming the layer the flavour
+    applied. Only the transport knows this, so the provider is asked.
+
+    Measured against a real cmd.exe standing in for Windows OpenSSH's stock
+    server: 4 of 8 adversarial values survived unescaped, and two of the
+    failures were command injection (`a&b`, `x|y`).
+    """
+    if flavour.argv_invocation:
+        # The flavour renders argv, so what a transport sends is a SCRIPT and
+        # the login shell's single parse is the one it was rendered for. This
+        # is every POSIX-family flavour: `$SHELL -c <script>` is exactly the
+        # target, and adding a layer here would corrupt it.
+        return command
+    login_shell = getattr(provider, "login_shell", None)
+    if login_shell is not None and login_shell == flavour.name:
+        # A command LINE delivered to the same shell it was rendered for:
+        # that shell parses it, and then the line's own `/c` parses it again.
+        # A different login shell either does not parse it or could not run
+        # it anyway, and PowerShell's `-EncodedCommand` is inert under all of
+        # them.
+        return flavour.escape_for_one_parse(command)
+    return command
+
+
+def _shell_invocation(
+    flavour, cmds, *, cwd, env, for_session, executable, provider=None
+):
     """One shell layer, as argv or as a command line.
 
     Most flavours render as argv. `cmd` cannot -- an argv element's quotes
@@ -117,10 +148,18 @@ def _shell_invocation(flavour, cmds, *, cwd, env, for_session, executable):
     sees them (`CmdShellFlavour.invocation`), which silently corrupted every
     value carrying a quote or a metacharacter. For those the rendered command
     line is submitted instead, marked so the executor does not re-quote it.
+
+    `login_shell` names what parses that line ON ARRIVAL, when a transport
+    delivers it to a shell rather than to `CreateProcess`. Only the
+    transport knows this, so it is passed in: a command line is rendered for
+    exactly ONE parse, and a login shell that parses it again consumes that
+    layer. Measured against a real cmd.exe standing in for Windows OpenSSH's
+    stock server, 4 of 8 adversarial values survived unescaped and two of
+    the failures were command injection.
     """
     if not flavour.argv_invocation:
         rendered = flavour.command(cmds, executable=executable, cwd=cwd, env=env)
-        return (CommandLine(rendered.command),)
+        return (CommandLine(_for_login_shell(flavour, rendered.command, provider)),)
     script = flavour.script(cmds, cwd=cwd, env=env, for_session=for_session)
     return tuple(flavour.invocation(script, executable=executable))
 
@@ -870,6 +909,7 @@ class SystemHost(Host):
                     env=None if "env" in provider.capabilities else env,
                     for_session="manages_status" in provider.capabilities,
                     executable=shell_executable,
+                    provider=provider,
                 )
                 return provider.execute(leading[0], *leading[1:], **options)
             if not args and native_cwd and native_env:
@@ -890,7 +930,8 @@ class SystemHost(Host):
                 env=None if "env" in provider.capabilities else env,
             )
             return provider.execute(
-                rendered.command, **self._out_of_band_env(provider, rendered, options)
+                _for_login_shell(flavour, rendered.command, provider),
+                **self._out_of_band_env(provider, rendered, options),
             )
 
         if self._shell is None and self._shell_resolver is None:
@@ -921,7 +962,8 @@ class SystemHost(Host):
                 env=None if "env" in provider.capabilities else env,
             )
             return provider.execute(
-                rendered.command, **self._out_of_band_env(provider, rendered, options)
+                _for_login_shell(flavour, rendered.command, provider),
+                **self._out_of_band_env(provider, rendered, options),
             )
         # One shell layer, exactly as LocalHost renders it. `flavour.command()`
         # already contains the shell invocation, so feeding *that* to
@@ -937,6 +979,7 @@ class SystemHost(Host):
             env=None if "env" in provider.capabilities else env,
             for_session="manages_status" in provider.capabilities,
             executable=shell_executable,
+            provider=provider,
         )
         return provider.execute(leading[0], *leading[1:], **options)
 

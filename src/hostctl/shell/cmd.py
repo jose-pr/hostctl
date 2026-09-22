@@ -195,6 +195,25 @@ class CmdShellFlavour(ShellFlavour):
             return _builtin_argument(text)
         return _argument(text)
 
+    def escape_for_one_parse(self, text: str) -> str:
+        """Caret-escape a whole command line for one more cmd parse.
+
+        Measured against a real `cmd.exe` standing in for a stock Windows
+        OpenSSH server (which runs `cmd.exe /c <string>`), over the
+        adversarial set `a b`, `%OS%`, `a&b`, `say "hi"`, `c^d`, `(x)`,
+        `100%`, `x|y`:
+
+        - unescaped, 4 of 8 survive -- `%OS%` expands to `Windows_NT`,
+          `c^d` arrives as `cd`, and `a&b` and `x|y` INJECT (rc 1 and 255);
+        - quoting the whole line instead: 0 of 8, because the outer cmd
+          strips the quotes and the inner `/c "..."` falls apart;
+        - this rule: 8 of 8.
+
+        `echo`'s escaping is the same operation -- escape data so cmd hands
+        it back rather than consuming it -- so it is the same helper.
+        """
+        return _echo_argument(text)
+
     def command_target(self, values: typing.Sequence[object]) -> ShellTarget:
         if values and self._text(values[0]).casefold() in self.builtins:
             return ShellTarget.SHELL

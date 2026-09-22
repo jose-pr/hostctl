@@ -234,6 +234,26 @@ class ShellFlavour(abc.ABC):
                 return stripped
         return stripped + self.command_separator
 
+    def escape_for_one_parse(self, text: str) -> str:
+        """Escape `text` so ONE parse by this shell hands it back verbatim.
+
+        This is the OUTER layer, for a transport that delivers a finalized
+        command line to a login shell which parses it before the command
+        line's own shell ever runs. SSH is the case: AsyncSSH sends one
+        command string, and Windows OpenSSH's stock server hands it to
+        `cmd.exe /c` -- so a line from `CmdShellFlavour.command()`, which
+        already carries one cmd layer, is parsed by cmd twice.
+
+        The default refuses rather than guessing. A POSIX login shell
+        receiving a POSIX-rendered line is the ordinary single-parse case
+        and never reaches here; a flavour that genuinely has an escape for
+        an extra parse implements it.
+        """
+        raise NotImplementedError(
+            f"{self.name} has no escaping for an additional parse by itself; "
+            "the command line is already rendered for exactly one"
+        )
+
     def command_path(self, value: PathLike) -> PurePath:
         """Return a direct-command marker using the target shell's path syntax."""
         return self.path_flavor(value)

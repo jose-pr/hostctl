@@ -30,6 +30,15 @@ their concrete flavours. Executor code follows the same layout under
 `hostctl.executor`: `_common.py` owns contracts and option types; `ssh.py` and
 `winrm.py` own `SshExecutor` and `WinRMExecutor`. Each package re-exports its
 own contracts; only the stable subset above reaches top-level `hostctl`.
+`login_shell` names what parses the command string when it ARRIVES. AsyncSSH
+sends one string and the server hands it to a login shell: on POSIX that is
+`$SHELL -c`, exactly what this package renders for, but Windows OpenSSH's stock
+server hands it to `cmd.exe /c`, so a `cmd`-dialect command line is parsed by
+cmd TWICE. `"auto"` reads the dialect (a Windows path flavour means the stock
+`cmd.exe`); name it explicitly when the server's `DefaultShell` has been
+changed. `ShellFlavour.escape_for_one_parse(text)` is the outer layer this
+selects, implemented by `cmd` and refused by default rather than guessed.
+
 A shell flavour answers TWO quoting questions, not one. `quote(value)` is
 syntactic -- enough that this shell sees one word and expands nothing.
 `argument(value, *, target=ShellTarget...)` quotes for whatever parses the token
@@ -353,7 +362,7 @@ hostctl applies to whatever you return.
 
 `SshConfig(host, port=22, username="root", password=None, client_keys=None,
 executable=None, known_hosts=(), dialect=POSIX_SHELL,
-path_flavor=pathlib_next.PosixPathname)`.
+path_flavor=pathlib_next.PosixPathname, login_shell="auto")`.
 
 Authentication fields are explicit and excluded from repr. `dialect` selects
 POSIX or PowerShell command construction independently of the POSIX/Windows

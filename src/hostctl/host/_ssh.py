@@ -84,6 +84,11 @@ def _path_flavor_from_connection_string(value: str) -> PathnameConstructor:
         ) from exc
 
 
+#: Login shells hostctl knows how to render for. `"auto"` is resolved from
+#: the dialect; the rest name what the server actually runs.
+_LOGIN_SHELLS = frozenset(("auto", "cmd", "powershell", "posix"))
+
+
 @dataclasses.dataclass
 class SshConfig(HostConfig, schemes=("ssh",)):
     """Explicit SSH transport, authentication, and target-shell settings."""
@@ -103,11 +108,36 @@ class SshConfig(HostConfig, schemes=("ssh",)):
     known_hosts: SshKnownHosts = ()
     dialect: SshShellSelection = POSIX_SHELL
     path_flavor: PathnameConstructor = PosixPathname
+    #: What parses the command string when it ARRIVES, before the command
+    #: line's own shell runs.
+    #:
+    #: AsyncSSH sends one string and the server hands it to a login shell.
+    #: On a POSIX server that is `$SHELL -c`, which is exactly what this
+    #: package renders for -- one parse, nothing to add. Windows OpenSSH's
+    #: stock server hands it to `cmd.exe /c`, so a `cmd`-dialect command
+    #: line (which already carries one cmd layer) is parsed by cmd TWICE:
+    #: measured against a real cmd.exe, 4 of 8 adversarial values survived
+    #: and two of the failures were command injection.
+    #:
+    #: `"auto"` reads the dialect: a Windows path flavour means the stock
+    #: `cmd.exe`, anything else means a POSIX login shell. The server's
+    #: shell is configurable (`HKLM\SOFTWARE\OpenSSH\DefaultShell`), so
+    #: say so explicitly when it has been changed -- guessing is wrong in
+    #: both directions.
+    login_shell: str = "auto"
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
         if not self.host:
             raise ValueError("host must not be empty")
+        if "://" in self.host:
+            # The constructor takes a HOST; the dispatcher takes a URI.
+            # Passed one here it became the hostname, and the failure
+            # surfaced much later as an unresolvable name.
+            raise ValueError(
+                f"SshConfig takes a host, not a URI: {self.host!r}. "
+                "Use HostConfig(uri) or Host(uri) to build one from a URI."
+            )
         if not 1 <= self.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
         if self.dialect != "auto":
@@ -124,6 +154,16 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             )
         if not issubclass(self.path_flavor, (PurePosixPath, PureWindowsPath)):
             raise TypeError("path_flavor must use POSIX or Windows path semantics")
+        if self.login_shell not in _LOGIN_SHELLS:
+            values = ", ".join(sorted(_LOGIN_SHELLS))
+            raise ValueError(f"login_shell must be one of: {values}")
+
+    @property
+    def resolved_login_shell(self) -> str:
+        """`login_shell` with `"auto"` answered from the dialect."""
+        if self.login_shell != "auto":
+            return self.login_shell
+        return "cmd" if issubclass(self.path_flavor, PureWindowsPath) else "posix"
 
     def connect_opts(self) -> typing.Dict[str, object]:
         opts: typing.Dict[str, object] = {"username": self.username or "root"}
@@ -153,6 +193,10 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         query = {"dialect": self.dialect, "path_flavor": path_flavor}
         if self.executable:
             query["executable"] = self.executable
+        if self.login_shell != "auto":
+            # Only when it was said: `auto` is the default and carrying it
+            # would change every existing URI's text.
+            query["login_shell"] = self.login_shell
         return (
             f"ssh://{user}{uri_host(self.host)}:{self.port or 22}"
             f"?{urlencode(query)}"
@@ -160,7 +204,9 @@ class SshConfig(HostConfig, schemes=("ssh",)):
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> SshConfig:
-        query = strict_uri_query(parsed, {"dialect", "path_flavor", "executable"})
+        query = strict_uri_query(
+            parsed, {"dialect", "path_flavor", "executable", "login_shell"}
+        )
         if not parsed.hostname or parsed.path not in ("", "/"):
             raise ValueError("SSH URI requires a host and no path")
         return cls(
@@ -179,6 +225,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             path_flavor=_path_flavor_from_connection_string(
                 query.get("path_flavor", "posix")
             ),
+            login_shell=query.get("login_shell", "auto"),
         )
 
     def _create_host(self):
@@ -633,6 +680,15 @@ class SshExecutorProvider(ExecutorProvider):
     def shell_executable(self):
         resolved = self.transport._resolved_dialect
         return resolved[2] if resolved is not None else None
+
+    @property
+    def login_shell(self):
+        """What parses a delivered command line before its own shell does.
+
+        The host reads this when it renders a `CommandLine`, because only
+        the transport knows there is an extra parse at all.
+        """
+        return self.transport.config.resolved_login_shell
 
     def spawn(self, *args, **options):
         return self.transport.spawn(*args, **options)

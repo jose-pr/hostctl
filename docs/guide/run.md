@@ -281,6 +281,23 @@ correlation:
 and RFC 2217 URLs are passed to PySerial); RFC 2217 provides no encryption or
 authentication and must be protected by an external secure transport.
 
+## What parses a command on arrival
+
+A transport that delivers a **command line** hands it to something that parses
+it. `CreateProcess` does not parse; a login shell does. SSH is the case worth
+naming: AsyncSSH sends one string, and the server runs it through a login
+shell. On POSIX that is `$SHELL -c`, which is exactly the single parse this
+package renders for. Windows OpenSSH's stock server uses `cmd.exe /c`, so a
+`cmd`-dialect command line is parsed by cmd *twice* -- and unescaped, that is
+command injection, not just corruption.
+
+`SshConfig(login_shell="auto" | "cmd" | "powershell" | "posix")` says which.
+`auto` reads the dialect: a Windows path flavour means the stock `cmd.exe`.
+The server's shell is configurable (`HKLM\SOFTWARE\OpenSSH\DefaultShell`),
+so name it explicitly when it has been changed -- guessing is wrong in both
+directions. The PowerShell dialect needs nothing either way: its
+`-EncodedCommand` is inert under any login shell.
+
 ## What a rendered command may contain
 
 A **raw string** is shell source and stays verbatim, so it may span lines and
