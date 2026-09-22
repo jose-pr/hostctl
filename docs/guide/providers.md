@@ -100,7 +100,15 @@ the same conservative default.
 
 A provider that declines is remembered for the current connection generation, so
 later operations skip it instead of re-attempting it every time. Reconnecting or
-replacing a provider starts a new generation and re-probes everything.
+replacing a provider starts a new generation and re-probes everything. The one
+exception is a host with nothing else left: when every other candidate is
+unavailable, an earlier refusal is tried again rather than failing without
+dialling, so one transient refusal cannot brick a single-provider host.
+
+Paths and commands connect the same way: a composite path calls the provider's
+`connect()` before each dispatch, which is where a refused port or an untrusted
+host key becomes `OperationNotStarted`. A path provider's `connect()` must
+therefore be idempotent and cheap once connected.
 
 ## Selection traces
 

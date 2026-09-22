@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A composite path falls back when SFTP cannot connect.** Nothing on the
+  path route connected the provider first: pathlib_next dialled SFTP inside
+  the operation, so an untrusted host key (`HostKeyNotVerifiable`) or a
+  refused port escaped raw and the next path provider was never tried --
+  while `run()` on the same host fell back. A composite path now calls the
+  provider's `connect()` before dispatch, and SFTP maps asyncssh's connect
+  errors the way the SSH leg already did. Most likely to fire since 0.3.0
+  started verifying the SFTP host key: any host not yet in `known_hosts`.
+- **`run()` no longer re-dials a declined provider on every call.** 0.3.0
+  cleared every decline per call, so a dead primary cost a full connect
+  attempt (~9 s against a refused port) on each `run()` while the fallback
+  served. A decline now lasts for the generation again, and is re-admitted
+  only when no other provider can serve -- which keeps a single-provider
+  host from bricking on one transient refusal, for paths as well as `run()`.
+- A path refusal with nothing left to try names why ("no path provider
+  completed read (...: Host key is not trusted ...)") and keeps the cause.
+
 ## [0.3.0] - 2026-09-22
 
 ### Added

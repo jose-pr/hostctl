@@ -315,7 +315,12 @@ hostctl applies to whatever you return.
   falls through to the next provider for **that call only**; it does not take
   the provider out of service.
 - `ProviderSelector` holds the ordered providers and the per-generation
-  declines; `ProviderSelection` is one resolved choice.
+  declines; `ProviderSelection` is one resolved choice. `select()` re-admits
+  a decline recorded by an earlier operation only when no other provider can
+  serve.
+- A provider's optional `connect()` is where a pre-dispatch failure belongs.
+  Composite paths call a path provider's `connect()` before **every**
+  dispatch, so it must be idempotent and cheap once connected.
   `ProviderSelector.redact(value)` is the one redaction used in traces --
   rendered commands routinely carry credentials, so log through it.
 - `SessionInitializer` is the hook a provider may accept to prepare a session
