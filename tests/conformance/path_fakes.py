@@ -499,6 +499,12 @@ class LocalQgaTransport:
             if payload:
                 process.stdin.write(payload)
             process.stdin.close()
+            # And forget it. `communicate()` below flushes `stdin` if it is
+            # still set, and flushing an already-closed pipe is a
+            # `ValueError: flush of closed file` on Python 3.12 and older --
+            # 3.13 tolerates it, which is why this only failed on the older
+            # legs. The guest agent has sent all the input there is.
+            process.stdin = None
             self._exec_process = process
             self._exec_output = None
             self._exec_pid += 1
