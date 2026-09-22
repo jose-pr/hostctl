@@ -706,10 +706,24 @@ class SftpPathProvider(PathProvider):
     # Closing is owned by SshExecutorProvider for the shared transport;
     # connecting is not, because the SFTP client has to be established from
     # the caller's thread before any native recursive operation runs.
+    #
+    # Composite paths call this before EVERY dispatch, so once connected it
+    # must stay cheap: a lock, a liveness check and a cache hit.
     def connect(self):
+        from .. import _async
+
         try:
             self.transport.connect()
-            self.transport.warm_sftp()
+            try:
+                self.transport.warm_sftp()
+            except Exception as exc:
+                # pathlib_next dials its own SFTP connection and hands back
+                # asyncssh's errors raw -- `HostKeyNotVerifiable` is not an
+                # OSError -- so map them as the transport's own connect does.
+                normalized = _async.normalize_asyncssh_error(exc)
+                if normalized is exc:
+                    raise
+                raise normalized from exc
         except (OSError, TimeoutError) as exc:
             log.debug(
                 "SFTP provider declining before dispatch: %s: %s",

@@ -337,13 +337,12 @@ class ProviderSelector:
         return self._generation
 
     def retry_declined(self) -> None:
-        """Forget refusals recorded during an earlier call.
+        """Forget every refusal recorded this generation.
 
-        A decline exists to stop one dispatch re-dialling a provider that just
-        refused; it was never meant to outlive the call. Kept for the life of
-        the selector it bricked a single-provider host: one transient refusal
-        (sshd restarting, a network blip) and hostctl never dialled out again
-        until `close()`.
+        Not needed to recover a host: `select()` already re-admits an earlier
+        refusal when nothing else can serve. This is for a caller that knows
+        the declined provider is back (sshd restarted) and wants it preferred
+        over a fallback that is still serving.
         """
         with self._lock:
             self._declined.clear()
@@ -539,6 +538,15 @@ class ProviderSelector:
                 len(self._attempt_trace),
             )
             return result
+        if self._readmit_earlier_declines(excluded, capability):
+            # Nothing else can serve, so a refusal recorded by an EARLIER
+            # operation gets another chance rather than failing this one
+            # without dialling: one transient refusal (sshd restarting) on a
+            # single-provider host otherwise bricked it until close(). A
+            # decline this operation made itself is in `excluded` and stays.
+            return self.select(
+                capability=capability, exclude=excluded, policy=policy, pin=pin
+            )
         log.debug(
             "no provider available (generation %d); candidates: %s",
             self._generation,
@@ -562,6 +570,32 @@ class ProviderSelector:
             "no provider is available" + (f" ({detail})" if detail else ""),
             cause=cause,
         ) from cause
+
+    def _readmit_earlier_declines(
+        self, excluded: typing.AbstractSet[str], capability: str | None
+    ) -> bool:
+        """Forget declines that the running operation did not make.
+
+        A name the caller excluded is one it tried and saw refuse, so only
+        declines outside `excluded` came from an earlier operation.
+        """
+        with self._lock:
+            stale = [
+                provider.name
+                for provider in self.providers
+                if provider.name in self._declined
+                and provider.name not in excluded
+                and (capability is None or capability in provider.capabilities)
+            ]
+            for name in stale:
+                del self._declined[name]
+                self._decline_causes.pop(name, None)
+        for name in stale:
+            log.debug(
+                "provider %s re-admitted: every other candidate is unavailable",
+                _redacted_name(name),
+            )
+        return bool(stale)
 
     def _record(self, entry: dict[str, object]) -> None:
         """Merge one trace entry, letting a later record supersede an earlier.

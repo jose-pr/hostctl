@@ -800,6 +800,137 @@ def test_path_falls_back_over_every_candidate_not_just_one():
     assert path.provider.name == "third"
 
 
+def _served_by_memory(text="served"):
+    backend = MemPathBackend()
+    MemPath("/etc", backend=backend).mkdir(parents=True)
+    MemPath("/etc/hostname", backend=backend).write_text(text)
+    return PathProvider("memory", lambda *parts: MemPath(*parts, backend=backend))
+
+
+def _sftp_that_cannot_connect(*, connect=None, warm=None):
+    from hostctl import SshConfig
+    from hostctl.host._ssh import SftpPathProvider, _SshTransport
+
+    transport = _SshTransport(SshConfig("nas.example", username="root"))
+    transport.connect = connect or (lambda: None)
+    transport.warm_sftp = warm or (lambda: None)
+    return SftpPathProvider(transport)
+
+
+@pytest.mark.parametrize(
+    "error",
+    (
+        # What `_SshTransport.connect()` makes of each: an untrusted host key
+        # (`HostKeyNotVerifiable`) and a refused or firewalled port.
+        ConnectionError("Host key is not trusted for host nas.example"),
+        ConnectionRefusedError(10061, "connection refused"),
+        TimeoutError("connect timed out"),
+    ),
+    ids=("host-key", "refused", "timeout"),
+)
+def test_a_path_falls_back_when_sftp_cannot_connect(error):
+    """`run()` connects before dispatch and fell back; `path()` did not.
+
+    Nothing on the composite-path route called `SftpPathProvider.connect()`:
+    pathlib_next dialled SFTP lazily inside the operation, so the transport
+    error escaped `_dispatch` and the working next provider was never tried.
+    """
+
+    def refuse():
+        raise error
+
+    host = PosixHost(
+        path_providers=(_sftp_that_cannot_connect(connect=refuse), _served_by_memory())
+    )
+
+    path = host.path("/etc/hostname")
+
+    assert path.read_text() == "served"
+
+
+def test_a_raw_asyncssh_host_key_error_from_the_sftp_leg_declines():
+    """pathlib_next dials its own SFTP connection and raises asyncssh's error
+    raw; `HostKeyNotVerifiable` is not an OSError, so it was never taken as
+    "nothing started" even where `connect()` did run."""
+    import asyncssh
+
+    def untrusted():
+        raise asyncssh.HostKeyNotVerifiable("Host key is not trusted")
+
+    host = PosixHost(
+        path_providers=(_sftp_that_cannot_connect(warm=untrusted), _served_by_memory())
+    )
+
+    assert host.path("/etc/hostname").read_text() == "served"
+
+
+def test_a_path_refusal_names_its_cause_when_nothing_is_left():
+    def refuse():
+        raise ConnectionError("Host key is not trusted for host nas.example")
+
+    host = PosixHost(path_providers=(_sftp_that_cannot_connect(connect=refuse),))
+
+    with pytest.raises(OperationNotStarted) as raised:
+        host.path("/etc/hostname").read_text()
+
+    assert "Host key is not trusted" in str(raised.value)
+    assert isinstance(raised.value.cause, ConnectionError)
+
+
+def test_a_path_refusal_does_not_brick_a_single_provider_host():
+    """Now that a failed SFTP connect declines, the decline must not outlive
+    the refusal on a host with nothing to fall back to."""
+    state = {"failing": True}
+
+    def flaky():
+        if state["failing"]:
+            raise ConnectionRefusedError(10061, "sshd restarting")
+
+    backend = MemPathBackend()
+    MemPath("/etc", backend=backend).mkdir(parents=True)
+    MemPath("/etc/hostname", backend=backend).write_text("back")
+    provider = _sftp_that_cannot_connect(connect=flaky)
+    provider.factory = lambda *parts: MemPath(*parts, backend=backend)
+    host = PosixHost(path_providers=(provider,))
+
+    with pytest.raises(OperationNotStarted):
+        host.path("/etc/hostname").read_text()
+
+    state["failing"] = False
+    assert host.path("/etc/hostname").read_text() == "back"
+
+
+def test_a_declined_primary_is_not_redialled_while_the_fallback_serves():
+    """Every `run()` cleared every decline, so a dead primary was dialled
+    again on each call -- ~9 s apiece against a refused port -- although the
+    fallback had been serving all along."""
+    dialled = []
+
+    def refuse(command, *args, **options):
+        dialled.append(command)
+        raise OperationNotStarted(
+            "connection refused", cause=ConnectionRefusedError("refused")
+        )
+
+    host = PosixHost(
+        executor_providers=(
+            ExecutorProvider("ssh", refuse, capabilities=()),
+            ExecutorProvider(
+                "fallback",
+                lambda command, *args, **options: subprocess.CompletedProcess(
+                    (command,), 0, b"ok", b""
+                ),
+                capabilities=(),
+            ),
+        )
+    )
+
+    for _ in range(3):
+        assert host.run("uptime", check=False).stdout == b"ok"
+
+    assert len(dialled) == 1
+
+
 def test_two_threads_selecting_do_not_share_a_trace():
     """The per-operation trace and the probe/decline maps were unsynchronised
     instance state, so concurrent operations on one host mixed trace entries

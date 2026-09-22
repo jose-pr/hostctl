@@ -826,11 +826,11 @@ class SystemHost(Host):
             raise NotImplementedError(
                 f"{type(self).__name__} does not provide the 'run' capability"
             )
-        # A refusal recorded by an earlier call must not decide this one: a
-        # single-provider SSH host that hit one transient ConnectionError
-        # never dialled out again until close(). Within this call, `excluded`
-        # still stops a provider being retried after it declines.
-        self._executor_selector.retry_declined()
+        # No `retry_declined()` here. Clearing every refusal per call re-dialled
+        # a dead primary on EVERY run() -- ~9 s each against a refused port --
+        # although the fallback was serving. The selector re-admits an earlier
+        # refusal only when nothing else is left, which is what keeps a
+        # single-provider host from bricking on one transient failure.
         excluded: list[str] = []
         while True:
             provider = self._executor_selector.select(exclude=excluded).provider

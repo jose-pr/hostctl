@@ -498,10 +498,20 @@ class _CompositePathMixin:
         candidates = self._providers_in_order(operation, pin=pin)
         attempted = False
         not_implemented: typing.Optional[NotImplementedError] = None
+        not_started: typing.Optional[OperationNotStarted] = None
         for provider in candidates:
             attempted = True
             old = (self._provider, self._backend_path, self._factory, self._pinned)
             try:
+                # Connect first, where a failure is provably pre-dispatch.
+                # SFTP used to be dialled lazily inside the backend by the
+                # operation itself, so an unreachable server or an untrusted
+                # host key escaped as a raw transport error and the next
+                # provider was never tried -- while `run()`, which connects
+                # before dispatch, fell back on the same host.
+                connect = getattr(provider, "connect", None)
+                if connect is not None:
+                    connect()
                 backend_path = self._provider_path(provider)
                 if pin:
                     # A write/open operation owns the provider choice before
@@ -531,6 +541,7 @@ class _CompositePathMixin:
                 # `excluded` already stops us retrying it for this call.
                 continue
             except OperationNotStarted as exc:
+                not_started = exc
                 if pin:
                     self._provider, self._backend_path, self._factory, self._pinned = (
                         old
@@ -554,7 +565,16 @@ class _CompositePathMixin:
             # visibly with a single provider, where "try the next one" has
             # nothing to try.
             raise not_implemented
-        raise OperationNotStarted(f"no path provider completed {operation}")
+        # Carry the last refusal: "no provider completed" alone hid WHY -- a
+        # rejected host key read the same as a refused port.
+        cause = not_started.cause if not_started is not None else None
+        detail = ""
+        if not_started is not None:
+            reason = f"{not_started}: {cause}" if cause is not None else not_started
+            detail = f" ({ProviderSelector.redact(reason)})"
+        raise OperationNotStarted(
+            f"no path provider completed {operation}{detail}", cause=cause
+        ) from (cause or not_started)
 
     def via(self, name: str):
         provider = next((item for item in self._providers if item.name == name), None)
