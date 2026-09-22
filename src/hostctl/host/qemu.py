@@ -6,6 +6,7 @@ import base64
 import binascii
 import dataclasses
 import io
+import logging
 import subprocess
 import threading
 import typing
@@ -283,6 +284,14 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         return QemuHost(self)
 
 
+#: Sentinel: the guest helper has not been probed yet. `None` is a real
+#: answer -- this guest has no helper -- and must not trigger a re-probe on
+#: every `path()` call.
+log = logging.getLogger(__name__)
+
+_UNPROBED = object()
+
+
 class QemuHost(Host):
     """A guest OS reached through QEMU Guest Agent."""
 
@@ -302,6 +311,9 @@ class QemuHost(Host):
             lambda: self.transport, agent_timeout=config.agent_timeout
         )
         self._path_backend: typing.Optional[QgaPathBackend] = None
+        #: The probed guest helper, or `None` once probing has failed.
+        #: `_UNPROBED` distinguishes "not asked yet" from "asked, no helper".
+        self._path_helper: object = _UNPROBED
         self._path_provider: typing.Optional[object] = None
 
     @property
@@ -434,6 +446,7 @@ class QemuHost(Host):
         self._commands = None
         self._os_info = {}
         self._hostname = None
+        self._path_helper = _UNPROBED
         backend, self._path_backend = self._path_backend, None
         self._path_provider = None
         if backend is not None:
@@ -542,7 +555,7 @@ class QemuHost(Host):
             self._path_backend = QgaPathBackend(
                 self.transport,
                 supported_commands=self.supported_commands,
-                helper=self.config.path_helper,
+                helper=self.config.path_helper or self._guest_path_helper(),
                 timeout=self.config.agent_timeout,
             )
         path_backend = self._path_backend
@@ -559,6 +572,43 @@ class QemuHost(Host):
         if not self._path_provider.probe().usable:
             raise NotImplementedError("guest agent does not provide usable file RPCs")
         return self._path_provider.path(*segments)
+
+    def _guest_path_helper(self):
+        """Probe the guest for a metadata/namespace helper, or answer None.
+
+        QGA's file RPCs move bytes and nothing else, so `stat`, `scandir`
+        and every mutation need a guest-side helper. One is built here from
+        `guest-exec` -- positively probed, never assumed: `stat -c` and
+        `find -printf` are GNU spellings busybox and the BSDs do not share,
+        and a helper that assumes GNU and silently mis-parses is worse than
+        none. A failed probe returns `None`, which leaves the backend in
+        exactly the degraded mode it had before: reads and writes keep
+        working, and only the operations that genuinely need a helper are
+        unavailable.
+
+        `QemuConfig(path_helper=...)` overrides this entirely.
+        """
+        if self._path_helper is not _UNPROBED:
+            return self._path_helper
+        self._path_helper = None
+        if not {"guest-exec", "guest-exec-status"} <= self.supported_commands:
+            return None
+        from ._qga_helper import PosixGuestPathHelper, WindowsGuestPathHelper
+
+        family = self._probe_os_family()
+        if family is None:
+            # The same refusal `shell_flavour` makes: a helper for the wrong
+            # family would run commands the guest does not have.
+            return None
+        helper_type = (
+            WindowsGuestPathHelper if family == "windows" else PosixGuestPathHelper
+        )
+        try:
+            self._path_helper = helper_type.probe(self._executor)
+        except Exception:
+            log.debug("guest path helper probe failed", exc_info=True)
+            self._path_helper = None
+        return self._path_helper
 
     @property
     def path_provider(self):

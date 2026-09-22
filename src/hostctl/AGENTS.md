@@ -444,6 +444,18 @@ transcript attached to an error has `secret=True` login values replaced with
 `username`/`password`: console credentials live in the profile's `login=`
 steps.
 
+QGA paths get their metadata and namespace operations from a guest-side
+helper, because the file RPCs move bytes and nothing else. One is PROBED during
+discovery: `PosixGuestPathHelper` for a POSIX guest (GNU `stat -c` and
+`find -printf`, proven by `stat -c %f -- /` answering hex for a directory) and
+`WindowsGuestPathHelper` for a Windows one (the same PowerShell scripts
+`WinRMPathBackend` uses, carried over `guest-exec` as `-EncodedCommand`). A
+guest that fails the probe keeps the degraded mode it had before -- reads and
+writes never needed a helper -- rather than losing `path()`.
+`QemuConfig(path_helper=...)` overrides the probe entirely. Every path is an
+argv element after a `--`, so a leading `-` is data and nothing is interpolated
+into shell text.
+
 `QemuConfig.max_reply_size` (default 48 MiB) bounds one QGA reply, and
 `agent_timeout` bounds one round trip independently of a command's `timeout=`:
 an agent that stops answering raises `ConnectionError`, not a command timeout.

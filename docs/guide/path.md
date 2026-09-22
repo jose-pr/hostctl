@@ -23,6 +23,12 @@ buffered write/append/exclusive-create without requiring a shell in the image.
 Docker's archive API cannot remove, rename, chmod, or create an empty directory;
 those operations raise `NotImplementedError` explicitly.
 
+QGA paths take their metadata and namespace operations from a guest-side
+helper, probed during discovery: GNU `stat`/`find` on a POSIX guest, PowerShell
+on a Windows one. A guest that fails the probe keeps content access and loses
+only the operations that genuinely need a helper, and
+`QemuConfig(path_helper=...)` replaces the probe with your own.
+
 QGA paths use bounded `guest-file-open/read/write/seek/flush/close` requests and
 always close remote handles. Content access needs no in-guest shell. A reader
 from `open("rb")` is seekable wherever the agent advertises `guest-file-seek`,
