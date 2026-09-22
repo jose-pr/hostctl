@@ -147,13 +147,17 @@ def main(argv=None):
         version = getattr(hostctl, "__version__", "unknown")
         interpreter = f"py{sys.version_info.major}.{sys.version_info.minor}"
         payload = {
+            "name": f"hostctl {version} ({interpreter})",
             "package": "hostctl",
             "version": version,
             "interpreter": interpreter,
             "python": platform.python_version(),
             "platform": platform.platform(),
             "machine": platform.machine(),
-            "metrics": metrics,
+            # Keyed by metric NAME, not a list: that is the shape the
+            # shared `compare_bench.py` reads, and a results file the
+            # standard tool cannot load is a results file nobody compares.
+            "metrics": {metric["name"]: metric for metric in metrics},
         }
         RESULTS.mkdir(parents=True, exist_ok=True)
         target = RESULTS / f"{version}-{interpreter}.json"

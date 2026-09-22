@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-22
+
+### Added
+
+- **QGA paths have metadata and namespace operations.** `QemuHost.path()`
+  now supports `stat`, `iterdir`, `mkdir`, `unlink`, `rename` and `chmod`
+  through a guest-side helper built during discovery -- hostctl previously
+  shipped none, so a caller had to write one and every QGA path reported
+  `degraded`. The helper is POSITIVELY PROBED: GNU `stat -c`/`find -printf`
+  on a POSIX guest, PowerShell on a Windows one. A guest that fails the
+  probe keeps content access and loses only what genuinely needs a helper.
+  `QemuConfig(path_helper=...)` still overrides.
+- **`SshConfig(login_shell="auto"|"cmd"|"powershell"|"posix")`** says what
+  parses the command string on arrival. Windows OpenSSH's stock server
+  hands it to `cmd.exe /c`, so a `cmd`-dialect command line is parsed by cmd
+  twice; unescaped, 4 of 8 adversarial values survived and two of the
+  failures were command injection. `auto` reads the dialect.
+- **`ShellFlavour.argument(value, *, target=ShellTarget...)`** separates
+  quoting for the shell's parser from quoting for whatever reads the token
+  next -- a cmd builtin, a child's argv parser, PowerShell's binder, or the
+  program slot. `quote()` remains the syntactic layer.
+
 ### Removed
 
 - **`SerialTransport`** and its `hostctl.executor` export. It duplicated
@@ -64,6 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **`asyncssh` and `libvirt-python` are bounded** (`>=2.14,<3`, `>=9.0,<12`);
   the `dev` extra now pulls every transport, so `pip install -e ".[dev]"` is
   the whole development environment.
+- **`LocalHost` is a `SystemHost`.** It duplicated the provider selection,
+  failover loop, capability computation and dispatch ladder, and the two
+  copies diverged. Two consequences for callers:
+  **`LocalHost().path()` with no segments no longer returns the absolute
+  working directory** -- it returns a path with no segments added, like
+  every other transport, which still resolves against the process's working
+  directory. A local path is still a plain `pathlib_next` path, not a
+  composite.
 
 ### Fixed
 
@@ -180,6 +210,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   so `zipfile` and `tarfile` work against a guest path, and an exclusive
   `open("x")` is refused at `open()` rather than after the whole payload has
   been staged.
+- **A `cmd`-dialect command sent over SSH to Windows is escaped for the
+  login shell that receives it.** Two of the eight adversarial values were
+  command injection, not corruption.
+- **`SshConfig("ssh://host")` raises** instead of making the URI the
+  hostname, which surfaced much later as an unresolvable name. The
+  constructor takes a host; `HostConfig(uri)` takes a URI.
 
 ## [0.2.7] - 2026-08-16
 

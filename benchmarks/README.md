@@ -38,8 +38,8 @@ committed** — that is what makes a before/after recoverable later. Schema:
   "python": "3.14.6",
   "platform": "Windows-11-...",
   "machine": "ARM64",
-  "metrics": [
-    {
+  "metrics": {
+    "shell.posix.script(argv)": {
       "name": "shell.posix.script(argv)",
       "samples": 7,
       "iterations": 2000,
@@ -47,8 +47,17 @@ committed** — that is what makes a before/after recoverable later. Schema:
       "median_ms": 0.0105,
       "max_ms": 0.0116
     }
-  ]
+  }
 }
+```
+
+`metrics` is keyed by metric name because that is the shape the shared
+`compare_bench.py` reads:
+
+```bash
+py -3 "$ENGINEERING_OVERLAY_ROOT/tools/compare_bench.py" \
+    benchmarks/results/0.2.7-py3.14.json \
+    benchmarks/results/0.3.0-py3.14.json
 ```
 
 Each metric times `iterations` calls in a batch and repeats that `samples`

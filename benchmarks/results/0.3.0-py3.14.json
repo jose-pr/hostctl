@@ -4,96 +4,96 @@
   "metrics": {
     "path.build": {
       "iterations": 2000,
-      "max_ms": 0.023947899986524135,
-      "median_ms": 0.02142860001185909,
-      "min_ms": 0.021100299956742674,
+      "max_ms": 0.02486589999170974,
+      "median_ms": 0.02125980000710115,
+      "min_ms": 0.02058164996560663,
       "name": "path.build",
       "samples": 7
     },
     "path.exists": {
       "iterations": 2000,
-      "max_ms": 0.0134997499990277,
-      "median_ms": 0.013165450014639646,
-      "min_ms": 0.012952500022947788,
+      "max_ms": 0.02734984998824075,
+      "median_ms": 0.014508849999401718,
+      "min_ms": 0.01349729998037219,
       "name": "path.exists",
       "samples": 7
     },
     "path.iterdir": {
       "iterations": 2000,
-      "max_ms": 0.04312930000014603,
-      "median_ms": 0.040812149993143976,
-      "min_ms": 0.03943254996556789,
+      "max_ms": 0.04530289996182546,
+      "median_ms": 0.040284849994350225,
+      "min_ms": 0.0401269500143826,
       "name": "path.iterdir",
       "samples": 7
     },
     "path.read_bytes": {
       "iterations": 2000,
-      "max_ms": 0.01725939998868853,
-      "median_ms": 0.015489299956243485,
-      "min_ms": 0.015122649958357215,
+      "max_ms": 0.018535399984102696,
+      "median_ms": 0.01566350000211969,
+      "min_ms": 0.015078900032676756,
       "name": "path.read_bytes",
       "samples": 7
     },
     "path.truediv": {
       "iterations": 2000,
-      "max_ms": 0.002637400000821799,
-      "median_ms": 0.0024813999771140516,
-      "min_ms": 0.0024671999854035676,
+      "max_ms": 0.0026769500109367073,
+      "median_ms": 0.0026001500082202256,
+      "min_ms": 0.0025260999682359397,
       "name": "path.truediv",
       "samples": 7
     },
     "shell.cmd.script(argv)": {
       "iterations": 2000,
-      "max_ms": 0.022075549990404397,
-      "median_ms": 0.021514350024517626,
-      "min_ms": 0.020666099968366325,
+      "max_ms": 0.03015124995727092,
+      "median_ms": 0.022269949957262725,
+      "min_ms": 0.021909500006586313,
       "name": "shell.cmd.script(argv)",
       "samples": 7
     },
     "shell.posix.script(argv)": {
       "iterations": 2000,
-      "max_ms": 0.010387000045739114,
-      "median_ms": 0.010256299981847405,
-      "min_ms": 0.010204299993347377,
+      "max_ms": 0.014201599988155067,
+      "median_ms": 0.010909600008744746,
+      "min_ms": 0.010569950041826814,
       "name": "shell.posix.script(argv)",
       "samples": 7
     },
     "shell.posix.script(raw+cwd+env)": {
       "iterations": 2000,
-      "max_ms": 0.014303250005468726,
-      "median_ms": 0.013370899949222803,
-      "min_ms": 0.01304119999986142,
+      "max_ms": 0.013002699997741729,
+      "median_ms": 0.012769299966748804,
+      "min_ms": 0.012640749977435917,
       "name": "shell.posix.script(raw+cwd+env)",
       "samples": 7
     },
     "shell.powershell.command(encoded)": {
       "iterations": 500,
-      "max_ms": 0.0493108001537621,
-      "median_ms": 0.047315599862486124,
-      "min_ms": 0.04691719985567033,
+      "max_ms": 0.055859399959445,
+      "median_ms": 0.04823280009441078,
+      "min_ms": 0.047755799954757094,
       "name": "shell.powershell.command(encoded)",
       "samples": 7
     },
     "shell.powershell5.structured_command": {
       "iterations": 2000,
-      "max_ms": 0.01617200003238395,
-      "median_ms": 0.014595450018532574,
-      "min_ms": 0.014404549961909652,
+      "max_ms": 0.015310599992517382,
+      "median_ms": 0.015085150022059679,
+      "min_ms": 0.014879300026223063,
       "name": "shell.powershell5.structured_command",
       "samples": 7
     },
     "shell.powershell7.structured_command": {
       "iterations": 2000,
-      "max_ms": 0.009781999979168177,
-      "median_ms": 0.009450050012674183,
-      "min_ms": 0.00937474996317178,
+      "max_ms": 0.014495450013782829,
+      "median_ms": 0.009914950001984835,
+      "min_ms": 0.009722999995574355,
       "name": "shell.powershell7.structured_command",
       "samples": 7
     }
   },
-  "name": "hostctl 0.2.7 (py3.14)",
+  "name": "hostctl 0.3.0 (py3.14)",
   "package": "hostctl",
   "platform": "Windows-11-10.0.28000-SP0",
   "python": "3.14.6",
-  "version": "0.2.7"
+  "version": "0.3.0"
 }

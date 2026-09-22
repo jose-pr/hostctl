@@ -4,96 +4,96 @@
   "metrics": {
     "path.build": {
       "iterations": 2000,
-      "max_ms": 0.041351849999999996,
-      "median_ms": 0.03250929999999999,
-      "min_ms": 0.031015650000000006,
+      "max_ms": 0.032857950000000025,
+      "median_ms": 0.03166795,
+      "min_ms": 0.030100050000000017,
       "name": "path.build",
       "samples": 7
     },
     "path.exists": {
       "iterations": 2000,
-      "max_ms": 0.01937430000000001,
-      "median_ms": 0.0177601,
-      "min_ms": 0.017600649999999995,
+      "max_ms": 0.018396499999999982,
+      "median_ms": 0.017492699999999972,
+      "min_ms": 0.017051800000000006,
       "name": "path.exists",
       "samples": 7
     },
     "path.iterdir": {
       "iterations": 2000,
-      "max_ms": 0.05497954999999999,
-      "median_ms": 0.053751850000000045,
-      "min_ms": 0.052336099999999997,
+      "max_ms": 0.05494144999999995,
+      "median_ms": 0.05198500000000006,
+      "min_ms": 0.05137924999999999,
       "name": "path.iterdir",
       "samples": 7
     },
     "path.read_bytes": {
       "iterations": 2000,
-      "max_ms": 0.021337300000000003,
-      "median_ms": 0.020430199999999954,
-      "min_ms": 0.02008029999999994,
+      "max_ms": 0.024391700000000013,
+      "median_ms": 0.019539299999999926,
+      "min_ms": 0.01902789999999999,
       "name": "path.read_bytes",
       "samples": 7
     },
     "path.truediv": {
       "iterations": 2000,
-      "max_ms": 0.0033509499999999637,
-      "median_ms": 0.003173649999999917,
-      "min_ms": 0.0031471999999999056,
+      "max_ms": 0.0031970500000000346,
+      "median_ms": 0.003118450000000106,
+      "min_ms": 0.0030693000000001636,
       "name": "path.truediv",
       "samples": 7
     },
     "shell.cmd.script(argv)": {
       "iterations": 2000,
-      "max_ms": 0.022053600000000007,
-      "median_ms": 0.020004200000000024,
-      "min_ms": 0.019591999999999832,
+      "max_ms": 0.028845400000000018,
+      "median_ms": 0.021972950000000106,
+      "min_ms": 0.021776599999999924,
       "name": "shell.cmd.script(argv)",
       "samples": 7
     },
     "shell.posix.script(argv)": {
       "iterations": 2000,
-      "max_ms": 0.012058100000000183,
-      "median_ms": 0.011391200000000046,
-      "min_ms": 0.011182849999999966,
+      "max_ms": 0.01072289999999998,
+      "median_ms": 0.009629150000000086,
+      "min_ms": 0.009488549999999929,
       "name": "shell.posix.script(argv)",
       "samples": 7
     },
     "shell.posix.script(raw+cwd+env)": {
       "iterations": 2000,
-      "max_ms": 0.012400449999999896,
-      "median_ms": 0.011492350000000151,
-      "min_ms": 0.011084450000000023,
+      "max_ms": 0.018767999999999892,
+      "median_ms": 0.011709399999999981,
+      "min_ms": 0.011316749999999987,
       "name": "shell.posix.script(raw+cwd+env)",
       "samples": 7
     },
     "shell.powershell.command(encoded)": {
       "iterations": 500,
-      "max_ms": 0.05210579999999965,
-      "median_ms": 0.05052520000000005,
-      "min_ms": 0.048869800000000296,
+      "max_ms": 0.05180120000000077,
+      "median_ms": 0.05106080000000013,
+      "min_ms": 0.04974840000000036,
       "name": "shell.powershell.command(encoded)",
       "samples": 7
     },
     "shell.powershell5.structured_command": {
       "iterations": 2000,
-      "max_ms": 0.014116550000000005,
-      "median_ms": 0.013814549999999981,
-      "min_ms": 0.013450399999999973,
+      "max_ms": 0.015742350000000016,
+      "median_ms": 0.01479095000000008,
+      "min_ms": 0.014597499999999819,
       "name": "shell.powershell5.structured_command",
       "samples": 7
     },
     "shell.powershell7.structured_command": {
       "iterations": 2000,
-      "max_ms": 0.009425199999999911,
-      "median_ms": 0.009201000000000015,
-      "min_ms": 0.008772650000000048,
+      "max_ms": 0.010457649999999985,
+      "median_ms": 0.009736500000000037,
+      "min_ms": 0.009538400000000058,
       "name": "shell.powershell7.structured_command",
       "samples": 7
     }
   },
-  "name": "hostctl 0.2.7 (py3.9)",
+  "name": "hostctl 0.3.0 (py3.9)",
   "package": "hostctl",
   "platform": "Windows-10-10.0.28000-SP0",
   "python": "3.9.13",
-  "version": "0.2.7"
+  "version": "0.3.0"
 }
