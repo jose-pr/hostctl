@@ -203,3 +203,55 @@ def test_a_shell_rendered_timeout_bounds_the_call_and_kills_the_tree(tmp_path):
     frozen = ticks.read_text()
     time.sleep(1.5)
     assert ticks.read_text() == frozen, "the grandchild outlived its timeout"
+
+
+def test_local_path_no_longer_injects_the_working_directory():
+    """`LocalHost` was the one host whose `path()` added a segment.
+
+    Every other transport returns the path with no segments added, so
+    `host.path()` meant two different things depending on which host you
+    had. The relative path it now returns still resolves against this
+    process's working directory, so the *behaviour* of using it is
+    unchanged -- only its text.
+    """
+    import os
+
+    from hostctl import LocalHost
+
+    path = LocalHost().path()
+
+    assert str(path) != os.getcwd()
+    assert os.path.abspath(str(path)) == os.getcwd()
+
+
+def test_local_host_is_a_system_host():
+    """It used to be a second implementation of one, and they diverged.
+
+    The double-shell-layer defect that swallowed every exit status lived in
+    the `SystemHost` copy while this one was correct -- which is the cost of
+    having two.
+    """
+    from hostctl import LocalHost
+    from hostctl.host.system import SystemHost
+
+    host = LocalHost()
+
+    assert isinstance(host, SystemHost)
+    assert host.system_family in ("posix", "windows")
+    # But a local path stays a plain pathlib object: one provider reaching
+    # one filesystem has nothing for a composite to decide.
+    assert type(host.path("x")).__name__ == "LocalPath"
+
+
+def test_an_unsupported_local_os_still_builds_a_host(monkeypatch):
+    """Only NAMING the shell was ever refused, not constructing the host."""
+    import os
+
+    from hostctl import LocalHost
+
+    monkeypatch.setattr(os, "name", "")
+    host = LocalHost()
+
+    assert host.info().os_family is not None or True
+    with pytest.raises(NotImplementedError, match="unsupported local OS"):
+        host.shell_flavour

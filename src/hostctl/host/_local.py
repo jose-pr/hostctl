@@ -4,24 +4,16 @@ from __future__ import annotations
 
 import os as _os
 import platform as _platform
-import subprocess as _subprocess
 import typing as _ty
 
-from ..executor import CommandLine, LocalExecutor
-from ..provider import OperationNotStarted, ProviderSelector
+from ..provider import OperationNotStarted
 from ..provider.transports import LocalExecutorProvider, LocalPathProvider
+from .system import SystemHost
 from ._common import (
-    CaptureOutput,
-    Command,
-    Environment,
-    FileHandle,
-    Host,
     HostConfig,
     HostInfo,
     HostPath,
-    Input,
     PathLike,
-    starts_direct_command,
     normalize_os_family,
 )
 from ..shell import POSIX_SHELL, POWERSHELL, ShellFlavour
@@ -59,15 +51,22 @@ class LocalConfig(HostConfig, schemes=("local",)):
         return LocalHost(self)
 
 
-class LocalHost(Host):
-    """A host whose commands and paths are local to this process.
+class LocalHost(SystemHost):
+    """This machine, assembled from the local providers.
 
-    The public surface is unchanged, but execution and filesystem access are
-    assembled from ordered providers (:class:`LocalExecutorProvider` and
-    :class:`LocalPathProvider`) rather than a hard-wired executor.  A subclass
-    may supply its own providers to reuse the local semantics over a different
-    access mechanism.
+    A `SystemHost` like every other, not a second implementation of one.
+    It used to duplicate the provider selection, the failover loop, the
+    capability computation and the direct/shell dispatch ladder -- and the
+    two copies diverged: the double-shell-layer defect that swallowed every
+    exit status (`core-01`) lived in the `SystemHost` copy while this one
+    was correct, which is exactly the cost of having two.
+
+    What is genuinely local stays here: the system family and shell come
+    from `os.name` rather than a config, `info()` reports this process's
+    own platform, and the default providers are the local ones.
     """
+
+    config_type = LocalConfig
 
     def __init__(
         self,
@@ -75,201 +74,83 @@ class LocalHost(Host):
         *,
         executor_providers: _ty.Iterable[object] = (),
         path_providers: _ty.Iterable[object] = (),
+        **options: object,
     ) -> None:
-        self.config = config or LocalConfig()
-        self._executor_provider_selector = ProviderSelector(
-            tuple(executor_providers) or (LocalExecutorProvider(),)
-        )
-        self._path_provider_selector = ProviderSelector(
-            tuple(path_providers) or (LocalPathProvider(),)
+        # Instance attributes, set before `super().__init__` reads them: the
+        # family is a property of the machine this process is on, not of a
+        # subclass someone declared.
+        # Resolved here, but NOT enforced: an exotic `os.name` could always
+        # build a host and use `info()` and `path()`; only naming its shell
+        # raised. `shell_flavour` below keeps that boundary.
+        if _os.name == "nt":
+            self.system_family = "windows"
+            self.default_shell = POWERSHELL
+        elif _os.name == "posix":
+            self.system_family = "posix"
+            self.default_shell = POSIX_SHELL
+        else:
+            self.system_family = "generic"
+            self.default_shell = None
+        super().__init__(
+            config if config is not None else LocalConfig(),
+            executor_providers=tuple(executor_providers) or (LocalExecutorProvider(),),
+            path_providers=tuple(path_providers) or (LocalPathProvider(),),
+            **options,
         )
 
     @property
     def executor_providers(self) -> _ty.Tuple[object, ...]:
         """The ordered command providers backing :meth:`run`."""
-        return self._executor_provider_selector.providers
+        return self._executor_selector.providers
 
     @property
     def path_providers(self) -> _ty.Tuple[object, ...]:
         """The ordered filesystem providers backing :meth:`path`."""
-        return self._path_provider_selector.providers
-
-    def _run_selector(self) -> ProviderSelector:
-        return self._executor_provider_selector
-
-    @property
-    def capabilities(self) -> _ty.FrozenSet[str]:
-        values = set()
-        if any(
-            self._executor_provider_selector.probe(provider).usable
-            for provider in self._executor_provider_selector.providers
-        ):
-            values.add("run")
-        if any(
-            self._path_provider_selector.probe(provider).usable
-            for provider in self._path_provider_selector.providers
-        ):
-            values.add("path")
-        return frozenset(values)
+        return self._path_selector.providers
 
     @property
     def shell_flavour(self) -> ShellFlavour:
-        if _os.name == "nt":
-            return POWERSHELL
-        if _os.name == "posix":
-            return POSIX_SHELL
-        raise NotImplementedError(f"unsupported local OS: {_os.name}")
-
-    @property
-    def executor(self) -> LocalExecutor:
-        return self._executor_provider_selector.select().provider.executor
-
-    def info(self) -> HostInfo:
-        return HostInfo(
-            hostname=_platform.node() or None,
-            os_family=normalize_os_family(_platform.system()),
-            os_name=_platform.system() or None,
-            os_version=_platform.version() or None,
-            architecture=_platform.machine() or None,
-        )
+        """The local shell, or a refusal naming the OS it could not place."""
+        if self._shell is None and self._shell_resolver is None:
+            raise NotImplementedError(f"unsupported local OS: {_os.name}")
+        return super().shell_flavour
 
     def path(self, *segments: PathLike, backend: _ty.Optional[str] = None) -> HostPath:
-        names = tuple(
-            provider.name for provider in self._path_provider_selector.providers
-        )
+        """A plain `pathlib_next` path, not a composite.
+
+        The composite exists to select between providers per operation and
+        to pin a route; a local host reaches one filesystem through one
+        provider, so it would add a layer with nothing to decide. Callers
+        also rely on a local path being an ordinary pathlib object.
+
+        With no segments this no longer injects `os.getcwd()`. Every other
+        transport returns the path with no segments added, and a local host
+        being the one exception meant `host.path()` meant two different
+        things depending on the host -- the relative path it now returns
+        still resolves against this process's working directory.
+        """
+        names = tuple(provider.name for provider in self._path_selector.providers)
         if backend is not None and backend not in names:
             raise ValueError(
                 "local path backend must be "
                 + " or ".join(repr(name) for name in names or ("local",))
             )
         if backend is None:
-            provider = self._path_provider_selector.select().provider
+            provider = self._path_selector.select().provider
         else:
             provider = next(
-                item
-                for item in self._path_provider_selector.providers
-                if item.name == backend
+                item for item in self._path_selector.providers if item.name == backend
             )
             if not provider.probe().usable:
                 raise OperationNotStarted(f"path provider {backend!r} is unavailable")
-        return provider.path(*(segments or (_os.getcwd(),)))
+        return provider.path(*segments)
 
-    def run(
-        self,
-        *cmds: Command,
-        bufsize: int = -1,
-        executable: _ty.Optional[str] = None,
-        stdin: _ty.Optional[FileHandle] = None,
-        stdout: _ty.Optional[FileHandle] = None,
-        stderr: _ty.Optional[FileHandle] = None,
-        cwd: _ty.Optional[PathLike] = None,
-        env: _ty.Optional[Environment] = None,
-        capture_output: CaptureOutput = True,
-        check: bool = True,
-        encoding: _ty.Optional[str] = None,
-        errors: _ty.Optional[str] = None,
-        input: Input = None,
-        timeout: _ty.Optional[float] = None,
-        text: _ty.Optional[bool] = None,
-    ) -> _subprocess.CompletedProcess:
-        excluded: _ty.List[str] = []
-        while True:
-            provider = self._executor_provider_selector.select(
-                exclude=excluded
-            ).provider
-            try:
-                return self._run_with_provider(
-                    provider,
-                    cmds,
-                    bufsize=bufsize,
-                    executable=executable,
-                    stdin=stdin,
-                    stdout=stdout,
-                    stderr=stderr,
-                    cwd=cwd,
-                    env=env,
-                    capture_output=capture_output,
-                    check=check,
-                    encoding=encoding,
-                    errors=errors,
-                    input=input,
-                    timeout=timeout,
-                    text=text,
-                )
-            except OperationNotStarted as exc:
-                # Only a proven pre-dispatch refusal may reach another
-                # provider; a dispatched command is never replayed.
-                self._executor_provider_selector.decline(provider.name, str(exc))
-                excluded.append(provider.name)
-
-    def _run_with_provider(
-        self,
-        provider,
-        cmds: _ty.Sequence[Command],
-        *,
-        bufsize: int,
-        executable: _ty.Optional[str],
-        stdin,
-        stdout,
-        stderr,
-        cwd,
-        env,
-        capture_output,
-        check,
-        encoding,
-        errors,
-        input,
-        timeout,
-        text,
-    ) -> _subprocess.CompletedProcess:
-        direct = starts_direct_command(cmds)
-        if direct is not None:
-            command, args = direct
-            if executable is not None:
-                raise NotImplementedError(
-                    "executable cannot be combined with a direct command"
-                )
-            return provider.execute(
-                command,
-                *args,
-                bufsize=bufsize,
-                stdin=stdin,
-                stdout=stdout,
-                stderr=stderr,
-                cwd=cwd,
-                env=env,
-                capture_output=capture_output,
-                check=check,
-                encoding=encoding,
-                errors=errors,
-                input=input,
-                timeout=timeout,
-                text=text,
-            )
-        flavour = self.shell_flavour
-        if not flavour.argv_invocation:
-            # cmd: argv delivery cannot carry its quoting (see
-            # `CmdShellFlavour.invocation`), so submit the rendered command
-            # line and let the target parse it once.
-            rendered = flavour.command(cmds, executable=executable)
-            leading: _ty.Tuple[object, ...] = (CommandLine(rendered.command),)
-        else:
-            script = flavour.script(cmds, cwd=None, env=None)
-            leading = tuple(flavour.invocation(script, executable=executable))
-        return provider.execute(
-            leading[0],
-            *leading[1:],
-            bufsize=bufsize,
-            stdin=stdin,
-            stdout=stdout,
-            stderr=stderr,
-            cwd=cwd,
-            env=env,
-            capture_output=capture_output,
-            check=check,
-            encoding=encoding,
-            errors=errors,
-            input=input,
-            timeout=timeout,
-            text=text,
+    def info(self) -> HostInfo:
+        """This process's own platform, with no transport to ask."""
+        return HostInfo(
+            hostname=_platform.node() or None,
+            os_family=normalize_os_family(_platform.system()),
+            os_name=_platform.system() or None,
+            os_version=_platform.version() or None,
+            architecture=_platform.machine() or None,
         )

@@ -955,14 +955,34 @@ class Host(_abc.ABC, metaclass=_HostMeta):
 
 
 def strict_uri_query(
-    parsed: _SplitResult, allowed: _ty.Iterable[str]
-) -> _ty.Dict[str, str]:
-    """Parse one selected implementation's query without ambiguity."""
-    query = {}
+    parsed: _SplitResult,
+    allowed: _ty.Iterable[str],
+    *,
+    repeatable: _ty.Iterable[str] = (),
+) -> _ty.Dict[str, object]:
+    """Parse one selected implementation's query without ambiguity.
+
+    A repeated key is an error by default: silently taking the last value
+    made `?shell=a&shell=b` a coin flip, and an unknown key used to be
+    dropped in silence, so `?exectuor=ssh` built a config with no executors
+    that failed much later as "does not provide the 'run' capability".
+
+    `repeatable` names keys that are ORDERED LISTS rather than settings --
+    `SystemConfig`'s `executor` and `path` -- and their values come back as
+    a tuple in the order they were written. Declaring them here is what
+    lets every config share one parser: `SystemConfig` used to hand-roll a
+    second one for exactly this difference, and the two then had to be kept
+    in agreement by hand.
+    """
+    repeated = frozenset(repeatable)
+    query: _ty.Dict[str, object] = {}
     for key, value in _parse_qsl(parsed.query, keep_blank_values=True):
-        if key in query:
+        if key in repeated:
+            query[key] = _ty.cast(_ty.Tuple[str, ...], query.get(key, ())) + (value,)
+        elif key in query:
             raise ValueError(f"duplicate connection parameter: {key}")
-        query[key] = value
+        else:
+            query[key] = value
     unknown = set(query) - set(allowed)
     if unknown:
         raise ValueError(f"unknown connection parameter: {sorted(unknown)[0]}")

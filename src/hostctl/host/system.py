@@ -6,7 +6,7 @@ import dataclasses
 import logging
 import threading
 import typing
-from urllib.parse import unquote, parse_qsl, quote, urlencode
+from urllib.parse import unquote, quote, urlencode
 
 from pathlib_next import Path
 
@@ -26,6 +26,7 @@ from ._common import (
     PathLike,
     Command,
     starts_direct_command,
+    strict_uri_query,
 )
 from .composite_path import CompositePosixPath, CompositeWindowsPath
 
@@ -107,6 +108,21 @@ register_system_provider("local", _local_provider)
 register_system_provider("ssh", _ssh_provider)
 register_system_provider("sftp", _ssh_provider)
 register_system_provider("winrm", _winrm_provider)
+
+
+class _ShellContext(typing.NamedTuple):
+    """What the SHELL layer must supply, because the provider cannot.
+
+    `cwd` and `env` are `None` when the provider carries them natively --
+    passing them to the flavour as well would apply them twice. Computed
+    once per dispatch instead of six times inline, which is where
+    `core-01`, `core-03` and `core-32` all lived: the combinations are the
+    bug surface, so there is one expression of them.
+    """
+
+    cwd: typing.Optional[PathLike]
+    env: typing.Optional[typing.Any]
+    for_session: bool
 
 
 def _for_login_shell(flavour, command, provider) -> str:
@@ -251,23 +267,15 @@ class SystemConfig(HostConfig):
                 "system URI reconstruction accepts only provider_options= and "
                 f"initializer= constructor options; unsupported credentials: {names}"
             )
-        pairs = parse_qsl(parsed.query, keep_blank_values=True)
-        # Fail closed, like every other config's `strict_uri_query`: an
-        # unknown key used to be dropped in silence, so `?exectuor=ssh` built
-        # a config with no executors that only failed much later as "does not
-        # provide the 'run' capability", and a repeated `shell=` silently took
-        # the last value. `executor` and `path` are the two keys that
-        # legitimately repeat -- they are ordered lists.
-        seen: typing.Set[str] = set()
-        for key, _value in pairs:
-            if key not in ("executor", "path", "shell"):
-                raise ValueError(f"unknown connection parameter: {key}")
-            if key == "shell" and key in seen:
-                raise ValueError("duplicate connection parameter: shell")
-            seen.add(key)
-        values = dict(pairs)
-        executors = tuple(v for k, v in pairs if k == "executor")
-        paths = tuple(v for k, v in pairs if k == "path")
+        # The SHARED parser, with the two keys that legitimately repeat
+        # declared. This used to be a second hand-rolled query parse -- one
+        # of three in this package -- and each of the three had a different
+        # defect fixed in it.
+        query = strict_uri_query(
+            parsed, ("executor", "path", "shell"), repeatable=("executor", "path")
+        )
+        executors = typing.cast(typing.Tuple[str, ...], query.get("executor", ()))
+        paths = typing.cast(typing.Tuple[str, ...], query.get("path", ()))
         return cls(
             # Unquoted: `connection_uri` percent-encodes the authority, so
             # storing the still-encoded netloc added a layer on every
@@ -275,7 +283,7 @@ class SystemConfig(HostConfig):
             # `node%3A22`, then `node%253A22` -- and the API header promises
             # `str(config)` can be handed straight back.
             unquote(parsed.netloc) or unquote(parsed.path) or "localhost",
-            shell=values.get("shell"),
+            shell=query.get("shell"),
             executor=executors,
             path=paths,
             **constructor_only,
@@ -851,6 +859,35 @@ class SystemHost(Host):
                 self._executor_selector.decline(provider.name, str(exc), cause=exc)
                 excluded.append(provider.name)
 
+    @staticmethod
+    def _shell_context(provider, cwd, env) -> _ShellContext:
+        """Which of cwd/env the shell must embed for this provider."""
+        return _ShellContext(
+            None if "cwd" in provider.capabilities else cwd,
+            None if "env" in provider.capabilities else env,
+            "manages_status" in provider.capabilities,
+        )
+
+    def _execute_command_line(
+        self, provider, flavour, cmds, *, executable, context, options
+    ):
+        """Render one finalized command line and submit it.
+
+        The one place a `ShellCommand` is turned into a dispatch: it carries
+        an out-of-band environment for providers that cannot embed one, and
+        it is the only path that needs the login-shell layer.
+        """
+        rendered = flavour.command(
+            cmds,
+            executable=executable,
+            cwd=context.cwd,
+            env=context.env,
+        )
+        return provider.execute(
+            _for_login_shell(flavour, rendered.command, provider),
+            **self._out_of_band_env(provider, rendered, options),
+        )
+
     def _run_with_provider(self, provider, cmds, **kwargs):
         self._ensure_provider_connected(provider)
         cwd = kwargs.get("cwd")
@@ -893,21 +930,22 @@ class SystemHost(Host):
                 return provider.execute(command_text(command), **options)
             flavour = self.shell_flavour
             shell_executable = getattr(provider, "shell_executable", None)
+            context = self._shell_context(provider, cwd, env)
             if "script" in provider.capabilities:
                 script = flavour.script(
                     ((command, *args),),
-                    cwd=None if "cwd" in provider.capabilities else cwd,
-                    env=None if "env" in provider.capabilities else env,
-                    for_session="manages_status" in provider.capabilities,
+                    cwd=context.cwd,
+                    env=context.env,
+                    for_session=context.for_session,
                 )
                 return provider.execute(script, **options)
             if "args" in provider.capabilities:
                 leading = _shell_invocation(
                     flavour,
                     ((command, *args),),
-                    cwd=None if "cwd" in provider.capabilities else cwd,
-                    env=None if "env" in provider.capabilities else env,
-                    for_session="manages_status" in provider.capabilities,
+                    cwd=context.cwd,
+                    env=context.env,
+                    for_session=context.for_session,
                     executable=shell_executable,
                     provider=provider,
                 )
@@ -923,15 +961,13 @@ class SystemHost(Host):
                 text = command_text(command)
                 if flavour.quote(text) == text:
                     return provider.execute(text, **options)
-            rendered = flavour.command(
+            return self._execute_command_line(
+                provider,
+                flavour,
                 ((command, *args),),
                 executable=shell_executable,
-                cwd=None if "cwd" in provider.capabilities else cwd,
-                env=None if "env" in provider.capabilities else env,
-            )
-            return provider.execute(
-                _for_login_shell(flavour, rendered.command, provider),
-                **self._out_of_band_env(provider, rendered, options),
+                context=context,
+                options=options,
             )
 
         if self._shell is None and self._shell_resolver is None:
@@ -940,6 +976,7 @@ class SystemHost(Host):
             )
         flavour = self.shell_flavour
         executable = kwargs.get("executable")
+        context = self._shell_context(provider, cwd, env)
         if "script" in provider.capabilities:
             if executable is not None:
                 raise NotImplementedError(
@@ -948,22 +985,20 @@ class SystemHost(Host):
                 )
             script = flavour.script(
                 cmds,
-                cwd=None if "cwd" in provider.capabilities else cwd,
-                env=None if "env" in provider.capabilities else env,
-                for_session="manages_status" in provider.capabilities,
+                cwd=context.cwd,
+                env=context.env,
+                for_session=context.for_session,
             )
             return provider.execute(script, **options)
         shell_executable = executable or getattr(provider, "shell_executable", None)
         if "args" not in provider.capabilities:
-            rendered = flavour.command(
+            return self._execute_command_line(
+                provider,
+                flavour,
                 cmds,
                 executable=shell_executable,
-                cwd=None if "cwd" in provider.capabilities else cwd,
-                env=None if "env" in provider.capabilities else env,
-            )
-            return provider.execute(
-                _for_login_shell(flavour, rendered.command, provider),
-                **self._out_of_band_env(provider, rendered, options),
+                context=context,
+                options=options,
             )
         # One shell layer, exactly as LocalHost renders it. `flavour.command()`
         # already contains the shell invocation, so feeding *that* to
@@ -975,9 +1010,9 @@ class SystemHost(Host):
         leading = _shell_invocation(
             flavour,
             cmds,
-            cwd=None if "cwd" in provider.capabilities else cwd,
-            env=None if "env" in provider.capabilities else env,
-            for_session="manages_status" in provider.capabilities,
+            cwd=context.cwd,
+            env=context.env,
+            for_session=context.for_session,
             executable=shell_executable,
             provider=provider,
         )
