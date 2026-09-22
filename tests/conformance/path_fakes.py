@@ -402,32 +402,43 @@ class LocalQgaTransport:
         self._exec_output = None
         self._exec_pid = 0
 
+    def _end_exec(self) -> None:
+        """End the current guest process and release its pipes.
+
+        Called when a new `guest-exec` REPLACES this one as well as at
+        close: the fake keeps a single process, so starting a second
+        command used to drop the first `Popen` unreaped and its two pipes
+        unclosed. Windows GC timing hid that; on Linux it surfaced as
+        `ResourceWarning: subprocess N is still running` -- attributed,
+        through warnings-as-errors, to whatever test happened to run next.
+        """
+        process, self._exec_process = self._exec_process, None
+        self._exec_output = None
+        if process is None:
+            return
+        if process.poll() is None:
+            # A timed-out guest command is ORPHANED by contract, so the
+            # fake is what ends it.
+            try:
+                process.kill()
+            except OSError:
+                pass
+        try:
+            process.communicate(timeout=5)
+        except Exception:
+            pass
+        for pipe in (process.stdin, process.stdout, process.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except Exception:
+                pass
+
     def close(self) -> None:
         for stream in tuple(self._handles.values()):
             stream.close()
         self._handles.clear()
-        # A timed-out guest command is ORPHANED by contract -- the executor
-        # gives up and nobody calls `communicate()` -- so the fake has to be
-        # the thing that ends it. Otherwise the pipes are finalized by the
-        # collector, which is a `ResourceWarning` and, with warnings as
-        # errors, a failure attributed to whatever test ran next.
-        process, self._exec_process = self._exec_process, None
-        if process is not None:
-            if process.poll() is None:
-                try:
-                    process.kill()
-                except OSError:
-                    pass
-            try:
-                process.communicate(timeout=5)
-            except Exception:
-                pass
-            for pipe in (process.stdin, process.stdout, process.stderr):
-                try:
-                    if pipe is not None:
-                        pipe.close()
-                except Exception:
-                    pass
+        self._end_exec()
         self.sandbox.close()
 
     def execute(self, request, timeout=None):
@@ -464,6 +475,9 @@ class LocalQgaTransport:
             # deadline that raises with the guest pid were all dead code in
             # the battery, and the qemu timeout leg was really testing the
             # fake's own `subprocess.run(timeout=)`.
+            # Whatever is still running is replaced by this command, so
+            # end it first rather than dropping the handle.
+            self._end_exec()
             environment = os.environ.copy()
             for item in arguments.get("env", ()):
                 key, value = item.split("=", 1)
