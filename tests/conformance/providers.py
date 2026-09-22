@@ -212,16 +212,16 @@ def _run_like_a_channel(
         # N is still running` and two unclosed files -- against whatever
         # test happens to run next, which is how this read as an unrelated
         # failure. Windows GC timing hid it entirely.
-        try:
-            popen.communicate(timeout=5)
-        except Exception:
-            pass
         for pipe in (popen.stdin, popen.stdout, popen.stderr):
             try:
                 if pipe is not None:
                     pipe.close()
             except Exception:
                 pass
+        try:
+            popen.wait(timeout=5)
+        except Exception:
+            pass
         empty = "" if encoding is not None else b""
         raise subprocess.TimeoutExpired(
             invocation, timeout, output=empty, stderr=empty

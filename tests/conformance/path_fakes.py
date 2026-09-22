@@ -416,6 +416,17 @@ class LocalQgaTransport:
         self._exec_output = None
         if process is None:
             return
+        # Order matters. `communicate()` READS the pipes, and a
+        # shell-rendered command's grandchild still holds them open after
+        # the shell itself is killed -- so it blocked, timed out, and left
+        # the `Popen` unreaped, which is the `ResourceWarning: subprocess N
+        # is still running` this exists to prevent. Close first, then wait.
+        for pipe in (process.stdin, process.stdout, process.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except Exception:
+                pass
         if process.poll() is None:
             # A timed-out guest command is ORPHANED by contract, so the
             # fake is what ends it.
@@ -424,15 +435,9 @@ class LocalQgaTransport:
             except OSError:
                 pass
         try:
-            process.communicate(timeout=5)
+            process.wait(timeout=5)
         except Exception:
             pass
-        for pipe in (process.stdin, process.stdout, process.stderr):
-            try:
-                if pipe is not None:
-                    pipe.close()
-            except Exception:
-                pass
 
     def close(self) -> None:
         for stream in tuple(self._handles.values()):
