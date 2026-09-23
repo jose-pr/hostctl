@@ -638,6 +638,32 @@ def test_redact_uri_leaves_a_credential_free_uri_alone():
     assert redact_uri("wss://nas:8443/api?x=1") == "wss://nas:8443/api?x=1"
 
 
+@pytest.mark.parametrize(
+    "uri",
+    (
+        "ssh://nas:22/mail/user@example.com",
+        "ssh://user@nas:22/path/foo@bar",
+        "https://host:443/a@b",
+        "ssh://nas:22/mail/a@b/more@here",
+    ),
+)
+def test_redact_uri_never_over_redacts_a_well_formed_uri(uri):
+    """The textual fallback reads the LAST `@` as the userinfo delimiter, and
+    it used to run whenever `urlsplit` reported no password -- including for
+    URIs that simply do not have one.
+
+    `ssh://nas:22/mail/user@example.com` carries no credential at all and came
+    back as `ssh://nas@example.com`: not merely over-redacted but pointing at
+    a different host. Guessing is now confined to input that does not parse.
+    """
+    assert redact_uri(uri) == uri
+
+
+def test_redact_uri_still_strips_a_password_beside_an_at_sign_in_the_path():
+    """The guard above must not cost the actual redaction."""
+    assert redact_uri("ssh://root:pw@nas:22/mail/a@b") == "ssh://root@nas:22/mail/a@b"
+
+
 def test_an_unsupported_session_raises_not_implemented_not_a_runtime_error():
     """AGENTS.md: unsupported run()/path()/spawn() raise NotImplementedError.
 

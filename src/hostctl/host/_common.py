@@ -230,6 +230,12 @@ def redact_uri(uri: str) -> str:
 
     A URI with no password is returned unchanged.
 
+    **A well-formed URI is never over-redacted.** When the URI parses, what
+    `urlsplit` says is the authority *is* the authority, so an `@` anywhere
+    else -- a mailbox in a path, `ssh://nas:22/mail/user@example.com` -- is
+    left alone. Guessing is confined to input that does not parse, where
+    there is nothing better to go on: see below.
+
     This never raises. It is meant for error messages and log records, where
     failing to render a diagnostic would be worse than rendering an odd one.
     Characters `urlsplit` would delete (tab, CR, LF) are percent-encoded first,
@@ -238,31 +244,37 @@ def redact_uri(uri: str) -> str:
     """
     try:
         parsed = _urlsplit(_encode_stripped_characters(uri))
-        password = parsed.password
+        # Not dead code: `.port` is a property that RAISES, and touching it
+        # is what decides "well formed" here. It catches both shapes that
+        # matter in one place -- a non-numeric or out-of-range port, and an
+        # unencoded `/`, `?` or `#` in a password, since the latter ends the
+        # authority and leaves `user:secret` being read as host:port. So the
+        # bad port IS the symptom of the hidden password.
+        parsed.port  # noqa: B018
     except ValueError:
-        # A malformed IPv6 authority. The textual fallback below still strips
-        # the userinfo, which is the whole job.
-        password = None
+        pass  # Malformed. The textual fallback below is all that is left.
     else:
-        if password is not None:
-            try:
-                return _without_password(parsed).geturl()
-            except ValueError:
-                # `_rebuild_authority` reads `parsed.port`, which raises for a
-                # non-numeric or out-of-range one. This function is called
-                # from inside exception handlers to format a diagnostic, so
-                # raising here would replace the real error with this one.
-                pass
+        if parsed.password is None:
+            # Well formed and carrying no password: there is nothing to
+            # strip, and the fallback must not run. It reads the LAST `@` in
+            # the whole string as the userinfo delimiter, which would rewrite
+            # `ssh://nas:22/mail/user@example.com` -- a URI with no
+            # credentials at all -- into `ssh://nas@example.com`, naming a
+            # different host.
+            return uri
+        try:
+            return _without_password(parsed).geturl()
+        except ValueError:
+            # Not reachable through `.port`, which is already validated above;
+            # kept because "never raises" is a contract this function is
+            # called from inside exception handlers to honour.
+            pass
 
-    # `urlsplit` finds no password when one contains an unencoded `/`, `?` or
-    # `#`: those end the authority, so the secret lands in the path or query
-    # and the "redacted" form used to be the input in full. Randomly generated
-    # passwords routinely contain `/`.
-    #
-    # Fall back to reading the userinfo textually. The last `@` wins, as it
-    # does in a real authority. This can over-redact a path that contains `@`
-    # -- deliberately: an odd diagnostic beats a password in a log, which is
-    # the trade-off this function already documents.
+    # Only a malformed URI reaches here. Read the userinfo textually: the last
+    # `@` wins, as it does in a real authority. This can over-redact -- but
+    # the text has already failed to say where its authority ended, so there
+    # is no reading of it that is known to be right, and an odd diagnostic
+    # beats a password in a log.
     head, separator, _rest = uri.partition("://")
     start = len(head) + len(separator)
     authority_end = uri.rfind("@")

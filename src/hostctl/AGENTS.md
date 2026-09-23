@@ -156,7 +156,11 @@ and dispatches it with no args, and that script is shell text, not a program.
   renders. Supplying a password both in the URI and as an argument raises.
   `redact_uri(uri)` STRIPS a password and returns a valid, reusable URI (not a
   masked one, so a rendered form can never round-trip a wrong credential), for
-  logs, reprs, and error messages.
+  logs, reprs, and error messages. A WELL-FORMED URI IS NEVER OVER-REDACTED:
+  when it parses, `urlsplit`'s authority is the authority, so an `@` elsewhere
+  (`ssh://nas:22/mail/user@example.com`) is left alone. Only input that does
+  not parse gets the textual last-`@` guess, which may over-redact -- by then
+  the text has already failed to say where its authority ended.
 - A connection URI may carry a raw tab, CR, or LF in its **userinfo**: those
   are percent-encoded before `urlsplit` sees them, which would otherwise
   delete them silently (`ssh://u:pw<LF>otp:1@host` would authenticate with
