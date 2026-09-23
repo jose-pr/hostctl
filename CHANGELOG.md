@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-23
+
+### Fixed
+
+- **`redact_uri` no longer over-redacts a well-formed URI.** The textual
+  fallback -- which reads the last `@` in the whole string as the userinfo
+  delimiter -- ran whenever `urlsplit` reported no password, including for
+  URIs that simply do not have one. `ssh://nas:22/mail/user@example.com`
+  carries no credential at all and came back as `ssh://nas@example.com`: a
+  diagnostic quietly naming a different host. Guessing is now confined to
+  input that does not parse -- when the URI is well formed, `urlsplit`'s
+  authority is the authority, so an `@` in a path is left alone. A password
+  hidden by an unencoded `/`, `?` or `#` is still redacted: that input is
+  malformed (the separator ends the authority, leaving `user:secret` read as
+  host:port), and detecting exactly that is what now gates the fallback.
+
+### Changed
+
+- `ConnectionString` now documents the parsing contract it already enforced:
+  the input must be a valid URI, and reserved characters in a password must
+  be percent-encoded. There is no lenient mode and none is planned -- a
+  password may itself contain `@` and `:`, so nothing can recover where an
+  unescaped one ended, and a guess in the parser would be a guess about what
+  to connect to. Documentation and tests only; behaviour is unchanged.
+
 ## [0.3.1] - 2026-09-22
 
 ### Fixed
@@ -762,7 +787,8 @@ test suite on Python 3.9 through 3.14.
   assigned to it; a config-less host now builds its own family configuration
   instead.
 
-[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/jose-pr/hostctl/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/jose-pr/hostctl/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/jose-pr/hostctl/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/jose-pr/hostctl/compare/v0.2.7...v0.3.0
 [0.2.7]: https://github.com/jose-pr/hostctl/compare/v0.2.6...v0.2.7
