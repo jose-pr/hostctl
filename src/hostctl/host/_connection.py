@@ -110,6 +110,23 @@ class ConnectionString:
     not an invalid URI -- it is a URI with the scheme left off, which is what
     people type on a command line.
 
+    Beyond that, **the input must be a valid URI, and a malformed one
+    raises** -- an unclosed IPv6 literal, a non-numeric port, or a password
+    written with an unescaped `/`, `?` or `#` (each ends the authority, so
+    what precedes it is read as a port and fails to cast).
+
+    **Reserved characters in a password must be percent-encoded, and one
+    that is not gets no rescue attempt.** There is no rescue to make: a
+    password may itself contain `@` and `:`, so no rule recovers where an
+    unescaped one ended. Those two do parse -- the last `@` and the
+    first `:` win, as in any authority, giving `pa@ss` and `pa:ss` -- but
+    that is the URI grammar being applied, not a guess about the secret.
+    Guessing here would be guessing about what to *connect to*, so a raise is
+    the answer. :func:`redact_uri` is the other job and keeps its own rules:
+    stripping a secret out of text that may not parse at all, for a log line
+    nothing connects to. It does not over-redact a well-formed URI either --
+    it guesses only once the text has failed to parse.
+
     Every field can also be supplied directly, and three layers decide each
     one: **an explicit argument wins, then whatever the string carried, then
     `defaults`.**

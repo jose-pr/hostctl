@@ -357,3 +357,39 @@ def test_replace_normalises_what_init_normalises():
 
     assert parsed.replace(scheme="WSS") == parsed
     assert ConnectionString("ssh://nas").replace(port="2222").port == 2222
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "ssh://root:pa/ss@nas",
+        "ssh://root:pa?ss@nas",
+        "ssh://root:pa#ss@nas",
+        "ssh://root:pw@[::1",
+        "ssh://root:pw@nas:notaport",
+    ],
+)
+def test_a_malformed_uri_raises_rather_than_being_guessed_at(target):
+    """The input must be a valid URI, and there is deliberately no lenient
+    mode: what this parses is what gets connected to, so a guess here is a
+    guess about the target. An unescaped `/`, `?` or `#` ends the authority,
+    which is why `root:pa` is then read as a port and fails to cast."""
+    with pytest.raises(ValueError):
+        ConnectionString(target)
+
+
+def test_reserved_characters_in_a_password_must_be_percent_encoded():
+    value = ConnectionString("ssh://root:pa%2Fss@nas")
+
+    assert value.username == "root"
+    assert value.password == "pa/ss"
+
+
+def test_at_and_colon_in_a_password_parse_by_the_uri_grammar():
+    """These two do not raise -- the last `@` and the first `:` delimit, as in
+    any authority. They are also why no textual fallback is possible: a
+    password may contain both, so nothing recovers where an unescaped one
+    ended. `redact_uri` may over-redact, but only once the text has failed
+    to parse at all; this may not guess even then."""
+    assert ConnectionString("ssh://root:pa@ss@nas").password == "pa@ss"
+    assert ConnectionString("ssh://root:pa:ss@nas").password == "pa:ss"

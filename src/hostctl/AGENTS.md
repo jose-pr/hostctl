@@ -193,9 +193,19 @@ path grammar, so `path()` raises.
 `ConnectionString(value, *, scheme=None, port=None, ...)` is the parsed form
 of a target -- host, scheme, port, user, password -- with `is_local` answered
 by `netimps` rather than guessed. It exists so a caller never reimplements
-connection-string parsing. `uri_hostname(value)` returns the bare hostname of
-a URI authority, unbracketing an IPv6 literal; it is the sibling of
-`uri_host`, `redact_uri` and `parse_credentials`.
+connection-string parsing. A bare host parses (a missing scheme is not an
+error), but otherwise the value MUST be a valid URI: an unclosed IPv6 literal,
+a non-numeric port, or an unescaped `/`, `?` or `#` in a password RAISES.
+**Percent-encode reserved characters in a password** -- there is no lenient
+mode and none will be added, because a password may itself contain `@` and
+`:`, so nothing can recover where an unescaped one ended, and guessing would
+be guessing what to connect to. (`@` and `:` do parse: last `@`, first `:`,
+per the URI grammar.) Use `redact_uri` when the text may not parse at all and
+the job is only keeping a secret out of a log.
+
+`uri_hostname(value)` returns the bare hostname of a URI authority,
+unbracketing an IPv6 literal; it is the sibling of `uri_host`, `redact_uri`
+and `parse_credentials`.
 
 `__version__` is the installed version string.
 
