@@ -51,6 +51,7 @@ Optional features/extras:
 | `container` | Docker SDK for Python | Docker Engine `run()`/`path()`/sessions |
 | `serial` | PySerial | raw native/RFC 2217/socket serial sessions |
 | `qemu-libvirt` | libvirt Python bindings | local libvirt QGA transport |
+| `cli` | `duho` | the `hostctl` command |
 
 ## Quick start
 
@@ -213,9 +214,11 @@ tunnel continues to consume `SshConfig` directly.
 
 ## Command line
 
-The installed `hostctl` command is a thin wrapper over the library:
+The `hostctl` command is a thin wrapper over the library, and needs the `cli`
+extra:
 
 ```console
+pip install "hostctl[cli]"
 hostctl run local: -- python -c "print('hello')"
 hostctl info ssh://server
 hostctl cp ./artifact ssh://server:/tmp/artifact
@@ -224,7 +227,8 @@ hostctl cp ./artifact ssh://server:/tmp/artifact
 Secrets never belong in argv. Use `HOSTCTL_PASSWORD` or the subcommand's
 `--ask-password` option. See the
 [CLI guide](https://jose-pr.github.io/hostctl/guide/cli/) for all subcommands
-and exit statuses.
+and exit statuses. With `HOSTCTL_MCP=stdio` in its environment the same
+program serves every subcommand as an MCP tool over stdio.
 
 ## API overview
 
@@ -238,7 +242,7 @@ and exit statuses.
 | `hostctl.executor` | Transport-specific command executors |
 | `hostctl.shell` | Shell flavours and persistent sessions |
 | `hostctl.sync` | Remote checksum and byte-progress helpers for `pathlib_next` |
-| `hostctl._cli` | Dependency-free command-line entry point |
+| `hostctl.cli` | The `hostctl` command line (`main`); needs the `cli` extra |
 
 ## Development
 

@@ -16,6 +16,7 @@ and is not published anywhere.
 | `src/hostctl/provider/` | the provider/selector contracts every transport plugs into |
 | `src/hostctl/serial/` | console profiles (prompt, login, status framing) |
 | `src/hostctl/sync/` | checksum and byte-progress helpers for `pathlib_next` |
+| `src/hostctl/cli/` | the `hostctl` command on `duho`, one module per subcommand |
 | `tests/conformance/` | the cross-transport battery: one contract, every provider |
 | `examples/` | runnable examples; deliberately not packaged |
 | `docs/` | the guide published to GitHub Pages |

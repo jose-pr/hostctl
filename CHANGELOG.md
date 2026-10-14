@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The `hostctl` command needs the `cli` extra** (`pip install
+  "hostctl[cli]"`, which adds `duho>=0.7.5,<0.8`). Without it the console
+  script prints one line naming the extra and exits non-zero. The command
+  line moved from `hostctl._cli` to `hostctl.cli`; `hostctl.cli.main(argv)`
+  no longer takes `stdout=`/`stderr=` and writes to `sys.stdout`/`sys.stderr`.
+  Subcommands, operands and exit statuses are unchanged, except that the
+  `--` before `run`'s program is now required.
 - **Requires netimps 0.4** (`netimps>=0.4.0,<0.5`, was `>=0.3.0,<0.4`), and the
   `ssh` extra requires `pathlib_next[sftp-async]>=0.9.12`, the first release
   that admits it. No hostctl code changed, but three things change for a
@@ -22,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     an object with no port.
   - netimps 0.4 refuses to import when `NETIMPS_NO_SOCKET_PATCH` is set, and
     `import hostctl` imports netimps; set `NETIMPS_SOCKET_PATCH=0` instead.
+
+### Added
+
+- `HOSTCTL_MCP=stdio` serves every `hostctl` subcommand as an MCP tool over
+  stdio. `--ask-password` is refused there, since a tool call cannot prompt;
+  use `HOSTCTL_PASSWORD`.
+- `hostctl --version`, and `-v`/`-q`/`--loglevel` on every subcommand.
 
 ## [0.3.2] - 2026-09-23
 
