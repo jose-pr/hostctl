@@ -81,6 +81,10 @@ qemu-libvirt = ["libvirt-python>=9.0,<12"]
 # supports basic/plaintext/ssl and NTLM.
 winrm-credssp = ["pywinrm[credssp]>=0.5.0,<0.6"]
 winrm-kerberos = ["pywinrm[kerberos]>=0.5.0,<0.6"]
+# The `hostctl` command line. 0.7.5 is the floor: it is the first release
+# whose tool-call error result carries the exit status (125/126/127) for an
+# `_errors_` exception, and 0.7.4 is where `_report_error_` begins.
+cli = ["duho>=0.7.5,<0.8"]
 # Self-sufficient on purpose: the transport extras were listed by hand in
 # four places (README, test.yml, release.yml's two jobs) and had already
 # drifted -- `psrp` was missing from two of them, so a capability test
@@ -91,7 +95,7 @@ dev = [
     "black",
     "build",
     "pytest",
-    "hostctl[ssh,winrm,psrp,container,serial]",
+    "hostctl[ssh,winrm,psrp,container,serial,cli]",
 ]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 
@@ -101,7 +105,7 @@ Documentation = "https://jose-pr.github.io/hostctl/"
 Issues = "https://github.com/jose-pr/hostctl/issues"
 
 [project.scripts]
-hostctl = "hostctl._cli:main"
+hostctl = "hostctl.cli:main"
 
 [tool.hatch.build.targets.sdist]
 # `*.local.*` as well as root dotfiles: an `AGENTS.local.md` beside the

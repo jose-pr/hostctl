@@ -1,49 +1,52 @@
-import io
 import json
 import subprocess
 import sys
 import types
+
+import duho.mcp as duho_mcp
 import pytest
 
 from hostctl import Exec
-from hostctl._cli import _parser, main
+from hostctl.cli import Hostctl, main
+from hostctl.cli._common import split_operand
 
 
-def test_cli_has_no_password_argument():
-    help_text = _parser().format_help()
-    assert "--password" not in help_text
-    with pytest.raises(SystemExit):
-        _parser().parse_args(["run", "--password", "secret", "local:", "--", "echo"])
+def test_cli_has_no_password_argument(capsys):
+    with pytest.raises(SystemExit) as exit_:
+        main(["run", "--help"])
+    assert exit_.value.code == 0
+    assert "--password" not in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exit_:
+        main(["run", "--password", "secret", "local:", "--", "echo"])
+    assert exit_.value.code == 2
 
 
-def test_run_propagates_status_and_streams():
-    stdout = io.BytesIO()
-    stderr = io.BytesIO()
+def test_run_propagates_status_and_streams(capsysbinary):
     code = main(
         [
             "run",
             "local:",
             "--",
-            __import__("sys").executable,
+            sys.executable,
             "-c",
             "import sys; print('out'); print('err', file=sys.stderr); sys.exit(7)",
-        ],
-        stdout=stdout,
-        stderr=stderr,
+        ]
     )
+    captured = capsysbinary.readouterr()
     assert code == 7
-    assert stdout.getvalue().strip() == b"out"
-    assert stderr.getvalue().strip() == b"err"
+    assert captured.out.strip() == b"out"
+    assert captured.err.strip() == b"err"
+
+
+def test_run_without_a_command_is_a_usage_failure(capsys):
+    assert main(["run", "local:"]) == 125
+    assert "run requires a command after --" in capsys.readouterr().err
 
 
 def test_run_marks_the_operand_as_one_direct_command(monkeypatch):
     seen = []
 
     class _Host:
-        from hostctl import POSIX_SHELL
-
-        shell_flavour = POSIX_SHELL
-
         def __enter__(self):
             return self
 
@@ -54,7 +57,7 @@ def test_run_marks_the_operand_as_one_direct_command(monkeypatch):
             seen.append(cmds)
             return subprocess.CompletedProcess(cmds, 0, b"", b"")
 
-    monkeypatch.setattr("hostctl._cli.Host", lambda *args, **kwargs: _Host())
+    monkeypatch.setattr("hostctl.cli._common.Host", lambda *args, **kwargs: _Host())
 
     # One `Exec`, not a leading path plus positionals: the operand is a single
     # direct command, and the program is passed verbatim so a bare name
@@ -63,7 +66,7 @@ def test_run_marks_the_operand_as_one_direct_command(monkeypatch):
     assert seen == [(Exec("/bin/sh", "-c", "true"),)]
 
 
-def test_cat_ls_cp_and_info(tmp_path):
+def test_cat_ls_cp_and_info(tmp_path, capsysbinary):
     source = tmp_path / "source.txt"
     source.write_bytes(b"value")
     target = tmp_path / "target.txt"
@@ -71,50 +74,30 @@ def test_cat_ls_cp_and_info(tmp_path):
     assert main(["cp", str(source), str(target)]) == 0
     assert target.read_bytes() == b"value"
 
-    stdout = io.BytesIO()
-    assert main(["cat", "local:", str(target)], stdout=stdout) == 0
-    assert stdout.getvalue() == b"value"
+    capsysbinary.readouterr()
+    assert main(["cat", "local:", str(target)]) == 0
+    assert capsysbinary.readouterr().out == b"value"
 
-    listing = io.StringIO()
-    assert main(["ls", "local:", str(tmp_path)], stdout=listing) == 0
-    assert {"source.txt", "target.txt"} <= set(listing.getvalue().splitlines())
+    assert main(["ls", "local:", str(tmp_path)]) == 0
+    listing = capsysbinary.readouterr().out.decode().splitlines()
+    assert {"source.txt", "target.txt"} <= set(listing)
 
-    info = io.StringIO()
-    assert main(["info", "local:"], stdout=info) == 0
-    assert "os_family" in json.loads(info.getvalue())
+    assert main(["info", "local:"]) == 0
+    assert "os_family" in json.loads(capsysbinary.readouterr().out)
 
 
-def test_remote_operand_split_rejects_a_port_taken_as_the_path(monkeypatch):
-    import contextlib
-
-    from hostctl import _cli
-
-    seen = []
-
-    class _Host:
-        def path(self, value):
-            return value
-
-    monkeypatch.setattr(
-        _cli,
-        "_open_host",
-        lambda stack, uri, credentials: (seen.append(uri), _Host())[1],
-    )
-
-    def split(value):
-        with contextlib.ExitStack() as stack:
-            path = _cli._path_operand(stack, value, {})
-        return seen[-1], path
-
-    assert split("ssh://host:2222:/tmp/x") == ("ssh://host:2222", "/tmp/x")
-    assert split("ssh://host:/tmp/x") == ("ssh://host", "/tmp/x")
-    assert split("ssh://[::1]:2222:/tmp/x") == ("ssh://[::1]:2222", "/tmp/x")
-    assert split("ssh://user:pw@host:2222:/tmp/x") == (
+def test_remote_operand_split_rejects_a_port_taken_as_the_path():
+    assert split_operand("ssh://host:2222:/tmp/x") == ("ssh://host:2222", "/tmp/x")
+    assert split_operand("ssh://host:/tmp/x") == ("ssh://host", "/tmp/x")
+    assert split_operand("ssh://[::1]:2222:/tmp/x") == ("ssh://[::1]:2222", "/tmp/x")
+    assert split_operand("ssh://user:pw@host:2222:/tmp/x") == (
         "ssh://user:pw@host:2222",
         "/tmp/x",
     )
     # A colon-free relative path is still a path, digits and all.
-    assert split("ssh://host:2222:22") == ("ssh://host:2222", "22")
+    assert split_operand("ssh://host:2222:22") == ("ssh://host:2222", "22")
+    assert split_operand("./x") is None
+    assert split_operand("C:\\x") is None
 
     # Each of these would otherwise split on the port colon, silently reaching
     # the default port with a relative path made of the port digits.
@@ -125,30 +108,43 @@ def test_remote_operand_split_rejects_a_port_taken_as_the_path(monkeypatch):
         "ssh://[::1]:2222/x",
     ):
         with pytest.raises(ValueError, match="URI:PATH"):
-            split(rejected)
+            split_operand(rejected)
 
 
-def test_cp_refuses_overwrite_without_flag(tmp_path):
+def test_cp_refuses_overwrite_without_flag(tmp_path, capsys):
     source = tmp_path / "source"
     target = tmp_path / "target"
     source.write_text("new")
     target.write_text("old")
-    error = io.StringIO()
-    assert main(["cp", str(source), str(target)], stderr=error) == 125
+    assert main(["cp", str(source), str(target)]) == 125
     assert target.read_text() == "old"
 
 
-def test_connection_failures_use_transport_status(monkeypatch):
-    monkeypatch.setattr(
-        "hostctl._cli.Host",
-        lambda *args, **kwargs: (_ for _ in ()).throw(ConnectionError("offline")),
-    )
-    error = io.StringIO()
-    assert main(["info", "ssh://host"], stderr=error) == 125
-    assert "offline" in error.getvalue()
+def test_failures_keep_their_status_and_their_kind(monkeypatch, capsys):
+    def refuse(error):
+        def host(*args, **kwargs):
+            raise error
+
+        monkeypatch.setattr("hostctl.cli._common.Host", host)
+
+    refuse(ConnectionError("offline"))
+    assert main(["info", "ssh://host"]) == 125
+    assert capsys.readouterr().err == "hostctl: offline\n"
+
+    refuse(PermissionError("auth failed"))
+    assert main(["info", "ssh://host"]) == 126
+    assert capsys.readouterr().err == "hostctl: permission denied: auth failed\n"
+
+    refuse(FileNotFoundError("no such file"))
+    assert main(["info", "ssh://host"]) == 127
+    assert capsys.readouterr().err == "hostctl: not found: no such file\n"
+
+    refuse(subprocess.TimeoutExpired("cmd", 5))
+    assert main(["info", "ssh://host"]) == 125
+    assert capsys.readouterr().err.startswith("hostctl: timed out: ")
 
 
-def test_password_comes_from_environment_not_argv(monkeypatch):
+def test_password_comes_from_environment_not_argv(monkeypatch, capsys):
     seen = {}
 
     class _Host:
@@ -165,12 +161,14 @@ def test_password_comes_from_environment_not_argv(monkeypatch):
             return types.SimpleNamespace()
 
     monkeypatch.setenv("HOSTCTL_PASSWORD", "environment-secret")
-    monkeypatch.setattr("hostctl._cli.Host", _Host)
-    assert main(["info", "ssh://host"], stdout=io.StringIO()) == 0
+    monkeypatch.setattr("hostctl.cli._common.Host", _Host)
+    assert main(["info", "ssh://host"]) == 0
     assert seen == {"password": "environment-secret"}
 
 
-def test_shell_uses_session_and_submits_input(monkeypatch):
+def test_shell_uses_session_and_submits_input(monkeypatch, capsysbinary):
+    import io
+
     events = []
 
     class _Session:
@@ -202,11 +200,10 @@ def test_shell_uses_session_and_submits_input(monkeypatch):
         def __exit__(self, *args):
             return False
 
-    monkeypatch.setattr("hostctl._cli.Host", lambda *args, **kwargs: _Host())
-    monkeypatch.setattr("hostctl._cli.sys.stdin", io.StringIO("show version\n"))
-    output = io.BytesIO()
-    assert main(["shell", "serial:///loop%3A%2F%2F"], stdout=output) == 0
-    assert output.getvalue() == b"ready\n"
+    monkeypatch.setattr("hostctl.cli._common.Host", lambda *args, **kwargs: _Host())
+    monkeypatch.setattr("sys.stdin", io.StringIO("show version\n"))
+    assert main(["shell", "serial:///loop%3A%2F%2F"]) == 0
+    assert capsysbinary.readouterr().out == b"ready\n"
     assert events == [
         ("session", {"terminal": True}),
         ("send", "show version"),
@@ -216,10 +213,8 @@ def test_shell_uses_session_and_submits_input(monkeypatch):
 
 
 def test_an_exported_password_does_not_break_a_local_command(monkeypatch, capsys):
-    """`HOSTCTL_PASSWORD` is ambient -- the guide says to export it -- and it
-    was splatted into every `Host(...)`, so the guide's own `local:` examples
-    failed with `unknown credential argument: password` and exit 125 the
-    moment the variable existed."""
+    """`HOSTCTL_PASSWORD` is ambient -- the guide says to export it -- so a
+    scheme that declares no password must not fail on it."""
     monkeypatch.setenv("HOSTCTL_PASSWORD", "hunter2")
 
     code = main(["run", "local:", "--", sys.executable, "-c", "print('ok')"])
@@ -235,3 +230,60 @@ def test_an_explicit_unknown_credential_still_fails_closed():
 
     with pytest.raises(ValueError, match="unknown credential argument"):
         HostConfig("local:", passwrd="typo")
+
+
+def test_every_command_is_an_mcp_tool():
+    names = {tool["name"] for tool in duho_mcp.describe_tools(Hostctl)}
+
+    assert names == {
+        f"hostctl.{name}" for name in ("run", "ls", "cat", "cp", "info", "shell")
+    }
+
+
+def test_a_tool_call_returns_the_command_output_and_status():
+    info = duho_mcp.call_tool(Hostctl, "hostctl.info", {"uri": "local:"})
+    assert not info.get("isError")
+    assert "os_family" in json.loads(info["content"][0]["text"])
+
+    program = "import sys; print('out'); print('err', file=sys.stderr); sys.exit(3)"
+    run = duho_mcp.call_tool(
+        Hostctl,
+        "hostctl.run",
+        {"uri": "local:", "--": [sys.executable, "-c", program]},
+    )
+    text = run["content"][0]["text"]
+    # The remote stderr arrives as bytes on a text-only captured stream.
+    assert run["isError"] and "out" in text and "err" in text
+    assert "exit code: 3" in text
+
+
+def test_a_tool_call_cannot_prompt_for_a_password():
+    result = duho_mcp.call_tool(
+        Hostctl, "hostctl.info", {"uri": "local:", "ask_password": True}
+    )
+
+    assert result["isError"]
+    assert "HOSTCTL_PASSWORD" in result["content"][0]["text"]
+    assert "exit code: 125" in result["content"][0]["text"]
+
+
+def test_without_duho_the_command_names_the_extra(monkeypatch):
+    monkeypatch.setitem(sys.modules, "duho", None)
+
+    with pytest.raises(SystemExit) as exit_:
+        main(["info", "local:"])
+
+    assert "hostctl[cli]" in str(exit_.value.code)
+
+
+def test_importing_hostctl_does_not_import_the_command_line():
+    probe = (
+        "import sys, hostctl; "
+        "loaded = {'hostctl.cli', 'duho'} & set(sys.modules); "
+        "sys.exit(sorted(loaded) or 0)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True
+    )
+
+    assert result.returncode == 0, result.stderr

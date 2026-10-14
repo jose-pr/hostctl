@@ -6,9 +6,10 @@ import contextlib
 import io
 import threading
 
+import duho
 import pytest
 
-from hostctl import _cli
+from hostctl.cli import Hostctl, main
 
 
 class _IdleSession:
@@ -72,58 +73,57 @@ class _Host:
         return False
 
 
-def _run_shell(monkeypatch, shell, stdin_text="hello\n"):
-    monkeypatch.setattr(_cli, "Host", lambda uri, **credentials: _Host(shell))
-    monkeypatch.setattr(_cli.sys, "stdin", io.StringIO(stdin_text))
-    stdout = io.StringIO()
-    stdout.buffer = io.BytesIO()
-    args = _cli._parser().parse_args(["shell", "serial:///dev/ttyUSB0"])
-    return _cli._command_shell(args, stdout, io.StringIO()), stdout
+def _run_shell(monkeypatch, capsysbinary, shell, stdin_text="hello\n"):
+    monkeypatch.setattr(
+        "hostctl.cli._common.Host", lambda uri, **credentials: _Host(shell)
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO(stdin_text))
+    command = duho.parse(Hostctl, ["shell", "serial:///dev/ttyUSB0"])
+    return command(), capsysbinary.readouterr().out
 
 
-def test_shell_opens_a_console_that_cannot_allocate_a_terminal(monkeypatch):
-    """`terminal=True` was hardcoded, and a URI-built serial host is raw.
-
-    So `hostctl shell serial:///dev/ttyUSB0` could never open a session at
-    all -- the one verb a console most needs.
-    """
+def test_shell_opens_a_console_that_cannot_allocate_a_terminal(
+    monkeypatch, capsysbinary
+):
+    """A URI-built serial host is raw, so asking only for a terminal could
+    never open a session -- the one verb a console most needs."""
     shell = _Shell(_IdleSession(), terminal_supported=False)
 
-    status, stdout = _run_shell(monkeypatch, shell)
+    status, output = _run_shell(monkeypatch, capsysbinary, shell)
 
     assert status == 0
     assert shell.terminal_requests == [True, None]
-    assert b"banner" in stdout.buffer.getvalue()
+    assert b"banner" in output
 
 
-def test_a_terminal_capable_host_still_gets_one(monkeypatch):
+def test_a_terminal_capable_host_still_gets_one(monkeypatch, capsysbinary):
     shell = _Shell(_IdleSession(), terminal_supported=True)
 
-    status, _ = _run_shell(monkeypatch, shell)
+    status, _ = _run_shell(monkeypatch, capsysbinary, shell)
 
     assert status == 0
     assert shell.terminal_requests == [True]
 
 
 def test_an_opaque_uri_is_a_legal_path_operand():
-    """`local:/tmp/x` is the spelling every other subcommand documents.
-
-    Looking for a SECOND colon rejected it outright.
-    """
+    """`local:/tmp/x` is the spelling every other subcommand documents."""
+    command = duho.parse(Hostctl, ["cp", "local:/tmp/x", "y"])
     with contextlib.ExitStack() as stack:
-        path = _cli._path_operand(stack, "local:/tmp/x", {})
+        path = command.path_operand(stack, "local:/tmp/x")
         assert str(path).replace("\\", "/").endswith("/tmp/x")
 
 
 def test_a_host_with_no_path_names_the_spelling():
+    command = duho.parse(Hostctl, ["cp", "ssh://host:2222/srv", "y"])
     with contextlib.ExitStack() as stack:
         with pytest.raises(ValueError, match="URI:PATH"):
-            _cli._path_operand(stack, "ssh://host:2222/srv", {})
+            command.path_operand(stack, "ssh://host:2222/srv")
 
 
-def test_the_help_documents_the_grammar_and_the_exit_codes():
-    """None of this existed anywhere but the guide."""
-    text = _cli._parser().format_help()
+def test_the_help_documents_the_grammar_and_the_exit_codes(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    text = capsys.readouterr().out
 
     assert "URI:PATH" in text
     assert "HOSTCTL_PASSWORD" in text

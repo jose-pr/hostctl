@@ -3,9 +3,8 @@
 Protocol-independent host execution and filesystem paths. Core requires
 `pathlib_next`; transport integrations are optional extras.
 
-The dependency-free CLI entry point is `hostctl._cli:main`. Commands are
-`run`, `ls`, `cat`, `cp`, `info`, and `shell`; passwords come only from
-`HOSTCTL_PASSWORD` or `--ask-password`, never argv values.
+The `hostctl` command line is `hostctl.cli` and needs the `cli` extra; see
+"Command line" at the end. `import hostctl` never imports it.
 
 `hostctl.__all__` is the stable surface: hosts and configs you construct,
 exceptions you catch, types you annotate with, and the provider/shell contracts
@@ -550,3 +549,35 @@ when the console does not answer the way the protocol requires.
 
 `TerminalOptions(term, columns, rows, pixel_width, pixel_height)` is the
 resolved terminal request `spawn(terminal=...)` produces.
+
+## Command line
+
+`hostctl.cli.main(argv=None) -> int` is the entry point of the `hostctl`
+console script and of `python -m hostctl`, built on `duho`; install
+`hostctl[cli]`. Without the extra it raises `SystemExit` naming it.
+`hostctl.cli` is not library API and is absent from `hostctl.__all__`.
+
+```console
+hostctl run local: -- python -c "print('hello')"
+hostctl info ssh://server
+hostctl ls ssh://server /etc
+hostctl cat ssh://server /etc/os-release
+hostctl cp ./artifact ssh://server:/tmp/artifact
+hostctl shell ssh://server
+```
+
+- The program after `run` follows `--`; it runs directly, without a shell.
+- `cp` operands are `URI:PATH` or a local path; the colon before the path is
+  required even after a port (`ssh://host:2222:/x`).
+- Each subcommand takes `--ask-password`, `-v`/`-q` and `--loglevel`; the
+  root takes `--version`.
+- Exit status: `run` returns the remote command's own status; the command
+  line's own failures are 125 (connection, timeout, usage, unsupported
+  operation), 126 (permission denied), 127 (not found) and 130 (interrupted).
+  A parser usage error is 2.
+- `HOSTCTL_PASSWORD` supplies a password, offered only to schemes that accept
+  one; `--ask-password` prompts instead and is refused in a tool call.
+- `HOSTCTL_MCP=stdio` serves every subcommand as an MCP tool over stdio
+  (`hostctl.run`, `.ls`, `.cat`, `.cp`, `.info`, `.shell`); `run`'s program
+  is the tool argument `"--"`. A tool call has no stdin, so `shell` there
+  sends nothing.
