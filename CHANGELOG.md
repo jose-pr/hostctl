@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Requires netimps 0.4** (`netimps>=0.4.0,<0.5`, was `>=0.3.0,<0.4`), and the
+  `ssh` extra requires `pathlib_next[sftp-async]>=0.9.12`, the first release
+  that admits it. No hostctl code changed, but three things change for a
+  caller:
+  - `winrm`, `winrms`, `wsman`, `wsmans` and `psrp` now have default ports
+    (5985, 5986, 5985, 5986, 5985) where `ConnectionString.port` was `None`,
+    so `str(ConnectionString("winrm://admin@host"))` renders
+    `winrm://admin@host:5985`. They are the ports `WinRMConfig` already chose.
+  - An all-digit scheme given through `scheme=`, `defaults=` or `replace()` is
+    read as a port, and one outside 0-65535 raises `ValueError` where it gave
+    an object with no port.
+  - netimps 0.4 refuses to import when `NETIMPS_NO_SOCKET_PATCH` is set, and
+    `import hostctl` imports netimps; set `NETIMPS_SOCKET_PATCH=0` instead.
+
 ## [0.3.2] - 2026-09-23
 
 ### Fixed

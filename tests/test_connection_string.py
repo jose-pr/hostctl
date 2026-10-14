@@ -101,6 +101,14 @@ def test_the_default_resolver_is_netimps():
     assert ConnectionString("nas", scheme="ssh").port == netimps.get_default_port("ssh")
 
 
+def test_winrm_schemes_resolve_the_ports_winrmconfig_uses():
+    # Must agree with the 5985/5986 `WinRMConfig` picks for a plain and an
+    # `ssl` transport, or a port read from here would contradict it.
+    assert ConnectionString("winrm://admin@host").port == 5985
+    assert ConnectionString("winrms://admin@host").port == 5986
+    assert str(ConnectionString("winrms://admin@host")) == "winrms://admin@host:5986"
+
+
 def test_a_scheme_registered_with_netimps_is_picked_up():
     # An application extends the table with `netimps.register_port`, and
     # `ConnectionString` sees it because it asks netimps at parse time rather

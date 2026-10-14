@@ -49,12 +49,12 @@ classifiers = [
 # * `BaseSftpBackend.close()` is the public way to drop a backend's cached
 #   connections, which `SshTransport.close()` calls.
 #
-# netimps has no such case and floors at the series start -- 0.3.0, whose
-# breaking changes include a `resolve()` chain that no longer stops on an
-# empty answer and a `register_port` that moves a scheme instead of leaving
-# the old reverse entry behind. The ceilings stay at the next major-ish
-# boundary because both projects are pre-1.0, where a minor may break.
-dependencies = ["pathlib_next>=0.9.10,<0.10", "netimps>=0.3.0,<0.4"]
+# netimps has no such case and floors at the series start -- 0.4.0, whose
+# scheme registry knows winrm/winrms/wsman/wsmans/psrp, so `ConnectionString`
+# resolves 5985/5986 for them where 0.3 left the port `None`. The ceilings
+# stay at the next major-ish boundary because both projects are pre-1.0,
+# where a minor may break.
+dependencies = ["pathlib_next>=0.9.10,<0.10", "netimps>=0.4.0,<0.5"]
 
 [project.optional-dependencies]
 # SSH-backed run()/path(): asyncssh for shell exec, pathlib_next's SftpPath
@@ -62,7 +62,10 @@ dependencies = ["pathlib_next>=0.9.10,<0.10", "netimps>=0.3.0,<0.4"]
 # The floor is the oldest asyncssh this package is exercised against;
 # the ceiling is the next major. Left unbounded, these two were the only
 # dependencies that could install a version nobody had ever run.
-ssh = ["asyncssh>=2.14,<3", "pathlib_next[sftp-async]>=0.9.10,<0.10"]
+# pathlib_next's SFTP backend imports netimps; 0.9.12 is the first release
+# whose extra declares the 0.4 series, while 0.9.10-0.9.11 leave netimps
+# unbounded and so could be paired with a netimps they never ran against.
+ssh = ["asyncssh>=2.14,<3", "pathlib_next[sftp-async]>=0.9.12,<0.10"]
 # Windows Remote Management command execution.
 winrm = ["pywinrm>=0.5.0,<0.6"]
 # PowerShell Remoting Protocol runspaces (Python 3.10+ only).  The marker
