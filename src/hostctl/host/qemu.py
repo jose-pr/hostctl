@@ -113,9 +113,9 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
     #: Guest-side helper supplying the metadata and namespace operations QGA
     #: has no RPC for. QGA's file RPCs move bytes and nothing else, so without
     #: one `stat`, `scandir` and every mutation are unavailable and the path
-    #: provider reports `degraded`. hostctl ships no implementation yet (see
-    #: `.agents/plans/qga_guest_path_helper.md`); supplying one is how a
-    #: caller with a known guest gets a complete path surface today.
+    #: provider reports `degraded`. hostctl ships no implementation yet;
+    #: supplying one is how a caller with a known guest gets a complete path
+    #: surface today.
     path_helper: typing.Optional["GuestPathHelper"] = dataclasses.field(
         default=None, repr=False, compare=False
     )
