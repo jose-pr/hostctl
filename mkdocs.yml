@@ -6,7 +6,7 @@ repo_name: jose-pr/hostctl
 edit_uri: edit/main/docs/
 
 # Constrain the scan to docs/ so pymdownx.snippets + strict nav don't trip on
-# repo-level markdown (see kb/PYTHON.md Known Difficulties).
+# repo-level markdown.
 docs_dir: docs
 
 theme:

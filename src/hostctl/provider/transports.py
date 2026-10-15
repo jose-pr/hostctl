@@ -156,9 +156,8 @@ class ContainerExecutorProvider(ExecutorProvider):
         # OSError, not just ConnectionError: a DNS failure (socket.gaierror)
         # and a routing failure (EHOSTUNREACH/ENETUNREACH) are OSError but not
         # ConnectionError, and they are unambiguously pre-dispatch -- no
-        # channel opened, nothing sent. They used to escape the provider, so
-        # ordered fallback stopped dead and a raw socket error crossed the
-        # public boundary.
+        # channel opened, nothing sent -- so the provider declines and
+        # ordered fallback moves on.
         except (OSError, TimeoutError) as exc:
             log.debug(
                 "container provider declining before dispatch: %s: %s",

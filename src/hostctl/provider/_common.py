@@ -91,10 +91,9 @@ class SessionInitializer:
     def __call__(self, host, **options):
         """Run the hook, passing `timeout` only to a hook that accepts it.
 
-        It used to be injected unconditionally, so the documented example --
-        `SessionInitializer(lambda h: h.run("sudo -v"), timeout=10)` -- raised
-        `TypeError` at `connect()` and tore the connection down, because that
-        lambda takes no `timeout` keyword.
+        The documented example,
+        `SessionInitializer(lambda h: h.run("sudo -v"), timeout=10)`, takes
+        no `timeout` keyword, and passing one would raise at `connect()`.
 
         The value is advisory: it is handed to a hook that declares it, and
         nothing here enforces a deadline. A hook that wants one applies it to
@@ -497,9 +496,7 @@ class ProviderSelector:
             if declined is not None:
                 # Recorded even when the caller also excluded this provider:
                 # `exclude` says "I already tried it", and the decline is the
-                # reason it did not work.  Skipping the record here is exactly
-                # what used to strip the refusal from the trace of the call
-                # that suffered it.
+                # reason it did not work, which that call's trace must keep.
                 self._record(
                     {
                         "provider": self.redact(provider.name),
@@ -573,9 +570,8 @@ class ProviderSelector:
             )
             or "<none>",
         )
-        # Name why. This used to surface as a bare "no provider is available"
-        # with no `__cause__` and no `.cause`, so the real refusal -- a
-        # rejected host key, a refused connection -- was visible only at DEBUG.
+        # Name why: the real refusal -- a rejected host key, a refused
+        # connection -- rides as `__cause__` and `.cause`, not only at DEBUG.
         with self._lock:
             causes = dict(self._decline_causes)
             declined_names = list(self._declined)

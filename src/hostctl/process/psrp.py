@@ -59,12 +59,11 @@ def _pipeline_state_name(value: object) -> str:
 
 #: `WinRMConfig.transport` spelled the way pypsrp's WSMan names it.
 #:
-#: The pool used to hardcode "negotiate", so a config that validates and
-#: advertises `credssp` (or `basic`) authenticated with Negotiate instead --
-#: and the same config behaved differently depending only on whether the psrp
-#: extra happened to be installed. `plaintext` is pywinrm's name for basic
-#: over http, and `ssl` is its name for basic over https: certificate auth
-#: needs a client certificate, which `WinRMConfig` does not carry.
+#: The pool authenticates with the transport the config names, as pywinrm
+#: does, so a config behaves the same with or without the psrp extra.
+#: `plaintext` is pywinrm's name for basic over http, and `ssl` is its name
+#: for basic over https: certificate auth needs a client certificate, which
+#: `WinRMConfig` does not carry.
 _PSRP_AUTH = {
     "basic": "basic",
     "plaintext": "basic",
@@ -218,10 +217,9 @@ class RunspaceSession:
         marker = exit_marker()
         if capture_exit:
             # Reset first: this runspace is persistent, so `$LASTEXITCODE`
-            # survives from one pipeline to the next. A pure-PowerShell
-            # command never sets it, and used to report whatever an earlier
-            # *native* command had left behind -- a succeeding command raising
-            # CalledProcessError with a stale status.
+            # survives from one pipeline to the next, and a pure-PowerShell
+            # command, which never sets it, would report the stale status of
+            # an earlier *native* command.
             # The epilogue goes on its OWN LINE: joined with `;` after the
             # payload, a script ending in a `#` comment commented it out,
             # and the pipeline then reported whatever status the previous

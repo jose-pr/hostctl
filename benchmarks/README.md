@@ -74,7 +74,6 @@ meaningless.
 A local number is a sanity check, not evidence. A perf claim in a release or a
 changelog comes from a run whose conditions are stated.
 
-The committed `0.2.7` files are the **baseline**: the state at the end of the
-2026-09-20 review remediation, before any optimisation work. Nothing in this
-package has been tuned for speed yet, which is exactly why a baseline is worth
-having now.
+The committed `0.2.7` files are the **baseline**: hostctl 0.2.7, before any
+optimisation work. Nothing in this package has been tuned for speed yet, which
+is exactly why a baseline is worth having now.

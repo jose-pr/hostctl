@@ -108,10 +108,8 @@ class SerialConfig(HostConfig, schemes=("serial",)):
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
-        # Built ONCE, here, and kept: `SerialHost.__init__` used to build a
-        # second one from the same fields as a 12-argument positional call,
-        # so the two constructions could drift and the positional one had
-        # no names to check against.
+        # Built ONCE, here, by keyword, and kept: `SerialHost` reads it
+        # rather than building a second one from the same fields.
         settings = SerialSettings(
             self.port,
             baudrate=self.baudrate,
@@ -437,10 +435,9 @@ class SerialHost(Host):
         else:
             output_value = output
         # The shared dispatcher owns the "a `None` target means `sys.stdout`"
-        # rule; serial used to treat `None` as "discard", which silently threw
-        # the console transcript away for `capture_output=False`.  A serial
-        # console is one merged stream, so the stderr side is pinned to PIPE
-        # to keep the dispatcher from writing an empty second stream.
+        # rule.  A serial console is one merged stream, so the stderr side is
+        # pinned to PIPE to keep the dispatcher from writing an empty second
+        # stream.
         captured, _ = dispatch_output(
             output_stream,
             subprocess.PIPE,
@@ -465,8 +462,7 @@ class _SerialShell:
     does supply is the two spellings a caller reaches for -- `run()` (only
     when the profile frames a reliable status) and `session()` -- plus the
     documented `with host.shell as session:` shorthand, which is a serial
-    console's primary mode and used to raise `TypeError: object does not
-    support the context manager protocol`.
+    console's primary mode.
     """
 
     def __init__(self, host: SerialHost) -> None:

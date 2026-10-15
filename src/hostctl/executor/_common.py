@@ -226,13 +226,9 @@ def expired(
 ) -> subprocess.TimeoutExpired:
     """Build the one `TimeoutExpired` shape every hostctl transport raises.
 
-    `subprocess.TimeoutExpired` is the shared type, but the attributes hung
-    off it used to be per-transport: `.orphaned` and `.pid` existed only on
-    the SSH and QGA paths, so a supervisor writing
-    `if exc.orphaned: alert(exc.pid)` -- exactly what the API header
-    documented -- crashed with `AttributeError` when the same `SystemHost`
-    timed out over local, serial or WinRM. The payload diverged too: local
-    and QGA reported `b''` where serial reported `None`.
+    Every transport sets the same attributes, `.orphaned` and `.pid`
+    included, and the same payload types, so a supervisor writing
+    `if exc.orphaned: alert(exc.pid)` works whichever transport timed out.
 
     `orphaned` is `True` when the transport could NOT stop the command, so
     it is still running somewhere; `pid` is its identifier where the

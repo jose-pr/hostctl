@@ -218,12 +218,10 @@ def async_to_sync(
     try:
         return future.result()
     except BaseException:
-        # Cancel what is still pending. `KeyboardInterrupt` (or any exception
-        # raised out of `result()`) used to leave the coroutine running on
-        # the bridge loop, so a Ctrl-C during `run()` returned to the prompt
-        # while the remote command kept going and its channel stayed open.
-        # Cancelling propagates into the task, and asyncssh closes the
-        # channel from there.
+        # Cancel what is still pending: otherwise a Ctrl-C during `run()`
+        # returns to the prompt while the coroutine, the remote command and
+        # its channel keep going on the bridge loop. Cancelling propagates
+        # into the task, and asyncssh closes the channel from there.
         future.cancel()
         raise
 

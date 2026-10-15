@@ -539,18 +539,17 @@ class ContainerHost(Host):
         errors: typing.Optional[str] = None,
     ) -> Process:
         """Start a persistent Docker exec process with an optional TTY."""
-        # container-14: `errors=` without `encoding=` was accepted and
-        # dropped, so `errors="replace"` still raised on undecodable output.
-        # Selecting text mode from either is the rule every other transport
-        # follows (`executor.wants_text`).
+        # Either `errors=` or `encoding=` selects text mode, the rule every
+        # transport follows (`executor.wants_text`), so `errors="replace"`
+        # alone applies to undecodable output.
         if errors is not None and encoding is None:
             encoding = "utf-8"
         direct = starts_direct_command(cmds)
         if direct is not None:
             command, args = direct
             if executable is not None:
-                # `run()` refuses this; spawning silently ignored it, so the
-                # same call meant two different things at two entry points.
+                # `run()` refuses this too, so the same call means one thing
+                # at both entry points.
                 raise NotImplementedError(
                     "executable cannot be combined with a direct command"
                 )
@@ -635,9 +634,8 @@ class ContainerHost(Host):
             )
         except Exception:
             # The exec has already started, so the hijacked daemon connection
-            # is live. `SocketIO.close()` provably does not close the
-            # underlying socket, and this construction can raise (a bad
-            # `encoding` gives LookupError) -- both paths used to leave the
-            # connection open until a GC pass broke its reference cycle.
+            # is live, and this construction can raise (a bad `encoding` gives
+            # LookupError). `SocketIO.close()` does not close the underlying
+            # socket, which would then stay open until a GC pass.
             _close_hijacked(stream)
             raise

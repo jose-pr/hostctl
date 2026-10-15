@@ -303,10 +303,9 @@ class ShellFlavour(abc.ABC):
     #: where there is nothing to fuse, and PowerShell 5 has no `&&` to fuse
     #: with anyway.
     #:
-    #: Declared, because it used to be INFERRED from whether `command`
-    #: happened to sit next to `cwd` in `context_order`. PowerShell's order
-    #: puts `env` between them, so its `join_cwd` override was unreachable
-    #: for years and nothing failed to say so.
+    #: Declared, not inferred from `context_order`: PowerShell's order puts
+    #: `env` between `cwd` and `command`, and its `join_cwd` override still
+    #: applies.
     cwd_guard: typing.ClassVar[str] = "operator"
     structured_command_prefix = ""
     path_flavor: type[PurePath] = PurePath

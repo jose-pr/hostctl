@@ -204,11 +204,8 @@ class SerialConsoleProcess(Process):
         # console with a non-UTF-8 device answered `errors="replace"` with a
         # `UnicodeEncodeError`. `QemuSerialProcess` already carried both.
         self.errors = errors or "strict"
-        #: Set when the caller asked for text. `read()` used to return
-        #: `bytes` whatever `encoding=` said, so the same
-        #: `spawn(encoding="utf-8")` gave `str` from SSH and a QEMU console
-        #: and `bytes` from here -- a `TypeError` in any code that works
-        #: against both.
+        #: Set when the caller asked for text, so `read()` returns `str`
+        #: here as it does from SSH and a QEMU console.
         self._decoder = (
             IncrementalTextDecoder(self.encoding, self.errors) if text else None
         )

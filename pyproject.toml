@@ -72,12 +72,11 @@ winrm-kerberos = ["pywinrm[kerberos]>=0.5.0,<0.6"]
 # whose tool-call error result carries the exit status (125/126/127) for an
 # `_errors_` exception, and 0.7.4 is where `_report_error_` begins.
 cli = ["duho>=0.7.5,<0.8"]
-# Self-sufficient on purpose: the transport extras were listed by hand in
-# four places (README, test.yml, release.yml's two jobs) and had already
-# drifted -- `psrp` was missing from two of them, so a capability test
-# skipped silently. `hostctl[...]` is a self-reference, which PEP 508
-# permits and pip resolves; `psrp`'s own `python_version >= "3.10"` marker
-# still keeps it off the 3.9 floor.
+# Self-sufficient on purpose: README and the workflows install `.[dev]`
+# rather than re-spelling the transport extras, where a missing one makes a
+# capability test skip silently. `hostctl[...]` is a self-reference, which
+# PEP 508 permits and pip resolves; `psrp`'s own `python_version >= "3.10"`
+# marker still keeps it off the 3.9 floor.
 dev = [
     "black",
     "build",

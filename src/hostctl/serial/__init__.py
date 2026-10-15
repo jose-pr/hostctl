@@ -247,12 +247,9 @@ class PromptConsoleProfile:
             if match:
                 return bytes(buffer)
             if len(buffer) > self.max_buffer:
-                # NOT a silent head truncation. The transcript used to be cut
-                # from the front mid-line and returned as if complete, with
-                # `error_patterns` then searched only against the surviving
-                # tail -- so a 120 KB `show running-config` came back as its
-                # last 64 KB with returncode 0, and a failure message printed
-                # early no longer set a status.
+                # An error, not a head truncation: a transcript cut from the
+                # front reads as complete, and `error_patterns` would miss a
+                # failure printed in the part that was dropped.
                 raise ConsoleProtocolError(
                     f"serial console output exceeded max_buffer "
                     f"({self.max_buffer} bytes); raise it on the profile to "

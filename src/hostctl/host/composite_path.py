@@ -81,11 +81,9 @@ def _provider_supports(
     return bool(
         "path" in capabilities
         or any(value in capabilities for value in alternatives)
-        # A bare `open` stands in for `open_read` only. It used to grant
-        # `open_write` too, so a provider declaring read operations -- a QGA
-        # guest with no write RPCs, say -- accepted `open('wb')` and was even preferred for it over a
-        # writable sibling. A mutation has to be declared: that is the whole
-        # point of operation-level capabilities.
+        # A bare `open` stands in for `open_read` only: a mutation has to be
+        # declared, so a read-only provider (a QGA guest with no write RPCs)
+        # is never chosen for `open('wb')` over a writable sibling.
         or ("open_read" in alternatives and "open" in capabilities)
     )
 
@@ -168,7 +166,7 @@ def _resolves_on(target: object, provider: typing.Optional[PathProvider]) -> boo
 def _is_composite_owner(base: type) -> bool:
     """True for classes belonging to this module's composite hierarchy.
 
-    Used to tell a deliberate composite override (``iterdir``, ``rename``,
+    Tells a deliberate composite override (``iterdir``, ``rename``,
     ``readlink``, ``copy``) apart from an inherited ``pathapi``
     implementation, which is exactly what forwarding must displace.
     """
@@ -488,10 +486,9 @@ class _CompositePathMixin:
     def _copy_from(self, source, **kwargs):
         """CPython 3.14's `Path.copy()` destination hook.
 
-        One shared implementation (`_staged_io.copy_from`). This body used to
-        be copied verbatim into four modules, and every copy diverged from
-        what stdlib actually calls it with: it raised `FileExistsError` where
-        stdlib overwrites, and opened a directory `"rb"`.
+        One shared implementation (`_staged_io.copy_from`), which follows
+        what stdlib calls it with: it overwrites an existing file and never
+        opens a directory.
         """
         return copy_from(self, source, **kwargs)
 
@@ -660,12 +657,9 @@ class _CompositePathMixin:
             attempted = True
             old = (self._provider, self._backend_path, self._factory, self._pinned)
             try:
-                # Connect first, where a failure is provably pre-dispatch.
-                # SFTP used to be dialled lazily inside the backend by the
-                # operation itself, so an unreachable server or an untrusted
-                # host key escaped as a raw transport error and the next
-                # provider was never tried -- while `run()`, which connects
-                # before dispatch, fell back on the same host.
+                # Connect first, where a failure is provably pre-dispatch, so
+                # an unreachable server or an untrusted host key declines this
+                # provider and the next is tried, as `run()` does.
                 connect = getattr(provider, "connect", None)
                 if connect is not None:
                     connect()
@@ -817,8 +811,8 @@ class _CompositePathMixin:
         self._factory = other._factory
         self._pinned = other._pinned
         self._selection_trace = other._selection_trace
-        # The logical name changed, so the cached backend path no longer
-        # describes this path; it is re-derived lazily from the factory.
+        # The logical name changed, so the cached backend path describes the
+        # old one; it is re-derived lazily from the factory.
         self._backend_path = None
 
     def _init_routing_state(

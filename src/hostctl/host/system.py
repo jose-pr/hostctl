@@ -182,9 +182,8 @@ class _ShellContext(typing.NamedTuple):
 
     `cwd` and `env` are `None` when the provider carries them natively --
     passing them to the flavour as well would apply them twice. Computed
-    once per dispatch instead of six times inline, which is where
-    `core-01`, `core-03` and `core-32` all lived: the combinations are the
-    bug surface, so there is one expression of them.
+    once per dispatch: the combinations are the bug surface, so there is one
+    expression of them.
     """
 
     cwd: typing.Optional[PathLike]
@@ -214,12 +213,11 @@ class SystemConfig(HostConfig):
     into a host on its own.
     """
 
-    #: Class-level URI scheme used to *build* :attr:`connection_uri`.  This is
+    #: Class-level URI scheme that *builds* :attr:`connection_uri`.  This is
     #: deliberately not named ``scheme``: ``HostConfig.scheme`` is a property
-    #: derived by parsing the built URI, and shadowing it with a plain string
-    #: broke that contract for every subclass here.  The two now flow one way
-    #: -- ``uri_scheme`` builds the URI, ``scheme`` reads it back -- so they
-    #: cannot disagree.
+    #: derived by parsing the built URI, and a plain string would shadow it.
+    #: The two flow one way -- ``uri_scheme`` builds the URI, ``scheme``
+    #: reads it back -- so they cannot disagree.
     uri_scheme: typing.ClassVar[str] = ""
 
     #: Concrete `SystemHost` subclass this configuration creates.  Bound by
@@ -277,10 +275,8 @@ class SystemConfig(HostConfig):
     def connection_uri(self) -> str:
         if not self.uri_scheme:
             # The abstract base registers no URI scheme, so it has no
-            # round-trippable URI to advertise.  It previously claimed
-            # "system://", which `HostConfig(...)` then rejected as an
-            # unsupported scheme -- advertising a URI that cannot be parsed
-            # back is worse than declining to produce one.
+            # round-trippable URI to advertise, and a URI that cannot be
+            # parsed back is worse than declining to produce one.
             raise NotImplementedError(
                 f"{type(self).__name__} is abstract and has no connection URI"
             )
@@ -307,9 +303,7 @@ class SystemConfig(HostConfig):
                 f"initializer= constructor options; unsupported credentials: {names}"
             )
         # The SHARED parser, with the two keys that legitimately repeat
-        # declared. This used to be a second hand-rolled query parse -- one
-        # of three in this package -- and each of the three had a different
-        # defect fixed in it.
+        # declared.
         query = strict_uri_query(
             parsed, ("executor", "path", "shell"), repeatable=("executor", "path")
         )
@@ -376,11 +370,8 @@ class SystemHost(Host):
         initializer=None,
     ):
         # A config-less host builds the configuration matching its own system
-        # family.  Previously this made a bare `SystemConfig` and then
-        # assigned to `config.scheme` -- writing to what `HostConfig` defines
-        # as a read-only computed property, which only worked because
-        # `SystemConfig` shadowed that property with a plain string.  Picking
-        # the right config type instead keeps `scheme` derived from the URI.
+        # family, which keeps `scheme` derived from the URI: `HostConfig`
+        # defines it as a read-only computed property.
         if isinstance(config, str):
             raise TypeError(
                 f"{type(self).__name__} takes a config, not a connection string; "
@@ -845,11 +836,10 @@ class SystemHost(Host):
     def _composite_path_type(self):
         """The path grammar this system family actually has.
 
-        Everything that is not Windows used to fall through to POSIX, so an
-        `IosHost` -- documented as session/command-only until an IOS path
-        grammar is designed -- advertised `path` and applied POSIX rules to
-        locations like `flash:/config.text`, where `:` is a device separator
-        rather than part of a name.
+        Any other family raises: an `IosHost` is session/command-only until
+        an IOS path grammar is designed, and POSIX rules would misread
+        `flash:/config.text`, where `:` is a device separator rather than part
+        of a name.
         """
         if self.system_family == "windows":
             return CompositeWindowsPath
@@ -1077,9 +1067,7 @@ class SystemHost(Host):
             # `cwd`/`env` were stripped from `options` above and put back only
             # for a provider that carries them natively. Whatever is left must
             # be embedded in a rendered script, or the call silently runs in
-            # the wrong directory with the wrong environment -- which is what
-            # `Exec` over the shipped SSH provider (no capabilities at all)
-            # used to do.
+            # the wrong directory with the wrong environment.
             native_cwd = cwd is None or "cwd" in provider.capabilities
             native_env = env is None or "env" in provider.capabilities
             if "args" in provider.capabilities and native_cwd and native_env:

@@ -114,9 +114,7 @@ def validate_open_mode(mode: str) -> typing.Tuple[bool, bool]:
     """Validate a binary `open()` mode and return `(readable, writable)`.
 
     A `t` suffix is accepted and ignored, as `pathapi` allows: these
-    backends stage bytes and the text layer is applied above them. The
-    container and QGA copies used to reject `"rt"` while the WinRM copy
-    accepted it, for no reason either could have defended.
+    backends stage bytes and the text layer is applied above them.
     """
     if (
         not mode

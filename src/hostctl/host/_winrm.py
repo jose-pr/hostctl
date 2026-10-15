@@ -617,12 +617,9 @@ class WinRMPathBackend:
             "try {" + body + "} catch {"
             "$e=$_.Exception;"
             # PowerShell wraps a .NET static-method failure in a
-            # MethodInvocationException whose category is NotSpecified, so
-            # every test below used to miss and every error from an
-            # `[IO.File]`/`[IO.Directory]` body degraded to bare OSError. The
-            # worst of it: read_bytes() on a missing file raised OSError, which
-            # defeats staged_open's `except FileNotFoundError`, so open("ab")
-            # on a missing file raised instead of creating it.
+            # MethodInvocationException whose category is NotSpecified;
+            # unwrapped, every `[IO.File]`/`[IO.Directory]` error is a bare
+            # OSError, which staged_open's `except FileNotFoundError` misses.
             "while($e.InnerException -and ($e -is "
             "[System.Management.Automation.MethodInvocationException]))"
             "{$e=$e.InnerException};"
@@ -751,12 +748,10 @@ class WinRMPathBackend:
         return result
 
     def scandir(self, path: str) -> typing.List[typing.Tuple[str, FileStat]]:
-        # Follow the link, as `os.scandir` and `pathlib.Path.iterdir` do. The
-        # guard used to stat without following, and every reparse point is
-        # reported as S_IFLNK whatever it points at -- so listing a directory
-        # symlink or a junction (a redirected profile folder, a DFS-style
-        # mount point, "C:\Users\All Users") raised NotADirectoryError while
-        # `is_dir()` on the same path returned True.
+        # Follow the link, as `os.scandir` and `pathlib.Path.iterdir` do:
+        # every reparse point is reported as S_IFLNK whatever it points at,
+        # and a junction (a redirected profile folder, a DFS-style mount
+        # point, "C:\Users\All Users") lists like the directory it is.
         current = self.stat(path, follow_symlinks=True)
         if not _stat.S_ISDIR(current.st_mode):
             raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
@@ -1073,9 +1068,8 @@ class WinRMExecutorProvider(ExecutorProvider):
         # OSError, not just ConnectionError: a DNS failure (socket.gaierror)
         # and a routing failure (EHOSTUNREACH/ENETUNREACH) are OSError but not
         # ConnectionError, and they are unambiguously pre-dispatch -- no
-        # channel opened, nothing sent. They used to escape the provider, so
-        # ordered fallback stopped dead and a raw socket error crossed the
-        # public boundary.
+        # channel opened, nothing sent -- so the provider declines and
+        # ordered fallback moves on.
         except (OSError, TimeoutError) as exc:
             log.debug(
                 "WinRM provider declining before dispatch: %s: %s",

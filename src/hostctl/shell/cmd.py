@@ -349,7 +349,7 @@ class CmdShellFlavour(ShellFlavour):
     ) -> typing.Sequence[str]:
         """cmd has no argv spelling; render with `command()` instead.
 
-        The argv this used to return carried a script quoted for *cmd's* own
+        An argv would carry a script quoted for *cmd's* own
         parser (`^"`, `^&`, `^%`). Every consumer delivers argv through an
         exec-style API, and on Windows that means `CreateProcess` quoting:
         the script element is wrapped in quotes and each inner `"` is escaped

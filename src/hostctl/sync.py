@@ -131,11 +131,10 @@ class ProgressReader:
         self._count(len(data))
         return data
 
-    # Every other way to read. Only `read()` used to count -- the rest went
-    # through `__getattr__` uncounted, and the dunders bypass it entirely --
-    # so `hashlib.file_digest`, a `BufferedReader` wrapper, and any
-    # line-based consumer hashed or copied a whole file and reported no
-    # progress at all.
+    # Every other way to read counts too: `__getattr__` would pass them
+    # through uncounted and the dunders bypass it entirely, so
+    # `hashlib.file_digest`, a `BufferedReader` wrapper, or a line-based
+    # consumer would report no progress at all.
     def read1(self, size: int = -1) -> bytes:
         read1 = getattr(self.reader, "read1", None)
         data = read1(size) if callable(read1) else self.reader.read(size)

@@ -698,12 +698,9 @@ class _SshTransport:
         else:
             if cwd is not None or env is not None:
                 raise ValueError("cwd and env require a command when spawning")
-            # Resolve the remote program the same way the command branch does.
-            # It used to be just the per-call `executable=`, so a bare
-            # `with host.shell as session:` started the account's *login*
-            # shell and ignored SshConfig.executable, the flavour's default,
-            # and the executable recovered by dialect="auto" -- while send()
-            # went on rendering in the configured dialect.
+            # Resolve the remote program the same way the command branch
+            # does, so a bare `with host.shell as session:` starts the shell
+            # that send() renders for, not the account's *login* shell.
             command = executable or self.config.executable
             if command is None:
                 flavour = self.shell_flavour
@@ -771,9 +768,8 @@ class SshExecutorProvider(ExecutorProvider):
         # OSError, not just ConnectionError: a DNS failure (socket.gaierror)
         # and a routing failure (EHOSTUNREACH/ENETUNREACH) are OSError but not
         # ConnectionError, and they are unambiguously pre-dispatch -- no
-        # channel opened, nothing sent. They used to escape the provider, so
-        # ordered fallback stopped dead and a raw socket error crossed the
-        # public boundary.
+        # channel opened, nothing sent -- so the provider declines and
+        # ordered fallback moves on.
         except (OSError, TimeoutError) as exc:
             log.debug(
                 "SSH provider declining before dispatch: %s: %s",

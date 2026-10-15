@@ -744,14 +744,11 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
                     ):
                         continue
                 # The entry point's NAME matching the scheme is the fast
-                # path, not the rule. A plugin may declare several schemes
-                # under one entry point (`schemes=("plug", "plug+tls")`), and
-                # matching only on the name made its secondary schemes work
-                # or fail depending on whether something had already
-                # dispatched the primary one in this process. An unknown
-                # scheme now loads the remaining entry points too; each load
-                # happens once, and a plugin that matches nothing simply
-                # leaves the scheme unsupported as before.
+                # path, not the rule: a plugin may declare several schemes
+                # under one entry point (`schemes=("plug", "plug+tls")`). An
+                # unknown scheme loads the remaining entry points too; each
+                # load happens once, and a plugin that matches nothing leaves
+                # the scheme unsupported.
                 if name != scheme and scheme in known:
                     continue
                 try:
@@ -1034,17 +1031,14 @@ def strict_uri_query(
 ) -> _ty.Dict[str, object]:
     """Parse one selected implementation's query without ambiguity.
 
-    A repeated key is an error by default: silently taking the last value
-    made `?shell=a&shell=b` a coin flip, and an unknown key used to be
-    dropped in silence, so `?exectuor=ssh` built a config with no executors
-    that failed much later as "does not provide the 'run' capability".
+    A repeated key is an error by default, so `?shell=a&shell=b` is not a
+    coin flip; an unknown key is an error too, so a misspelt
+    `?exectuor=ssh` fails here rather than as a missing capability later.
 
     `repeatable` names keys that are ORDERED LISTS rather than settings --
     `SystemConfig`'s `executor` and `path` -- and their values come back as
-    a tuple in the order they were written. Declaring them here is what
-    lets every config share one parser: `SystemConfig` used to hand-roll a
-    second one for exactly this difference, and the two then had to be kept
-    in agreement by hand.
+    a tuple in the order they were written. Declaring them here lets every
+    config share this one parser.
     """
     repeated = frozenset(repeatable)
     query: _ty.Dict[str, object] = {}

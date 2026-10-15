@@ -50,8 +50,8 @@ class LocalConfig(HostConfig, schemes=("local",)):
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> LocalConfig:
         if parsed.netloc or parsed.path or parsed.query:
-            # `local://` is the same URI with an empty authority, and it
-            # already parsed as one; the message used to claim otherwise.
+            # `local://` is the same URI with an empty authority, so the
+            # message names both spellings.
             raise ValueError("local URI must be 'local:' or 'local://'")
         return cls()
 
@@ -62,12 +62,9 @@ class LocalConfig(HostConfig, schemes=("local",)):
 class LocalHost(SystemHost):
     """This machine, assembled from the local providers.
 
-    A `SystemHost` like every other, not a second implementation of one.
-    It used to duplicate the provider selection, the failover loop, the
-    capability computation and the direct/shell dispatch ladder -- and the
-    two copies diverged: the double-shell-layer defect that swallowed every
-    exit status (`core-01`) lived in the `SystemHost` copy while this one
-    was correct, which is exactly the cost of having two.
+    A `SystemHost` like every other, not a second implementation of one:
+    provider selection, failover, capabilities and the direct/shell
+    dispatch are `SystemHost`'s, so local and remote hosts cannot diverge.
 
     What is genuinely local stays here: the system family and shell come
     from `os.name` rather than a config, `info()` reports this process's
@@ -121,11 +118,9 @@ class LocalHost(SystemHost):
         provider, so it would add a layer with nothing to decide. Callers
         also rely on a local path being an ordinary pathlib object.
 
-        With no segments this no longer injects `os.getcwd()`. Every other
-        transport returns the path with no segments added, and a local host
-        being the one exception meant `host.path()` meant two different
-        things depending on the host -- the relative path it now returns
-        still resolves against this process's working directory.
+        With no segments this returns the empty relative path, as every
+        other transport does, not `os.getcwd()`; it still resolves against
+        this process's working directory.
         """
         names = tuple(provider.name for provider in self._path_selector.providers)
         if backend is not None and backend not in names:

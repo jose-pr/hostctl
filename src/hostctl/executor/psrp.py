@@ -100,8 +100,7 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
         codec = encoding or "utf-8"
         # `invoke(capture_exit=True)` already consumed the
         # `__HOSTCTL_LASTEXITCODE__` line and folded it into `returncode`;
-        # this used to re-parse the same marker out of output that no longer
-        # contained it, which is two implementations of one convention.
+        # the session is the only parser of that marker.
         returncode = result.returncode
         # Output is already console text (`format_text`), one item per line;
         # the other legs deliver CRLF, so this one does too.

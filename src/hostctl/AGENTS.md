@@ -72,8 +72,8 @@ the one token rendered bare. A plain string is always a value; there is no
 `"operator"` fuses the change onto a GROUPED payload with the AND operator,
 `"statement"` is for a flavour whose change-directory statement aborts the
 script itself (PowerShell's `-ErrorAction Stop`). It is declared rather than
-inferred from `context_order`'s ordering, which is how PowerShell's `join_cwd`
-override stayed unreachable for years.
+inferred from `context_order`'s ordering, which puts PowerShell's `env`
+between `cwd` and `command`.
 
 `hostctl.executor`'s public helpers are the ones a transport adapter needs to
 behave like the others; an executor that skips them is where cross-transport

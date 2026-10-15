@@ -201,9 +201,7 @@ class SshProcess(Process):
         if self._closed:
             return
         # `_closed` is set only after both calls succeed, so a failed close
-        # stays retryable and the caller keeps the channel reference. That is
-        # the whole mechanism -- there used to be a `try/except: raise` around
-        # this, which reads like it does something and does not.
+        # stays retryable and the caller keeps the channel reference.
         self._call(self._process.close)
         self._call(lambda: self._process.wait_closed())
         self._closed = True

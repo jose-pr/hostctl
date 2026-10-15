@@ -51,17 +51,15 @@ def _resolve_port(scheme: str, value: Port) -> object:
         return _NO_PORT
     if isinstance(value, bool):
         # `True` is an `int`, but nothing sensible means port 1 by it; only
-        # `False` is given a meaning, as the explicit "no port", and that was
-        # handled above. `port=True` used to be stored and rendered verbatim,
-        # so a URI came out as `wss://nas:True`.
+        # `False` is given a meaning, as the explicit "no port", and that is
+        # handled above. Stored, `True` would render as `wss://nas:True`.
         raise TypeError("port=True has no meaning; use False for 'no port'")
     if value is None or isinstance(value, int):
         return value
     if isinstance(value, str):
         # Text, not a table: `port="2222"` is what a config file or an
-        # argv-derived value looks like. It used to be indexed as a mapping
-        # (`"2222"[scheme]`) or stored verbatim and rendered into an invalid
-        # URI like `wss://nas:abc`.
+        # argv-derived value looks like. It must parse as an integer, or it
+        # would render into an invalid URI like `wss://nas:abc`.
         try:
             return int(value)
         except ValueError:
@@ -411,9 +409,8 @@ class ConnectionString:
         for name in names:
             value = changes.get(name, getattr(self, name))
             if name == "scheme" and value is not None:
-                # `__init__` casefolds it, so `replace(scheme="WSS")` used to
-                # produce an object unequal to the parsed form of the same
-                # target.
+                # `__init__` casefolds it, so `replace(scheme="WSS")` does too,
+                # to stay equal to the parsed form of the same target.
                 value = str(value).casefold()
             if name == "port" and name in changes:
                 value = _resolve_port(
@@ -427,7 +424,7 @@ class ConnectionString:
         if "scheme" in changes and not explicit_port:
             # A port that was resolved from the old scheme is not an answer
             # for the new one: `ConnectionString("wss://nas").replace(
-            # scheme="ssh")` used to keep 443.
+            # scheme="ssh")` gets 22, not 443.
             from netimps import get_default_port
 
             object.__setattr__(

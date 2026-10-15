@@ -307,12 +307,10 @@ class ContainerProcess(Process):
     def close(self) -> None:
         if not self._closed:
             self._closed = True
-            # EOF first. `close()` used to close the socket and nothing
-            # else, so the next `read()` or `wait()` still went to `recv()`
-            # -- on a closed handle, which answers with the operating
-            # system's raw error (`WinError 10038`, `EBADF`) out of a method
-            # whose contract is a stream. Whatever was already buffered
-            # stays readable; after that the stream reads as ended.
+            # EOF first, so a later `read()` or `wait()` never reaches
+            # `recv()` on a closed handle and its raw OS error (`WinError
+            # 10038`, `EBADF`). Whatever was already buffered stays readable;
+            # after that the stream reads as ended.
             self._eof = True
             self._socket.close()
 

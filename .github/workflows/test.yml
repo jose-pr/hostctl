@@ -207,8 +207,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # The dispatched ref, like the test job above. Without it this job
-      # silently tested the default branch, so a `workflow_dispatch` on a
-      # feature ref reported live results for code that ref did not contain.
+      # tests the default branch, and a `workflow_dispatch` on a feature ref
+      # reports live results for code that ref does not contain.
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}

@@ -526,11 +526,9 @@ class QemuHost(Host):
 
     def info(self) -> HostInfo:
         self.connect()
-        # `os_family` is a FAMILY. It used to carry `guest-get-osinfo`'s
-        # `id` -- an os-release id such as `ubuntu` or `rhel` -- so the same
-        # machine answered `linux` over SSH and `ubuntu` over QGA, and a
-        # caller branching on the family had to special-case this transport.
-        # `id` and `pretty-name` feed `os_name`, where they belong.
+        # `os_family` is a FAMILY (`linux`, as over SSH), not
+        # `guest-get-osinfo`'s `id`, which is an os-release id such as
+        # `ubuntu`; `id` and `pretty-name` feed `os_name`.
         return HostInfo(
             hostname=self._hostname,
             os_family=self._probe_os_family(),
@@ -1066,7 +1064,7 @@ class _QgaReadStream(io.RawIOBase):
                 "this guest agent does not support guest-file-seek"
             )
         position = self._backend.seek(self._handle, offset, whence, path=self._path)
-        # Whatever it was, it is no longer at the end.
+        # After a seek the position is not known to be at the end.
         self._eof = False
         return position
 

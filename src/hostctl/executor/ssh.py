@@ -230,11 +230,9 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
 
         async def dispatch() -> object:
             # `connection.run()` is `create_process()` followed by
-            # `process.wait()`, and it never hands the process back -- so a
-            # timeout used to abandon a live channel and a still-running
-            # remote command, with nothing to terminate and `orphaned` always
-            # True. Creating the process here keeps the handle that
-            # docs/guide/contracts.md requires for a best-effort terminate.
+            # `process.wait()`, and it never hands the process back. Creating
+            # the process here keeps the handle that docs/guide/contracts.md
+            # requires for a best-effort terminate on timeout.
             nonlocal orphaned
             process = await connection.create_process(
                 command,
