@@ -259,6 +259,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   pair, beside `ssh_providers()` and `winrm_providers()`, for a host you
   assemble yourself. `posix://...?executor=local` now builds the same
   providers.
+- `hostctl.shell.wants_epilogue(capabilities)` answers whether a script for a
+  provider needs the flavour's status epilogue (not when it declares
+  `manages_status`). `shell_flavour_names()` (also in `hostctl`) lists the
+  names `shell_flavour()` accepts, plugin flavours included.
+- `pathapi.protocols.supports(path, Protocol)` answers for a host path. A
+  composed host's path answers from the operations its providers declare
+  (only the pinned provider after `.via()`), without probing; a container path
+  has no `Create`, `Chmod`, `Remove` or `Move`, and a QGA path has no
+  `Readlink` or `Symlink` and answers its metadata and namespace protocols
+  from the guest helper.
+- `HOSTCTL_MCP=stdio` serves every `hostctl` subcommand as an MCP tool over
+  stdio. `--ask-password` is refused there, since a tool call cannot prompt;
+  use `HOSTCTL_PASSWORD`.
+- `hostctl --version`, and `-v`/`-q`/`--loglevel` on every subcommand.
 
 ### Changed
 
