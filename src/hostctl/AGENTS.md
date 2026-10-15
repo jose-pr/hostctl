@@ -94,7 +94,7 @@ algorithm="md5", chunk_size=1048576)`, and `ProgressReader`; these plug into
 `pathapi.sync.PathSyncer` and the existing path copy machinery.
 
 `SystemHost`, `PosixHost`, and `WindowsHost` compose ordered executor/path
-providers. `SshConfig(...).open()` and `WinRMConfig(...).open()` return a
+providers. Opening an `SshConfig` or `WinRMConfig` (`config.open()`) returns a
 `PosixHost` or `WindowsHost` that retains the original connection URI
 and lifecycle while exposing transport operations through provider adapters;
 transport implementations remain private.
