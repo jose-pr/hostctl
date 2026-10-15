@@ -232,3 +232,25 @@ def test_a_command_timeout_is_enforced_across_a_blocking_read():
 
     assert time.monotonic() - started < 5
     assert all(wait is not None for wait in console.waits)
+
+
+def test_login_timeout_bounds_a_silent_console():
+    import time
+
+    from hostctl import ConsoleProtocolError
+
+    profile = PromptConsoleProfile(rb"login: ", login_timeout=0.2)
+    host = SerialHost(SerialConfig("loop://", protocol=profile))
+    started = time.monotonic()
+    try:
+        with pytest.raises(ConsoleProtocolError):
+            host.connect()
+    finally:
+        host.close()
+    assert time.monotonic() - started < 1.0
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_login_timeout_must_be_positive(value):
+    with pytest.raises(ValueError, match="login_timeout"):
+        PromptConsoleProfile(rb"> ", login_timeout=value)

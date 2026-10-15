@@ -124,7 +124,12 @@ class PromptConsoleProfile:
             typing.Callable[[SerialProcess, int, int], None]
         ] = None,
         status_parser: typing.Optional[typing.Callable[[re.Match[bytes]], int]] = None,
+        login_timeout: float = 10.0,
     ) -> None:
+        if not login_timeout > 0:
+            raise ValueError("login_timeout must be positive")
+        #: Seconds each login step and the first prompt may take in `negotiate()`.
+        self.login_timeout = float(login_timeout)
         self._prompt = self._compile(prompt)
         self.login = tuple(
             step if isinstance(step, LoginStep) else LoginStep(step[0], step[1])
@@ -327,10 +332,12 @@ class PromptConsoleProfile:
         # keep in agreement.
         for step, pattern in zip(self.login, self._login_patterns):
             transcript = self._read_until(
-                process, pattern, timeout=10, initial=transcript
+                process, pattern, timeout=self.login_timeout, initial=transcript
             )
             process.write(step.send + self.line_terminator)
-        self._read_until(process, self._prompt, timeout=10, initial=transcript)
+        self._read_until(
+            process, self._prompt, timeout=self.login_timeout, initial=transcript
+        )
         if self.paging_disable is not None:
             process.write(self.paging_disable + self.line_terminator)
             # Its reply is deliberately NOT waited for here: a device that
