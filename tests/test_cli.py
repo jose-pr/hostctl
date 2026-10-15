@@ -380,8 +380,12 @@ def test_info_on_an_unreachable_host_exits_125_and_prints_no_identity(
 def test_the_library_info_of_an_unreachable_host_is_still_synthesized(unreachable_ssh):
     from hostctl import Host
 
-    with Host("ssh://nonexistent.invalid") as host:
+    # Not entered as a context: `connect()` raises when nothing connected.
+    host = Host("ssh://nonexistent.invalid")
+    try:
         assert host.info().hostname == "nonexistent.invalid"
+    finally:
+        host.close()
 
 
 def test_info_reports_a_refused_login_as_126(monkeypatch, capsys):
