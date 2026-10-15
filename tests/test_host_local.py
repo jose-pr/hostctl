@@ -261,3 +261,9 @@ def test_the_local_hosts_executor_runs_a_program_with_argv():
     result = LocalHost().executor(sys.executable, "-c", "print(1)")
 
     assert result.returncode == 0
+
+
+def test_local_host_still_lists_its_providers():
+    host = LocalHost()
+    assert [p.name for p in host.executor_providers] == ["local"]
+    assert [p.name for p in host.path_providers] == ["local"]

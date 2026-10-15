@@ -99,16 +99,6 @@ class LocalHost(SystemHost):
         )
 
     @property
-    def executor_providers(self) -> _ty.Tuple[object, ...]:
-        """The ordered command providers backing :meth:`run`."""
-        return self._executor_selector.providers
-
-    @property
-    def path_providers(self) -> _ty.Tuple[object, ...]:
-        """The ordered filesystem providers backing :meth:`path`."""
-        return self._path_selector.providers
-
-    @property
     def shell_flavour(self) -> ShellFlavour:
         """The local shell, or a refusal naming the OS it could not place."""
         if self._shell is None and self._shell_resolver is None:

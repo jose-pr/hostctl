@@ -496,6 +496,82 @@ class SystemHost(Host):
         self._lifecycle_lock = threading.RLock()
 
     @property
+    def executor_providers(self) -> typing.Tuple[object, ...]:
+        """The ordered command providers backing :meth:`run`."""
+        return self._executor_selector.providers
+
+    @property
+    def path_providers(self) -> typing.Tuple[object, ...]:
+        """The ordered filesystem providers backing :meth:`path`."""
+        return self._path_selector.providers
+
+    def replace_providers(self, *, executor=None, path=None) -> None:
+        """Swap either provider set; ``None`` keeps it.
+
+        Starts a new connection generation: the session initializer runs again
+        before the next operation. A replaced provider's transport is closed
+        unless a provider that stays shares it, and a transport shared by
+        several replaced providers is closed once. A path obtained earlier
+        still routes to the old providers, so obtain it again. An invalid
+        set (duplicate names) raises before anything changes.
+        """
+        with self._lifecycle_lock:
+            new_executor = ProviderSelector(executor) if executor is not None else None
+            new_path = ProviderSelector(path) if path is not None else None
+            old = [
+                *(self._executor_selector.providers if new_executor else ()),
+                *(self._path_selector.providers if new_path else ()),
+            ]
+            kept = [
+                *(new_executor or self._executor_selector).providers,
+                *(new_path or self._path_selector).providers,
+            ]
+            replaced = [
+                provider
+                for provider in old
+                if not any(provider is item for item in kept)
+            ]
+            kept_targets = {id(getattr(item, "transport", item)) for item in kept}
+            targets = []
+            seen = set()
+            for provider in replaced:
+                target = getattr(provider, "transport", provider)
+                if (
+                    id(target) not in seen
+                    and id(target) not in kept_targets
+                    and id(target) not in self._closed_targets
+                ):
+                    seen.add(id(target))
+                    targets.append(target)
+            self._connected_providers = [
+                item
+                for item in self._connected_providers
+                if not any(item is provider for provider in replaced)
+            ]
+            if new_executor is not None:
+                self._executor_selector = new_executor
+            else:
+                self._executor_selector.invalidate()
+            if new_path is not None:
+                self._path_selector = new_path
+            else:
+                self._path_selector.invalidate()
+            self._connected = False
+            self._initializer_generation = False
+            first_error = None
+            for target in reversed(targets):
+                close = getattr(target, "close", None)
+                if close:
+                    try:
+                        close()
+                    except BaseException as exc:
+                        if first_error is None:
+                            first_error = exc
+                self._closed_targets.add(id(target))
+            if first_error is not None:
+                raise first_error
+
+    @property
     def shell_flavour(self):
         if self._shell is None and self._shell_resolver is not None:
             self._shell = shell_flavour(self._shell_resolver())
@@ -1104,6 +1180,9 @@ class SystemHost(Host):
         # provider is a live object, not a value.
         with self._lifecycle_lock:
             if any(item is provider for item in self._connected_providers):
+                # A kept provider after `replace_providers()` is already
+                # connected but belongs to a new generation.
+                self._run_initializer_locked([provider])
                 return
             connect = getattr(provider, "connect", None)
             if connect is not None:

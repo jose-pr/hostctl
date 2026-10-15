@@ -1131,3 +1131,79 @@ def test_path_backend_probes_through_the_selector_once():
             host.path("/x", backend="a")
 
     assert len(calls) == 1
+
+
+class _Transport:
+    def __init__(self):
+        self.closes = 0
+
+    def close(self):
+        self.closes += 1
+
+
+def _executor(name, transport=None):
+    provider = ExecutorProvider(
+        name, lambda *a, **k: subprocess.CompletedProcess(a, 0, b"", b"")
+    )
+    provider.transport = transport if transport is not None else _Transport()
+    return provider
+
+
+def test_replace_providers_closes_the_old_transport_once_and_the_new_once():
+    old, new = _executor("old"), _executor("new")
+    host = PosixHost(executor_providers=(old,))
+    host.run("true")
+    assert [p.name for p in host.executor_providers] == ["old"]
+    assert host.path_providers == ()
+
+    host.replace_providers(executor=(new,))
+
+    assert [p.name for p in host.executor_providers] == ["new"]
+    assert old.transport.closes == 1
+    host.run("true")
+    host.close()
+    assert (old.transport.closes, new.transport.closes) == (1, 1)
+
+
+def test_replace_providers_keeps_a_transport_a_kept_provider_shares():
+    shared = _Transport()
+    old = _executor("old", shared)
+    kept = PathProvider("kept", lambda *parts: MemPath(*parts))
+    kept.transport = shared
+    host = PosixHost(executor_providers=(old,), path_providers=(kept,))
+    host.replace_providers(executor=(_executor("new"),))
+    assert shared.closes == 0
+    host.close()
+    assert shared.closes == 1
+
+
+def test_replace_providers_closes_a_shared_transport_once():
+    shared = _Transport()
+    executor = _executor("a", shared)
+    path = PathProvider("a", lambda *parts: MemPath(*parts))
+    path.transport = shared
+    host = PosixHost(executor_providers=(executor,), path_providers=(path,))
+    host.replace_providers(executor=(_executor("b"),), path=())
+    assert shared.closes == 1
+
+
+def test_replace_providers_with_duplicate_names_changes_nothing():
+    old = _executor("old")
+    host = PosixHost(executor_providers=(old,))
+    with pytest.raises(ValueError):
+        host.replace_providers(executor=(_executor("x"), _executor("x")))
+    assert host.executor_providers == (old,)
+    assert old.transport.closes == 0
+
+
+def test_replace_providers_runs_the_initializer_again():
+    ran = []
+    kept = _executor("kept")
+    host = PosixHost(
+        executor_providers=(kept,), initializer=lambda connected: ran.append(1)
+    )
+    host.run("true")
+    assert ran == [1]
+    host.replace_providers(path=())
+    host.run("true")
+    assert ran == [1, 1]

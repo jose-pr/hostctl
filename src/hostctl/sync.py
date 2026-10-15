@@ -12,6 +12,7 @@ from pathapi import LocalPath
 from pathapi.sync import PathAndStat
 
 from .host import Host
+from .host.system import SystemHost
 
 _REMOTE_ALGORITHMS = frozenset(("md5", "sha1", "sha256", "sha384", "sha512"))
 _HEX_DIGEST = re.compile(r"^[0-9a-fA-F]+$")
@@ -336,8 +337,7 @@ def _hashes_in_process(path: object) -> bool:
 
 def _host_path_token(host: Host) -> typing.Optional[tuple[object, ...]]:
     """Return the backend identity for a host without using path prefixes."""
-    selector = getattr(host, "_path_selector", None)
-    if selector is not None:
+    if isinstance(host, SystemHost):
         return None
     try:
         sample = host.path()
@@ -352,11 +352,8 @@ def _host_owns_path(
     owner_token: typing.Optional[tuple[object, ...]],
 ) -> bool:
     provider = getattr(path, "provider", None)
-    selector = getattr(host, "_path_selector", None)
-    if provider is not None and selector is not None:
-        return any(
-            provider is candidate for candidate in getattr(selector, "providers", ())
-        )
+    if provider is not None and isinstance(host, SystemHost):
+        return any(provider is candidate for candidate in host.path_providers)
     return owner_token is not None and _path_token(path) == owner_token
 
 
