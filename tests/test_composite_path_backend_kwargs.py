@@ -9,7 +9,7 @@ inside a transport.
 """
 
 import pytest
-from pathlib_next.mempath import MemPath, MemPathBackend
+from pathapi.mempath import MemPath, MemPathBackend
 
 from hostctl import PathProvider, PosixHost
 
@@ -88,11 +88,11 @@ def test_no_kwargs_leaves_the_stdlib_call_untouched(host):
 def test_force_reaches_a_real_backend_end_to_end(tmp_path):
     """`symlink_to(force=)` over a genuine backend, no fake in the way.
 
-    `force=` is a generic `Path` extension in pathlib_next, so this exercises
+    `force=` is a generic `Path` extension in pathapi, so this exercises
     the whole chain -- composite wrapper, signature check, real filesystem --
     which is the call that raised `TypeError` before the passthrough existed.
     """
-    from pathlib_next import Path as PnPath
+    from pathapi import Path as PnPath
 
     provider = PathProvider(
         "local",

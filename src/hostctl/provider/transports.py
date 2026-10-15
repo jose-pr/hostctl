@@ -25,7 +25,7 @@ import logging
 import os
 import typing
 
-from pathlib_next import Path
+from pathapi import Path
 
 from ._common import (
     ExecutorProvider,
@@ -302,7 +302,7 @@ class DownloadPathProvider(PathProvider):
             "exists",
             # Both derive from `stat`, which this provider answers. Leaving
             # them out made `via("download").is_file()` raise while
-            # `.stat()` succeeded, and broke every pathlib_next helper that
+            # `.stat()` succeeded, and broke every pathapi helper that
             # asks `is_dir()` before doing anything.
             "is_file",
             "is_dir",

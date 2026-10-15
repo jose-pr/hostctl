@@ -1,6 +1,6 @@
 """Provider-retention cases which cannot be covered by one backend alone."""
 
-from pathlib_next.mempath import MemPath, MemPathBackend
+from pathapi.mempath import MemPath, MemPathBackend
 
 from hostctl import HostPath, PathProvider, PosixHost, ProviderProbe
 
@@ -82,7 +82,7 @@ def test_move_to_a_foreign_path_transfers_instead_of_renaming_on_the_source():
     host* to a path spelled like the local destination: the file left the
     source, never arrived, and a path was returned with no error.
     """
-    from pathlib_next import LocalPath
+    from pathapi import LocalPath
     import tempfile
 
     backend = MemPathBackend()
@@ -112,7 +112,7 @@ def test_move_between_two_providers_does_not_use_either_backend_rename():
 
 
 def test_a_string_destination_is_a_logical_path_on_the_same_host():
-    """`pathlib_next` documents `target: Path | str`; both raised TypeError."""
+    """`pathapi` documents `target: Path | str`; both raised TypeError."""
     backend = MemPathBackend()
     MemPath("a.txt", backend=backend).write_bytes(b"data")
     host = PosixHost(path_providers=(_memory_provider("only", backend),))
@@ -187,11 +187,9 @@ def test_a_plain_copy_keeps_the_backend_path_it_was_built_for():
 
 
 def test_a_uri_backed_path_reports_a_filesystem_logical_path():
-    """`str()` of an SftpPath is the whole `sftp://host:port/...` URI.
-
-    Used as the logical path it sent I/O to `/sftp:/host:22/...`, so a
-    resolved symlink reported `exists()` False and a relative target raised.
-    """
+    """An SSH host's logical paths are paths on the target, never a URI:
+    used as the logical path, `sftp://host:22/...` sent I/O to
+    `/sftp:/host:22/...`."""
     from hostctl import SshConfig
 
     host = PosixHost.from_ssh(SshConfig("h", username="root"))
@@ -202,13 +200,11 @@ def test_a_uri_backed_path_reports_a_filesystem_logical_path():
 
 
 def test_logical_text_prefers_the_filesystem_spelling():
-    from pathlib_next.uri.schemes.sftp import SftpPath
+    from sftppath import SFTPPath
 
     from hostctl.host.composite_path import _logical_text
 
-    assert (
-        _logical_text(SftpPath("sftp://h:22/usr/lib/jvm/java")) == "/usr/lib/jvm/java"
-    )
+    assert _logical_text(SFTPPath("/usr/lib/jvm/java", host="h")) == "/usr/lib/jvm/java"
     # A backend with no filesystem spelling keeps its own text.
     assert _logical_text(MemPath("srv/x", backend=MemPathBackend())) == "srv/x"
 

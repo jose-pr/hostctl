@@ -116,7 +116,7 @@ class LocalHost(SystemHost):
         return super().shell_flavour
 
     def path(self, *segments: PathLike, backend: _ty.Optional[str] = None) -> HostPath:
-        """A plain `pathlib_next` path, not a composite.
+        """A plain `pathapi` path, not a composite.
 
         The composite exists to select between providers per operation and
         to pin a route; a local host reaches one filesystem through one

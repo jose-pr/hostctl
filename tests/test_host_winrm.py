@@ -11,7 +11,7 @@ from pathlib import PureWindowsPath
 
 import pytest
 
-from pathlib_next import Path as NextPath
+from pathapi import Path as NextPath
 from hostctl import Shell, WinRMConfig, WinRMPath
 from hostctl.host._winrm import _WinRMTransport
 from hostctl.executor.winrm import NativeWinRMSession

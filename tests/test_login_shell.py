@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 import pytest
-from pathlib_next import PosixPathname, WindowsPathname
+from pathapi import PosixPathname, WindowsPathname
 
 from hostctl import SshConfig
 from hostctl.shell import CMD, POSIX_SHELL, POWERSHELL

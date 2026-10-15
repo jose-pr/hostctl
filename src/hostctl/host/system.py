@@ -8,7 +8,7 @@ import threading
 import typing
 from urllib.parse import unquote, quote, urlencode
 
-from pathlib_next import Path
+from pathapi import Path
 
 from ..executor._common import CommandLine, command_text
 from ..provider import (
@@ -56,7 +56,7 @@ def _local_provider(config, kind):
         from ..executor import LocalExecutor
 
         return ExecutorProvider("local", LocalExecutor())
-    from pathlib_next import Path as LocalPath
+    from pathapi import Path as LocalPath
 
     return PathProvider("local", lambda *parts: LocalPath(*parts))
 

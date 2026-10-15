@@ -3,13 +3,13 @@
 Two properties, and they pull against each other:
 
 1. A backend that overrides a derived operation for a transport-native
-   implementation must be the code that runs -- ``SftpPath.copy`` fans out
-   over asyncssh workers, ``SftpPath.rm``/``checksum`` execute server-side,
+   implementation must be the code that runs -- ``SFTPPath.copy`` fans out
+   over asyncssh workers, ``SFTPPath.rm``/``checksum`` execute server-side,
    ``LocalPath`` reaches ``shutil``/``os.scandir``. Decomposing a call into
    backend primitives would still produce correct results while silently
    discarding every one of those, which no output assertion would catch.
 2. An operation hostctl never declares must still work, so that following
-   ``pathlib_next`` does not mean hand-writing a forwarder per release.
+   ``pathapi`` does not mean hand-writing a forwarder per release.
 
 The tests below pin both, because satisfying either one alone is easy and
 the failure mode of trading one for the other is invisible.
@@ -19,7 +19,7 @@ import inspect
 import stat
 
 import pytest
-from pathlib_next.mempath import MemPath, MemPathBackend
+from pathapi.mempath import MemPath, MemPathBackend
 
 from hostctl import PathProvider, PosixHost
 
@@ -39,7 +39,7 @@ class RecordingMemPath(MemPath):
         type(self).calls.append("rm")
         return super().rm(*args, **kwargs)
 
-    def touch(self, mode=0o666, exist_ok=True):
+    def touch(self, mode=None, exist_ok=True):
         type(self).calls.append("touch")
         return super().touch(mode=mode, exist_ok=exist_ok)
 
@@ -68,7 +68,7 @@ def test_backend_override_of_copy_runs(host):
 
 
 def test_backend_override_of_rm_runs(host):
-    """rm() is a derived operation; SftpPath implements it server-side."""
+    """rm() is a derived operation; SFTPPath implements it server-side."""
     target = host.path("root", "a.txt")
 
     target.rm()
@@ -110,10 +110,10 @@ def test_chown_reaches_the_backend_without_a_composite_method(host):
     ``_chown`` primitive, so NotImplementedError from it is the proof that
     routing happened rather than a missing attribute at the composite layer.
     """
-    from pathlib_next import Path as PnPath
+    from pathapi import Path as PnPath
 
     if not hasattr(PnPath, "chown"):
-        pytest.skip("installed pathlib_next predates chown()")
+        pytest.skip("installed pathapi predates chown()")
 
     from hostctl.host import composite_path
 
@@ -139,8 +139,8 @@ def test_a_composite_argument_keeps_its_backend(tmp_path):
     and for a backend whose paths carry state that constructor FAILS
     (`TypeError: WinRMPath requires a backend`), which is not even the
     `NotImplementedError` the row's retry contract is written against.
-    `pathlib_next` 0.9.10 closed that particular hole by routing through
-    `with_segments`, so this is a guard rather than a reproduction: hostctl
+    pathapi routes derived paths through `with_segments`, so this is a
+    guard rather than a reproduction: hostctl
     now hands over the provider's own path and does not rely on the backend
     re-parsing text correctly.
     """
@@ -179,7 +179,7 @@ def test_a_composite_argument_keeps_its_backend(tmp_path):
 def test_a_download_provider_answers_the_stat_predicates_it_derives():
     """It declared `stat` and `exists` but not `is_file`/`is_dir`, so a
     pinned download path answered `stat()` and `is_symlink()` and refused
-    `is_file()` -- and every pathlib_next helper that asks `is_dir()` first
+    `is_file()` -- and every pathapi helper that asks `is_dir()` first
     broke on it."""
     from hostctl.provider.transports import DownloadPathProvider
 
@@ -199,7 +199,7 @@ def test_a_read_only_provider_can_still_copy_out(tmp_path):
     """`copy`/`move` were both gated on the source provider's `write`, so a
     read-only provider could not copy OUT at all -- although only reads
     happen on the source -- while `read_bytes()` on the same path worked."""
-    from pathlib_next import Path as LocalPath
+    from pathapi import Path as LocalPath
     from hostctl.provider.transports import DownloadPathProvider
 
     backend = MemPathBackend()
@@ -270,8 +270,8 @@ def test_the_default_path_syncer_policy_works_over_composite_paths(tmp_path):
     """`PathSyncer`'s default checksum calls `supported_checksums()` and
     `is_local()` bare, so either one raising aborts a whole sync on the first
     file."""
-    from pathlib_next import Path as LocalPath
-    from pathlib_next.utils.sync import PathSyncer
+    from pathapi import Path as LocalPath
+    from pathapi.sync import PathSyncer
 
     source_root = LocalPath(str(tmp_path / "source"))
     source_root.mkdir()

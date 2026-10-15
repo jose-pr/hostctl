@@ -225,7 +225,7 @@ def test_a_supplied_path_helper_reaches_the_backend_and_lifts_the_degradation():
     one, so every real QemuHost path was metadata-less."""
     import stat as stat_module
 
-    from pathlib_next.utils.stat import FileStat
+    from pathapi import FileStat
 
     class _Helper:
         def stat(self, path, *, follow_symlinks=True):

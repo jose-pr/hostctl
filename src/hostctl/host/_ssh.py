@@ -11,7 +11,7 @@ import typing
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from urllib.parse import quote, unquote, urlencode
 
-from pathlib_next import Pathname, PosixPathname, WindowsPathname
+from pathapi import Pathname, PosixPathname, WindowsPathname
 
 from ..executor import SshConnection, SshExecutor, wants_text
 from ..provider import (
@@ -23,13 +23,6 @@ from ..provider import (
 )
 
 log = logging.getLogger("hostctl.host.ssh")
-
-#: RFC 3986 `pchar`, plus `/`.  Everything legal in a URI path segment is
-#: left as written -- including `:` so a Windows-flavoured remote path still
-#: reads as `sftp://host:22/C:/Temp` -- while `%`, `?`, `#`, space, and
-#: non-ASCII are percent-encoded, because those are what a URI parser would
-#: otherwise take for syntax.
-_URI_PATH_SAFE = "/:@-._~!$&'()*+,;="
 from ..process import Process, SshProcess, TerminalRequest
 from ._common import (
     CaptureOutput,
@@ -174,12 +167,10 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             if isinstance(keys, (str, bytes, os.PathLike)):
                 keys = [keys]
             opts["client_keys"] = keys
-        # Always passed, never omitted on the default. `()` is asyncssh's own
-        # "resolve known_hosts the usual way" value, so the exec leg is
-        # unchanged -- but pathlib_next's SFTP connect seeds `known_hosts=None`
-        # (verification off) for options it is not given, so omitting the key
-        # made the path leg accept any host key, including a substituted one,
-        # and hand it the password. Opting out stays possible and explicit:
+        # Always passed, never omitted on the default: `()` is asyncssh's own
+        # "resolve known_hosts the usual way" value, and both legs receive
+        # these options, so the path leg verifies the host key exactly as the
+        # exec leg does. Opting out stays possible and explicit:
         # `known_hosts=None`.
         opts["known_hosts"] = self.known_hosts
         return opts
@@ -451,51 +442,42 @@ class _SshTransport:
         backend, self._sftp_backend = self._sftp_backend, None
         if backend is None:
             return
-        # `BaseSftpBackend.close()` closes every connection the backend
+        # `BaseSFTPBackend.close()` closes every connection the backend
         # cached and leaves it usable, so the next path() reconnects.
         backend.close()
 
     def warm_sftp(self) -> None:
         """Establish the SFTP client from the *calling* thread.
 
-        pathlib_next's native recursive operations (`rm`, `copy`) run as
-        coroutines on the shared bridge loop and resolve the client from
-        there. With nothing cached that waits on a future only that loop can
-        complete, so the loop parks for the full 60s connect timeout, the
-        removal never happens, and every later SFTP operation in the process
-        -- on any path, on any host -- queues behind it. Warming it here costs
-        the connection that is about to be made anyway.
+        sftppath's native recursive operations (`rm`, `copy`) run on its own
+        event-loop thread, where a synchronous connect cannot be made; a
+        client already cached is what they use. Warming it here costs the
+        connection that is about to be made anyway.
         """
-        path = self.path()
-        backend = self._sftp_backend
-        client = getattr(backend, "client", None)
-        source = getattr(path, "source", None)
-        if client is None or source is None:
-            return
-        client(source)
+        self.path()
+        client = getattr(self._sftp_backend, "client", None)
+        if client is not None:
+            client()
 
     def path(self, *segments: PathLike) -> HostPath:
-        from pathlib_next.uri.schemes.sftp import AsyncsshSftpBackend, SftpPath
+        from sftppath import AsyncSSHBackend, SFTPPath
 
         remote_path = self.config.path_flavor(*segments).as_posix()
         if not remote_path.startswith("/"):
             remote_path = "/" + remote_path
         with self._ssh_lock:
             if self._sftp_backend is None:
-                self._sftp_backend = AsyncsshSftpBackend(
-                    connect_opts=self.config.connect_opts()
+                # `ssh_config=None`: the exec leg reads no ssh_config, so the
+                # path leg must not either, or `Host`/`Port`/`User` entries
+                # would send the two legs to different servers.
+                self._sftp_backend = AsyncSSHBackend(
+                    self.config.host,
+                    self.config.port or 22,
+                    user=self.config.username or "root",
+                    connect_opts=self.config.connect_opts(),
+                    ssh_config=None,
                 )
-            # The remote path becomes part of a URI, so it has to be encoded
-            # as one. `pathlib_next` parses with `uritools.urisplit` and then
-            # uridecodes the components: a raw `?` or `#` in a filename was
-            # taken as the start of the query or fragment and truncated the
-            # path, and a genuine `%xx` was decoded into a different name.
-            path = SftpPath(
-                f"sftp://{uri_host(self.config.host)}:{self.config.port or 22}"
-                f"{quote(remote_path, safe=_URI_PATH_SAFE)}",
-                backend=self._sftp_backend,
-            )
-            return path
+            return SFTPPath(remote_path, backend=self._sftp_backend)
 
     def run(
         self,
@@ -717,9 +699,9 @@ class SftpPathProvider(PathProvider):
             try:
                 self.transport.warm_sftp()
             except Exception as exc:
-                # pathlib_next dials its own SFTP connection and hands back
-                # asyncssh's errors raw -- `HostKeyNotVerifiable` is not an
-                # OSError -- so map them as the transport's own connect does.
+                # sftppath maps its own errors to OSError types; an asyncssh
+                # error that still arrives raw (`HostKeyNotVerifiable` is not
+                # an OSError) is mapped as the transport's own connect does.
                 normalized = _async.normalize_asyncssh_error(exc)
                 if normalized is exc:
                     raise

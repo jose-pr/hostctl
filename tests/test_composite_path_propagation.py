@@ -7,7 +7,7 @@ guard the whole derivation surface rather than one method.
 """
 
 import pytest
-from pathlib_next.mempath import MemPath, MemPathBackend
+from pathapi.mempath import MemPath, MemPathBackend
 
 from hostctl import PathProvider, PosixHost
 

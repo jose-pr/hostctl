@@ -3,8 +3,8 @@ import shutil
 import subprocess
 
 import pytest
-from pathlib_next.mempath import MemPath, MemPathBackend
-from pathlib_next.utils.sync import PathAndStat, PathSyncer
+from pathapi.mempath import MemPath, MemPathBackend
+from pathapi.sync import PathAndStat, PathSyncer
 
 from hostctl import ExecutorProvider, PathProvider, PosixHost, WindowsHost
 from hostctl.sync import ProgressReader, host_checksum, stat_checksum
@@ -295,7 +295,7 @@ def _memory_host(name, backend):
 def test_two_hosts_are_two_filesystems_even_when_paths_are_spelled_alike():
     """`/app.conf` on one host is not `/app.conf` on another.
 
-    pathlib_next decides "same file" through `_same_filesystem()`; without an
+    pathapi decides "same file" through `_same_filesystem()`; without an
     answer it falls back to `(type, segments)` equality and refuses the copy
     with `EINVAL "Source and target are the same file"`.
     """
@@ -415,9 +415,9 @@ def test_a_remote_checksum_separates_options_from_the_filename():
 
 def test_a_composite_path_reports_whether_it_is_local():
     """`PathSyncer` applies its size+mtime quick check only when a side says
-    it is not local, and pathlib_next answers `True` for a path that does not
+    it is not local, and pathapi answers `True` for a path that does not
     implement `is_local` -- so every remote-to-remote sync through composite
-    paths checksummed every existing pair, discarding the answer `SftpPath`
+    paths checksummed every existing pair, discarding the answer `SFTPPath`
     already had."""
     backend = MemPathBackend()
     _memory_file(backend, "data", b"content")

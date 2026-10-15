@@ -7,8 +7,8 @@ import subprocess
 import json
 
 import pytest
-from pathlib_next import Path
-from pathlib_next.utils.stat import FileStat
+from pathapi import Path
+from pathapi import FileStat
 
 from hostctl import WinRMPath
 from hostctl.host._winrm import WinRMPathBackend
@@ -74,7 +74,7 @@ class _MemoryBackend:
         self.stat(path)
 
 
-def test_winrm_path_is_pathlib_next_windows_path_and_propagates_backend():
+def test_winrm_path_is_pathapi_windows_path_and_propagates_backend():
     backend = _MemoryBackend()
     path = WinRMPath(r"C:\Temp\Folder", backend=backend)
 
@@ -317,7 +317,7 @@ def test_the_old_null_backup_form_is_the_one_that_failed(tmp_path):
 
 
 def test_symlink_to_force_reaches_the_backend():
-    """The override took the PUBLIC name, so `pathlib_next`'s wrapper --
+    """The override took the PUBLIC name, so `pathapi`'s wrapper --
     which is where `force=` (remove an existing entry first) and target
     normalisation live -- never ran: `symlink_to(target, force=True)`
     silently ignored `force`."""
@@ -334,7 +334,7 @@ def test_symlink_to_force_reaches_the_backend():
         def stat(self, path, *, follow_symlinks=True):
             import stat as stat_module
 
-            from pathlib_next.utils.stat import FileStat
+            from pathapi import FileStat
 
             if path not in self.files:
                 raise FileNotFoundError(path)

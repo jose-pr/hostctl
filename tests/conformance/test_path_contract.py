@@ -7,7 +7,7 @@ import stat
 
 import pytest
 
-from pathlib_next import Path as NextPath
+from pathapi import Path as NextPath
 
 from .providers import conformance_path, fake_providers, provider_context
 
@@ -21,8 +21,8 @@ def _link_target_parts(path) -> tuple:
 
     ``readlink()`` reports the target the transport stored, and the exact
     spelling is legitimately backend-specific: Windows ``os.readlink`` adds
-    the ``\\\\?\\`` extended-length prefix, and ``SftpPath`` renders as a
-    ``sftp://host:port/...`` URI.  Comparing the trailing path components
+    the ``\\\\?\\`` extended-length prefix, and a URI-shaped path renders
+    as ``scheme://host/...``.  Comparing the trailing path components
     checks the contract that actually matters -- the same file is named --
     without asserting one backend's spelling onto the others.
     """
@@ -30,8 +30,8 @@ def _link_target_parts(path) -> tuple:
     text = str(path).replace("\\", "/")
     if text.startswith("//?/"):
         text = text[4:]
-    # SftpPath renders as "sftp:/host:port/..." (one slash), a Uri as
-    # "scheme://host/...". Strip whichever scheme prefix is present.
+    # A URI-shaped path renders as "scheme://host/..." or "scheme:/...".
+    # Strip whichever scheme prefix is present.
     for separator in ("://", ":/"):
         if separator in text:
             text = text.split(separator, 1)[1]
@@ -72,13 +72,9 @@ if os.name != "nt":
 def test_path_names_containing_uri_syntax_address_the_right_file(
     provider, tmp_path, name
 ):
-    """A filename is data, even for a backend addressed by URI.
-
-    The SFTP path was built by embedding the remote path in an `sftp://`
-    f-string, so `pathlib_next`'s URI parse truncated a name at `?` or `#`
-    and decoded a literal `%20` into a space -- silently reading or writing a
-    different file.
-    """
+    """A filename is data: a name holding `?`, `#` or `%20` must address
+    exactly that file on every backend, including one addressed by URI, where
+    such a name would truncate or decode."""
     if "path" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no path capability")
     with provider_context(provider) as host:
@@ -214,7 +210,7 @@ def test_path_contract_uses_real_transport_backend(provider, tmp_path):
         pytest.skip(f"{provider.name} has no path capability")
     expected = {
         "local": ("LocalPath",),
-        "ssh": ("SftpPath",),
+        "ssh": ("SFTPPath",),
         "winrm": ("WinRMPath",),
         "container": ("PosixContainerPath", "WindowsContainerPath"),
         "qemu": ("PosixQemuPath", "WindowsQemuPath"),

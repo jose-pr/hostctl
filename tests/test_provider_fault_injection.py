@@ -15,7 +15,7 @@ import subprocess
 from hostctl import _async
 
 import pytest
-from pathlib_next.mempath import MemPath, MemPathBackend
+from pathapi.mempath import MemPath, MemPathBackend
 
 from hostctl import (
     ContainerConfig,
@@ -630,7 +630,7 @@ def test_the_shipped_local_provider_can_symlink_and_readlink(tmp_path):
     supports symlink_to" however capable its backend was, while SFTP and
     WinRM escaped only by declaring the `path` wildcard.
     """
-    from pathlib_next import Path as LocalPath
+    from pathapi import Path as LocalPath
 
     host = PosixHost(path_providers=(LocalPathProvider(lambda *p: LocalPath(*p)),))
     target = host.path(str(tmp_path / "release-42"))
@@ -779,7 +779,7 @@ def test_path_falls_back_over_every_candidate_not_just_one():
     the identical `run()` succeeded."""
     from hostctl import PosixHost
     from hostctl.provider import OperationNotStarted, PathProvider
-    from pathlib_next import Path as LocalPath
+    from pathapi import Path as LocalPath
 
     def offline(name):
         def factory(*segments):
@@ -832,7 +832,7 @@ def test_a_path_falls_back_when_sftp_cannot_connect(error):
     """`run()` connects before dispatch and fell back; `path()` did not.
 
     Nothing on the composite-path route called `SftpPathProvider.connect()`:
-    pathlib_next dialled SFTP lazily inside the operation, so the transport
+    the SFTP library dials lazily inside the operation, so the transport
     error escaped `_dispatch` and the working next provider was never tried.
     """
 
@@ -849,9 +849,9 @@ def test_a_path_falls_back_when_sftp_cannot_connect(error):
 
 
 def test_a_raw_asyncssh_host_key_error_from_the_sftp_leg_declines():
-    """pathlib_next dials its own SFTP connection and raises asyncssh's error
-    raw; `HostKeyNotVerifiable` is not an OSError, so it was never taken as
-    "nothing started" even where `connect()` did run."""
+    """An SFTP leg that raises asyncssh's error raw still declines:
+    `HostKeyNotVerifiable` is not an OSError, so unmapped it would never be
+    taken as "nothing started"."""
     import asyncssh
 
     def untrusted():

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from pathlib_next import Path as NextPath
+from pathapi import Path as NextPath
 
 from hostctl import Host, LocalHost
 

@@ -17,8 +17,8 @@ import uuid
 from pathlib import PurePath as _StdPurePath
 from urllib.parse import quote, unquote, urlencode
 
-from pathlib_next import Path, WindowsPathname
-from pathlib_next.utils.stat import FileStat
+from pathapi import Path, WindowsPathname
+from pathapi import FileStat
 
 from ..executor import (
     ExecutorCapability,
@@ -958,7 +958,7 @@ class WinRMPath(StagedOpenMixin, WindowsPathname, Path):
     def _symlink_to(self, target, target_is_directory: bool = False):
         """Create this path as a symbolic link to ``target``.
 
-        The PRIMITIVE, not the public method: `pathlib_next`'s wrapper adds
+        The PRIMITIVE, not the public method: `pathapi`'s wrapper adds
         `force=` (remove an existing entry first) and normalises a `str`
         target without re-parsing it as URI syntax. Overriding the public
         name made both unreachable, so `symlink_to(target, force=True)`

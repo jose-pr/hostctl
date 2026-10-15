@@ -3,8 +3,8 @@ import io
 import stat
 
 import pytest
-from pathlib_next import Path
-from pathlib_next.utils.stat import FileStat
+from pathapi import Path
+from pathapi import FileStat
 
 from hostctl.host.qemu import PosixQemuPath, QgaPathBackend, WindowsQemuPath
 from hostctl.executor._qga import QgaCommandError
@@ -317,7 +317,7 @@ def test_open_modes_are_strict(mode):
     )
 
     # What matters here is that the mode is refused, not which layer refuses
-    # it: `pathlib_next.Path.open()` rejects some of these spellings before
+    # it: `pathapi.Path.open()` rejects some of these spellings before
     # the backend sees them, and its wording is its own to change.
     # `validate_open_mode`'s message is pinned in tests/test_staged_io.py.
     with pytest.raises(ValueError):

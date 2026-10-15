@@ -14,7 +14,7 @@ import re
 import threading
 import typing
 
-from pathlib_next import Path
+from pathapi import Path
 
 #: Selection, probe, and decline diagnostics.  Library convention: this module
 #: never configures a handler and never calls ``basicConfig``; an application
@@ -210,7 +210,7 @@ class ExecutorProvider:
 
 
 class PathProvider:
-    """Named path factory.  ``path`` must return a pathlib_next.Path."""
+    """Named path factory.  ``path`` must return a pathapi.Path."""
 
     DEFAULT_CAPABILITIES = frozenset(
         (
@@ -282,7 +282,7 @@ class PathProvider:
         value = self.factory(*segments)
         if not isinstance(value, Path):
             raise TypeError(
-                f"path provider {self.name!r} returned {type(value).__name__}, expected pathlib_next.Path"
+                f"path provider {self.name!r} returned {type(value).__name__}, expected pathapi.Path"
             )
         return value
 

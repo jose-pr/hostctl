@@ -20,8 +20,8 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from typing import Dict, Iterable, Optional, Tuple
 
-from pathlib_next.uri.schemes.sftp import BaseSftpBackend
-from pathlib_next.utils.stat import FileStat
+from sftppath import BaseSFTPBackend
+from pathapi import FileStat
 
 
 class _Sandbox:
@@ -100,7 +100,7 @@ class _Sandbox:
 
 
 class LocalSftpClient:
-    """Paramiko-shaped client consumed by pathlib_next's real SftpPath."""
+    """Paramiko-shaped client consumed by sftppath's real SFTPPath."""
 
     def __init__(self) -> None:
         self.sandbox = _Sandbox("posix")
@@ -140,7 +140,7 @@ class LocalSftpClient:
 
     def open(self, path: str, mode: str, buffering: int = -1):
         # SFTP clients expose byte streams for their historical ``r``/``w``
-        # modes; pathlib_next supplies text decoding above this layer.
+        # modes; pathapi supplies text decoding above this layer.
         binary_mode = mode if "b" in mode else mode + "b"
         return self._path(path).open(binary_mode, buffering=buffering)
 
@@ -171,22 +171,17 @@ class LocalSftpClient:
         return self.sandbox.readlink(path)
 
 
-class LocalSftpBackend(BaseSftpBackend):
+class LocalSftpBackend(BaseSFTPBackend):
     """Backend instance which keeps one cached fake SFTP client."""
 
     def __init__(self) -> None:
         self._client = LocalSftpClient()
 
-    def client(self, _source):
+    def client(self):
         return self._client
 
     def close(self) -> None:
         self._client.close()
-
-    def invalidate(self, _source) -> None:
-        # The production SSH transport invalidates sources during close.
-        # This fake has no connection cache beyond its one owned client.
-        return None
 
 
 class WinRMFilesystemRunner:

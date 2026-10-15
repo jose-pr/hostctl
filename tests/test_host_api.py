@@ -6,7 +6,7 @@ import subprocess
 from urllib.parse import quote, urlsplit
 
 import pytest
-from pathlib_next import WindowsPathname
+from pathapi import WindowsPathname
 
 from hostctl import (
     POWERSHELL,

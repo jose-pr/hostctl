@@ -8,7 +8,7 @@ import sys
 from pathlib import PurePosixPath
 
 import pytest
-from pathlib_next import PosixPathname
+from pathapi import PosixPathname
 
 from hostctl import Exec, LocalHost, POSIX_SHELL, POWERSHELL
 from hostctl.executor._common import command_text

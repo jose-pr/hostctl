@@ -84,7 +84,7 @@ def _shell_cases():
 
 
 def _path_cases():
-    from pathlib_next.mempath import MemPath, MemPathBackend
+    from pathapi.mempath import MemPath, MemPathBackend
     from hostctl.host import PosixHost
     from hostctl.provider import PathProvider
 

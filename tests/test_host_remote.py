@@ -8,7 +8,7 @@ import sys
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
 import pytest
-from pathlib_next import Path as NextPath, PosixPathname, WindowsPathname
+from pathapi import Path as NextPath, PosixPathname, WindowsPathname
 
 from hostctl import (
     BASH,
@@ -205,10 +205,10 @@ def test_ssh_config_uses_explicit_authentication_fields():
 def test_default_config_still_verifies_the_host_key_on_every_leg():
     """`known_hosts` is never omitted, whatever its value.
 
-    pathlib_next's SFTP connect seeds `known_hosts=None` -- verification off --
-    for options it is not handed. Omitting the key on its `()` default meant
-    `run()` verified the server key while `path()` accepted any key, including
-    a substituted one, and sent it the password.
+    Both legs are handed the same options, so neither may rely on a library
+    default: an SFTP client that seeds `known_hosts=None` for an option it is
+    not given would accept any server key, including a substituted one, and
+    send it the password.
     """
     options = SshConfig("host", password="secret").connect_opts()
 
@@ -390,8 +390,9 @@ def test_sftp_path_styles_when_ssh_extra_is_available():
     windows = _SshTransport(SshConfig("host", path_flavor=WindowsPathname)).path(
         r"C:\Temp"
     )
-    assert str(posix) == "sftp://host:22/etc"
-    assert str(windows) == "sftp://host:22/C:/Temp"
+    # The text is the path on the server; a Windows drive keeps its colon.
+    assert str(posix) == "/etc"
+    assert str(windows) == "/C:/Temp"
     assert isinstance(posix, NextPath)
     assert isinstance(windows, NextPath)
 
@@ -408,25 +409,12 @@ def test_sftp_path_styles_when_ssh_extra_is_available():
     ],
 )
 def test_sftp_path_survives_uri_syntax_in_a_filename(remote):
-    """The path is embedded in a URI, so it must be encoded as one.
-
-    `pathlib_next` splits with `uritools.urisplit` and uridecodes the parts:
-    a raw `?` or `#` truncated the path into a query or fragment, and a
-    genuine `%xx` decoded into a different filename. Round-trip, not the
-    encoded spelling, is what is pinned here.
-    """
+    """A name that would be syntax in a URI -- `?`, `#`, `%xx` -- reaches the
+    server as written: the remote path is never parsed as a URI."""
     pytest.importorskip("asyncssh")
     path = _SshTransport(SshConfig("host")).path(remote)
-    assert path.as_posix().split(":", 1)[1] == remote
-
-
-def test_sftp_path_leaves_uri_legal_characters_readable():
-    """Encoding is minimal: a Windows-flavoured path keeps its drive colon."""
-    pytest.importorskip("asyncssh")
-    windows = _SshTransport(SshConfig("host", path_flavor=WindowsPathname)).path(
-        r"C:\Temp"
-    )
-    assert str(windows) == "sftp://host:22/C:/Temp"
+    assert str(path) == remote
+    assert path.name == remote.rsplit("/", 1)[1]
 
 
 def test_sftp_backend_is_reused_and_invalidated_on_close():
@@ -579,28 +567,12 @@ def test_the_default_verifies_the_host_key_on_both_legs():
 
     assert options == {"username": "root", "known_hosts": ()}
 
-    # The SFTP leg gets the same dict, which is the point: pathlib_next's
-    # backend seeds `known_hosts=None` -- verification OFF -- for options it
-    # is not handed.
-    import pathlib_next.uri.schemes.sftp as sftp
+    # The SFTP leg gets the same dict, and reads no ssh_config, so it
+    # verifies the host key and resolves the host as the exec leg does.
+    transport = _SshTransport(SshConfig("h"))
+    transport.path("/tmp/x")
+    backend = transport._sftp_backend
 
-    seen = {}
-
-    class _Backend:
-        def __init__(self, **kwargs):
-            seen.update(kwargs)
-
-        def close(self):
-            return None
-
-    original = sftp.AsyncsshSftpBackend
-    sftp.AsyncsshSftpBackend = _Backend
-    try:
-        transport = _SshTransport(SshConfig("h"))
-        transport.path("/tmp/x")
-    except Exception:
-        pass
-    finally:
-        sftp.AsyncsshSftpBackend = original
-
-    assert "known_hosts" in seen.get("connect_opts", {}), seen
+    assert backend.connect_opts["known_hosts"] == ()
+    assert backend.connect_opts["config"] is None
+    assert (backend.host, backend.port, backend.user) == ("h", 22, "root")

@@ -28,44 +28,26 @@ classifiers = [
     "Topic :: System :: Filesystems",
     "Typing :: Typed",
 ]
-# pathlib_next supplies the common local/remote path return type. netimps
+# pathapi supplies the common local/remote path return type. netimps
 # supplies scheme/port and address semantics -- including schemes no system
 # services database knows (ws/wss, socks5) -- so hostctl does not reimplement
 # them. Transport implementations remain extras, so importing hostctl never
 # requires them.
 #
 # Each floor is the `.0` of the dependency's current minor series, raised
-# above it only where hostctl needs a later patch. pathlib_next is that
-# exception, and 0.9.10 is the floor for two reasons:
-#
-# * `Path._same_filesystem()`, which 0.9.10 added, is how a composite path
-#   tells pathlib_next that two hosts are two namespaces. Without it the
-#   copy/move/sync guards fall back to path equality -- `(type, segments)`,
-#   blind to hosts -- so 0.9.4 through 0.9.9 refuse to copy `/etc/app.conf`
-#   from one host to the same path on another (`EINVAL "Source and target
-#   are the same file"`, and `PathSyncer` "source and target overlap").
-#   0.9.4 is where those guards landed, so the whole 0.9.4-0.9.9 window is
-#   excluded rather than merely undesirable.
-# * `BaseSftpBackend.close()` is the public way to drop a backend's cached
-#   connections, which `SshTransport.close()` calls.
-#
-# netimps has no such case and floors at the series start -- 0.4.0, whose
-# scheme registry knows winrm/winrms/wsman/wsmans/psrp, so `ConnectionString`
-# resolves 5985/5986 for them where 0.3 left the port `None`. The ceilings
-# stay at the next major-ish boundary because both projects are pre-1.0,
-# where a minor may break.
-dependencies = ["pathlib_next>=0.9.10,<0.10", "netimps>=0.4.0,<0.5"]
+# above it only where hostctl needs a later patch. The ceilings stay at the
+# next minor because every one of these is pre-1.0, where a minor may break.
+# netimps 0.4.0's scheme registry knows winrm/winrms/wsman/wsmans/psrp, so
+# `ConnectionString` resolves 5985/5986 for them where 0.3 left the port
+# `None`.
+dependencies = ["pathapi>=0.1.0,<0.2", "netimps>=0.4.0,<0.5"]
 
 [project.optional-dependencies]
-# SSH-backed run()/path(): asyncssh for shell exec, pathlib_next's SftpPath
-# (asyncssh-only since 0.8.2) for the remote path backend.
-# The floor is the oldest asyncssh this package is exercised against;
-# the ceiling is the next major. Left unbounded, these two were the only
-# dependencies that could install a version nobody had ever run.
-# pathlib_next's SFTP backend imports netimps; 0.9.12 is the first release
-# whose extra declares the 0.4 series, while 0.9.10-0.9.11 leave netimps
-# unbounded and so could be paired with a netimps they never ran against.
-ssh = ["asyncssh>=2.14,<3", "pathlib_next[sftp-async]>=0.9.12,<0.10"]
+# SSH-backed run()/path(): asyncssh for shell exec, sftppath's SFTPPath for
+# the remote path backend. The asyncssh floor is sftppath's own: its
+# connection cache calls `SSHClientConnection.is_closed()`, absent before
+# 2.20, so an older asyncssh could not serve the path leg.
+ssh = ["asyncssh>=2.20,<3", "sftppath[asyncssh]>=0.1.0,<0.2"]
 # Windows Remote Management command execution.
 winrm = ["pywinrm>=0.5.0,<0.6"]
 # PowerShell Remoting Protocol runspaces (Python 3.10+ only).  The marker

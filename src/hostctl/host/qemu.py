@@ -16,8 +16,8 @@ from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from pathlib import PurePath as _StdPurePath
 from urllib.parse import quote, unquote, urlencode
 
-from pathlib_next import Path, Pathname, PosixPathname, WindowsPathname
-from pathlib_next.utils.stat import FileStat
+from pathapi import Path, Pathname, PosixPathname, WindowsPathname
+from pathapi import FileStat
 
 from ..executor import QemuExecutor
 from ..executor._qga import (
@@ -1126,7 +1126,7 @@ class _QgaPathMixin(StagedOpenMixin):
     __slots__ = ()
 
     def exists(self, *, follow_symlinks: bool = True) -> bool:
-        # pathlib_next answers this from `stat()`, swallowing OSError but not
+        # pathapi answers this from `stat()`, swallowing OSError but not
         # NotImplementedError -- so on a helper-less guest the documented
         # boolean probe raised. The backend can still answer with file RPCs.
         return self.backend.exists(str(self), follow_symlinks=follow_symlinks)

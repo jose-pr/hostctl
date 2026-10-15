@@ -166,11 +166,11 @@ class StagedWriteStream(io.BytesIO):
 
     def __del__(self):
         # Never upload from the collector. This guards the BINARY case only:
-        # `pathlib_next.Path.open()` wraps a text mode in its own
+        # `pathapi.Path.open()` wraps a text mode in its own
         # `io.TextIOWrapper`, and that wrapper's finalizer closes the buffer,
         # which commits -- so an abandoned or exception-interrupted text
-        # stream still uploads. Closing that needs a wrapper hook upstream;
-        # see ../pathlib-next findings. `io.IOBase.__del__` calls
+        # stream still uploads. Closing that needs a hook in the wrapper.
+        # `io.IOBase.__del__` calls
         # `close()`, so without this the pending commit would run at an
         # arbitrary point with its exceptions printed and discarded -- a
         # network write nobody asked for and nobody can catch.
@@ -256,7 +256,7 @@ class StagedTextWrapper(io.TextIOWrapper):
 
 def _text_encoding(encoding: typing.Optional[str]) -> typing.Optional[str]:
     # `io.text_encoding` is 3.10+; on the 3.9 floor pass the value through,
-    # exactly as pathlib_next's own open() does.
+    # exactly as pathapi's own open() does.
     resolve = getattr(io, "text_encoding", None)
     return resolve(encoding) if resolve is not None else encoding
 
@@ -264,7 +264,7 @@ def _text_encoding(encoding: typing.Optional[str]) -> typing.Optional[str]:
 class StagedOpenMixin:
     """Supplies `open()` for a path whose `_open()` stages writes in memory.
 
-    Identical to the inherited `pathlib_next.Path.open()` except for the text
+    Identical to the inherited `pathapi.Path.open()` except for the text
     wrapper it builds: a plain `io.TextIOWrapper` commits the staged buffer
     from `__exit__` and from the garbage collector, so `open('w')` ignored the
     guards that `open('wb')` honours.
@@ -301,7 +301,7 @@ class StagedOpenMixin:
 def validate_open_mode(mode: str) -> typing.Tuple[bool, bool]:
     """Validate a binary `open()` mode and return `(readable, writable)`.
 
-    A `t` suffix is accepted and ignored, as `pathlib_next` allows: these
+    A `t` suffix is accepted and ignored, as `pathapi` allows: these
     backends stage bytes and the text layer is applied above them. The
     container and QGA copies used to reject `"rt"` while the WinRM copy
     accepted it, for no reason either could have defended.

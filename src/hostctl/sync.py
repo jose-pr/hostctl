@@ -1,4 +1,4 @@
-"""Checksum and progress helpers for :mod:`pathlib_next` copy and sync."""
+"""Checksum and progress helpers for :mod:`pathapi` copy and sync."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import re
 import subprocess
 import typing
 
-from pathlib_next.utils.sync import PathAndStat
+from pathapi.sync import PathAndStat
 
 if typing.TYPE_CHECKING:
     from .host import Host
@@ -46,11 +46,11 @@ def stat_checksum(entry: PathAndStat) -> tuple[int, float]:
     It can also *report* a change which is not one: ``Path.copy()``
     propagates ``st_mode`` and not timestamps, so a file this helper copies
     lands with a fresh modification time and compares unequal on the next
-    run -- the sync never settles.  Measured on both supported interpreters
-    with ``pathlib_next`` 0.9.10: a backdated source and its fresh copy
-    differ by the full hour on 3.14 as well as on 3.9.  (CPython 3.14 added
+    run -- the sync never settles.  Measured on both supported interpreters:
+    a backdated source and its fresh copy differ by the full hour on 3.14 as
+    well as on 3.9.  (CPython 3.14 added
     its own ``Path.copy()`` which does preserve timestamps, but
-    ``pathlib_next`` routes explicitly around it to keep one cross-version
+    ``pathapi`` routes explicitly around it to keep one cross-version
     contract, so it is not reached.)
 
     So: use this helper where source modification times are meaningful on
@@ -71,7 +71,7 @@ def host_checksum(
 
     More than one host may be supplied for a cross-host sync. Paths which do
     not belong to any supplied host are hashed through their binary ``open()``
-    contract, preserving interoperability with arbitrary ``pathlib_next``
+    contract, preserving interoperability with arbitrary ``pathapi``
     implementations.
     """
     normalized = algorithm.casefold().replace("-", "")

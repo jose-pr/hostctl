@@ -8,7 +8,7 @@ import typing
 from pathlib import PurePath, PurePosixPath, PureWindowsPath
 from urllib.parse import quote, unquote, urlencode
 
-from pathlib_next import Pathname, PosixPathname, WindowsPathname
+from pathapi import Pathname, PosixPathname, WindowsPathname
 
 from ..executor.container import (
     ContainerExecutor,

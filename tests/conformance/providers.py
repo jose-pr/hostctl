@@ -951,7 +951,7 @@ def _ssh_local() -> tuple[object, Callable[[], None]]:
     -- a `cmd` command line delivered to a `cmd.exe` login shell -- had no
     way to be exercised live at all.
     """
-    from pathlib_next import PosixPathname, WindowsPathname
+    from pathapi import PosixPathname, WindowsPathname
 
     from hostctl import SshConfig
     from hostctl.shell import CMD, POSIX_SHELL

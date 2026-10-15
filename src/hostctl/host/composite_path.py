@@ -1,6 +1,6 @@
 """Logical pathlib paths which select and retain host path providers.
 
-The composite classes deliberately inherit the concrete ``pathlib_next``
+The composite classes deliberately inherit the concrete ``pathapi``
 pathname flavour instead of ``LocalPath``.  This keeps POSIX syntax stable on
 Windows clients (and vice versa) while the provider-owned path remains the
 authority for I/O.
@@ -14,7 +14,7 @@ import os
 import pathlib
 import typing
 
-from pathlib_next import Path, PosixPathname, WindowsPathname
+from pathapi import Path, PosixPathname, WindowsPathname
 
 from ..provider import OperationNotStarted, PathProvider, ProviderSelector
 from ._staged_io import copy_from
@@ -88,13 +88,12 @@ def _accepts_kwargs(
 def _logical_text(backend_path: Path) -> str:
     """The path text a backend path names *on its own host*.
 
-    `str()` of a URI-shaped backend path is the whole URI -- an `SftpPath`
-    renders as `sftp://host:22/srv/x`, which is not a path on the target, and
-    a relative one raises. Used as a logical path it sent I/O to
-    `/sftp:/host:22/srv/x`, so a resolved symlink reported `exists()` False.
-    `__fspath__()` is what a host-filesystem scheme answers with; backends
-    that have no filesystem spelling (MemPath) raise, and for those `str()` is
-    already the right text.
+    `str()` of a URI-shaped backend path is the whole URI, which is not a
+    path on the target: used as a logical path it would send I/O to
+    `/sftp:/host:22/srv/x`. `__fspath__()` is what a host-filesystem scheme
+    answers with; a backend with no filesystem spelling (`MemPath`,
+    `SFTPPath`) is not `os.PathLike`, and for those `str()` is already the
+    path text.
     """
     try:
         return os.fspath(backend_path)
@@ -120,7 +119,7 @@ def _is_composite_owner(base: type) -> bool:
     """True for classes belonging to this module's composite hierarchy.
 
     Used to tell a deliberate composite override (``iterdir``, ``rename``,
-    ``readlink``, ``copy``) apart from an inherited ``pathlib_next``
+    ``readlink``, ``copy``) apart from an inherited ``pathapi``
     implementation, which is exactly what forwarding must displace.
     """
     return getattr(base, "__module__", "") == __name__
@@ -213,11 +212,11 @@ def _make_forwarder(
 #
 # The method that was *called* is the method invoked on the backend -- never a
 # decomposition into primitives.  Backends override derived operations for real
-# optimization (``SftpPath.copy`` fans out over asyncssh workers,
-# ``SftpPath.rm``/``checksum`` run server-side, ``LocalPath`` reaches ``shutil``
+# optimization (``SFTPPath.copy`` fans out over asyncssh workers,
+# ``SFTPPath.rm``/``checksum`` run server-side, ``LocalPath`` reaches ``shutil``
 # and ``os.scandir``), and decomposing would silently discard all of it while
 # still producing correct results.  Anything the backend does not override
-# resolves to ``pathlib_next``'s own wrapper, so operations added upstream work
+# resolves to ``pathapi``'s own wrapper, so operations added upstream work
 # by adding a row here rather than writing a body.
 #
 # ``retry_safe`` is deliberately conservative.  A wrapper composed of several
@@ -232,7 +231,7 @@ _FORWARDED: "dict[str, tuple[str, bool, bool]]" = {
     # `stat`, because that is what they are: `is_file()` is a stat with a
     # mask. Gating them on their own name alone meant the shipped
     # `DownloadPathProvider` answered `stat()` and `is_symlink()` and refused
-    # `is_file()` -- and every pathlib_next helper that asks `is_dir()` first
+    # `is_file()` -- and every pathapi helper that asks `is_dir()` first
     # (copy(recursive), mkdir(exist_ok), move) broke on such a path.
     "exists": ("exists|stat", False, True),
     "is_file": ("is_file|stat", False, True),
@@ -272,7 +271,7 @@ class _CompositePathMixin:
         """Install the forwarders on every concrete composite class.
 
         Generated here rather than written out so that following
-        ``pathlib_next`` is a row in ``_FORWARDED``, not a new method body.
+        ``pathapi`` is a row in ``_FORWARDED``, not a new method body.
         A class defining the name in its own body always wins -- that is the
         opt-out for an operation needing real composite logic (``iterdir``,
         ``rename``, ``readlink``, ``copy``/``move``).
@@ -281,7 +280,7 @@ class _CompositePathMixin:
         for name, (capability, pin, retry_safe) in _FORWARDED.items():
             # Only a definition inside the composite classes themselves opts
             # out.  Testing the whole MRO would match everything inherited
-            # from ``pathlib_next.Path`` -- which is the entire surface this
+            # from ``pathapi.Path`` -- which is the entire surface this
             # table exists to route.
             owner = next(
                 (
@@ -305,7 +304,7 @@ class _CompositePathMixin:
         """Route ``copy``/``move`` to the backend when both ends agree.
 
         A backend overrides these for transport-native transfer --
-        ``SftpPath.copy`` fans out over asyncssh workers rather than
+        ``SFTPPath.copy`` fans out over asyncssh workers rather than
         streaming bytes through the client -- so handing the call straight
         to ``Path.copy`` would be correct and much slower.
 
@@ -317,7 +316,7 @@ class _CompositePathMixin:
         """
         generic = getattr(Path, name)
         if isinstance(target, str):
-            # `pathlib_next` documents `target: Path | str`. A bare string is a
+            # `pathapi` documents `target: Path | str`. A bare string is a
             # logical spelling on *this* host, so it is given this path's
             # routing state; handing it to the backend raw made every backend
             # re-parse it through its own constructor and raise TypeError.
@@ -424,7 +423,7 @@ class _CompositePathMixin:
     def _same_filesystem(self, other: "Path") -> bool:
         """Whether `other`'s segments resolve in the namespace this path does.
 
-        `pathlib_next` asks this before `copy()`, `move()` and `PathSyncer`
+        `pathapi` asks this before `copy()`, `move()` and `PathSyncer`
         decide two paths are the same file or overlapping trees. Without an
         answer it falls back to equality, which is `(type, segments)` and so
         reads `/etc/app.conf` on two different hosts as one file and refuses
@@ -780,7 +779,7 @@ class _CompositePathMixin:
 
         ``_scandir`` is the primitive and ``iterdir`` derives from it, not
         the other way round: a backend whose listing call already carries
-        metadata answers in one round trip (``SftpPath`` uses
+        metadata answers in one round trip (``SFTPPath`` uses
         ``listdir_attr``; FTP/HTTP/S3 do the equivalent).  Listing via
         ``iterdir`` instead would rebuild every child as a composite path
         and then stat each one separately, discarding that.
@@ -897,9 +896,9 @@ class _CompositePathMixin:
         Hand-written for the same reason as `supported_checksums`: it must
         never raise. `PathSyncer` applies its size+mtime quick check only
         when a side reports False, and a backend that does not implement
-        `is_local` at all is answered `True` by pathlib_next -- so every
+        `is_local` at all is answered `True` by pathapi -- so every
         remote-to-remote sync through composite paths checksummed every
-        existing pair, discarding the answer `SftpPath` already had.
+        existing pair, discarding the answer `SFTPPath` already had.
         """
         try:
             return bool(
@@ -915,7 +914,7 @@ class _CompositePathMixin:
     def _rename_compatible(self, target: "Path") -> bool:
         """Whether `rename()` may be attempted onto `target` at all.
 
-        `pathlib_next.Path.move()` asks first and skips straight to
+        `pathapi.Path.move()` asks first and skips straight to
         copy + remove when the answer is no, which is what a transfer between
         two hosts needs. A rename is only expressible when one provider can
         address both ends.

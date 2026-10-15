@@ -34,7 +34,7 @@ import stat as _stat
 import subprocess
 import typing
 
-from pathlib_next.utils.stat import FileStat
+from pathapi import FileStat
 
 from ..executor._qga import guest_oserror
 

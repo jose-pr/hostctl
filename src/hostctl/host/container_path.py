@@ -12,8 +12,8 @@ import tarfile
 import typing
 
 from pathlib import PurePath as _StdPurePath
-from pathlib_next import Path, PosixPathname, WindowsPathname
-from pathlib_next.utils.stat import FileStat
+from pathapi import Path, PosixPathname, WindowsPathname
+from pathapi import FileStat
 from ._staged_io import copy_from, StagedOpenMixin, staged_open
 
 
@@ -658,7 +658,7 @@ class ContainerPathBackend:
 
 
 class _ContainerPathMixin(StagedOpenMixin):
-    """Shared pathlib_next operations for both container path flavours."""
+    """Shared pathapi operations for both container path flavours."""
 
     __slots__ = ()
 
@@ -721,7 +721,7 @@ class _ContainerPathMixin(StagedOpenMixin):
     def _symlink_to(self, target, target_is_directory: bool = False):
         """Create this path as a symlink to ``target``.
 
-        The PRIMITIVE: `pathlib_next`'s public wrapper supplies `force=`
+        The PRIMITIVE: `pathapi`'s public wrapper supplies `force=`
         and target normalisation, which overriding the public name made
         unreachable.
 

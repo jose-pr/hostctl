@@ -9,7 +9,7 @@ import sys
 import typing
 from pathlib import PurePath
 
-from pathlib_next import Pathname
+from pathapi import Pathname
 
 _Result = typing.TypeVar("_Result", covariant=True)
 

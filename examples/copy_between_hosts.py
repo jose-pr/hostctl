@@ -2,7 +2,7 @@
 
 import os
 
-from pathlib_next.utils.sync import PathSyncer
+from pathapi.sync import PathSyncer
 
 from hostctl import Host, host_checksum
 

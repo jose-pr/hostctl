@@ -1,7 +1,7 @@
 from hostctl import HostPath, OperationNotStarted, PosixHost
 from hostctl.provider import PathProvider, ProviderProbe
 import pytest
-from pathlib_next.mempath import MemPath, MemPathBackend
+from pathapi.mempath import MemPath, MemPathBackend
 from examples.application_provider import (
     DownloadProvider,
     MetadataProvider,

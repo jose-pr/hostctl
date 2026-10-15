@@ -190,7 +190,7 @@ def test_a_secret_in_a_decline_reason_is_redacted_in_the_log(caplog):
 
 
 def test_a_secret_in_a_path_segment_is_redacted_in_the_log(caplog):
-    from pathlib_next.mempath import MemPath, MemPathBackend
+    from pathapi.mempath import MemPath, MemPathBackend
 
     backend = MemPathBackend()
     host = PosixHost(

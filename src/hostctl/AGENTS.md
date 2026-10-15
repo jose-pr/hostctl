@@ -1,7 +1,7 @@
 # hostctl — API header
 
 Protocol-independent host execution and filesystem paths. Core requires
-`pathlib_next`; transport integrations are optional extras.
+`pathapi`; transport integrations are optional extras.
 
 The `hostctl` command line is `hostctl.cli` and needs the `cli` extra; see
 "Command line" at the end. `import hostctl` never imports it.
@@ -91,7 +91,7 @@ divergence comes from:
 
 `hostctl.sync` adds `stat_checksum(entry)`, `host_checksum(*hosts,
 algorithm="md5", chunk_size=1048576)`, and `ProgressReader`; these plug into
-`pathlib_next.utils.sync.PathSyncer` and the existing path copy machinery.
+`pathapi.sync.PathSyncer` and the existing path copy machinery.
 
 `SystemHost`, `PosixHost`, and `WindowsHost` compose ordered executor/path
 providers. `PosixHost.from_ssh(SshConfig(...))` and
@@ -111,7 +111,7 @@ shell-agnostic option surface. `*args` is positional and is what
 as separate elements, while a non-`ARGS` executor never receives them at all,
 because the shell flavour has already rendered them into `command`. `ExecutionOptions` is the corresponding total-false `TypedDict`;
 executor-specific extensions remain keyword options.
-`ExecutorCommand` is `str | pathlib.PurePath | pathlib_next.Pathname`; paths
+`ExecutorCommand` is `str | pathlib.PurePath | pathapi.Pathname`; paths
 remain path objects until the concrete executor converts them for transport.
 `ExecutorCapability.ARGS`, `.CWD`, and `.ENV` declare native executor support.
 `Shell.execute(path, *args)` preserves path/args for an `ARGS` executor;
@@ -310,7 +310,7 @@ hostctl applies to whatever you return.
   `PathProvider(name, factory, *, capabilities=None, probe=None)` are the two
   provider shapes. `name` is what a trace and a `.via()` pin refer to;
   `executor` is any callable matching the `Executor` protocol, and `factory`
-  builds a `pathlib_next.Path` from segments. `capabilities` is a set of
+  builds a `pathapi.Path` from segments. `capabilities` is a set of
   operation names -- strings, so an `ExecutorCapability` member and its
   spelling are interchangeable. `PathProvider.DEFAULT_CAPABILITIES` is the
   full filesystem vocabulary: `stat`, `scandir`, `open`, `open_read`,
@@ -341,7 +341,7 @@ hostctl applies to whatever you return.
 - `CompositePosixPath` / `CompositeWindowsPath` are the path types a composed
   host returns. They preserve the logical path, select a provider per
   operation, pin mutations and streams to the provider that started them, and
-  answer `pathlib_next`'s `_same_filesystem()` with the host's provider set,
+  answer `pathapi`'s `_same_filesystem()` with the host's provider set,
   so a cross-host copy is never mistaken for a file copied onto itself.
   `path.via(name)` returns a path pinned to one provider.
 
@@ -358,7 +358,7 @@ hostctl applies to whatever you return.
   command to `SshExecutor`; WinRM provider run delegates its finalized
   PowerShell script to `WinRMExecutor`.
 - `HostInfo` fields are optional; unknown system values remain `None`.
-- A usable `path()` returns `HostPath` (`pathlib_next.Path`).
+- A usable `path()` returns `HostPath` (`pathapi.Path`).
 - A timeout raises `subprocess.TimeoutExpired` carrying the SAME payload on
   every transport: `.orphaned` (a bool -- `True` when the transport could not
   stop the command, so it is still running there), `.pid` (`None` unless the
@@ -380,12 +380,12 @@ hostctl applies to whatever you return.
 
 `SshConfig(host, port=22, username="root", password=None, client_keys=None,
 executable=None, known_hosts=(), dialect=POSIX_SHELL,
-path_flavor=pathlib_next.PosixPathname, login_shell="auto")`.
+path_flavor=pathapi.PosixPathname, login_shell="auto")`.
 
 Authentication fields are explicit and excluded from repr. `dialect` selects
 POSIX or PowerShell command construction independently of the POSIX/Windows
 SFTP path flavor. `dialect` is a `ShellFlavour` strategy. `path_flavor` is a concrete
-`pathlib_next.Pathname` or `pathlib.PurePath` subclass; bare `PurePath` is
+`pathapi.Pathname` or `pathlib.PurePath` subclass; bare `PurePath` is
 rejected because it would infer the local OS. SSH implies neither an OS nor a
 shell. `dialect="auto"` performs positive cached probing and raises rather than
 guessing. The SSH executor provider closes its AsyncSSH connection and waits for closure.
@@ -393,15 +393,18 @@ AsyncSSH authentication failures are exposed as `PermissionError`; SSH
 host-key, key-exchange, disconnect, connection-loss, protocol, and channel
 failures are exposed as `ConnectionError`. The original AsyncSSH exception is
 retained as `__cause__`.
-The SFTP path provider reuses one `AsyncsshSftpBackend` per host and invalidates its
-cached sources during `close()`; each path call does not create another SFTP
-connection. Provider close performs all AsyncSSH operations through the
+The SFTP path provider reuses one `sftppath.AsyncSSHBackend` per host and
+closes its connections during `close()`; each path call does not create
+another SFTP connection. The path leg is given the exec leg's connect
+options and reads no ssh_config, so both legs reach the same server and
+verify its key the same way. `str()` of an SSH host's path is the path on
+the server. Provider close performs all AsyncSSH operations through the
 shared bridge. Omitted `run()` stdin is an explicit EOF stream, `bufsize=0` is
 rejected, and a missing remote exit status is reported as return code `-1`.
 Timeouts raise `subprocess.TimeoutExpired` with an `orphaned` flag indicating
 whether a process/channel termination hook was available.
 A composed SSH host opens **two** connections and authenticates twice: the
-exec leg is hostctl's own, the path leg is `pathlib_next`'s SFTP backend,
+exec leg is hostctl's own, the path leg is `sftppath`'s SFTP backend,
 which takes connect options rather than a live connection. `bufsize` is
 asyncssh's stdin CHUNK size here, not `subprocess`'s buffering policy, so
 values below 512 are refused rather than obeyed. `run()` buffers the whole

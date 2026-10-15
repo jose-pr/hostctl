@@ -3,7 +3,7 @@ import subprocess
 from pathlib import PurePosixPath
 
 import pytest
-from pathlib_next.mempath import MemPath, MemPathBackend
+from pathapi.mempath import MemPath, MemPathBackend
 
 from hostctl import (
     Exec,
@@ -352,7 +352,7 @@ def test_system_host_close_attempts_all_targets_and_reraises_first_error():
 def test_transport_facade_helpers_validate_system_family():
     from hostctl import PosixHost, SshConfig, WindowsHost
 
-    from pathlib_next import WindowsPathname
+    from pathapi import WindowsPathname
 
     with pytest.raises(ValueError, match="selects"):
         PosixHost.from_ssh(SshConfig("host", path_flavor=WindowsPathname))
@@ -908,7 +908,7 @@ def test_a_family_with_no_path_grammar_says_so():
     documented as command-only until an IOS path grammar is designed --
     advertised `path` and applied POSIX rules to `flash:/config.text`."""
     from hostctl import IosHost
-    from pathlib_next import Path as LocalPath
+    from pathapi import Path as LocalPath
 
     host = IosHost(path_providers=(PathProvider("local", lambda *p: LocalPath(*p)),))
 

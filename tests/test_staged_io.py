@@ -89,7 +89,7 @@ def test_text_suffix_is_accepted_by_every_backend(flavour):
 
 
 def test_open_mode_validation_is_one_rule():
-    # `pathlib_next` strips the `b` before calling `_open`, so these are the
+    # `pathapi` strips the `b` before calling `_open`, so these are the
     # modes the validator actually sees.
     assert validate_open_mode("r") == (True, False)
     assert validate_open_mode("w") == (False, True)
@@ -203,7 +203,7 @@ def test_append_writelines_also_lands_at_the_end():
 def test_a_text_mode_block_that_raises_does_not_commit(flavour):
     """The guards must not depend on whether the mode carried a `b`.
 
-    `pathlib_next.Path.open()` wraps a text mode in a plain `TextIOWrapper`
+    `pathapi.Path.open()` wraps a text mode in a plain `TextIOWrapper`
     whose `__exit__` and finalizer both close the buffer -- and for a staged
     stream that close *is* the upload, so the binary guards never ran.
     hostctl supplies its own wrapper instead.
@@ -311,7 +311,7 @@ def test_copy_from_follows_the_stdlib_contract(tmp_path):
     directory. Four copies of that hook did neither: they raised
     `FileExistsError` unless given an `overwrite` keyword stdlib never
     passes, and opened a directory `"rb"`."""
-    from pathlib_next import Path as LocalPath
+    from pathapi import Path as LocalPath
 
     from hostctl.host._staged_io import copy_from
 
@@ -335,7 +335,7 @@ def test_copy_from_follows_the_stdlib_contract(tmp_path):
 
 
 def test_copy_from_still_honours_an_explicit_no_overwrite(tmp_path):
-    from pathlib_next import Path as LocalPath
+    from pathapi import Path as LocalPath
 
     from hostctl.host._staged_io import copy_from
 

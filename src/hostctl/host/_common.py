@@ -17,7 +17,7 @@ from urllib.parse import (
     urlsplit as _urlsplit,
 )
 
-from pathlib_next import Path as HostPath
+from pathapi import Path as HostPath
 
 from ..executor import (
     CaptureOutput,

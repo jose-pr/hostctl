@@ -3,8 +3,8 @@
 ``asyncssh`` is fully async, but :class:`~hostctl.host.Host` presents a
 synchronous API, so its direct-asyncssh operations (opening the connection,
 running a remote command) are driven to completion here. SFTP is NOT among
-them: :meth:`~hostctl.host.Host.path` uses `pathlib_next`'s own ``SftpPath``
-(with its own async bridge), not this one.
+them: :meth:`~hostctl.host.Host.path` uses `sftppath`'s ``SFTPPath``, which
+runs asyncssh on an event-loop thread of its own, not this one.
 
 The bridge is a single **shared background event loop** running in a daemon
 thread; each call submits its coroutine with ``run_coroutine_threadsafe`` and

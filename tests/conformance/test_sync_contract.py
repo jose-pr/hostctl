@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from pathlib_next.utils.sync import PathAndStat, PathSyncer, SyncEvent
+from pathapi.sync import PathAndStat, PathSyncer, SyncEvent
 
 from hostctl.sync import host_checksum, stat_checksum
 
@@ -178,8 +178,7 @@ def test_stat_checksum_does_not_converge_after_a_copy(provider, tmp_path):
 
     ``Path.copy()`` propagates ``st_mode`` and not timestamps, so a
     ``stat_checksum`` sync re-copies forever. Measured on both supported
-    interpreters with ``pathlib_next`` 0.9.10, including the local path on
-    3.14: ``pathlib_next`` routes explicitly around CPython 3.14's own
+    interpreters, including the local path on 3.14: ``pathapi`` routes explicitly around CPython 3.14's own
     ``Path.copy()`` to keep one cross-version contract, so the stdlib's
     timestamp preservation is never reached.
 

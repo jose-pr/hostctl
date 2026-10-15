@@ -16,7 +16,7 @@ import dataclasses as _dc
 import typing as _ty
 from pathlib import PurePath as _PurePath
 
-from pathlib_next import Pathname as _Pathname
+from pathapi import Pathname as _Pathname
 
 from ..executor import PathLike
 

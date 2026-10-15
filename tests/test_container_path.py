@@ -5,7 +5,7 @@ import stat
 import tarfile
 
 import pytest
-from pathlib_next import Path
+from pathapi import Path
 
 from hostctl.host.container_path import (
     ContainerPathBackend,
