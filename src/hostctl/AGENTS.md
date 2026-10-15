@@ -394,8 +394,9 @@ path_flavor=pathapi.PosixPathname, login_shell="auto")`.
 
 Authentication fields are explicit and excluded from repr. `dialect` selects
 POSIX or PowerShell command construction independently of the POSIX/Windows
-SFTP path flavor. `dialect` is a `ShellFlavour` strategy. `path_flavor` is a concrete
-`pathapi.Pathname` or `pathlib.PurePath` subclass; bare `PurePath` is
+SFTP path flavor. `dialect` is a `ShellFlavour` strategy. `path_flavor` is `"posix"`,
+`"windows"` or a concrete `pathapi.Pathname` or `pathlib.PurePath` subclass
+(no `"auto"`: an SSH server names no OS); bare `PurePath` is
 rejected because it would infer the local OS. SSH implies neither an OS nor a
 shell. `dialect="auto"` performs positive cached probing and raises rather than
 guessing. The SSH executor provider closes its AsyncSSH connection and waits for closure.
@@ -435,7 +436,8 @@ normalization as `wait()`.
 executable=None, dialect="auto", path_flavor="auto", client_factory=None)` uses the optional
 `container` extra and Docker Engine API. Inspection selects Linux/POSIX or
 Windows/PowerShell semantics. `ContainerHost` supports buffered exec,
-persistent sessions/TTYs, and archive-backed POSIX or Windows paths. Archive
+persistent sessions/TTYs, and archive-backed POSIX or Windows paths.
+`path_flavor` is `"auto"`, `"posix"`, `"windows"` or a pure-path class. Archive
 paths support stat/traversal/read/write/append/exclusive-create, plus
 `symlink_to()`/`readlink()` -- a `SYMTYPE` tar member is a faithful
 representation; archive-only mkdir/remove/rename/chmod raise
@@ -443,6 +445,11 @@ representation; archive-only mkdir/remove/rename/chmod raise
 buffered exec streams neither, and the exec API has no cancellable deadline).
 `iterdir()`/`walk()` pull one archive per directory, so a deep tree is
 re-downloaded level by level -- list a large one through `run()` instead.
+An overwrite keeps the existing file's owner and mode (the archive API takes
+ownership from the tar header alone); a new file is uid/gid 0, mode 0644, and
+`user=` applies to exec only. `exists()` and `open("x")` read one member header,
+not the archive. A path taken before `ContainerHost.close()` refuses
+(`ValueError`) instead of reopening the client.
 
 ## QEMU Guest Agent
 
@@ -462,7 +469,14 @@ timed-out processes; `TimeoutExpired.orphaned` is true and `.pid` is retained
 when known. `QgaPathBackend` uses bounded file-handle RPCs; `exists()` is
 answered from those RPCs alone, while metadata and namespace mutations need a
 guest helper (`QemuConfig(path_helper=...)`) and raise `NotImplementedError`
-without one.
+without one. `write_bytes()` and `open("w")` write in place, not atomically, so
+the file keeps its inode, mode, owner and links; only the exclusive `x` modes
+need the helper (a temporary file and a rename that does not replace).
+`rename()` follows `os.rename` for the guest family: it replaces on a POSIX
+guest and raises `FileExistsError` on a Windows one. A listing skips any name
+that is not one path component. `run(stderr=STDOUT)` interleaves the streams on
+qemu-ga 8.0+ with a non-Windows guest and otherwise returns stdout followed by
+stderr.
 
 `SerialHost.run()` frames each command as its own profile exchange and
 refuses a structured (argv) command: the host names no shell flavour, so it has
@@ -485,7 +499,8 @@ guest that fails the probe keeps the degraded mode it had before -- reads and
 writes never needed a helper -- rather than losing `path()`.
 `QemuConfig(path_helper=...)` overrides the probe entirely. Every path is an
 argv element after a `--`, so a leading `-` is data and nothing is interpolated
-into shell text.
+into shell text; `find` takes no `--`, so it gets an absolute path or one
+anchored with `./`.
 
 `QemuConfig.max_reply_size` (default 48 MiB) bounds one QGA reply, and
 `agent_timeout` bounds one round trip independently of a command's `timeout=`:

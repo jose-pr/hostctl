@@ -69,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   is a profile argument only, not part of the `serial:///` URI.
 - `QemuHost.open_serial(encoding=, errors=)` (and `QemuSerialConsole.open`)
   return a console that reads and writes `str`.
+- `ContainerConfig(path_flavor="posix")`, `"windows"` and `SshConfig(path_flavor=
+  "windows")` take the strings `QemuConfig` already accepted; `SshConfig` has
+  no `"auto"`.
+- `run(..., stderr=subprocess.STDOUT)` on a QGA guest asks qemu-ga to
+  interleave the streams (`capture-output: "merged"`) when the agent is 8.0 or
+  later and the guest is not Windows.
 
 ### Fixed
 
@@ -83,12 +89,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   so a split UTF-8 character raised `UnicodeDecodeError` or became two
   U+FFFD. The text read now returns `""` and keeps the partial character for
   the next read.
-
-### Fixed
-
 - `typing.get_type_hints()` works on every public function and method on
   Python 3.9 (18 raised there, 7 on 3.14), and `SystemHost.run` carries the
   same annotations as `Host.run`.
+- **QGA writes work on Windows guests again.** A write went through a
+  temporary file and a replacing rename that the Windows helper refuses, so
+  every write failed since the helper probe landed in 0.3.0. A QGA write is now
+  in place (not atomic), which also keeps a POSIX file's inode, mode, owner and
+  symlink; only `open("x")` writes a temporary file and renames it.
+- A POSIX QGA `rename()` onto an existing target replaces it, as `os.rename`
+  does, and a skipped `mv -n` no longer reports success without moving;
+  a Windows guest raises `FileExistsError`.
+- `iterdir()` of a dash-leading relative path (`-delete`) no longer runs
+  `find` with it as an expression: the starting point is anchored with `./`.
+- QGA `exists()` below a regular file returns `False`; a guest-file-read reply
+  longer than requested and a deeply nested reply raise `QgaProtocolError`; a
+  listing skips names that are not one path component; a helper-less QGA path
+  provider declares `exists`.
+- Container overwrites keep the file's owner, group and mode instead of
+  re-owning it to root; `exists()` and `open("x"/"a"/"r+")` read one archive
+  header instead of downloading the whole subtree, and an engine error is no
+  longer reported as `FileExistsError`; `write_bytes` `PermissionError` carries
+  `errno` and `filename`.
+- A container path taken before `ContainerHost.close()` raises instead of
+  reopening docker-py's client, and a Windows container follows relative links
+  with Windows path syntax.
 
 ## [0.3.2] - 2026-09-23
 
