@@ -244,7 +244,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
 
         return cls(
             host=uri_hostname(parsed),
-            port=parsed.port or get_default_port("ssh"),
+            port=get_default_port("ssh") if parsed.port is None else parsed.port,
             username=unquote(parsed.username or "") or "root",
             password=typing.cast(typing.Optional[str], credentials.get("password")),
             client_keys=typing.cast(SshClientKeys, credentials.get("client_keys")),
@@ -340,13 +340,22 @@ class _SshTransport:
             return {
                 "sh": POSIX_SHELL,
                 "dash": POSIX_SHELL,
+                "ash": POSIX_SHELL,
+                "ksh": POSIX_SHELL,
+                "ksh93": POSIX_SHELL,
+                "mksh": POSIX_SHELL,
+                "lksh": POSIX_SHELL,
+                "oksh": POSIX_SHELL,
+                "yash": POSIX_SHELL,
+                "posh": POSIX_SHELL,
                 "bash": BASH,
                 "zsh": ZSH,
                 "fish": FISH,
             }[name.casefold()], executable
         except KeyError as exc:
             raise RuntimeError(
-                f"unsupported or undetected remote POSIX shell: {name or '<empty>'}"
+                f"unsupported or undetected remote POSIX shell: {name or '<empty>'} "
+                "(csh and tcsh are not supported)"
             ) from exc
 
     def _detect_windows_shell(self) -> typing.Tuple[ShellFlavour, str]:
@@ -551,7 +560,10 @@ class _SshTransport:
             return self._login_dir
 
     def path(self, *segments: PathLike) -> HostPath:
-        from sftppath import AsyncSSHBackend, SFTPPath
+        from .. import _async
+
+        sftppath = _async.sftppath()
+        AsyncSSHBackend, SFTPPath = sftppath.AsyncSSHBackend, sftppath.SFTPPath
 
         pure = self.config.path_flavor(*segments)
         remote_path = pure.as_posix()
@@ -784,6 +796,21 @@ class SftpPathProvider(PathProvider):
         super().__init__(
             "sftp", lambda *segments: transport.path(*segments), capabilities=("path",)
         )
+
+    def probe(self):
+        from .. import _async
+
+        try:
+            _async.sftppath()
+        except ImportError:
+            return ProviderProbe(
+                "unavailable",
+                reason=(
+                    "the 'ssh' extra is incomplete: sftppath is not installed; "
+                    "pip install hostctl[ssh]"
+                ),
+            )
+        return ProviderProbe("available", capabilities=self.capabilities)
 
     # Closing is owned by SshExecutorProvider for the shared transport;
     # connecting is not, because the SFTP client has to be established from

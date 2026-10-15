@@ -44,6 +44,17 @@ def asyncssh():
     return asyncssh
 
 
+def sftppath():
+    """Import ``sftppath`` on demand (the other half of the ``ssh`` extra)."""
+    try:
+        import sftppath
+    except ImportError as exc:
+        raise ImportError(
+            "SSH paths require the 'ssh' extra: pip install hostctl[ssh]"
+        ) from exc
+    return sftppath
+
+
 def normalize_asyncssh_error(
     exc: Exception,
     *,

@@ -511,6 +511,10 @@ options. Neither leg reads an ssh_config: both receive `config=None`, so an
 alias, `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in
 `~/.ssh/config` is ignored; pass the host, key and known_hosts explicitly.
 Both legs therefore reach the same server and verify its key the same way.
+`SftpPathProvider.probe()` reports `unavailable` (naming `hostctl[ssh]`) when
+sftppath is missing, so selection routes around it; `dialect="auto"` accepts
+sh, dash, ash, ksh, ksh93, mksh, lksh, oksh, yash, posh, bash, zsh and fish
+(csh and tcsh are refused); `ssh://h:0` is a `ValueError`, not port 22.
 `SshConfig(connect_timeout=30.0)` bounds establishing the connection in
 seconds (`None` leaves asyncssh's own default; otherwise it must be > 0) and is
 the URI key `connect_timeout`, omitted from `connection_uri` at 30. `connect()`

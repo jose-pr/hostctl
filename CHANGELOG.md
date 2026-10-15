@@ -238,6 +238,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - PowerShell-dialect stderr over SSH is text, not CLIXML, and a long
   PowerShell script is no longer refused by endpoint protection that flags
   `-EncodedCommand`.
+- A missing `sftppath` no longer surfaces as a bare `ModuleNotFoundError`: the
+  SFTP provider probes `unavailable` and `path()` raises the `ssh`-extra
+  `ImportError`. The libvirt QGA message names `pip install
+  hostctl[qemu-libvirt]`.
+- `dialect="auto"` over SSH accepts ash (BusyBox), ksh, mksh and the other
+  POSIX shells it used to refuse; csh and tcsh still raise, now saying they are
+  unsupported.
+- `ssh://h:0` raises the port `ValueError` instead of silently using 22.
 - `SshProcess.wait(timeout=)` no longer loses output that arrived before the
   timeout; `read()` returns it afterwards.
 - An SSH host or username that OpenSSH would refuse now raises `ValueError`

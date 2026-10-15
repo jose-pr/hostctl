@@ -595,3 +595,29 @@ def test_the_default_verifies_the_host_key_on_both_legs():
     assert backend.connect_opts["known_hosts"] == ()
     assert backend.connect_opts["config"] is None
     assert (backend.host, backend.port, backend.user) == ("h", 22, "root")
+
+
+@pytest.mark.parametrize("shell", ("/bin/ash", "/bin/ksh", "/usr/bin/mksh"))
+def test_ssh_auto_accepts_the_other_posix_shells(shell):
+    from hostctl.shell import POSIX_SHELL
+
+    host, _ = _host(
+        SshConfig("host", dialect="auto"), result=_Result(stdout=shell + "\n")
+    )
+
+    assert host.shell_flavour is POSIX_SHELL
+
+
+def test_ssh_auto_still_refuses_csh_and_says_so():
+    host, _ = _host(
+        SshConfig("host", dialect="auto"), result=_Result(stdout="/bin/tcsh\n")
+    )
+
+    with pytest.raises(RuntimeError, match="tcsh.*not supported"):
+        host.shell_flavour
+
+
+def test_a_zero_port_in_a_uri_is_refused_not_turned_into_22():
+    with pytest.raises(ValueError, match="port"):
+        HostConfig("ssh://h:0")
+    assert HostConfig("ssh://h").port == 22
