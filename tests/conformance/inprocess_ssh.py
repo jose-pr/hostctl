@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 import typing
@@ -166,3 +168,139 @@ class InProcessSSHServer:
         if loop is not None and not loop.is_running():
             loop.close()
         shutil.rmtree(self._dir, ignore_errors=True)
+
+
+def _end_tree(child: subprocess.Popen) -> None:
+    """End `child` and whatever it started, as a closed SSH session does."""
+    if child.poll() is not None:
+        return
+    if os.name == "nt":
+        # TerminateProcess ends cmd.exe alone; its children keep the pipes.
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(child.pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    try:
+        child.kill()
+    except OSError:
+        pass
+
+
+async def login_shell_handler(process: typing.Any) -> None:
+    """Run the delivered command line through this machine's login shell.
+
+    Windows gets `cmd.exe /c` with the line verbatim (a string, so
+    `CreateProcess` adds no quoting), as Windows OpenSSH's stock server does;
+    POSIX gets `/bin/sh -c`. The server must run with `encoding=None`.
+    """
+    loop = asyncio.get_running_loop()
+    command = process.command
+    if os.name == "nt":
+        argv: typing.Any = "cmd.exe /d /s /c " + command if command else "cmd.exe /d"
+    else:
+        argv = ["/bin/sh", "-c", command] if command else ["/bin/sh"]
+    env = dict(os.environ)
+    for key, value in (process.env or {}).items():
+        key = key.decode() if isinstance(key, bytes) else key
+        env[key] = value.decode() if isinstance(value, bytes) else value
+    child = subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+
+    def on_signal(name: str) -> None:
+        if name in ("TERM", "KILL", "INT", "HUP"):
+            _end_tree(child)
+
+    process.signal_received = on_signal
+
+    def pump(source: typing.Any, sink: typing.Any, done: asyncio.Future) -> None:
+        try:
+            while True:
+                data = source.read1(65536)
+                if not data:
+                    break
+                loop.call_soon_threadsafe(sink.write, data)
+        except (OSError, ValueError):
+            pass
+        finally:
+            source.close()
+            loop.call_soon_threadsafe(done.set_result, None)
+
+    drained = []
+    for source, sink in (
+        (child.stdout, process.stdout),
+        (child.stderr, process.stderr),
+    ):
+        done = loop.create_future()
+        threading.Thread(target=pump, args=(source, sink, done), daemon=True).start()
+        drained.append(done)
+
+    def feed(data: bytes) -> None:
+        try:
+            child.stdin.write(data)
+            child.stdin.flush()
+        except (OSError, ValueError):
+            pass
+
+    async def forward_stdin() -> None:
+        try:
+            while True:
+                data = await process.stdin.read(65536)
+                if not data:
+                    break
+                await loop.run_in_executor(None, feed, data)
+        except (asyncssh.Error, OSError):
+            pass
+        finally:
+            try:
+                child.stdin.close()
+            except OSError:
+                pass
+
+    feeder = loop.create_task(forward_stdin())
+    closed = loop.create_task(process.wait_closed())
+    output = asyncio.ensure_future(asyncio.gather(*drained))
+    await asyncio.wait({output, closed}, return_when=asyncio.FIRST_COMPLETED)
+    if not output.done():
+        # The client went away first: end the command it abandoned.
+        _end_tree(child)
+        await output
+    returncode = await loop.run_in_executor(None, child.wait)
+    feeder.cancel()
+    await asyncio.gather(feeder, return_exceptions=True)
+    if not closed.done():
+        process.exit(returncode if returncode >= 0 else 255)
+    await asyncio.gather(closed, return_exceptions=True)
+
+
+_shared: typing.Optional[InProcessSSHServer] = None
+_shared_lock = threading.Lock()
+
+
+def shared_login_shell_server() -> InProcessSSHServer:
+    """One `login_shell_handler` server per test session, SFTP in a temp root.
+
+    `sftp_root` on the returned server is that root; it and the server are
+    removed at interpreter exit.
+    """
+    global _shared
+    with _shared_lock:
+        if _shared is None:
+            root = tempfile.mkdtemp(prefix="hostctl-ssh-root-")
+            server = InProcessSSHServer(login_shell_handler, sftp_root=root)
+            server.__enter__()
+            server.sftp_root = root
+
+            def close() -> None:
+                server.__exit__(None, None, None)
+                shutil.rmtree(root, ignore_errors=True)
+
+            atexit.register(close)
+            _shared = server
+        return _shared

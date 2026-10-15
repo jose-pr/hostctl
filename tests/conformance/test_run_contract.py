@@ -14,7 +14,7 @@ import pytest
 
 from hostctl import Cmdlet, Exec
 
-from .providers import fake_providers, live_providers, provider_context
+from .providers import deterministic_providers, live_providers, provider_context
 
 
 def test_live_provider_registry_is_env_gated():
@@ -22,7 +22,7 @@ def test_live_provider_registry_is_env_gated():
     assert providers and providers[0].name == "local"
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_direct_argv_and_capture(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
@@ -45,7 +45,7 @@ def test_direct_argv_and_capture(provider):
     assert result.stderr.startswith(b"err")
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_text_env_and_nonzero_check(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
@@ -94,7 +94,7 @@ def test_text_env_and_nonzero_check(provider):
             host.run(Exec(sys.executable, "-c", "raise SystemExit(4)"))
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_env_values_never_reach_exception_text(provider):
     """An environment value embedded in the command is masked in what is shown."""
     if "run" not in provider.capabilities:
@@ -120,7 +120,7 @@ def test_env_values_never_reach_exception_text(provider):
             assert secret not in str(expired.value) + repr(expired.value)
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_errors_alone_selects_text_mode(provider):
     """`subprocess.run`'s rule: any of text/encoding/errors means `str`.
 
@@ -143,7 +143,7 @@ def test_errors_alone_selects_text_mode(provider):
     assert isinstance(binary.stdout, bytes)
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_uncaptured_output_reaches_the_substituted_stdout(provider, monkeypatch):
     """A buffered transport writes an uncaptured stream to `sys.stdout`.
 
@@ -172,7 +172,7 @@ def test_uncaptured_output_reaches_the_substituted_stdout(provider, monkeypatch)
     assert "routed" in sink.getvalue()
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_cwd_is_applied_only_when_supported(provider, tmp_path):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
@@ -187,7 +187,7 @@ def test_cwd_is_applied_only_when_supported(provider, tmp_path):
     assert Path(result.stdout.strip()) == tmp_path
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_silent_capture_is_empty_bytes(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
@@ -197,7 +197,7 @@ def test_silent_capture_is_empty_bytes(provider):
     assert result.stderr == b""
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_shell_command_shapes_and_operators_remain_explicit(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
@@ -218,7 +218,7 @@ def test_shell_command_shapes_and_operators_remain_explicit(provider):
     assert b"one" in joined.stdout and b"two" in joined.stdout
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_timeout_and_input_are_subprocess_compatible(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
@@ -239,7 +239,7 @@ def test_timeout_and_input_are_subprocess_compatible(provider):
             )
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_every_timeout_carries_the_same_payload(provider):
     """`subprocess.TimeoutExpired` is the shared type, and the attributes
     hung off it were per-transport: `.orphaned` and `.pid` existed only on
@@ -267,7 +267,7 @@ def test_every_timeout_carries_the_same_payload(provider):
     assert error.stderr is not None
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_the_registry_capabilities_match_the_host_that_was_built(provider):
     """The registry's capability strings are hand-written in parallel with the
     hosts, and every case in this battery skips itself when a capability is
@@ -301,7 +301,7 @@ def test_the_registry_capabilities_match_the_host_that_was_built(provider):
         )
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_a_shell_rendered_command_times_out_too(provider):
     """Every timeout case in this battery used `Exec`.
 

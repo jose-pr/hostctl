@@ -19,12 +19,14 @@ from hostctl.sync import host_checksum, stat_checksum
 from .providers import (
     conformance_path,
     conformance_utime,
-    fake_providers,
+    deterministic_providers,
     provider_context,
 )
 
 _PATH_PROVIDERS = tuple(
-    provider for provider in fake_providers() if "path" in provider.capabilities
+    provider
+    for provider in deterministic_providers()
+    if "path" in provider.capabilities
 )
 
 

@@ -18,7 +18,7 @@ import io
 import pytest
 
 from hostctl.process import Process
-from .providers import fake_providers, provider_context
+from .providers import deterministic_providers, provider_context
 
 
 class _MemoryProcess:
@@ -96,7 +96,7 @@ def test_process_eof_and_context_are_idempotent():
 
 
 def _spawn_providers():
-    return [item for item in fake_providers() if "spawn" in item.capabilities]
+    return [item for item in deterministic_providers() if "spawn" in item.capabilities]
 
 
 def _spawn(host, provider):
@@ -150,7 +150,7 @@ def test_provider_spawn_runs_a_real_process(provider):
         process.close()
 
 
-@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
 def test_spawn_capability_matches_the_host_implementation(provider):
     """Advertising ``spawn`` and implementing it must not diverge.
 

@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from hostctl.host import LocalHost
 
-from .providers import fake_providers
+from .providers import deterministic_providers
 
 
 def test_provider_registry_is_capability_explicit() -> None:
-    providers = fake_providers()
+    providers = deterministic_providers()
     assert {item.name for item in providers} >= {"local", "ssh", "winrm"}
     for provider in providers:
         assert provider.capabilities
@@ -30,7 +30,7 @@ def test_provider_registry_is_capability_explicit() -> None:
 def test_transport_fakes_are_not_local_host_aliases() -> None:
     """Registry entries must not silently collapse back to ``LocalHost``."""
 
-    for provider in fake_providers():
+    for provider in deterministic_providers():
         value = provider.factory()
         host = value[0] if isinstance(value, tuple) else value
         # The second element is the fake's own cleanup, which is what

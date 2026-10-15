@@ -897,13 +897,76 @@ def fake_providers() -> tuple[Provider, ...]:
     )
 
 
+class _ChrootSandbox:
+    """Map a remote path under an SFTP chroot to the file behind it."""
+
+    def __init__(self, root: str) -> None:
+        self.root = Path(root)
+
+    def local(self, remote: str) -> Path:
+        return self.root.joinpath(*[part for part in remote.split("/") if part])
+
+
+def _ssh_inprocess() -> tuple[object, Callable[[], None]]:
+    from pathapi import PosixPathname
+
+    from .inprocess_ssh import shared_login_shell_server
+
+    server = shared_login_shell_server()
+    host = server.config(
+        dialect=POWERSHELL if os.name == "nt" else POSIX_SHELL,
+        path_flavor=PosixPathname,
+        login_shell="cmd" if os.name == "nt" else "posix",
+    )._create_host()
+    host.sandbox = _ChrootSandbox(server.sftp_root)
+    return host, lambda: None
+
+
+def deterministic_providers() -> tuple[Provider, ...]:
+    """`fake_providers()` plus the in-process asyncssh server leg.
+
+    `ssh-inproc` runs production asyncssh, sftppath's `AsyncSSHBackend` and
+    a real login shell against a server on 127.0.0.1, so it is offline and
+    a failure there fails rather than skips.
+    """
+    return fake_providers() + (
+        Provider(
+            "ssh-inproc",
+            _ssh_inprocess,
+            # `symlink` on Windows too: the server calls os.symlink, and a
+            # host without Developer Mode raises PermissionError, which the
+            # symlink cases already report as a host-policy skip.
+            frozenset(
+                (
+                    "run",
+                    "path",
+                    "args",
+                    "cwd",
+                    "env",
+                    "input",
+                    "timeout",
+                    "symlink",
+                    "spawn",
+                    "local-python",
+                )
+            ),
+        ),
+    )
+
+
+def require(provider: Provider, token: str) -> None:
+    """Skip unless `provider` declares `token`, naming both."""
+    if token not in provider.capabilities:
+        pytest.skip(f"{provider.name} lacks {token}")
+
+
 def conformance_path(host, provider: Provider, tmp_path: Path, *parts: str):
     """Return an existing, transport-native scratch root joined with parts."""
 
     token = tmp_path.name
     if provider.name in ("winrm", "qemu-windows"):
         root = host.path(r"C:\hostctl-conformance", token)
-    elif provider.name in ("ssh", "qemu"):
+    elif provider.name in ("ssh", "ssh-inproc", "qemu"):
         root = host.path("/hostctl-conformance", token)
     else:
         root = host.path(tmp_path)

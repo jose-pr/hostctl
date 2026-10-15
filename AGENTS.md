@@ -18,6 +18,7 @@ and is not published anywhere.
 | `src/hostctl/sync/` | checksum and byte-progress helpers for `pathapi` |
 | `src/hostctl/cli/` | the `hostctl` command on `duho`, one module per subcommand |
 | `tests/conformance/` | the cross-transport battery: one contract, every provider |
+| `tests/conformance/inprocess_ssh.py` | an asyncssh server on 127.0.0.1 with a real login shell; backs the `ssh-inproc` leg |
 | `examples/` | runnable examples; deliberately not packaged |
 | `docs/` | the guide published to GitHub Pages |
 
