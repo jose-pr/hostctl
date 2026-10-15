@@ -50,6 +50,14 @@ ExecutorCommand = typing.Union[str, PurePath, Pathname]
 CommandArgument = typing.Union[str, bytes, PurePath, Pathname]
 
 
+#: The PowerShell status every WinRM leg and the PowerShell flavour report: 0
+#: when the last statement succeeded (`$?`), else the native exit code if
+#: there is one, else 1.
+POWERSHELL_STATUS = (
+    "$(if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 })"
+)
+
+
 def capture_streams(
     capture_output: CaptureOutput,
     stdout: typing.Optional[FileHandle],

@@ -9,6 +9,7 @@ import uuid
 import typing
 
 from ._common import (
+    POWERSHELL_STATUS,
     expired,
     CaptureOutput,
     command_text,
@@ -59,13 +60,6 @@ def exit_marker() -> str:
     """
     return f"{NATIVE_EXIT_MARKER[:-2]}_{uuid.uuid4().hex}__"
 
-
-#: The status every WinRM leg reports: 0 when the last statement succeeded
-#: (`$?`), else the native exit code if there is one, else 1. Same expression
-#: as the PowerShell flavour's `execution_epilogue`.
-POWERSHELL_STATUS = (
-    "$(if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 })"
-)
 
 #: Clears a status left by an earlier native command in a persistent session.
 LASTEXITCODE_RESET = "$global:LASTEXITCODE=0"

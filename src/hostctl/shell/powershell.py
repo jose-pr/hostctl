@@ -8,6 +8,7 @@ import typing
 from pathlib import PureWindowsPath
 
 from ..executor import Environment, PathLike
+from ..executor._common import POWERSHELL_STATUS
 from ._common import (
     ShellCommand,
     ShellFlavour,
@@ -117,10 +118,7 @@ class PowerShellFlavour(ShellFlavour):
     # `$host.SetShouldExit`, not `exit`: an `exit` statement discards the
     # objects still deferred in the formatting pipeline, so an object result
     # such as `[pscustomobject]@{a=1}` printed nothing with status 0.
-    execution_epilogue = (
-        "\n$host.SetShouldExit("
-        "$(if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }))"
-    )
+    execution_epilogue = "\n$host.SetShouldExit(" + POWERSHELL_STATUS + ")"
     structured_command_prefix = "& "
     path_flavor = PureWindowsPath
     info_script = (
