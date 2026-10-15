@@ -144,6 +144,12 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             if isinstance(keys, (str, bytes, os.PathLike)):
                 keys = [keys]
             opts["client_keys"] = keys
+        # `config=None`: neither leg reads an ssh_config. asyncssh would load
+        # `~/.ssh/config` by default, and a library call must not depend on a
+        # personal file that hostctl overrides half of anyway (host, port and
+        # user are always passed). Both legs get these options, so they
+        # resolve and verify the host alike.
+        opts["config"] = None
         # Always passed, never omitted on the default: `()` is asyncssh's own
         # "resolve known_hosts the usual way" value, and both legs receive
         # these options, so the path leg verifies the host key exactly as the
@@ -445,15 +451,13 @@ class _SshTransport:
             remote_path = "/" + remote_path
         with self._ssh_lock:
             if self._sftp_backend is None:
-                # `ssh_config=None`: the exec leg reads no ssh_config, so the
-                # path leg must not either, or `Host`/`Port`/`User` entries
-                # would send the two legs to different servers.
+                # The options carry `config=None` (see `connect_opts`), which
+                # sftppath keeps, so this leg reads no ssh_config either.
                 self._sftp_backend = AsyncSSHBackend(
                     self.config.host,
                     self.config.port,
                     user=self.config.username or "root",
                     connect_opts=self.config.connect_opts(),
-                    ssh_config=None,
                 )
             return SFTPPath(remote_path, backend=self._sftp_backend)
 

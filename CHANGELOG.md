@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   instead of a base64 `-EncodedCommand` argument. Endpoint-protection
   heuristics scan the command line, and a base64 PowerShell launch is what
   they flag; the script now never appears there. Results are unchanged.
+- **Breaking, 0.4.0**: the exec leg of an SSH host no longer reads
+  `~/.ssh/config`. It did, by asyncssh's default, while the SFTP leg did not,
+  so an alias reached the server through `run()` and failed through `path()`.
+  Neither leg reads one now; pass the host, key, known_hosts file or proxy
+  you took from it to `SshConfig`.
 - **Breaking, 0.4.0**: `ShellFlavour.command()` takes `login_shell=None`; a
   custom flavour must accept it to be used over SSH. The POSIX `command()`
   puts `cwd` inside the script instead of a leading `cd ... &&`, and joins
@@ -116,8 +121,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     in place of `pathlib_next[sftp-async]`. An SSH host's path is an
     `sftppath.SFTPPath`, and its `str()` is the path on the server where it
     was `sftp://host:22/...`.
-  - The SFTP leg still uses the exec leg's connect options, and reads no
-    `~/.ssh/config`, so both legs reach the same server.
   - pathapi's own changes reach hostctl's paths: `touch(mode=...)` raises
     `NotImplementedError` on a path that cannot `chmod()`, and a path class
     without `__fspath__` is no longer `os.PathLike`.
