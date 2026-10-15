@@ -43,19 +43,15 @@ def stat_checksum(entry: PathAndStat) -> tuple[int, float]:
 
     It can *miss* a change which preserves both size and modification time.
 
-    It can also *report* a change which is not one: ``Path.copy()``
-    propagates ``st_mode`` and not timestamps, so a file this helper copies
-    lands with a fresh modification time and compares unequal on the next
-    run -- the sync never settles.  Measured on both supported interpreters:
-    a backdated source and its fresh copy differ by the full hour on 3.14 as
-    well as on 3.9.  (CPython 3.14 added
-    its own ``Path.copy()`` which does preserve timestamps, but
-    ``pathapi`` routes explicitly around it to keep one cross-version
-    contract, so it is not reached.)
+    It settles only where the target can take a modification time.
+    ``PathSyncer`` copies the source's modification time onto a target that
+    supports pathapi's ``Utime``: local paths and an SSH host's paths do, so a
+    repeated sync there is a no-op.  WinRM, container and QEMU guest paths do
+    not, so a file copied there lands with a fresh modification time and
+    compares unequal on the next run -- the sync re-copies it.
 
-    So: use this helper where source modification times are meaningful on
-    both sides -- a tree replicated by something which preserves them -- and
-    :func:`host_checksum` when hostctl's own copies must converge to a no-op.
+    Where the target cannot hold the time, use :func:`host_checksum` when
+    hostctl's own copies must converge to a no-op.
     """
     if entry.stat is None:
         raise FileNotFoundError(entry.path)

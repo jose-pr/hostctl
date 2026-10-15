@@ -67,21 +67,20 @@ PathSyncer(stat_checksum).sync(source.path("/src"), target.path("/dst"))
 ```
 
 Two caveats decide whether it fits. It can **miss** a content change which
-preserves both size and modification time. It can also **report** a change
-which is not one: `Path.copy()` propagates `st_mode` and not timestamps, so a
-file it copies lands with a fresh modification time and compares unequal on
-the next run — a repeated `stat_checksum` sync re-copies what it copied before
-rather than settling into a no-op. That holds on every supported interpreter,
-the local path on 3.14 included: `pathapi` routes explicitly around
-CPython 3.14's own `Path.copy()` to keep one cross-version contract, so the
-stdlib's timestamp preservation is never reached.
+preserves both size and modification time. And it settles only where the
+target can take a modification time: `PathSyncer` copies the source's
+modification time onto a target that supports pathapi's `Utime`, which local
+paths and an SSH host's paths do, so a repeated `stat_checksum` sync there is
+a no-op. WinRM, container and QEMU guest paths do not support `Utime`, so a
+file copied there lands with a fresh modification time, compares unequal on
+the next run, and is copied again.
 
-Choose it when source modification times are meaningful on both sides — a tree
-replicated by something which preserves them. Choose `host_checksum` when
-hostctl's own copies must converge.
+Choose `host_checksum` where the target cannot hold the time and hostctl's own
+copies must converge.
 
-The default `PathSyncer` checksum reads both files completely. It is strongest
-when no platform hash tool exists, but often the most expensive choice for
+The default `PathSyncer` checksum uses a server-side digest when both paths
+implement pathapi's `NativeChecksum` (an SSH host's path does) and reads both
+files completely otherwise, which is often the most expensive choice for
 remote-to-remote synchronization. `dry_run=True`, `remove_missing`, hooks, and
 `ignore_error` remain `PathSyncer` options and need no hostctl wrapper.
 
