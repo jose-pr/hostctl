@@ -347,3 +347,74 @@ def test_an_exported_password_is_not_offered_to_a_qemu_socket_scheme(monkeypatch
     assert usable_credentials("qga+ssh://u@h/dom", {"password": "x"}) == {
         "password": "x"
     }
+
+
+@pytest.fixture
+def unreachable_ssh(monkeypatch):
+    """SSH whose connect fails before anything is sent, with no DNS lookup."""
+
+    def refuse(self, *args, **kwargs):
+        raise OSError("no route to host")
+
+    monkeypatch.setattr("hostctl.host._ssh._SshTransport.connect", refuse)
+
+
+def test_run_on_an_unreachable_host_exits_125_with_one_line(unreachable_ssh, capsys):
+    assert main(["run", "ssh://nonexistent.invalid", "--", "true"]) == 125
+    err = capsys.readouterr().err
+    assert err.startswith("hostctl: ")
+    assert len(err.strip().splitlines()) == 1
+    assert "Traceback" not in err
+
+
+def test_info_on_an_unreachable_host_exits_125_and_prints_no_identity(
+    unreachable_ssh, capsys
+):
+    assert main(["info", "ssh://nonexistent.invalid"]) == 125
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("hostctl: ")
+    assert "Traceback" not in captured.err
+
+
+def test_the_library_info_of_an_unreachable_host_is_still_synthesized(unreachable_ssh):
+    from hostctl import Host
+
+    with Host("ssh://nonexistent.invalid") as host:
+        assert host.info().hostname == "nonexistent.invalid"
+
+
+def test_info_reports_a_refused_login_as_126(monkeypatch, capsys):
+    from hostctl import HostInfo
+    from hostctl.host.system import SystemHost
+
+    def refused(self):
+        return HostInfo(), False, [PermissionError("auth failed")]
+
+    monkeypatch.setattr(SystemHost, "_collect_info", refused)
+    monkeypatch.setattr(SystemHost, "connect", lambda self: None)
+    assert main(["info", "ssh://host"]) == 126
+    assert capsys.readouterr().err == "hostctl: permission denied: auth failed\n"
+
+
+def test_info_exits_zero_when_a_provider_answers(capsys):
+    assert main(["info", "local:"]) == 0
+    assert "os_family" in json.loads(capsys.readouterr().out)
+
+
+def test_every_epilog_uri_dispatches():
+    from hostctl import HostConfig
+    from hostctl.cli import _root
+
+    lines = _root._EPILOG.split("connection URIs:\n", 1)[1].split("\n\n", 1)[0]
+    uris = [line.split()[0] for line in lines.splitlines() if line.strip()]
+    assert uris and not any(uri.startswith("psrp://") for uri in uris)
+    for uri in uris:
+        assert HostConfig(uri, **({"password": "x"} if "winrm" in uri else {}))
+
+    operands = _root._EPILOG.split("remote path operands (cp):\n", 1)[1]
+    examples = operands.split("\n\n", 1)[0].splitlines()[1:]
+    for line in examples:
+        for token in line.split():
+            if "://" in token or token.startswith("local:/"):
+                assert split_operand(token)

@@ -748,6 +748,20 @@ class SystemHost(Host):
             raise first_error
 
     def info(self) -> HostInfo:
+        return self._collect_info()[0]
+
+    def _collect_info(
+        self,
+    ) -> typing.Tuple[HostInfo, bool, typing.List[BaseException]]:
+        """`info()` with what it learned about the providers.
+
+        Returns the `HostInfo`, whether some provider answered, and the
+        transport errors raised by those that did not. `info()` stays best
+        effort; a caller that must tell "nothing answered" from an answer
+        (the command line's exit status) reads the rest.
+        """
+        answered = False
+        failures: typing.List[BaseException] = []
         fields = {name: None for name in HostInfo.__dataclass_fields__}
         if self._info is not None:
             fields.update(
@@ -786,9 +800,11 @@ class SystemHost(Host):
                     ProviderSelector.redact(provider.name),
                     type(exc).__name__,
                 )
+                failures.append(exc)
                 continue
             if not isinstance(value, HostInfo):
                 continue
+            answered = True
             for name, item in dataclasses.asdict(value).items():
                 if fields[name] is None and item is not None:
                     fields[name] = item
@@ -812,7 +828,7 @@ class SystemHost(Host):
             fields["hostname"] = hostname
         if fields["os_family"] is None:
             fields["os_family"] = self.system_family
-        return HostInfo(**fields)
+        return HostInfo(**fields), answered, failures
 
     def _composite_path_type(self):
         """The path grammar this system family actually has.

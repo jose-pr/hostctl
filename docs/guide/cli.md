@@ -26,7 +26,9 @@ formatting layer. Everything the CLI itself reports uses one of four codes:
 | 130  | interrupted (Ctrl-C) |
 
 125 is the catch-all, so it covers a usage error and an unsupported operation
-as well as a connection failure; the message on stderr says which. A command
+as well as a connection failure; the message on stderr says which. A host
+that cannot be reached is 125 for every subcommand, `info` included (126 when
+the login is refused): `info` does not print an identity made up from the URI. A command
 line the parser rejects (an unknown option, a missing operand) exits 2.
 
 `hostctl --version` prints the installed version. Every subcommand takes

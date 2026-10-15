@@ -728,7 +728,9 @@ hostctl shell ssh://server
 - Exit status: `run` returns the remote command's own status; the command
   line's own failures are 125 (connection, timeout, usage, unsupported
   operation), 126 (permission denied), 127 (not found) and 130 (interrupted).
-  A parser usage error is 2.
+  A parser usage error is 2. An unreachable host is 125 for every
+  subcommand, `info` included (`SystemHost._collect_info()` says whether any
+  provider answered; the library's `info()` stays best effort).
 - `HOSTCTL_PASSWORD` supplies a password, offered only to schemes that accept
   one (decided per scheme: `qemu+libvirt:` and `qga+unix:` take none);
   `--ask-password` prompts instead and is refused in a tool call. A tool

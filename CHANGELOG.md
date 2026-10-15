@@ -187,6 +187,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `hostctl run`/`ls`/`cp` on an unreachable host exit 125 with one line
+  instead of a traceback and status 1. `hostctl info` exits 125 (126 on an
+  authentication refusal) instead of printing an identity made up from the
+  URI with status 0. `hostctl --help` no longer lists the unregistered
+  `psrp://` scheme; PSRP is `winrm://...?provider=psrp`.
 - `hostctl cp` no longer splits `ssh://user:password@host` at the password's
   colon, and no operand error echoes a password. `HOSTCTL_PASSWORD` no
   longer makes every `qemu+libvirt:`/`qga+unix:` command exit 125.

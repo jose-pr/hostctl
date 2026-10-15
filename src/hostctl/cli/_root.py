@@ -8,6 +8,7 @@ import sys
 
 from duho import AUTO, Cli
 
+from ..provider import OperationNotStarted
 from .cat import Cat
 from .cp import Cp
 from .info import Info
@@ -20,7 +21,7 @@ connection URIs:
   local:                      this machine
   ssh://user@host:22          SSH (asyncssh)
   winrm://user@host:5985      WinRM
-  psrp://user@host:5985       PowerShell Remoting
+  winrm://user@host:5985?provider=psrp  PowerShell Remoting (PSRP)
   docker://container          a running container
   qemu+libvirt:///domain      a guest, through libvirt
   serial:///dev/ttyUSB0       a raw serial console
@@ -51,6 +52,8 @@ _ERRORS = {
     PermissionError: 126,
     FileNotFoundError: 127,
     ConnectionError: 125,
+    # Raised only before anything was sent: the host was never reached.
+    OperationNotStarted: 125,
     OSError: 125,
     ValueError: 125,
     NotImplementedError: 125,
