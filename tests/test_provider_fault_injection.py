@@ -818,8 +818,13 @@ def _sftp_that_cannot_connect(*, connect=None, warm=None):
     from hostctl.host._ssh import SftpPathProvider, _SshTransport
 
     transport = _SshTransport(SshConfig("nas.example", username="root"))
-    transport.connect = connect or (lambda: None)
-    transport.warm_sftp = warm or (lambda: None)
+    refuse = connect or warm or (lambda: None)
+
+    class _Backend:
+        def client(self):
+            refuse()
+
+    transport._backend = lambda: _Backend()
     return SftpPathProvider(transport)
 
 

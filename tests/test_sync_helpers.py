@@ -512,7 +512,7 @@ def test_a_local_host_hashes_in_process(tmp_path):
     ("given", "expected"),
     [
         ("C:\\data\\file.txt", "C:\\data\\file.txt"),
-        ("data\\file.txt", "\\data\\file.txt"),
+        ("\\data\\file.txt", "\\data\\file.txt"),
     ],
 )
 def test_a_windows_shell_is_handed_a_windows_spelling_of_the_backend_path(

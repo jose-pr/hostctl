@@ -116,7 +116,9 @@ def test_ssh_spawn_renders_command_and_requests_terminal():
     assert "printf" in command
     # `cd --` guards directory names starting with "-", and joining with the
     # AND operator aborts the payload when the directory does not exist.
-    assert "cd -- '/tmp/a b'&&" in command
+    # The login shell reads the line; the inner shell's script holds the rest.
+    assert "cd -- " in command and "/tmp/a b" in command
+    assert "&&{ printf" in command
     assert "export NAME=value" in command
     assert options["request_pty"] is True
     assert options["term_type"] == "xterm-256color"

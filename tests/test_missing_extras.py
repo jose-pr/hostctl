@@ -31,7 +31,6 @@ def hide(monkeypatch):
                 monkeypatch.delitem(sys.modules, module)
         finder = _Hidden(names)
         sys.meta_path.insert(0, finder)
-        monkeypatch.setattr(sys, "meta_path", [f for f in sys.meta_path], raising=True)
         return finder
 
     yield apply
