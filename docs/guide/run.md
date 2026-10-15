@@ -122,14 +122,16 @@ and append an exit epilogue so the remote status propagates:
 
 ```
 & 'Get-Item' 'C:/a b'
-exit $(if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 })
+$host.SetShouldExit($(if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }))
 ```
 
 Both channels are consulted because `$LASTEXITCODE` is set only by *native*
 commands: a failing cmdlet leaves it `$null` (so `exit $LASTEXITCODE` reported
 success), and it goes stale, so a native failure followed by a successful
 cmdlet reported the old code. The epilogue is on its own line so a script
-ending in a `#` comment cannot swallow it.
+ending in a `#` comment cannot swallow it, and it sets the exit code with
+`$host.SetShouldExit` rather than `exit`, which drops the objects still
+waiting to be formatted (`[pscustomobject]@{a=1}` printed nothing).
 
 `run()` returns a `subprocess.CompletedProcess`. Highlights:
 

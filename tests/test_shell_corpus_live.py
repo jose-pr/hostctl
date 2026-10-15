@@ -96,10 +96,6 @@ _PS = ("powershell", "pwsh")
 #: the corpus must be named here; a new failure is a new finding, not a row to
 #: add without one.
 KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
-    # PowerShell reads a native argument whose value is `--%` as stop-parsing.
-    "067": lambda f, s, v: (
-        f in _PS and s in ("argv_native", "argv_unresolved", "session") and v == "--%"
-    ),
     # A relative cwd consults CDPATH.
     "078": lambda f, s, v: s == "cdpath" and v != INTERFERENCE,
     # send() appends `;` to a heredoc terminator, and fish has no open-pipe
@@ -112,8 +108,6 @@ KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
     "222": lambda f, s, v: (
         f == "fish" and v == "%self" and s in ("argv", "command_line", "env", "session")
     ),
-    # An embedded empty env value unsets the variable under PowerShell 5 and cmd.
-    "225": lambda f, s, v: f in ("cmd", "powershell") and s == "env" and v == "",
     # Windows PowerShell 5 globs a [..] in a called program path.
     "new-ps5-program-wildcard": lambda f, s, v: (
         f == "powershell" and s in ("program", "program_path") and v == "[ab]"
@@ -128,6 +122,14 @@ KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
 #: in docs/guide/contracts.md. A documented cell may raise or arrive changed;
 #: it must never execute.
 DOCUMENTED: typing.Dict[str, Predicate] = {
+    # "PowerShell native argument `--%`"
+    "ps-stop-parsing": lambda f, s, v: (
+        f in _PS and s in ("argv_native", "argv_unresolved", "session") and v == "--%"
+    ),
+    # "Embedded `env` value `\"\"` under Windows PowerShell 5 and cmd"
+    "empty-env-value": lambda f, s, v: (
+        f in ("cmd", "powershell") and s == "env" and v == ""
+    ),
     # "Windows PowerShell 5 native arguments"
     "ps5-native": lambda f, s, v: (
         f == "powershell" and s in ("argv_native", "session") and _ps5_stuck(v)

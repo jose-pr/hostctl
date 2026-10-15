@@ -534,6 +534,20 @@ def test_cmd_start_always_gets_an_empty_title():
     assert rendered == 'start "" /b /wait ^"C:\\d s\\x.bat^" ^"a b^"'
 
 
+@pytest.mark.parametrize("flavour", (POWERSHELL, PWSH))
+def test_a_native_stop_parsing_argument_is_refused(flavour):
+    """No spelling of the value `--%` reaches a native program as data."""
+    with pytest.raises(ValueError, match="stop-parsing"):
+        flavour.structured_command((r"C:\Windows\System32\whoami.exe", "--%"))
+    # A cmdlet argument is not a native command line.
+    assert flavour.command_text(Cmdlet("Write-Output", "--%"))
+
+
+def test_the_powershell_epilogue_defers_to_set_should_exit():
+    assert "$host.SetShouldExit(" in POWERSHELL.execution_epilogue
+    assert "exit $" not in POWERSHELL.execution_epilogue
+
+
 def test_cmd_structured_call_is_refused():
     with pytest.raises(ValueError, match="call"):
         CMD.structured_command(("call", "x.bat"))

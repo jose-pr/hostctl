@@ -68,6 +68,27 @@ def test_success_is_still_zero(executable):
 
 
 @pytest.mark.parametrize("executable", list(_shells()))
+def test_object_output_survives_the_epilogue(executable):
+    """`exit` discarded objects still waiting to be formatted, so
+    `[pscustomobject]@{a=1}` printed nothing with status 0."""
+    script = POWERSHELL.script(["[pscustomobject]@{a=1}"])
+    completed = subprocess.run(
+        list(POWERSHELL.invocation(script, executable=executable)),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.split() == ["a", "-", "1"]
+
+
+@pytest.mark.parametrize("executable", list(_shells()))
+def test_a_user_exit_before_the_epilogue_keeps_its_code(executable):
+    assert _status(executable, "exit 5") == 5
+
+
+@pytest.mark.parametrize("executable", list(_shells()))
 def test_a_trailing_comment_cannot_swallow_the_epilogue(executable):
     """The epilogue was appended after `;` on the same line, so a script
     ending in a comment commented the status reporting out."""

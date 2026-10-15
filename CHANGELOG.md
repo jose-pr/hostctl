@@ -33,9 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   HTTP** unless `allow_cleartext=True` (URI query `allow_cleartext=true`), on
   both the pywinrm and PSRP legs. They sent the password in cleartext on
   pywinrm. This ships in 0.4.0.
+- **A PowerShell native argument `--%` raises `ValueError`.** PowerShell reads
+  it as the stop-parsing token however it is quoted, so the rest of the line
+  reached the program unparsed and re-split. **Breaking, 0.4.0.**
 
 ### Fixed
 
+- **PowerShell keeps deferred object output.** The status epilogue ended with
+  `exit`, which discards objects still waiting to be formatted:
+  `host.run("[pscustomobject]@{a=1}")` returned an empty line with status 0 on
+  Windows PowerShell and pwsh. It now ends with `$host.SetShouldExit(...)`;
+  the exit status is unchanged. The WinRS (`pywinrm`) path shares the
+  epilogue and was not exercised.
 - **A `cmd` redirect to a path with a space writes that file.** The operand
   after `REDIRECT`/`APPEND` was quoted for a child's C runtime and wrote a file
   named after its first word; it is now quoted for the shell that reads it.

@@ -113,8 +113,12 @@ class PowerShellFlavour(ShellFlavour):
     # half and `$LASTEXITCODE` keeps a native command's real code. The
     # leading newline is not cosmetic: appended after `;` on the same line, a
     # script ending in a `#` comment commented the whole epilogue out.
+    # `$host.SetShouldExit`, not `exit`: an `exit` statement discards the
+    # objects still deferred in the formatting pipeline, so an object result
+    # such as `[pscustomobject]@{a=1}` printed nothing with status 0.
     execution_epilogue = (
-        "\nexit $(if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 })"
+        "\n$host.SetShouldExit("
+        "$(if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 }))"
     )
     structured_command_prefix = "& "
     path_flavor = PureWindowsPath
@@ -211,6 +215,10 @@ class PowerShellFlavour(ShellFlavour):
         execute, raises rather than arriving changed.
         """
         text = self._text(value)
+        if text == "--%" and target not in (ShellTarget.CMDLET, ShellTarget.BATCH):
+            # A native argument whose value is `--%` is read as the
+            # stop-parsing token however it is quoted; no spelling sends it.
+            raise ValueError("PowerShell reads a native argument '--%' as stop-parsing")
         if target is ShellTarget.BATCH:
             token = _batch_token(text)
             if _binder_wraps(token, major_version=self.major_version):
@@ -240,6 +248,12 @@ class PowerShellFlavour(ShellFlavour):
         return self.quote(text)
 
     def operator(self, value: ShellOperator) -> str:
+        """Render an operator.
+
+        Windows PowerShell 5 re-encodes the bytes of a pipe between native
+        programs through the console code page, and `>`/`>>` write UTF-16LE
+        with a byte-order mark; PowerShell 7 and cmd pass bytes through.
+        """
         if self.major_version >= 7 and value in (
             ShellOperator.AND,
             ShellOperator.OR,
@@ -261,6 +275,11 @@ class PowerShellFlavour(ShellFlavour):
             ) from exc
 
     def environment_assignment(self, key: str, value: object) -> str:
+        """Render `$env:KEY='VALUE'`.
+
+        An empty value unsets the variable under Windows PowerShell 5 (as
+        under cmd); pwsh sets it empty.
+        """
         return f"$env:{key}={_literal(self._text(value))}"
 
     def change_directory(self, cwd: PathLike) -> str:
