@@ -267,3 +267,20 @@ def test_local_host_still_lists_its_providers():
     host = LocalHost()
     assert [p.name for p in host.executor_providers] == ["local"]
     assert [p.name for p in host.path_providers] == ["local"]
+
+
+def test_local_providers_returns_the_local_pair():
+    import hostctl
+    from hostctl.provider.transports import (
+        FULL_PATH_OPERATIONS,
+        LocalExecutorProvider,
+        LocalPathProvider,
+    )
+
+    executor, path = hostctl.local_providers()
+    assert isinstance(executor, LocalExecutorProvider)
+    assert isinstance(path, LocalPathProvider)
+    assert (executor.name, path.name) == ("local", "local")
+    assert path.capabilities == FULL_PATH_OPERATIONS
+    assert isinstance(path.path("x"), NextPath)
+    assert "local_providers" in hostctl.__all__

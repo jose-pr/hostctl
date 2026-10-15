@@ -19,6 +19,14 @@ from ._common import (
 from ..shell import POSIX_SHELL, POWERSHELL, ShellFlavour
 
 
+def local_providers() -> _ty.Tuple[LocalExecutorProvider, LocalPathProvider]:
+    """This machine's executor and path providers, for a host you assemble yourself.
+
+    A pair, like `ssh_providers()`, but with no transport to share.
+    """
+    return LocalExecutorProvider(), LocalPathProvider()
+
+
 class LocalConfig(HostConfig, schemes=("local",)):
     """This machine, addressed as `local:`.
 

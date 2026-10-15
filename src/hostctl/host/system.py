@@ -13,12 +13,7 @@ from urllib.parse import unquote, quote, urlencode
 from pathapi import Path
 
 from ..executor._common import CommandLine, command_text
-from ..provider import (
-    ExecutorProvider,
-    OperationNotStarted,
-    PathProvider,
-    ProviderSelector,
-)
+from ..provider import OperationNotStarted, ProviderSelector
 from ..shell import POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ._common import (
     CaptureOutput,
@@ -103,13 +98,9 @@ def _provider_option(config: "SystemConfig", name: str):
 
 def _local_provider(config, kind):
     del config
-    if kind == "executor":
-        from ..executor import LocalExecutor
+    from ..provider.transports import LocalExecutorProvider, LocalPathProvider
 
-        return ExecutorProvider("local", LocalExecutor())
-    from pathapi import Path as LocalPath
-
-    return PathProvider("local", lambda *parts: LocalPath(*parts))
+    return LocalExecutorProvider() if kind == "executor" else LocalPathProvider()
 
 
 #: The transports one `_create_host()` call has built, by option key. Scoped to

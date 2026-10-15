@@ -1207,3 +1207,12 @@ def test_replace_providers_runs_the_initializer_again():
     host.replace_providers(path=())
     host.run("true")
     assert ran == [1, 1]
+
+
+def test_a_local_system_descriptor_uses_the_local_provider_classes():
+    from hostctl.provider.transports import LocalExecutorProvider, LocalPathProvider
+
+    scheme = "windows" if os.name == "nt" else "posix"
+    with HostConfig(f"{scheme}://node?executor=local&path=local").open() as host:
+        assert isinstance(host.executor_providers[0], LocalExecutorProvider)
+        assert isinstance(host.path_providers[0], LocalPathProvider)

@@ -17,7 +17,11 @@ from ._common import (
 from ._connection import ConnectionString as ConnectionString
 from ._ssh import ssh_providers as ssh_providers
 from ._winrm import winrm_providers as winrm_providers
-from ._local import LocalConfig as LocalConfig, LocalHost as LocalHost
+from ._local import (
+    LocalConfig as LocalConfig,
+    LocalHost as LocalHost,
+    local_providers as local_providers,
+)
 from .container import (
     ContainerConfig as ContainerConfig,
     ContainerHost as ContainerHost,
@@ -80,6 +84,7 @@ __all__ = [
     "ContainerHost",
     "LocalConfig",
     "LocalHost",
+    "local_providers",
     "QemuConfig",
     "QemuHost",
     "SshConfig",
