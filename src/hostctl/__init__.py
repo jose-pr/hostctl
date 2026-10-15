@@ -64,6 +64,8 @@ from .host import (
     WindowsConfig as WindowsConfig,
     WindowsHost as WindowsHost,
     register_system_provider as register_system_provider,
+    system_provider_names as system_provider_names,
+    host_schemes as host_schemes,
     IosConfig as IosConfig,
     IosHost as IosHost,
     CompositePosixPath as CompositePosixPath,
@@ -190,6 +192,8 @@ __all__ = [
     "OperationNotStarted",
     "SessionInitializer",
     "register_system_provider",
+    "system_provider_names",
+    "host_schemes",
     "CompositePosixPath",
     "CompositeWindowsPath",
     # Transfer helpers

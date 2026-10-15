@@ -28,6 +28,7 @@ from ._common import (
     Host,
     HostConfig,
     _HostExecutor,
+    entry_points_in,
     HostInfo,
     Input,
     PathLike,
@@ -43,13 +44,53 @@ _SYSTEM_PROVIDER_RESOLVERS = {}
 
 
 def register_system_provider(
-    name: str, resolver: typing.Callable[..., typing.Any]
+    name: str,
+    resolver: typing.Callable[["SystemConfig", str], typing.Any],
+    *,
+    replace: bool = False,
 ) -> None:
-    """Register a provider descriptor resolver for :class:`SystemConfig`."""
+    """Register a provider descriptor resolver for :class:`SystemConfig`.
+
+    `resolver(config, kind)` returns the provider for `kind` (`"executor"` or
+    `"path"`), or `None` when the descriptor offers none. A name registered
+    already raises `ValueError` unless `replace=True`.
+    """
     key = str(name).casefold().strip()
     if not key or not callable(resolver):
         raise ValueError("provider name and callable resolver are required")
+    if key in _SYSTEM_PROVIDER_RESOLVERS and not replace:
+        raise ValueError(f"system provider is already registered: {key}")
     _SYSTEM_PROVIDER_RESOLVERS[key] = resolver
+
+
+def system_provider_names() -> typing.Tuple[str, ...]:
+    """Every provider descriptor `SystemConfig` accepts, sorted.
+
+    The registered names plus the `hostctl.system_providers` entry points,
+    which are listed and not imported.
+    """
+    names = set(_SYSTEM_PROVIDER_RESOLVERS)
+    names.update(
+        str(point.name).casefold() for point in entry_points_in(_ENTRY_POINT_GROUP)
+    )
+    return tuple(sorted(names))
+
+
+_ENTRY_POINT_GROUP = "hostctl.system_providers"
+
+
+def _load_system_provider(key: str):
+    """Load, register and return the plugin resolver named `key`, if any."""
+    for point in entry_points_in(_ENTRY_POINT_GROUP):
+        if str(point.name).casefold() != key:
+            continue
+        try:
+            resolver = point.load()
+            register_system_provider(key, resolver, replace=True)
+        except Exception as exc:
+            raise ValueError(f"invalid system provider plugin {key!r}: {exc}") from exc
+        return resolver
+    return None
 
 
 def _provider_option(config: "SystemConfig", name: str):
@@ -248,7 +289,7 @@ class SystemConfig(HostConfig):
         result = []
         for descriptor in descriptors:
             key = str(descriptor).casefold()
-            resolver = _SYSTEM_PROVIDER_RESOLVERS.get(key)
+            resolver = _SYSTEM_PROVIDER_RESOLVERS.get(key) or _load_system_provider(key)
             if resolver is None:
                 raise ValueError(f"unknown {kind} provider descriptor: {descriptor!r}")
             provider = resolver(self, kind)

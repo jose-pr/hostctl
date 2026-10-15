@@ -68,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **PSRP `run()` text matches the other legs** (tables as a console shows
   them, CRLF line ends), which ships in 0.4.0. It was each object's
   `ToString()` joined with LF.
+- **Registries refuse a duplicate name**, which ships in 0.4.0. A second
+  `HostConfig` subclass claiming a scheme that another live config holds
+  raises `ValueError` where the class is defined (it used to fail later as
+  "ambiguous host URI"); `register_system_provider(name, resolver)` raises for
+  a name already registered. Pass `replace=True` to take the name over on
+  purpose. Redefining the same class (a module reload) is not a duplicate.
 
 ### Added
 
@@ -94,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `run(..., stderr=subprocess.STDOUT)` on a QGA guest asks qemu-ga to
   interleave the streams (`capture-output: "merged"`) when the agent is 8.0 or
   later and the guest is not Windows.
+- `host_schemes()` and `system_provider_names()` list what the URI-scheme and
+  system-provider registries hold, sorted, with entry-point names included and
+  not imported. Unknown system-provider descriptors load the
+  `hostctl.system_providers` entry point of that name.
 
 ### Security
 
@@ -180,6 +190,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   same for the address form). With `scheme=` or `defaults=` they parse as host
   and port. The `ConnectionString` docstring and the API header said a bare host
   parses without a scheme; they now say it needs one.
+- One broken `hostctl.configs` plugin no longer breaks every other unclaimed
+  scheme: the entry point named for the scheme loads first, a plugin that fails
+  to import is warned about and skipped, and only its own scheme raises
+  `RuntimeError` from the import error.
 - Default ports, IPv6 bracketing and the local-host check come from netimps
   where hostctl wrote its own: an SSH, QGA-over-SSH, WinRM or PSRP port, an
   endpoint or URI authority with a port, `HostInfo.hostname` (a bare IPv6

@@ -6,6 +6,7 @@ from ._common import (
     HostConfig as HostConfig,
     HostInfo as HostInfo,
     HostPath as HostPath,
+    host_schemes as host_schemes,
     parse_credentials as parse_credentials,
     redact_uri as redact_uri,
     strict_uri_credentials as strict_uri_credentials,
@@ -52,6 +53,7 @@ from .system import (
     WindowsConfig as WindowsConfig,
     WindowsHost as WindowsHost,
     register_system_provider as register_system_provider,
+    system_provider_names as system_provider_names,
 )
 from .serial import SerialConfig as SerialConfig, SerialHost as SerialHost
 from .composite_path import (
@@ -92,6 +94,8 @@ __all__ = [
     "WindowsConfig",
     "WindowsHost",
     "register_system_provider",
+    "host_schemes",
+    "system_provider_names",
     "IosConfig",
     "IosHost",
     "CompositePosixPath",

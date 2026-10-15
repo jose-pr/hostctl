@@ -5,6 +5,21 @@ identity, URI selection, and lifecycle. Installed integrations register config
 subclasses through the `hostctl.configs` entry-point group. Registry hooks are
 protected implementation details.
 
+Three registries take extensions, each with the same shape: a name is
+registered once (`replace=True` replaces it deliberately), a plugin comes in
+through an entry-point group, and a listing returns the sorted names.
+
+| kind | register | entry-point group | listing |
+| ---- | -------- | ----------------- | ------- |
+| URI scheme | `class C(HostConfig, schemes=(...))` | `hostctl.configs` | `host_schemes()` |
+| system provider | `register_system_provider(name, resolver)` | `hostctl.system_providers` | `system_provider_names()` |
+| shell flavour | `register_shell_flavour(flavour)` | `hostctl.shell_flavours` | |
+
+A second config claiming a scheme that is already registered raises
+`ValueError` when the class is defined. A plugin that fails to import is
+warned about and skipped: it takes down only its own scheme, which then raises
+`RuntimeError` naming the failed entry point.
+
 An entry point whose **name** equals the requested scheme is loaded first,
 which is the cheap path for the common one-scheme plugin. A plugin may
 declare several schemes on one config (`schemes=("plug", "plug+tls")`) under

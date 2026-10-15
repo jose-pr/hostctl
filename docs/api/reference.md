@@ -75,6 +75,8 @@ without a deprecation cycle.
 ::: hostctl.OperationNotStarted
 ::: hostctl.SessionInitializer
 ::: hostctl.register_system_provider
+::: hostctl.system_provider_names
+::: hostctl.host_schemes
 ::: hostctl.CompositePosixPath
 ::: hostctl.CompositeWindowsPath
 

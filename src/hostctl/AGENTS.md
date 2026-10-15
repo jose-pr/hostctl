@@ -98,10 +98,16 @@ providers. `PosixHost.from_ssh(SshConfig(...))` and
 `WindowsHost.from_winrm(WinRMConfig(...))` retain the original connection URI
 and lifecycle while exposing transport operations through provider adapters;
 transport implementations remain private.
-`register_system_provider(name, resolver)` extends logical system URI
-descriptors. Built-ins include `local`, `ssh`, `sftp`, and `winrm`; transport
-descriptors require matching objects in `SystemConfig(provider_options=...)` and
-never serialize credentials into the canonical URI.
+`register_system_provider(name, resolver, *, replace=False)` extends logical
+system URI descriptors; `resolver(config, kind)` returns the provider for
+`kind` (`"executor"` or `"path"`) or `None`. A name already registered raises
+`ValueError` unless `replace=True`, and an unknown descriptor loads the
+`hostctl.system_providers` entry point of that name. Built-ins include
+`local`, `ssh`, `sftp`, and `winrm`; transport descriptors require matching
+objects in `SystemConfig(provider_options=...)` and never serialize
+credentials into the canonical URI. `system_provider_names()` and
+`host_schemes()` return sorted tuples of what is registered, entry-point names
+included without importing them.
 
 `Executor(command, *args, stdin=None, stdout=None, stderr=None, cwd=None,
 env=None, capture_output=None, check=None, encoding=None, errors=None,
@@ -181,7 +187,12 @@ and dispatches it with no args, and that script is shell text, not a program.
 - `with config as host:` and `with config.open() as host:` connect and always
   close. Re-entering the same active config raises `RuntimeError`.
 - External config implementations declare `schemes=(...)`; registry hooks and
-  caches are protected implementation details.
+  caches are protected implementation details. A scheme another live config
+  already claims raises `ValueError("host scheme 'x' is already registered by
+  Name")` at class definition; redefining the same module-qualified class
+  replaces it, and `replace=True` takes the scheme over. One plugin that fails
+  to import is warned about and skipped, so it does not break dispatch of
+  other schemes; its own scheme raises `RuntimeError` from the import error.
 
 `LocalConfig`, `SshConfig`, `WinRMConfig`, and `ContainerConfig` produce their
 corresponding hosts. `PosixConfig`, `WindowsConfig` and `IosConfig` compose a

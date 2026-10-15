@@ -370,6 +370,9 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
     ] = None
     _uri_entry_points: _ty.ClassVar[_ty.Optional[tuple[object, ...]]] = None
     _uri_plugin_failures: _ty.ClassVar[dict[str, Exception]] = {}
+    #: Entry-point names already imported, so a sweep for an unclaimed scheme
+    #: loads each plugin once.
+    _uri_plugins_loaded: _ty.ClassVar[set[str]] = set()
     _uri_registry_generation: _ty.ClassVar[int] = 0
     _uri_registry_lock: _ty.ClassVar[_threading.RLock] = _threading.RLock()
 
@@ -401,11 +404,50 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         cls,
         *,
         schemes: _ty.Iterable[str] = (),
+        replace: bool = False,
         **kwargs: object,
     ) -> None:
         super().__init_subclass__(**kwargs)
-        cls._uri_schemes = tuple(scheme.casefold() for scheme in schemes)
-        HostConfig._refresh_uri_registry()
+        # Claimed only once nothing else holds them: a class that raises here
+        # stays a live subclass until it is collected, and must claim nothing.
+        cls._uri_schemes = ()
+        wanted = tuple(scheme.casefold() for scheme in schemes)
+        with HostConfig._uri_registry_lock:
+            cls._claim_schemes(wanted, replace)
+            cls._uri_schemes = wanted
+            HostConfig._uri_registry_generation += 1
+            HostConfig._uri_registry_cache = None
+
+    @classmethod
+    def _claim_schemes(cls, wanted: _ty.Tuple[str, ...], replace: bool) -> None:
+        """Refuse a scheme another live config already claims.
+
+        A redefinition (same module and name: a reload, or a test that builds
+        the class per call) replaces its predecessor. `replace=True` takes the
+        scheme over from the previous owner.
+        """
+        for other in _recursive_subclasses(HostConfig):
+            if other is cls or not other._uri_schemes:
+                continue
+            taken = set(wanted) & set(other._uri_schemes)
+            if not taken:
+                continue
+            same = (other.__module__, other.__qualname__) == (
+                cls.__module__,
+                cls.__qualname__,
+            )
+            if same:
+                other._uri_schemes = ()
+            elif replace:
+                other._uri_schemes = tuple(
+                    scheme for scheme in other._uri_schemes if scheme not in taken
+                )
+            else:
+                name = sorted(taken)[0]
+                raise ValueError(
+                    f"host scheme {name!r} is already registered by "
+                    f"{other.__name__}; pass replace=True to take it over"
+                )
 
     @property
     def scheme(self) -> str:
@@ -566,6 +608,7 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
             HostConfig._uri_registry_cache = None
             HostConfig._uri_entry_points = None
             HostConfig._uri_plugin_failures = {}
+            HostConfig._uri_plugins_loaded = set()
 
     @classmethod
     def _uri_implementations(
@@ -606,18 +649,7 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
                 )
             if HostConfig._uri_entry_points is None:
                 # Reading metadata imports nothing, so it stays under the lock.
-                points = _metadata.entry_points()
-                if hasattr(points, "select"):
-                    points = points.select(group="hostctl.configs")
-                elif hasattr(points, "get"):
-                    points = points.get("hostctl.configs", ())
-                else:
-                    points = tuple(
-                        item
-                        for item in points
-                        if getattr(item, "group", None) == "hostctl.configs"
-                    )
-                HostConfig._uri_entry_points = tuple(points)
+                HostConfig._uri_entry_points = entry_points_in("hostctl.configs")
             candidates = list(HostConfig._uri_registry_cache)
             entry_points = HostConfig._uri_entry_points
             failure = (
@@ -641,8 +673,21 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
                 for item in candidates
                 for value in getattr(item, "_uri_schemes", ())
             }
-            for entry_point in entry_points:
+            # The entry point named for the scheme goes first: a broken
+            # unrelated plugin earlier in the list must not stand between a
+            # scheme and its own plugin.
+            ordered = sorted(
+                entry_points,
+                key=lambda point: str(getattr(point, "name", "")).casefold() != scheme,
+            )
+            for entry_point in ordered:
                 name = str(getattr(entry_point, "name", "")).casefold()
+                with HostConfig._uri_registry_lock:
+                    if (
+                        name in HostConfig._uri_plugins_loaded
+                        or name in HostConfig._uri_plugin_failures
+                    ):
+                        continue
                 # The entry point's NAME matching the scheme is the fast
                 # path, not the rule. A plugin may declare several schemes
                 # under one entry point (`schemes=("plug", "plug+tls")`), and
@@ -674,10 +719,21 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
                         RuntimeWarning,
                         stacklevel=2,
                     )
-                    raise
+                    continue
+                with HostConfig._uri_registry_lock:
+                    HostConfig._uri_plugins_loaded.add(name)
                 candidates.append(implementation)
                 if scheme in getattr(implementation, "_uri_schemes", ()):
                     break
+            with HostConfig._uri_registry_lock:
+                failure = HostConfig._uri_plugin_failures.get(scheme)
+            claimed = any(
+                scheme in getattr(item, "_uri_schemes", ()) for item in candidates
+            )
+            if failure is not None and not claimed:
+                raise RuntimeError(
+                    f"hostctl.configs entry point for scheme {scheme!r} failed to load"
+                ) from failure
         return tuple(
             item
             for item in dict.fromkeys(candidates)
@@ -1107,6 +1163,35 @@ def _query_bool(query: _ty.Mapping[str, str], name: str, default: bool) -> bool:
     if value in _FALSE:
         return False
     raise ValueError(f"{name} must be one of 1/true/yes/on or 0/false/no/off")
+
+
+def entry_points_in(group: str) -> tuple:
+    """The installed entry points of `group`, without importing any."""
+    points = _metadata.entry_points()
+    if hasattr(points, "select"):
+        points = points.select(group=group)
+    elif hasattr(points, "get"):
+        points = points.get(group, ())
+    else:
+        points = tuple(item for item in points if getattr(item, "group", None) == group)
+    return tuple(points)
+
+
+def host_schemes() -> tuple[str, ...]:
+    """Every scheme `HostConfig(uri)` can dispatch, sorted.
+
+    The schemes of the registered configs, plus the names of the
+    `hostctl.configs` entry points, which are listed and not imported.
+    """
+    names = {
+        scheme
+        for implementation in HostConfig._uri_implementations()
+        for scheme in implementation._uri_schemes
+    }
+    for point in HostConfig._uri_entry_points or ():
+        names.add(str(getattr(point, "name", "")).casefold())
+    names.discard("")
+    return tuple(sorted(names))
 
 
 def _recursive_subclasses(
