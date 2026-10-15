@@ -55,7 +55,12 @@ ordered, percent-encoded, secret-free provider descriptors in repeated
 `executor=` and `path=` queries:
 
 ```python
-from hostctl import HostConfig, SshConfig
+from hostctl import HostConfig, PathProvider, SshConfig, register_system_provider
+
+# `sftp` is built in; `rpc` resolves only once something registers it.
+register_system_provider(
+    "rpc", lambda config, kind: PathProvider("rpc", rpc_path) if kind == "path" else None
+)
 
 config = HostConfig(
     "posix://node?executor=ssh&path=sftp&path=rpc",
