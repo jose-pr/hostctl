@@ -20,21 +20,28 @@ from ..provider import OperationNotStarted, PathProvider, ProviderSelector
 from pathapi.protocols import (
     BinaryOpen,
     Chmod,
+    Chown,
     Create,
+    Hardlink,
     Listing,
     Move,
+    NativeChecksum,
+    Owned,
     Readlink,
     Remove,
+    Resolve,
     Stat,
     Symlink,
+    Utime,
+    supports,
 )
 from ._staged_io import copy_from
 
 PathOperation = str
 
 #: The operation each pathapi protocol's primitives are routed under, for
-#: `_supports()`. A protocol left out (`Utime`, `Hardlink`, `Resolve`, ...) is
-#: one a composite path does not forward, so the class answers it.
+#: `_supports()`. A protocol left out is one whose answer depends on the
+#: backend path class as well (`_BACKEND_PROTOCOLS`).
 _PROTOCOL_OPERATIONS: "dict[type, tuple[PathOperation, ...]]" = {
     Stat: ("stat",),
     Listing: ("scandir",),
@@ -45,6 +52,18 @@ _PROTOCOL_OPERATIONS: "dict[type, tuple[PathOperation, ...]]" = {
     Readlink: ("readlink",),
     Symlink: ("symlink_to",),
     Move: ("rename",),
+}
+
+#: Protocols a backend path class may or may not implement whatever the
+#: provider declares: the declared operation says the provider routes the call,
+#: the class says it can do it.
+_BACKEND_PROTOCOLS: "dict[type, PathOperation]" = {
+    Utime: "utime",
+    Hardlink: "hardlink_to",
+    Owned: "stat",
+    Resolve: "stat",
+    NativeChecksum: "read",
+    Chown: "chmod",
 }
 
 
@@ -192,7 +211,11 @@ def _rebuild_composite(cls, text, provider, factory, providers, selector, pinned
 
 
 def _make_forwarder(
-    name: str, capability: PathOperation, pin: bool, retry_safe: bool
+    name: str,
+    capability: PathOperation,
+    pin: bool,
+    retry_safe: bool,
+    rewrap: bool = False,
 ) -> typing.Callable[..., object]:
     """Build a method forwarding ``name`` to the selected backend path."""
 
@@ -215,6 +238,15 @@ def _make_forwarder(
             resolved = tuple(_argument_for(arg, path, self._provider) for arg in args)
             return method(*resolved, **_accepts_kwargs(method, kwargs, name))
 
+        if rewrap:
+            result, provider = self._dispatch(
+                capability,
+                call,
+                pin=pin,
+                with_provider=True,
+                retry_on_not_implemented=retry_safe,
+            )
+            return self._as_composite(result, provider)
         return self._dispatch(
             capability, call, pin=pin, retry_on_not_implemented=retry_safe
         )
@@ -229,6 +261,14 @@ def _make_forwarder(
         f"        capability gate and retry contract.\n        "
     )
     return forwarder
+
+
+class _Row(typing.NamedTuple):
+    capability: str
+    pin: bool
+    retry_safe: bool
+    #: The result is a backend path: hand it back as a composite path.
+    rewrap: bool = False
 
 
 # Methods forwarded verbatim to the selected backend path.  Each entry maps a
@@ -251,8 +291,7 @@ def _make_forwarder(
 # backend lacking that primitive deletes the entry and only then raises.
 # ``NotImplementedError`` cannot distinguish "did nothing" from "did half", so
 # only calls that cannot mutate before raising opt in.
-_FORWARDED: "dict[str, tuple[str, bool, bool]]" = {
-    # name: (capability, pin, retry_safe)
+_FORWARDED: "dict[str, _Row]" = {
     # The stat-derived predicates accept EITHER their own capability or
     # `stat`, because that is what they are: `is_file()` is a stat with a
     # mask. Gating them on their own name alone meant the shipped
@@ -285,6 +324,13 @@ _FORWARDED: "dict[str, tuple[str, bool, bool]]" = {
     # `rm` removes files AND directories, and recursively lists to do it.
     "rm": ("unlink|rmdir", True, False),
     "symlink_to": ("symlink_to", True, False),
+    # `_utime` is what `PathSyncer` calls to carry a source's mtime across, so
+    # the primitive is forwarded as well as the public names.
+    "_utime": ("utime", True, True),
+    "hardlink_to": ("hardlink_to", True, True),
+    "owner": ("stat", False, True),
+    "group": ("stat", False, True),
+    "resolve": ("stat", False, True, True),
 }
 
 
@@ -303,7 +349,7 @@ class _CompositePathMixin:
         ``rename``, ``readlink``, ``copy``/``move``).
         """
         super().__init_subclass__(**kwargs)
-        for name, (capability, pin, retry_safe) in _FORWARDED.items():
+        for name, row in _FORWARDED.items():
             # Only a definition inside the composite classes themselves opts
             # out.  Testing the whole MRO would match everything inherited
             # from ``pathapi.Path`` -- which is the entire surface this
@@ -318,7 +364,7 @@ class _CompositePathMixin:
             )
             if owner is not None:
                 continue
-            setattr(cls, name, _make_forwarder(name, capability, pin, retry_safe))
+            setattr(cls, name, _make_forwarder(name, *row))
 
     def copy(self, target, **kwargs):
         return self._transfer("copy", target, **kwargs)
@@ -473,16 +519,34 @@ class _CompositePathMixin:
         and like every `supports()` answer it is advisory.
         """
         operations = _PROTOCOL_OPERATIONS.get(protocol)
-        if operations is None:
+        operation = _BACKEND_PROTOCOLS.get(protocol)
+        if operations is None and operation is None:
             return None
         if self._pinned:
             providers = (self._provider,) if self._provider is not None else ()
         else:
             providers = tuple(self._providers or ())
+        if operation is not None:
+            return any(
+                _provider_supports(provider, operation)
+                and self._backend_supports(provider, protocol)
+                for provider in providers
+            )
         return all(
             any(_provider_supports(provider, operation) for provider in providers)
             for operation in operations
         )
+
+    def _backend_supports(self, provider: PathProvider, protocol) -> bool:
+        """Whether the path class `provider` builds implements `protocol`.
+
+        Asked of the class, not an instance: an instance hook may connect, and
+        this answer must not.
+        """
+        try:
+            return supports(type(self._provider_path(provider)), protocol)
+        except Exception:
+            return False
 
     def _adopt(
         self, provider: PathProvider, backend_path: Path, *, pinned: bool
@@ -919,6 +983,22 @@ class _CompositePathMixin:
             pinned=self._pinned,
             logical_segments=(text,),
         )
+
+    def absolute(self):
+        """This path when absolute, else the backend's own `absolute()`.
+
+        Hand-written rather than a `_FORWARDED` row: an absolute path needs no
+        I/O, and a row would select and connect a provider to return `self`.
+        """
+        if self.is_absolute():
+            return self
+        result, provider = self._dispatch(
+            "stat",
+            lambda path: path.absolute(),
+            with_provider=True,
+            retry_on_not_implemented=True,
+        )
+        return self._as_composite(result, provider)
 
     def supported_checksums(self) -> frozenset:
         """Algorithms the selected backend can digest remotely, or none.

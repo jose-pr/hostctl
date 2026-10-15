@@ -151,6 +151,9 @@ class LocalSftpClient:
     def chmod(self, path: str, mode: int, **_options):
         self._path(path).chmod(mode)
 
+    def utime(self, path: str, times):
+        os.utime(self._path(path), times)
+
     def remove(self, path: str):
         self._path(path).unlink()
 

@@ -161,6 +161,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   because the relay was quadratic.
 - `host.executor(program, *args)` on a composed or local host raised
   `NameError`; both executor wrappers are now one class.
+- A composed host's path now forwards `_utime`, `hardlink_to`, `owner`,
+  `group`, `resolve` and a relative `absolute()` to its backend, which
+  `PathSyncer` needs to carry mtimes across: a second `stat_checksum` sync into
+  an SSH host copies nothing instead of everything. `supports()` answers
+  `Utime`, `Hardlink`, `Owned`, `Resolve`, `NativeChecksum` and `Chown` from
+  the backend path class, so it no longer claims a digest `LocalPath` lacks or
+  a `chown` a WinRM or container path cannot do. `PathProvider` declares
+  `utime` and `hardlink_to` by default.
 
 ## [0.3.2] - 2026-09-23
 

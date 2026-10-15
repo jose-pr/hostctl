@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from pathapi.protocols import Utime, supports
 from pathapi.sync import PathAndStat, PathSyncer, SyncEvent
 
 from hostctl.sync import host_checksum, stat_checksum
@@ -231,3 +232,32 @@ def test_path_syncer_dry_run_leaves_the_target_untouched(provider, tmp_path):
         PathSyncer(stat_checksum).sync(source, target, dry_run=True)
 
         assert not target.exists()
+
+
+@pytest.mark.parametrize("provider", _PATH_PROVIDERS, ids=lambda p: p.name)
+def test_path_syncer_converges_where_the_target_sets_mtimes(provider, tmp_path):
+    """A second ``stat_checksum`` sync into a target that can set an mtime
+    copies nothing: the first one carried the source's time across."""
+
+    with provider_context(provider) as host:
+        if provider.name == "container":
+            pytest.skip("container archive paths cannot create directories")
+        source = conformance_path(host, provider, tmp_path, "mtime-source")
+        target = conformance_path(host, provider, tmp_path, "mtime-target")
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "one.txt").write_bytes(b"one payload")
+        if not supports(target, Utime):
+            pytest.skip(f"{provider.name} paths cannot set an mtime (no Utime)")
+
+        copied = []
+
+        def hook(src, dst, event, dry_run):
+            if event is SyncEvent.Copy:
+                copied.append(str(dst))
+
+        PathSyncer(stat_checksum, hook=hook).sync(source, target)
+        assert len(copied) == 1
+        copied.clear()
+        PathSyncer(stat_checksum, hook=hook).sync(source, target)
+
+        assert copied == []

@@ -84,7 +84,10 @@ if supports(target, Remove):
 A composed host's path says yes to `Stat`, `Listing`, `BinaryOpen`, `Create`,
 `Remove`, `Chmod`, `Readlink`, `Symlink` or `Move` when some provider it may
 route to declares the operations behind it; a path pinned with `.via(name)`
-answers for that provider alone. No provider is probed to answer. A container
+answers for that provider alone. `Utime`, `Hardlink`, `Owned`, `Resolve`,
+`NativeChecksum` and `Chown` also need the provider's path class to implement
+them (the provider declares `utime` and `hardlink_to` for the first two). No
+provider is probed to answer. A container
 path has no `Create`, `Chmod`, `Remove` or `Move`; a QGA path has no
 `Readlink` or `Symlink`, and its metadata and namespace protocols follow the
 guest helper. The answer is advisory, as pathapi defines it: an operation may

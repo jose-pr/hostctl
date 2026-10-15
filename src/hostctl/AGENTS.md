@@ -315,7 +315,8 @@ hostctl applies to whatever you return.
   spelling are interchangeable. `PathProvider.DEFAULT_CAPABILITIES` is the
   full filesystem vocabulary: `stat`, `scandir`, `open`, `open_read`,
   `open_write`, `read`, `write`, `exists`, `is_file`, `is_dir`, `mkdir`,
-  `chmod`, `unlink`, `rmdir`, `rename`, `symlink_to`, `readlink`.
+  `chmod`, `unlink`, `rmdir`, `rename`, `symlink_to`, `readlink`, `utime`,
+  `hardlink_to`.
 - `ProviderProbe(availability, reason="", capabilities=frozenset(),
   system_hint=None)` is what `probe()` returns: `"available"`, `"degraded"`
   or `"unavailable"`. `usable` is true for the first two. A probe may narrow
@@ -350,8 +351,11 @@ hostctl applies to whatever you return.
   `Symlink` or `Move` when some provider it may route to (only the pinned one
   after `.via()`) declares the operations behind it (`stat`, `scandir`,
   `open_read`, `mkdir`, `unlink` and `rmdir`, `chmod`, `readlink`,
-  `symlink_to`, `rename`; `path` declares all). No provider is probed, and
-  the answer is advisory. A container path has no `Create`, `Chmod`,
+  `symlink_to`, `rename`; `path` declares all). `Utime`, `Hardlink`, `Owned`,
+  `Resolve`, `NativeChecksum` and `Chown` also need the backend path class to
+  implement them (`utime`, `hardlink_to`, `stat`, `stat`, `read`, `chmod`
+  declared), so a composite over a path class without one says no. No provider
+  is probed, and the answer is advisory. A container path has no `Create`, `Chmod`,
   `Remove` or `Move`; a QGA path has no `Readlink` or `Symlink`, and its
   metadata and namespace protocols follow the guest helper.
 

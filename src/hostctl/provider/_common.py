@@ -235,6 +235,8 @@ class PathProvider:
             # SFTP and WinRM escaped only by declaring the `path` wildcard.
             "symlink_to",
             "readlink",
+            "utime",
+            "hardlink_to",
         )
     )
 
