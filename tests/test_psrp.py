@@ -31,7 +31,9 @@ def test_explicit_psrp_has_actionable_error_when_missing(monkeypatch):
             ImportError("PSRP requires hostctl[psrp] on Python 3.10+")
         ),
     )
-    host = WindowsHost.from_winrm(WinRMConfig("host", "user", provider="psrp"))
+    host = WindowsHost.from_winrm(
+        WinRMConfig("host", "user", "secret", provider="psrp")
+    )
     with pytest.raises(ImportError, match="Python 3.10|psrp"):
         host.runspace()
 
@@ -529,9 +531,9 @@ def test_winrm_provider_backed_host_never_double_wraps_powershell(
     # Pin the transport to an in-memory session: constructing a real one would
     # open a network connection, which a unit test must never do.
     if provider == "psrp":
-        monkeypatch.setattr(transport, "runspace", lambda: FakeRunspace())
+        monkeypatch.setattr(transport._leg, "runspace", lambda: FakeRunspace())
     else:
-        transport._session = FakeWinRMSession()
+        transport._leg._session = FakeWinRMSession()
 
     executor_provider = WinRMExecutorProvider(transport)
     # The executor must advertise that it accepts a *finalized script*, which

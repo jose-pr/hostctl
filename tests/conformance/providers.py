@@ -707,7 +707,7 @@ class FakeWinRMHost:
             provider="pywinrm",
         )
         transport = _WinRMTransport(config)
-        transport._session = _PywinrmStdinSession(LocalWinRSProtocol())
+        transport._leg._session = _PywinrmStdinSession(LocalWinRSProtocol())
         runner = WinRMFilesystemRunner()
         # Keep the transport-built backend and replace only the hop it runs
         # scripts through: its budget and chunking are what production uses.

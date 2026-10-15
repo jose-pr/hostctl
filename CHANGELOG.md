@@ -55,6 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   runs non-interactive**, as the native leg already did. It starts
   `powershell.exe` directly and sends the script on stdin, instead of through
   cmd.exe. This ships in 0.4.0.
+- **`provider="pywinrm"` always means pywinrm**, which ships in 0.4.0. It used
+  to mean the native current-context leg for a password-free config on Windows;
+  use the new `provider="native"` (or `"auto"`) for that. An explicit
+  `"pywinrm"` or `"psrp"` without a password now needs `transport="kerberos"`.
+  `str(WinRMConfig)` omits an unset port, so `HostConfig(str(config)) == config`.
 - **One status rule on every WinRM leg**, which ships in 0.4.0: 0 when the last
   statement succeeded, else the native exit code, else 1. PSRP reports a
   non-terminating error followed by a successful statement as 0, where it was
@@ -135,6 +140,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A container path taken before `ContainerHost.close()` raises instead of
   reopening docker-py's client, and a Windows container follows relative links
   with Windows path syntax.
+- Two threads on a fresh PSRP host opened two pools, and one was never
+  closed.
 - A whole-file WinRM read is one round trip (it was one per 8 KiB on Python
   3.9-3.13), and `open("x")` on an existing file no longer downloads it.
 - A WinRM rename onto an existing entry raises `FileExistsError`, removing a

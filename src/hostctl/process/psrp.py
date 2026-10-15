@@ -130,15 +130,7 @@ class RunspaceSession:
             "operation_timeout": getattr(config, "operation_timeout_sec", 20),
             "read_timeout": getattr(config, "read_timeout_sec", 30),
         }
-        try:
-            wsman = WSMan(**kwargs)
-        except TypeError:
-            # pypsrp releases have renamed timeout parameters; retry with the
-            # stable connection options and let transport errors surface.
-            kwargs.pop("operation_timeout")
-            kwargs.pop("read_timeout")
-            wsman = WSMan(**kwargs)
-        return RunspacePool(wsman)
+        return RunspacePool(WSMan(**kwargs))
 
     def connect(self) -> None:
         # One lock: two threads calling `connect()` on a fresh session each

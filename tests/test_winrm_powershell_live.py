@@ -34,7 +34,7 @@ def transport():
     built = _WinRMTransport(
         WinRMConfig("fake", "fake", "fake", provider="pywinrm", transport="ntlm")
     )
-    built._session = _PywinrmStdinSession(LocalWinRSProtocol())
+    built._leg._session = _PywinrmStdinSession(LocalWinRSProtocol())
     return built
 
 

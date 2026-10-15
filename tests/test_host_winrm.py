@@ -43,7 +43,7 @@ def _host(response=None):
         WinRMConfig("windows.example.com", "admin", "secret", provider="pywinrm")
     )
     session = _Session(response)
-    host._session = session
+    host._leg._session = session
     return host, session
 
 
@@ -75,7 +75,7 @@ def test_winrm_context_closes_when_session_supports_close():
     finally:
         host.close()
     assert session.closed
-    assert host._session is None
+    assert host._leg._session is None
 
 
 def test_winrm_failure_check_and_no_check():
@@ -151,7 +151,7 @@ def test_winrm_missing_dependency_is_lazy(monkeypatch):
     host = _WinRMTransport(WinRMConfig("host", "user", "password", provider="pywinrm"))
     monkeypatch.setitem(sys.modules, "winrm", None)
     with pytest.raises(ImportError, match=r"hostctl\[winrm\]"):
-        _ = host.session
+        _ = host._leg.session
 
 
 def test_winrm_config_exposes_secure_transport_settings():
@@ -695,14 +695,13 @@ def test_auto_prefers_the_native_path_a_password_free_config_documents(monkeypat
 
     transport = winrm_module._WinRMTransport(WinRMConfig("server", "admin"))
 
-    assert transport._provider == "pywinrm"
-    assert transport._native_session is True
+    assert transport._leg.name == "native"
 
     # With a password there is a credential to hand PSRP, so `auto` takes it.
     credentialed = winrm_module._WinRMTransport(
         WinRMConfig("server", "admin", "secret")
     )
-    assert credentialed._provider == "psrp"
+    assert credentialed._leg.name == "psrp"
 
 
 def test_the_native_session_gets_the_configured_deadline(monkeypatch):
@@ -726,7 +725,7 @@ def test_the_native_session_gets_the_configured_deadline(monkeypatch):
     transport = winrm_module._WinRMTransport(
         WinRMConfig("server", "admin", read_timeout_sec=45)
     )
-    transport.session
+    transport._leg.session
     del _os
 
     assert built["timeout"] == 45.0
@@ -803,3 +802,140 @@ def test_allow_cleartext_query_is_a_strict_boolean(value, expected):
     assert config.allow_cleartext is expected
     with pytest.raises(ValueError, match="allow_cleartext"):
         HostConfig("winrm://user@host?allow_cleartext=maybe")
+
+
+@pytest.mark.parametrize(
+    ("provider", "password", "os_name", "psrp", "transport", "leg"),
+    [
+        ("auto", None, "nt", True, "ntlm", "native"),
+        ("auto", None, "nt", False, "ntlm", "native"),
+        ("auto", None, "posix", True, "kerberos", "psrp"),
+        ("auto", None, "posix", False, "kerberos", "pywinrm"),
+        ("auto", "secret", "nt", True, "ntlm", "psrp"),
+        ("auto", "secret", "posix", False, "ntlm", "pywinrm"),
+        ("native", None, "posix", True, "ntlm", "native"),
+        ("pywinrm", "secret", "nt", True, "ntlm", "pywinrm"),
+        ("pywinrm", None, "nt", True, "kerberos", "pywinrm"),
+        ("psrp", "secret", "posix", False, "ntlm", "psrp"),
+    ],
+)
+def test_one_rule_picks_the_leg(
+    monkeypatch, provider, password, os_name, psrp, transport, leg
+):
+    import hostctl.host._winrm as winrm_module
+
+    monkeypatch.setattr(winrm_module.os, "name", os_name)
+    monkeypatch.setattr(winrm_module, "pypsrp_available", lambda: psrp)
+    config = WinRMConfig(
+        "server", "admin", password, transport=transport, provider=provider
+    )
+
+    assert winrm_module._select_leg(config) == leg
+    assert winrm_module._WinRMTransport(config)._leg.name == leg
+
+
+def test_auto_without_a_password_off_windows_needs_a_password(monkeypatch):
+    import hostctl.host._winrm as winrm_module
+
+    monkeypatch.setattr(winrm_module.os, "name", "posix")
+    with pytest.raises(ValueError, match="pass password="):
+        winrm_module._select_leg(WinRMConfig("server", "admin"))
+
+
+def test_provider_native_means_no_password_and_pywinrm_psrp_need_one():
+    from hostctl import HostConfig
+
+    with pytest.raises(ValueError, match="current Windows logon"):
+        WinRMConfig("server", "admin", "secret", provider="native")
+    for provider in ("pywinrm", "psrp"):
+        with pytest.raises(ValueError, match="password="):
+            WinRMConfig("server", "admin", provider=provider)
+        assert WinRMConfig("server", "admin", provider=provider, transport="kerberos")
+    native = WinRMConfig("server", "admin", provider="native")
+    assert HostConfig(str(native)) == native
+    with pytest.raises(ValueError, match="native"):
+        WinRMConfig("server", "admin", provider="bogus")
+
+
+def test_a_config_without_a_port_survives_its_own_uri():
+    from hostctl import HostConfig
+
+    config = WinRMConfig("h", "u")
+    assert HostConfig(str(config)) == config
+    pinned = WinRMConfig("h", "u", port=5986, ssl=True)
+    assert HostConfig(str(pinned)) == pinned
+
+
+def test_the_psrp_leg_manages_its_own_status():
+    """The transport once decided this from a second place: PSRP declared it,
+    the transport did not, so the flavour's `exit` epilogue was appended and
+    `cmd /c exit 7` reported 1."""
+    scripts = []
+
+    class _Runspace:
+        def connect(self):
+            pass
+
+        def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
+            from hostctl.process.psrp import PipelineResult, PipelineStreams
+
+            scripts.append(script)
+            return PipelineResult((), PipelineStreams(), "Completed", False, 7)
+
+    transport = _WinRMTransport(
+        WinRMConfig("server", "admin", "secret", provider="psrp")
+    )
+    transport._leg._runspace = _Runspace()
+
+    assert "manages_status" in transport.capabilities
+    assert "runspace" in transport.capabilities
+    result = transport.run("cmd /c exit 7", check=False)
+
+    assert result.returncode == 7
+    assert "exit $(" not in scripts[0]
+
+
+def test_two_threads_open_one_runspace_and_close_closes_it():
+    import threading
+    import time
+
+    import hostctl.host._winrm as winrm_module
+
+    opened, closed = [], []
+
+    class _Pool:
+        def open(self):
+            opened.append(self)
+
+        def close(self):
+            closed.append(self)
+
+    class _Slow(winrm_module.RunspaceSession):
+        def __init__(self, config):
+            time.sleep(0.05)  # widen the check-then-assign window
+            super().__init__(config)
+
+        def _make_pool(self):
+            return _Pool()
+
+    original = winrm_module.RunspaceSession
+    winrm_module.RunspaceSession = _Slow
+    try:
+        transport = _WinRMTransport(WinRMConfig("h", "u", "p", provider="psrp"))
+        threads = [threading.Thread(target=transport.runspace) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        transport.close()
+    finally:
+        winrm_module.RunspaceSession = original
+
+    assert (len(opened), len(closed)) == (1, 1)
+
+
+def test_a_non_psrp_leg_has_no_runspace():
+    transport = _WinRMTransport(WinRMConfig("h", "u", "p", provider="pywinrm"))
+    with pytest.raises(NotImplementedError, match="PSRP runspaces"):
+        transport.runspace()
+    assert "runspace" not in transport.capabilities

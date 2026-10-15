@@ -235,10 +235,13 @@ The streaming interface deliberately exposes `send()`, `read()`, and
 `read_stderr()` rather than pretending that one read corresponds to one command.
 Command-correlated capture requires a separate framing protocol.
 
-WinRM's default provider is `auto`: it selects the optional PSRP provider when
-`hostctl[psrp]` is installed on Python 3.10+, otherwise it falls back to
-`pywinrm`. Select `provider="psrp"` to require PSRP explicitly. PSRP exposes a
-persistent typed runspace rather than a TTY:
+WinRM's default provider is `auto`, and it picks one of three legs. A
+password-free config on a Windows client uses `native` current-context
+remoting. Otherwise it selects the optional PSRP provider when `hostctl[psrp]`
+is installed on Python 3.10+, and falls back to `pywinrm`. Select
+`provider="native"`, `"pywinrm"` or `"psrp"` to force a leg; `"pywinrm"` and
+`"psrp"` need a password (or `transport="kerberos"`), and `"native"` takes
+none. PSRP exposes a persistent typed runspace rather than a TTY:
 
 ```python
 with WinRMConfig("windows.example.com", "admin", "secret", provider="psrp") as host:
@@ -374,5 +377,5 @@ serial test requires a VM with a separately configured serial device.
 !!! note
     SSH needs `hostctl[ssh]`; containers need `hostctl[container]`;
     explicit-credential WinRM needs `hostctl[winrm]`.
-    On Windows, a password-free WinRM config uses native current-context
-    PowerShell remoting.
+    On a Windows client, a password-free WinRM config uses native
+    current-context PowerShell remoting, whatever extras are installed.

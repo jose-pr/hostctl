@@ -12,6 +12,7 @@ import logging
 import os
 import stat as _stat
 import subprocess
+import threading
 import typing
 import uuid
 from pathlib import PurePath as _StdPurePath
@@ -27,9 +28,8 @@ from ..executor import (
     WinRMExecutor,
     WinRMSession,
     pypsrp_available,
-    require_pypsrp,
 )
-from ..executor.winrm import _PywinrmStdinSession
+from ..executor.winrm import _b64, _PywinrmStdinSession
 from ..process import RunspaceSession
 from ..provider import (
     ExecutorProvider,
@@ -70,7 +70,7 @@ WinRMTransport = typing.Literal[
 ]
 CertificateValidation = typing.Literal["validate", "ignore"]
 MessageEncryption = typing.Literal["auto", "always", "never"]
-WinRMProviderName = typing.Literal["auto", "pywinrm", "psrp"]
+WinRMProviderName = typing.Literal["auto", "native", "pywinrm", "psrp"]
 
 
 #: Script bytes one remote call may carry. Every leg delivers the script on
@@ -123,7 +123,22 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
                 "read_timeout_sec must be greater than operation_timeout_sec"
             )
         if self.provider not in typing.get_args(WinRMProviderName):
-            raise ValueError("provider must be 'auto', 'pywinrm', or 'psrp'")
+            raise ValueError("provider must be 'auto', 'native', 'pywinrm', or 'psrp'")
+        if self.provider == "native" and self.password is not None:
+            raise ValueError(
+                "native WinRM uses the current Windows logon; drop password= "
+                "or choose 'pywinrm'/'psrp'"
+            )
+        if (
+            self.provider in ("pywinrm", "psrp")
+            and self.password is None
+            and self.transport != "kerberos"
+        ):
+            raise ValueError(
+                f"provider={self.provider!r} needs password= (or "
+                "transport='kerberos'); use provider='native' for the "
+                "current Windows logon"
+            )
         if (
             self.transport in ("basic", "plaintext", "ssl")
             and not self.ssl
@@ -159,11 +174,10 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             query += "&" + urlencode({"provider": self.provider})
         if self.allow_cleartext:
             query += "&allow_cleartext=true"
-        port = self.port or (5986 if self.ssl else 5985)
-        return (
-            f"{self.scheme}://{quote(self.username, safe='')}@"
-            f"{uri_host(self.host)}:{port}?{query}"
-        )
+        authority = uri_host(self.host)
+        if self.port is not None:
+            authority += f":{self.port}"
+        return f"{self.scheme}://{quote(self.username, safe='')}@{authority}?{query}"
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> WinRMConfig:
@@ -215,40 +229,217 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
         )
 
 
+class _Leg:
+    """What one way of reaching the host owns: its lazy session and executor.
+
+    The executor is built once, with the status and deadline behaviour the
+    leg's session has, so the transport has no second source of truth for them.
+    """
+
+    name: str
+    executor: typing.Union[WinRMExecutor, PsrpExecutor]
+
+    def __init__(self, config: WinRMConfig) -> None:
+        self.config = config
+        #: Guards lazy construction: two threads on a fresh leg each built a
+        #: session, and the loser's was opened and never closed.
+        self._lock = threading.RLock()
+
+    @property
+    def opened(self) -> bool:
+        raise NotImplementedError
+
+    def connect(self) -> None:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+class _SessionLeg(_Leg):
+    """A leg that runs scripts through a `run_ps(script)` session."""
+
+    def __init__(self, config: WinRMConfig) -> None:
+        super().__init__(config)
+        self._session: typing.Optional[WinRMSession] = None
+
+    def _build(self) -> WinRMSession:
+        raise NotImplementedError
+
+    @property
+    def session(self) -> WinRMSession:
+        with self._lock:
+            if self._session is None:
+                self._session = self._build()
+            return self._session
+
+    @property
+    def opened(self) -> bool:
+        return self._session is not None
+
+    def connect(self) -> None:
+        _ = self.session
+
+    def close(self) -> None:
+        with self._lock:
+            session, self._session = self._session, None
+        close = getattr(session, "close", None)
+        if close is not None:
+            close()
+
+
+class _NativeLeg(_SessionLeg):
+    """The local PowerShell relays `Invoke-Command` with the current logon."""
+
+    name = "native"
+
+    def __init__(self, config: WinRMConfig) -> None:
+        super().__init__(config)
+        # The local powershell.exe relays the call, so it has a wall clock to
+        # bound and reports the remote status on its own marker line.
+        self.executor = WinRMExecutor(
+            lambda: self.session,
+            lambda: float(self.config.read_timeout_sec),
+            manages_status=True,
+            accepts_timeout=True,
+        )
+
+    def _build(self) -> WinRMSession:
+        if os.name != "nt":
+            raise ValueError(
+                "current-context WinRM requires a Windows client; pass password="
+            )
+        domain = os.environ.get("USERDOMAIN", "").strip()
+        username = os.environ.get("USERNAME", "").strip()
+        if not username:
+            raise ValueError(
+                "current-context WinRM requires USERNAME/USERDOMAIN; pass password="
+            )
+        configured = self.config.username.casefold()
+        candidates = {username.casefold()}
+        if domain:
+            candidates.add(f"{domain}\\{username}".casefold())
+            candidates.add(f"{username}@{domain}".casefold())
+        if configured not in candidates:
+            raise ValueError(
+                "password-free native WinRM requires the current Windows user"
+            )
+        if self.config.transport not in {"ntlm", "kerberos"}:
+            raise NotImplementedError(
+                "native current-context WinRM supports ntlm/kerberos only"
+            )
+        return NativeWinRMSession(
+            self.config.host,
+            ssl=self.config.ssl,
+            port=self.config.port,
+            # The config's read timeout IS the deadline here: the local
+            # powershell.exe relays the call, so its own wall clock is the
+            # only bound available.
+            timeout=float(self.config.read_timeout_sec),
+            transport=self.config.transport,
+            server_cert_validation=self.config.server_cert_validation,
+            message_encryption=self.config.message_encryption,
+        )
+
+
+class _PywinrmLeg(_SessionLeg):
+    """pywinrm's protocol, with the script on stdin."""
+
+    name = "pywinrm"
+
+    def __init__(self, config: WinRMConfig) -> None:
+        super().__init__(config)
+        self.executor = WinRMExecutor(
+            lambda: self.session, lambda: float(self.config.read_timeout_sec)
+        )
+
+    def _build(self) -> WinRMSession:
+        try:
+            import winrm
+        except ImportError as exc:
+            raise ImportError(
+                "WinRM support requires the 'winrm' extra: "
+                "pip install hostctl[winrm]"
+            ) from exc
+        # `winrm.Session` still owns endpoint and auth handling; only its
+        # protocol is used, because `run_ps` goes through cmd.exe.
+        return _PywinrmStdinSession(
+            winrm.Session(
+                self.config.endpoint,
+                auth=(self.config.username, self.config.password),
+                transport=self.config.transport,
+                server_cert_validation=self.config.server_cert_validation,
+                message_encryption=self.config.message_encryption,
+                operation_timeout_sec=self.config.operation_timeout_sec,
+                read_timeout_sec=self.config.read_timeout_sec,
+            ).protocol
+        )
+
+
+class _PsrpLeg(_Leg):
+    """A persistent PSRP runspace; the executor opens a pipeline in it."""
+
+    name = "psrp"
+
+    def __init__(self, config: WinRMConfig) -> None:
+        super().__init__(config)
+        self._runspace: typing.Optional[RunspaceSession] = None
+        self.executor = PsrpExecutor(lambda: self.runspace())
+
+    def runspace(self) -> RunspaceSession:
+        with self._lock:
+            if self._runspace is None:
+                self._runspace = RunspaceSession(self.config)
+            runspace = self._runspace
+        runspace.connect()
+        return runspace
+
+    @property
+    def opened(self) -> bool:
+        return self._runspace is not None
+
+    def connect(self) -> None:
+        self.runspace()
+
+    def close(self) -> None:
+        with self._lock:
+            runspace, self._runspace = self._runspace, None
+        if runspace is not None:
+            runspace.close()
+
+
+_LEGS: typing.Dict[str, typing.Callable[[WinRMConfig], _Leg]] = {
+    "native": _NativeLeg,
+    "pywinrm": _PywinrmLeg,
+    "psrp": _PsrpLeg,
+}
+
+
+def _select_leg(config: WinRMConfig) -> str:
+    """Pick the leg once: an explicit `provider`, else by credentials.
+
+    `auto` is native for a password-free config on a Windows client (the
+    current logon), else PSRP when `hostctl[psrp]` imports, else pywinrm.
+    Installing the psrp extra never takes the native path away.
+    """
+    if config.provider != "auto":
+        return config.provider
+    if config.password is None:
+        if os.name == "nt":
+            return "native"
+        if config.transport != "kerberos":
+            raise ValueError(
+                "current-context WinRM requires a Windows client; pass password="
+            )
+    return "psrp" if pypsrp_available() else "pywinrm"
+
+
 class _WinRMTransport:
     """A Windows host reached through PowerShell over WinRM."""
 
     def __init__(self, config: WinRMConfig) -> None:
         self.config = config
-        self._session: typing.Optional[WinRMSession] = None
-        self._runspace: typing.Optional[RunspaceSession] = None
-        # `auto` prefers the NATIVE current-context path when it applies --
-        # a password-free config on Windows -- because that is what the docs
-        # promise ("a password-free WinRM config uses native current-context
-        # PowerShell remoting"). Installing `hostctl[psrp]` used to silently
-        # take that away: PSRP won every `auto`, and PSRP needs a credential.
-        native = self.config.password is None and os.name == "nt"
-        self._provider = (
-            "psrp"
-            if self.config.provider == "psrp"
-            or (self.config.provider == "auto" and not native and pypsrp_available())
-            else "pywinrm"
-        )
-        #: True when the local PowerShell relays the command itself. That
-        #: session reports the remote status through its own
-        #: `__HOSTCTL_LASTEXITCODE__` marker line, so the flavour's
-        #: `; exit $LASTEXITCODE` epilogue must not be appended -- the `exit`
-        #: ends the remote pipeline before the marker can be emitted.
-        self._native_session = native and self._provider != "psrp"
-        # Only the native leg reports its own status and takes a per-call
-        # deadline: the local powershell.exe relays the call, so it has a
-        # wall clock to bound. pywinrm and PSRP poll for output instead.
-        self._executor = WinRMExecutor(
-            lambda: self.session,
-            lambda: float(self.config.read_timeout_sec),
-            manages_status=self._native_session,
-            accepts_timeout=self._native_session,
-        )
+        self._leg = _LEGS[_select_leg(config)](config)
         self._path_backend = WinRMPathBackend(
             self.run,
             max_script_bytes=_SCRIPT_BUDGET,
@@ -257,10 +448,12 @@ class _WinRMTransport:
     @property
     def capabilities(self) -> typing.FrozenSet[str]:
         capabilities = {"run", "path"}
-        if self._provider == "psrp":
+        capabilities.update(
+            getattr(item, "value", item)
+            for item in self._leg.executor.executor_capabilities
+        )
+        if self._leg.name == "psrp":
             capabilities.add("runspace")
-        if self._native_session:
-            capabilities.add(ExecutorCapability.MANAGES_STATUS.value)
         return frozenset(capabilities)
 
     @property
@@ -269,9 +462,7 @@ class _WinRMTransport:
 
     @property
     def executor(self) -> typing.Union[WinRMExecutor, PsrpExecutor]:
-        if self._provider == "psrp":
-            return PsrpExecutor(self.runspace)
-        return self._executor
+        return self._leg.executor
 
     def info(self) -> HostInfo:
         return parse_host_info(
@@ -282,118 +473,28 @@ class _WinRMTransport:
             ).stdout
         )
 
-    @property
-    def session(self) -> WinRMSession:
-        if self._provider == "psrp":
-            raise RuntimeError(
-                "PSRP provider uses runspace(); pywinrm session unavailable"
-            )
-        if self._session is None:
-            if self.config.password is None:
-                if os.name != "nt":
-                    raise ValueError(
-                        "current-context WinRM requires a Windows client; pass password="
-                    )
-                domain = os.environ.get("USERDOMAIN", "").strip()
-                username = os.environ.get("USERNAME", "").strip()
-                if not username:
-                    raise ValueError(
-                        "current-context WinRM requires USERNAME/USERDOMAIN; pass password="
-                    )
-                configured = self.config.username.casefold()
-                candidates = {username.casefold()}
-                if domain:
-                    candidates.add(f"{domain}\\{username}".casefold())
-                    candidates.add(f"{username}@{domain}".casefold())
-                if configured not in candidates:
-                    raise ValueError(
-                        "password-free native WinRM requires the current Windows user"
-                    )
-                if self.config.transport not in {"ntlm", "kerberos"}:
-                    raise NotImplementedError(
-                        "native current-context WinRM supports ntlm/kerberos only"
-                    )
-                self._session = NativeWinRMSession(
-                    self.config.host,
-                    ssl=self.config.ssl,
-                    port=self.config.port,
-                    # The config's read timeout IS the deadline here: the
-                    # local powershell.exe relays the call, so its own wall
-                    # clock is the only bound available. `timeout=None` left
-                    # the native path with no deadline at all while the
-                    # config validated one.
-                    timeout=float(self.config.read_timeout_sec),
-                    transport=self.config.transport,
-                    server_cert_validation=self.config.server_cert_validation,
-                    message_encryption=self.config.message_encryption,
-                )
-                return self._session
-            try:
-                import winrm
-            except ImportError as exc:
-                raise ImportError(
-                    "WinRM support requires the 'winrm' extra: "
-                    "pip install hostctl[winrm]"
-                ) from exc
-            # `winrm.Session` still owns endpoint and auth handling; only its
-            # protocol is used, because `run_ps` goes through cmd.exe.
-            self._session = _PywinrmStdinSession(
-                winrm.Session(
-                    self.config.endpoint,
-                    auth=(self.config.username, self.config.password),
-                    transport=self.config.transport,
-                    server_cert_validation=self.config.server_cert_validation,
-                    message_encryption=self.config.message_encryption,
-                    operation_timeout_sec=self.config.operation_timeout_sec,
-                    read_timeout_sec=self.config.read_timeout_sec,
-                ).protocol
-            )
-        return self._session
-
     def runspace(self) -> RunspaceSession:
         """Return a persistent typed PSRP runspace session."""
-        if self._provider != "psrp":
-            if self.config.provider == "psrp":
-                require_pypsrp()
+        if not isinstance(self._leg, _PsrpLeg):
             raise NotImplementedError(
                 "PSRP runspaces are unavailable; install hostctl[psrp] on Python 3.10+"
             )
-        if self._runspace is None:
-            self._runspace = RunspaceSession(self.config)
-        self._runspace.connect()
-        return self._runspace
+        return self._leg.runspace()
 
     def connect(self) -> None:
-        log.debug(
-            "opening WinRM %s session to %s",
-            self._provider,
-            ProviderSelector.redact(self.config.connection_uri),
-        )
-        if self._provider == "psrp":
-            self.runspace()
-        else:
-            _ = self.session
-        log.debug(
-            "WinRM %s session to %s established",
-            self._provider,
-            ProviderSelector.redact(self.config.connection_uri),
-        )
+        target = ProviderSelector.redact(self.config.connection_uri)
+        log.debug("opening WinRM %s session to %s", self._leg.name, target)
+        self._leg.connect()
+        log.debug("WinRM %s session to %s established", self._leg.name, target)
 
     def close(self) -> None:
-        if self._session is not None or self._runspace is not None:
+        if self._leg.opened:
             log.debug(
                 "closing WinRM %s session to %s",
-                self._provider,
+                self._leg.name,
                 ProviderSelector.redact(self.config.connection_uri),
             )
-        if self._session is not None:
-            session, self._session = self._session, None
-            close = getattr(session, "close", None)
-            if close is not None:
-                close()
-        if self._runspace is not None:
-            self._runspace.close()
-            self._runspace = None
+        self._leg.close()
 
     def path(
         self, *segments: PathLike, backend: typing.Optional[str] = None
@@ -463,10 +564,6 @@ class _WinRMTransport:
         )
 
 
-def _encoded(value: str) -> str:
-    return base64.b64encode(value.encode("utf-8")).decode("ascii")
-
-
 def _append_operation(encoded: str) -> str:
     """One chunk appended to the temporary file; also sizes the chunks."""
     return (
@@ -508,12 +605,12 @@ class WinRMPathBackend:
             "$OutputEncoding=[Text.UTF8Encoding]::new($false)",
             "$ErrorActionPreference='Stop'",
             "$p=[Text.Encoding]::UTF8.GetString("
-            f"[Convert]::FromBase64String('{_encoded(path)}'))",
+            f"[Convert]::FromBase64String('{_b64(path)}'))",
         ]
         if target is not None:
             values.append(
                 "$t=[Text.Encoding]::UTF8.GetString("
-                f"[Convert]::FromBase64String('{_encoded(target)}'))"
+                f"[Convert]::FromBase64String('{_b64(target)}'))"
             )
         values.append(
             "try {" + body + "} catch {"
@@ -1050,16 +1147,12 @@ class WinRMExecutorProvider(ExecutorProvider):
 
     def __init__(self, transport: _WinRMTransport):
         self.transport = transport
+        # The executor already declares `manages_status` when its session
+        # reports the status itself, which is what keeps the flavour's `exit`
+        # epilogue off the script.
         capabilities = set(transport.executor.executor_capabilities)
         if "runspace" in transport.capabilities:
             capabilities.add("runspace")
-        if ExecutorCapability.MANAGES_STATUS.value in transport.capabilities:
-            # The native session reports the remote status itself, through its
-            # own marker line. Declaring it here is what stops SystemHost
-            # appending `; exit $LASTEXITCODE`, whose `exit` ended the remote
-            # pipeline before the marker could be emitted -- so a command that
-            # failed by status reported 0 and `check=True` passed.
-            capabilities.add(ExecutorCapability.MANAGES_STATUS.value)
         super().__init__("winrm", transport.executor, capabilities=capabilities)
 
     def probe(self):
