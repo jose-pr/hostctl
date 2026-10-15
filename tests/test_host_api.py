@@ -272,10 +272,9 @@ def test_redact_uri_strips_the_password_leaving_a_reusable_uri():
 
 def test_redact_uri_preserves_hostname_case():
     # Redaction removes a credential; it must not also normalize the host.
-    # The branch that rebuilds the authority used to adopt urlsplit's
-    # case-folded hostname, so one host rendered two ways depending on whether
-    # a password was supplied -- which breaks log correlation by the name the
-    # operator typed.
+    # urlsplit case-folds the hostname, and one host rendered two ways
+    # depending on whether a password was supplied breaks log correlation by
+    # the name the operator typed.
     assert redact_uri("wss://root:pw@nasA:8443/api") == "wss://root@nasA:8443/api"
     assert redact_uri("wss://root@nasA") == "wss://root@nasA"
     assert redact_uri("wss://nasA") == "wss://nasA"
@@ -548,10 +547,9 @@ def test_repr_redacts_credentials():
 
 
 def test_capabilities_are_explicit():
-    # `spawn`/`tty` are reported because the SSH provider implements sessions.
-    # This used to assert {run, path} while `spawn()` worked, so a tool gating
-    # on `capabilities` -- which contracts.md tells callers to do -- refused
-    # to open a shell on every SSH host while offering it on containers.
+    # `spawn`/`tty` are reported because the SSH provider implements sessions:
+    # a tool gating on `capabilities`, as contracts.md tells callers to do,
+    # must offer a shell on an SSH host.
     assert SshConfig("host").open().capabilities == frozenset(
         ("run", "path", "spawn", "tty")
     )
@@ -619,8 +617,8 @@ def test_winrm_info_parses_partial_response_without_guessing():
 def test_redact_uri_removes_a_password_urlsplit_cannot_see(uri):
     """An unencoded `/`, `?` or `#` ends the authority for `urlsplit`.
 
-    No password was detected, so the "redacted" form used to be the input in
-    full -- and randomly generated passwords routinely contain `/`.
+    urlsplit then reports no password, yet the redacted form must not be
+    the input in full: randomly generated passwords routinely contain `/`.
     """
     redacted = redact_uri(uri)
 
@@ -644,13 +642,11 @@ def test_redact_uri_leaves_a_credential_free_uri_alone():
     ),
 )
 def test_redact_uri_never_over_redacts_a_well_formed_uri(uri):
-    """The textual fallback reads the LAST `@` as the userinfo delimiter, and
-    it used to run whenever `urlsplit` reported no password -- including for
-    URIs that simply do not have one.
+    """The textual fallback reads the LAST `@` as the userinfo delimiter, so
+    it runs only for input that does not parse.
 
-    `ssh://nas:22/mail/user@example.com` carries no credential at all and came
-    back as `ssh://nas@example.com`: not merely over-redacted but pointing at
-    a different host. Guessing is now confined to input that does not parse.
+    `ssh://nas:22/mail/user@example.com` carries no credential at all; the
+    fallback would turn it into `ssh://nas@example.com`, a different host.
     """
     assert redact_uri(uri) == uri
 

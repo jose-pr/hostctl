@@ -123,7 +123,7 @@ _CUT_SHORT = (
 @pytest.mark.parametrize("uri, fragments", _CUT_SHORT)
 def test_a_password_cut_short_is_never_echoed(uri, fragments):
     """A generated password holding `/`, `?` or `#` ends the authority early;
-    the remainder used to be echoed as a "query key" or a "port"."""
+    the remainder must not be echoed as a "query key" or a "port"."""
     with pytest.raises(ValueError) as caught:
         HostConfig(uri)
     shown = " ".join(

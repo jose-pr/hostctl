@@ -296,12 +296,10 @@ def test_the_target_is_inferred_where_it_is_decidable():
 
 
 def test_the_cwd_guard_covers_the_whole_payload_by_declaration():
-    """It used to be inferred from a tuple's ordering.
+    """Declared, not inferred from `context_order`'s ordering.
 
-    `script()` fused cwd onto the payload only when `command` happened to
-    sit next to `cwd` in `context_order`. PowerShell's order puts `env`
-    between them, so its `join_cwd` override was unreachable for years and
-    nothing said so. The strategy is now declared.
+    PowerShell's order puts `env` between `cwd` and `command`, and its
+    `join_cwd` override must still apply.
     """
     from hostctl.shell import BASH, FISH, PowerShellFlavour
 

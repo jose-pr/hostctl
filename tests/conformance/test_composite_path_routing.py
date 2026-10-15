@@ -78,9 +78,9 @@ def test_rename_resolves_target_on_the_selected_source_provider(tmp_path):
 def test_move_to_a_foreign_path_transfers_instead_of_renaming_on_the_source():
     """A foreign destination is a cross-backend transfer, not a backend rename.
 
-    `ssh_path.move(local_path)` used to issue an SFTP rename *inside the remote
-    host* to a path spelled like the local destination: the file left the
-    source, never arrived, and a path was returned with no error.
+    A backend rename of `ssh_path.move(local_path)` would act *inside the
+    remote host* on a path spelled like the local destination: the file would
+    leave the source, never arrive, and no error would say so.
     """
     from pathapi import LocalPath
     import tempfile
@@ -212,10 +212,10 @@ def test_logical_text_prefers_the_filesystem_spelling():
 
 
 def test_a_pinned_destination_is_not_resolved_on_the_dispatched_provider():
-    """`copy()` used to resolve the destination against the provider the
-    source was *built* with, before dispatch chose the one that runs, and
-    ignored the destination's own `.via()` pin -- so with a copy-overriding
-    backend the data landed on the wrong provider.
+    """`copy()` resolves the destination against the provider dispatch
+    chose, honouring the destination's own `.via()` pin, not the one the
+    source was *built* with -- or a copy-overriding backend writes the data
+    to the wrong provider.
     """
     calls = []
 

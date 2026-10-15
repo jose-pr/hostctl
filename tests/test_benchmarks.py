@@ -2,8 +2,8 @@
 
 `benchmarks/run.py` is run on demand and its results are tracked. A metric
 renamed or dropped without saving new results breaks the comparison with every
-tracked baseline, and an import that no longer works is found only when
-someone next wants a number.
+tracked baseline, and a broken import is found only when someone next
+wants a number.
 """
 
 from __future__ import annotations
@@ -48,8 +48,8 @@ def test_the_runner_imports(runner):
 
 
 def test_metric_names_match_the_newest_results(runner):
-    # The stub still calls the measured code once, so a case that no longer
-    # runs fails here and not on the next benchmark run.
+    # The stub still calls the measured code once, so a case that cannot
+    # run fails here and not on the next benchmark run.
     runner._measure = lambda name, call, **_: (call(), {"name": name})[1]
     names = {m["name"] for m in [*runner._shell_cases(), *runner._path_cases()]}
 

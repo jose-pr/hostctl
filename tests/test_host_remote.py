@@ -478,12 +478,12 @@ def test_auto_posix_probe_preserves_shell_executable():
 
 
 def test_a_session_starts_the_configured_shell_not_the_login_shell():
-    """`spawn()` with no command used to pass only the per-call executable.
+    """`spawn()` with no command resolves the program as `run()` does.
 
-    So a bare `with host.shell as session:` started the account's login shell
-    and ignored SshConfig.executable, the flavour's default and the executable
-    recovered by dialect="auto" -- while send() kept rendering in the
-    configured dialect.
+    The per-call executable alone would start the account's login shell and
+    ignore SshConfig.executable, the flavour's default and the executable
+    recovered by dialect="auto", while send() renders in the configured
+    dialect.
     """
     for config, expected in (
         (SshConfig("h", username="root"), "/bin/sh"),
@@ -602,9 +602,8 @@ def test_a_forked_child_does_not_reuse_the_parents_connection(monkeypatch):
 
 
 def test_the_default_verifies_the_host_key_on_both_legs():
-    """Nothing pinned the default, on either leg -- and the SFTP leg's
-    default is the opposite of the exec leg's, which is how `path()` came to
-    accept any host key while `run()` verified it."""
+    """The SFTP leg's library default is the opposite of the exec leg's, so
+    both are pinned: `path()` must not accept a host key `run()` rejects."""
     options = SshConfig("h").connect_opts()
 
     assert options == {

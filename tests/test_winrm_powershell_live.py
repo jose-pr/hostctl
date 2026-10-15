@@ -1,10 +1,10 @@
 """Drive `WinRMPathBackend`'s generated scripts through a real PowerShell.
 
 Every other WinRM path test *interprets* the generated script instead of
-running it, which is why four PowerShell-level defects passed a green suite:
-the `$null` backup name that made every overwrite throw, the
-`MethodInvocationException` wrapper that degraded every .NET-API error to bare
-OSError, and the reparse-point guard that refused to list a junction.
+running it, so a PowerShell-level defect passes them: a `$null` backup name
+that makes every overwrite throw, a `MethodInvocationException` wrapper that
+degrades every .NET-API error to bare OSError, a reparse-point guard that
+refuses to list a junction.
 
 There is no remote host here. The scripts are the ones the transport would
 send; only the hop is replaced, by running them locally against a temp
@@ -45,8 +45,8 @@ def backend(transport):
 
 @pytest.mark.parametrize("size", [0, 2, 5000, 1 << 20])
 def test_a_write_round_trips_at_the_production_budget(transport, tmp_path, size):
-    """Every pywinrm write used to raise OSError: the budget was smaller than
-    the minimum the writer needed."""
+    """The production script budget is above the minimum the writer needs,
+    or every pywinrm write raises OSError."""
     backend = transport._path_backend
     assert backend.max_script_bytes == _SCRIPT_BUDGET
     target = str(tmp_path / "blob.bin")
@@ -111,8 +111,8 @@ def test_appending_to_a_missing_file_creates_it(backend, tmp_path):
 
 
 def test_listing_a_directory_junction_works(backend, tmp_path):
-    """Any reparse point reported as S_IFLNK, so the guard refused to list
-    a junction even though `is_dir()` on the same path returned True."""
+    """Any reparse point reports as S_IFLNK; a junction must still list,
+    as `is_dir()` on the same path says it is a directory."""
     real = tmp_path / "real"
     real.mkdir()
     (real / "inside.txt").write_text("x", encoding="utf-8")

@@ -149,10 +149,9 @@ def test_composite_mutation_selection_trace_marks_pin(tmp_path):
 def test_concurrent_run_connects_each_provider_exactly_once():
     """Racing callers must not repeat connects or duplicate the connected list.
 
-    `_ensure_provider_connected` used to check-then-append without a lock, so
-    N concurrent `run()` calls all observed "not connected", all dialed out,
-    and all appended the same provider -- growing `_connected_providers`
-    permanently by one entry per racing call.
+    Without a lock around `_ensure_provider_connected`'s check-then-append,
+    N concurrent `run()` calls all observe "not connected", all dial out, and
+    all append the same provider to `_connected_providers`.
     """
 
     class _CountingTransport:
@@ -298,9 +297,9 @@ def test_session_initializer_may_reenter_run_without_deadlocking():
 def test_abstract_system_config_fails_clearly_instead_of_attribute_error():
     """`SystemConfig` is abstract; it must say so, not leak an AttributeError.
 
-    It binds neither `host_type` nor `uri_scheme`, so it previously raised a
-    bare `AttributeError: no attribute 'host_type'` from `_create_host()` and
-    advertised a `system://` URI that `HostConfig(...)` then rejected.
+    It binds neither `host_type` nor `uri_scheme`, so it must neither raise
+    a bare `AttributeError` from `_create_host()` nor advertise a `system://`
+    URI that `HostConfig(...)` would reject.
     """
     from hostctl.host.system import SystemConfig
 
@@ -320,9 +319,8 @@ def test_abstract_system_config_fails_clearly_instead_of_attribute_error():
 def test_system_config_scheme_stays_the_derived_hostconfig_property():
     """`scheme` is one thing across the hierarchy: a URI-derived property.
 
-    The concrete configs used to shadow `HostConfig.scheme` with a plain
-    string, and `SystemHost.__init__` assigned to it -- an LSP break that only
-    worked because the property had been replaced.
+    A concrete config must not shadow `HostConfig.scheme` with a plain
+    string, which `SystemHost.__init__` could then assign to.
     """
     from hostctl.host._common import HostConfig as _HostConfig
     from hostctl.host.system import IosConfig, PosixConfig, SystemConfig, WindowsConfig

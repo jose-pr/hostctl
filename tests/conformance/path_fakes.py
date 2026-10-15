@@ -430,11 +430,9 @@ class LocalQgaTransport:
         """End the current guest process and release its pipes.
 
         Called when a new `guest-exec` REPLACES this one as well as at
-        close: the fake keeps a single process, so starting a second
-        command used to drop the first `Popen` unreaped and its two pipes
-        unclosed. Windows GC timing hid that; on Linux it surfaced as
-        `ResourceWarning: subprocess N is still running` -- attributed,
-        through warnings-as-errors, to whatever test happened to run next.
+        close: the fake keeps a single process, and an unreaped `Popen` is a
+        `ResourceWarning` on Linux that warnings-as-errors pins on whatever
+        test runs next.
         """
         process, self._exec_process = self._exec_process, None
         self._exec_output = None

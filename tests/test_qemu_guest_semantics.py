@@ -179,12 +179,12 @@ def test_a_forward_only_reader_says_so():
 
 
 def test_an_exclusive_create_is_refused_by_open():
-    """The refusal used to arrive from `close()`, after all the work.
+    """Refused at `open()`, not from `close()` after all the work.
 
-    `staged_open` returned a writable stream and only called `write_bytes`
-    at close time, so the caller streamed the whole payload into memory and
-    then got a `NotImplementedError` out of the context manager's exit --
-    where code that guards `open()` with a capability check is not looking.
+    `staged_open` calls `write_bytes` only at close time; a refusal there
+    comes out of the context manager's exit after the whole payload was
+    staged, where code that guards `open()` with a capability check is not
+    looking.
     """
     host, _ = _host(
         commands=("guest-get-osinfo",),

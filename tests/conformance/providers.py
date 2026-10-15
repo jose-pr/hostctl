@@ -1114,10 +1114,9 @@ def _ssh_local() -> tuple[object, Callable[[], None]]:
     """The localhost sshd leg, POSIX by default.
 
     `HOSTCTL_TEST_SSH_FLAVOUR=windows` points it at a Windows OpenSSH
-    server instead. The fixture could previously only describe a POSIX
-    target, so the one transport combination with a documented double parse
-    -- a `cmd` command line delivered to a `cmd.exe` login shell -- had no
-    way to be exercised live at all.
+    server instead: the only live leg for the one combination with a
+    documented double parse, a `cmd` command line delivered to a `cmd.exe`
+    login shell.
     """
     from pathapi import PosixPathname, WindowsPathname
 

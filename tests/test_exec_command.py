@@ -97,8 +97,8 @@ def test_local_exec_runs_the_program_without_a_shell():
 
 
 def test_local_exec_resolves_a_bare_program_name_through_path():
-    # Previously unspellable: a bare string is always shell text, so direct
-    # execution required knowing an absolute path.
+    # A bare string is always shell text, so `Exec` is the only way to run a
+    # program found on PATH without a shell.
     name = "cmd.exe" if sys.platform == "win32" else "echo"
     args = ("/c", "echo", "hi") if sys.platform == "win32" else ("hi",)
 

@@ -185,9 +185,8 @@ def test_paged_output_keeps_every_page():
 
 
 def test_output_past_max_buffer_is_an_error_not_a_silent_truncation():
-    """The transcript was cut from the front mid-line and returned as if
-    complete, with `error_patterns` then searched only against the surviving
-    tail -- so a failure printed early no longer set a status."""
+    """A transcript cut from the front would read as complete, and
+    `error_patterns` would miss a failure printed in the dropped head."""
     body = b"x" * 5000
     console = _Console({b"show running-config": b"show running-config\r\n" + body})
     host = _host(console, max_buffer=1024)

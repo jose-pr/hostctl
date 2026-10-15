@@ -185,8 +185,7 @@ def test_direct_path_command_without_argv_capability_renders_one_quoted_command(
 
 def test_direct_command_without_arguments_reaches_a_capabilityless_provider():
     """A bare callable provider advertises nothing, so the no-args direct
-    branch renders the program itself -- the site that used to raise
-    NameError before `command_text` was imported."""
+    branch renders the program itself through `command_text`."""
     calls = []
 
     def execute(command, *args, **options):
@@ -920,10 +919,9 @@ def test_a_family_with_no_path_grammar_says_so():
 
 
 def test_info_stops_dialling_once_it_knows_everything():
-    """`info()` connected every usable provider, including ordered
-    fallbacks, so a host with a backup transport dialled it -- possibly
-    prompting for 2FA, or waiting out a TCP timeout -- merely to read
-    `HostInfo` the primary had already answered in full."""
+    """`info()` stops at the first provider that answers in full: dialling
+    an ordered fallback may prompt for 2FA or wait out a TCP timeout merely
+    to read `HostInfo` the primary already gave."""
     from hostctl import HostInfo
 
     connected = []

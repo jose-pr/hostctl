@@ -273,8 +273,8 @@ def test_the_constructor_takes_a_host_and_the_dispatcher_takes_a_uri():
     """Passed a URI, the constructor made it the HOSTNAME.
 
     The same trap `SerialConfig` has: two entry points whose first argument
-    is a different kind of thing. The failure used to surface much later, as
-    an unresolvable name.
+    is a different kind of thing. Accepted, the failure would surface much
+    later, as an unresolvable name.
     """
     with pytest.raises(ValueError, match="takes a host, not a URI"):
         SshConfig("ssh://root@h:22")

@@ -75,9 +75,8 @@ def test_text_env_and_nonzero_check(provider):
             )
             assert result.stdout.splitlines()[0] == "42"
             # ADDITIVE, on every transport: asserting only that the injected
-            # variable is visible is true under replace semantics too, which
-            # is how the local executor came to replace the environment while
-            # every other transport added to it.
+            # variable is visible is true under replace semantics too, so it
+            # would not tell a replacing executor from an adding one.
             # A live server never sees this process's environment, so there
             # the target's own PATH is the inherited value that must survive.
             name = "PATH" if provider.live else inherited

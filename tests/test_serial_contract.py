@@ -227,12 +227,12 @@ def test_a_serial_uri_refuses_a_credential_nothing_reads():
 
 
 def test_an_unimplemented_process_member_fails_loudly():
-    """Protocol members are not abstract, so a gap used to return `None`.
+    """Protocol members are not abstract, so a gap must raise, not return `None`.
 
     Five adapters inherit `Process` explicitly. An inherited-but-missing
-    member was a real method returning `None`: instantiation succeeded,
-    `isinstance(x, Process)` passed, and `if process.wait():` read a
-    missing implementation as "exited 0".
+    member returning `None` would instantiate, pass
+    `isinstance(x, Process)`, and make `if process.wait():` read a missing
+    implementation as "exited 0".
     """
     from hostctl.process import Process
 

@@ -1,14 +1,12 @@
 """The staged write-back stream shared by the whole-file path backends.
 
 WinRM, the Docker archive API, and the QGA file RPCs each emulate a writable
-`open()` by staging bytes in memory and uploading on `close()`. That
-emulation used to be written out three times, and only the WinRM copy had the
-`__del__` guard -- so an abandoned container or QGA write stream performed a
-network upload from the garbage collector, with any transport error printed
-and swallowed by the interpreter.
+`open()` by staging bytes in memory and uploading on `close()`, through
+one shared stream. An abandoned write stream must not upload from the garbage
+collector, where any transport error is printed and swallowed by the
+interpreter.
 
-These tests pin the guard for every backend, and the `t`-suffix question the
-three copies used to answer differently.
+These tests pin that guard for every backend, and the `t`-suffix rule.
 """
 
 from __future__ import annotations
@@ -86,7 +84,7 @@ def test_closing_a_write_stream_uploads_once(flavour):
 
 @pytest.mark.parametrize("flavour", sorted(_paths()))
 def test_text_suffix_is_accepted_by_every_backend(flavour):
-    """The container and QGA copies used to reject `"rt"`; WinRM accepted it."""
+    """`"rt"` is accepted by every whole-file backend."""
     backend = _RecordingBackend(contents=b"value")
     path = _paths()[flavour](backend)
 
@@ -118,7 +116,7 @@ def test_read_only_open_delegates_to_a_backend_that_streams():
     assert stream.read() == b"streamed"
 
     # A backend without `open_read` still gets a staged read rather than an
-    # AttributeError -- this is the branch only WinRM used to guard.
+    # AttributeError.
     plain = staged_open(_RecordingBackend(b"staged"), "/x", "r")
     assert plain.read() == b"staged"
 

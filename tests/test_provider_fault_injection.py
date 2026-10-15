@@ -547,9 +547,9 @@ def test_one_unsupported_operation_does_not_disable_the_provider():
     """`NotImplementedError` scopes to the call, not to the provider.
 
     A backend that cannot do one derived operation -- `samefile()` needs
-    `st_dev`/`st_ino`, which plenty of remote stats lack -- used to be
-    declined on the host's shared selector, so the *next* operation on any
-    path of that host failed with "no path provider supports open_read".
+    `st_dev`/`st_ino`, which plenty of remote stats lack -- stays on the
+    host's shared selector, so the *next* operation on any path of that host
+    still finds it.
     """
 
     class PartialPath(MemPath):

@@ -395,7 +395,7 @@ def test_cmd_shell_renders_environment_cwd_args_and_operators():
         "set NAME=100^%&"
         'cd /d "C:\\Program Files"&&'
         # Grouped, so the `&&` guards every command rather than only the
-        # first: `cd X && a & b` used to run `b` in the login directory.
+        # first: `cd X && a & b` would run `b` in the login directory.
         '(tool.exe ^"value ^& data^"&&echo(done)'
     )
 

@@ -459,8 +459,7 @@ def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it(compose):
     # the native session declares `manages_status`, so the flavour's own exit
     # epilogue is left off and the wrapper's marker epilogue is the one that
     # reports the status. Without that the payload's `exit` ends the runspace
-    # before the marker is ever emitted, and the code is lost -- which is
-    # exactly what this used to do.
+    # before the marker is ever emitted, and the code is lost.
     payload = "cmd /c exit 7"
     if compose:
         payload = POWERSHELL.script((payload,), epilogue=False)
@@ -546,8 +545,8 @@ def _through_a_job(monkeypatch):
 def test_native_remote_errors_are_statuses_not_exceptions(
     monkeypatch, command, status, output
 ):
-    """A remote error used to raise ConnectionError, so `check=False` could
-    not inspect it and `Get-Item missing` was an outage."""
+    """A remote error is a status, not ConnectionError, so `check=False` can
+    inspect it and `Get-Item missing` is not an outage."""
     from hostctl.executor.winrm import WinRMExecutor
     from hostctl.shell import POWERSHELL
 

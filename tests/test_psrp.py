@@ -221,10 +221,9 @@ def test_psrp_executor_projects_objects_and_error_streams():
 def test_psrp_executor_projects_native_last_exit_code():
     """The executor trusts the session's marker handling, and only that.
 
-    It used to re-parse `__HOSTCTL_LASTEXITCODE__` out of output the session
-    had already stripped -- one convention with two implementations. The fake
-    here now behaves as `invoke(capture_exit=True)` really does: marker
-    consumed, code in `returncode`.
+    The session is the only parser of `__HOSTCTL_LASTEXITCODE__`. The fake
+    here behaves as `invoke(capture_exit=True)` really does: marker consumed,
+    code in `returncode`.
     """
 
     class Session:
@@ -297,8 +296,8 @@ def test_runspace_capture_exit_consumes_the_marker_line(monkeypatch):
 
     # The script the pipeline received carries the epilogue, and resets
     # `$LASTEXITCODE` first: this runspace is persistent, so a pure-PowerShell
-    # command -- which never sets it -- used to report whatever an earlier
-    # native command had left behind, failing a command that succeeded.
+    # command -- which never sets it -- would otherwise report whatever an
+    # earlier native command had left behind, failing a command that succeeded.
     pool = Pool(0)
     RunspaceSession(pool=pool).invoke("cmd", capture_exit=True)
     script = pool.scripts[0]

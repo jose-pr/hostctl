@@ -39,9 +39,8 @@ class _Transport:
             }
         if command == "guest-get-osinfo":
             # What qemu-ga actually sends: `id` is the os-release ID, and
-            # `kernel-name` is the family. The fixture used to answer
-            # `id: "linux"`, which no real agent returns, and the family
-            # assertion below measured nothing.
+            # `kernel-name` is the family. No real agent answers
+            # `id: "linux"`, which would let the family assertion pass on `id`.
             return {
                 "id": "mswindows" if self.windows else "ubuntu",
                 "kernel-name": "Windows" if self.windows else "Linux",

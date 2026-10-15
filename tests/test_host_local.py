@@ -57,11 +57,9 @@ def test_local_run_text_input_and_check():
 @pytest.mark.parametrize(
     "value, encoding, expected",
     [
-        # The reported failure: bytes with a text encoding used to kill
-        # subprocess's writer thread and then block forever -- `timeout=` does
-        # not fire, because nothing is waiting on the child. On 3.9 the same
-        # call raised TypeError instead, so the behaviour was also
-        # interpreter-dependent.
+        # Bytes with a text encoding, passed through, kill subprocess's
+        # writer thread and block forever (`timeout=` does not fire, nothing
+        # waits on the child); on 3.9 the same call raises TypeError.
         (b"zz", "utf-8", "zz"),
         ("zz", "utf-8", "zz"),
         (b"zz", None, b"zz"),
@@ -233,12 +231,8 @@ def test_local_path_no_longer_injects_the_working_directory():
 
 
 def test_local_host_is_a_system_host():
-    """It used to be a second implementation of one, and they diverged.
-
-    The double-shell-layer defect that swallowed every exit status lived in
-    the `SystemHost` copy while this one was correct -- which is the cost of
-    having two.
-    """
+    """One implementation of a system host, so local and remote cannot
+    diverge."""
     from hostctl import LocalHost
     from hostctl.host.system import SystemHost
 

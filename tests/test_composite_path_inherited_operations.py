@@ -134,15 +134,13 @@ def test_walk_yields_composite_paths(host):
 def test_a_composite_argument_keeps_its_backend(tmp_path):
     """A composite argument reaches the backend as one of its own paths.
 
-    Composite arguments used to be stringified for every forwarder, so the
-    backend rebuilt the path from bare text through its own constructor --
-    and for a backend whose paths carry state that constructor FAILS
-    (`TypeError: WinRMPath requires a backend`), which is not even the
+    Stringified, the backend would rebuild the path from bare text through
+    its own constructor, which FAILS for a backend whose paths carry state
+    (`TypeError: WinRMPath requires a backend`) -- not even the
     `NotImplementedError` the row's retry contract is written against.
     pathapi routes derived paths through `with_segments`, so this is a
-    guard rather than a reproduction: hostctl
-    now hands over the provider's own path and does not rely on the backend
-    re-parsing text correctly.
+    guard: hostctl hands over the provider's own path and does not rely on
+    the backend re-parsing text correctly.
     """
     import os
 
