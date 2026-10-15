@@ -36,7 +36,8 @@ from _adversarial import (
 )
 from hostctl.executor import CommandLine, LocalExecutor
 from hostctl.process import Process
-from hostctl.shell.powershell import _crt_escape
+from hostctl.shell.cmd import _batch_token
+from hostctl.shell.powershell import _binder_wraps, _crt_escape
 from hostctl.shell import (
     BASH,
     CMD,
@@ -64,14 +65,6 @@ Predicate = typing.Callable[[str, str, str], bool]
 INTERFERENCE = "<interference>"
 
 
-#: finding id -> predicate over (flavour, slot, value). Every failing cell of
-#: the corpus must be named here; a new failure is a new finding, not a row to
-#: add without one.
-def _norm(value: str) -> str:
-    """`value` with a marker path replaced, so a table can name a hostile one."""
-    return re.sub(r"[^ ]*markers[\\/]m\d+", "{marker}", value)
-
-
 def _ps5_stuck(value: str) -> bool:
     """PowerShell 5 cannot pass `value` to a native program unsplit.
 
@@ -91,49 +84,27 @@ def _ps5_stuck(value: str) -> bool:
     return True
 
 
-_PS_BATCH_5 = frozenset(
-    [INTERFERENCE, '%OS%', '%USERNAME%', '&', '&"', '&%', '&&', "&'", '&\\', '&^', '&a', "'^", '<1-10>', '<x', '>x', '\\&', '\\^', '^', '^"', '^%', '^&', "^'", '^\\', '^^', '^a', '^x', 'a b" & echo {marker} & "', 'a&', 'a&b', 'a^', 'a|b', 'c^d', 'x&y']  # fmt: skip
-)
-_PS_BATCH_7 = frozenset(
-    [INTERFERENCE, '', '"', '" ', '" "', '""', '"""a b', '"%', '"&', '"\'', '"\\', '"^', '"a', '"a b"', '$"x"', '%"', '%&', '%OS%', '%USERNAME%', '%^', '&', '&"', '&%', '&&', "&'", '&\\', '&^', '&a', '\'"', "'&", "'^", '<1-10>', '<x', '>x', '\\"', '\\&', '\\^', '^', '^"', '^%', '^&', "^'", '^\\', '^^', '^a', '^x', 'a b" & echo {marker} & "', 'a b" c', 'a"', 'a""b c', 'a"b', 'a"b c', 'a&', 'a&b', 'a\\"b c', 'a^', 'a|b', 'c^d', 'k" v w', 'my file" /MIR "z', 'one " two " three', 'q"x', 'q\\\\" x', 'report" /MIR', 'say "hi"', 'x" & echo {marker} & "', 'x" /MIR "z', 'x" y', 'x"" y', 'x"&echo {marker}', 'x&y']  # fmt: skip
-)
-_BATCH_TARGET = {
-    ("cmd", "argv_unresolved"): frozenset(
-        [INTERFERENCE, '"&', '"^', 'a b" & echo {marker} & "', 'a|echo {marker}', 'x" & echo {marker} & "', 'x"&echo {marker}']  # fmt: skip
-    ),
-    ("powershell", "argv_batch"): _PS_BATCH_5,
-    ("powershell", "argv_unresolved"): _PS_BATCH_5,
-    ("pwsh", "argv_batch"): _PS_BATCH_7,
-    ("pwsh", "argv_unresolved"): _PS_BATCH_7,
-    ("powershell", "program"): frozenset(["%OS%", "%USERNAME%"]),
-    ("pwsh", "program"): frozenset(["%OS%", "%USERNAME%"]),
-}
+def _pwsh_rewraps(value: str) -> bool:
+    """pwsh would quote the batch token of `value` a second time."""
+    return _binder_wraps(_batch_token(value), major_version=7)
+
+
+_PERCENT_NAME = re.compile(r"%[A-Za-z_]+%")
 _CMD_SPACED_PROGRAM = frozenset(
     [' %', ' &', " '", ' ^', ' a', ' lead', '$(id -u)', '(echo injected)', ',x', ';', '=', '=ls', '`id -u`', 'a  b', 'a b', 'a;b', 'a=b', 'x=$(id)', '{a,b}']  # fmt: skip
 )
 _PS = ("powershell", "pwsh")
 
+#: finding id -> predicate over (flavour, slot, value). Every failing cell of
+#: the corpus must be named here; a new failure is a new finding, not a row to
+#: add without one.
 KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
-    # PowerShell 5 splits a native argument whose whitespace follows an odd
-    # number of quotes.
-    "002": lambda f, s, v: (
-        f == "powershell"
-        and s in ("argv_native", "argv_batch", "argv_unresolved", "session")
-        and _ps5_stuck(v)
-    ),
-    # A batch target, or a bare name that turns out to be one, re-parses a
-    # value with cmd's rules.
-    "003": lambda f, s, v: _norm(v) in _BATCH_TARGET.get((f, s), ()),
-    # A spaced .bat path cannot start through LocalExecutor.
-    "023": lambda f, s, v: f == "exec" and s == "exec_batch" and v != INTERFERENCE,
-    # A redirect operand is quoted for a C runtime, not for cmd.
-    "024": lambda f, s, v: f == "cmd" and s == "redirect" and v != INTERFERENCE,
     # PowerShell reads a native argument whose value is `--%` as stop-parsing.
     "067": lambda f, s, v: (
-        f in _PS
-        and s in ("argv_native", "argv_batch", "argv_unresolved", "session")
-        and v == "--%"
+        f in _PS and s in ("argv_native", "argv_unresolved", "session") and v == "--%"
     ),
+    # A redirect operand is quoted for a C runtime, not for cmd.
+    "024": lambda f, s, v: f == "cmd" and s == "redirect" and v != INTERFERENCE,
     # A relative cwd consults CDPATH.
     "078": lambda f, s, v: s == "cdpath" and v != INTERFERENCE,
     # send() appends `;` to a heredoc terminator, and fish has no open-pipe
@@ -142,14 +113,10 @@ KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
         (v == "<heredoc>" and s == "session")
         or (v == "<open-pipe>" and f == "fish" and s == "session")
     ),
-    # cmd's program slot is quoted with the caret form.
-    "081": lambda f, s, v: f == "cmd"
-    and (
-        (s == "argv_batch" and v != INTERFERENCE)
-        or (s in ("program", "program_path") and v in _CMD_SPACED_PROGRAM)
-    ),
-    # PowerShell prints a standalone path instead of running it.
-    "082": lambda f, s, v: f in _PS and s == "program_path" and v != INTERFERENCE,
+    # A standalone path is a value to PowerShell and a caret-quoted word to cmd.
+    "082": lambda f, s, v: s == "program_path"
+    and v != INTERFERENCE
+    and (f in _PS or (f == "cmd" and v in _CMD_SPACED_PROGRAM)),
     # fish expands a whole-word `%self`.
     "222": lambda f, s, v: (
         f == "fish" and v == "%self" and s in ("argv", "command_line", "env", "session")
@@ -166,8 +133,40 @@ KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
     ),
 }
 
-#: Cells a flavour refuses on purpose (render-time `ValueError`), by ledger row.
-DOCUMENTED: typing.Dict[str, Predicate] = {}
+#: Cells a flavour refuses or corrupts on purpose, each naming its ledger row
+#: in docs/guide/contracts.md. A documented cell may raise or arrive changed;
+#: it must never execute.
+DOCUMENTED: typing.Dict[str, Predicate] = {
+    # "Windows PowerShell 5 native arguments"
+    "ps5-native": lambda f, s, v: (
+        f == "powershell" and s in ("argv_native", "session") and _ps5_stuck(v)
+    ),
+    # "Program of unknown type": cmd refuses a quote.
+    "unresolved-cmd": lambda f, s, v: (
+        f == "cmd" and s == "argv_unresolved" and '"' in v
+    ),
+    # "Program of unknown type": PowerShell refuses what a batch file would
+    # run, and a batch file corrupts `^`, `%NAME%` and (under pwsh) an empty
+    # argument without being able to execute them.
+    "unresolved-ps": lambda f, s, v: (
+        f in _PS
+        and s == "argv_unresolved"
+        and (
+            any(char in v for char in '"&|<>^')
+            or _PERCENT_NAME.search(v) is not None
+            or (f == "pwsh" and v == "")
+        )
+    ),
+    # "Batch files": pwsh's binder wraps a token twice when a quote follows a
+    # backslash.
+    "pwsh-batch-rewrap": lambda f, s, v: (
+        f == "pwsh" and s == "argv_batch" and _pwsh_rewraps(v)
+    ),
+    # "Batch files": cmd expands %NAME% in the path of the batch file it runs.
+    "batch-path-percent": lambda f, s, v: (
+        f in _PS and s == "program" and _PERCENT_NAME.fullmatch(v) is not None
+    ),
+}
 
 WINDOWS_FLAVOURS = {
     "cmd": (CMD, "cmd.exe"),
@@ -319,6 +318,8 @@ class Outcome(typing.NamedTuple):
     values: typing.Set[str]
     refused: typing.Set[str]
     failed: typing.Set[str]
+    #: Values that created their marker file, which is never acceptable.
+    executed: typing.Set[str] = frozenset()  # type: ignore[assignment]
 
 
 def _chunks(items, size):
@@ -334,7 +335,7 @@ def drive(cases, render, execute, *, chunk=CHUNK) -> Outcome:
     until single values are named, so only failing cells pay. A marker file
     existing afterwards means the value executed as a command.
     """
-    refused, failed = set(), set()
+    refused, failed, executed = set(), set(), set()
     live = []
     run = execute
 
@@ -356,6 +357,7 @@ def drive(cases, render, execute, *, chunk=CHUNK) -> Outcome:
         for case in group:
             if case.marker is not None and case.marker.exists():
                 failed.add(case.value)
+                executed.add(case.value)
 
     def isolate(group):
         # `group` is known to fail: halve it until single values are named.
@@ -378,7 +380,9 @@ def drive(cases, render, execute, *, chunk=CHUNK) -> Outcome:
         injected(group)
         if not ok:
             isolate(group)
-    return Outcome({case.value for case in cases} | {INTERFERENCE}, refused, failed)
+    return Outcome(
+        {case.value for case in cases} | {INTERFERENCE}, refused, failed, executed
+    )
 
 
 def settle(flavour: str, slot: str, outcome: Outcome) -> None:
@@ -387,12 +391,16 @@ def settle(flavour: str, slot: str, outcome: Outcome) -> None:
         for value in outcome.values
         if any(rule(flavour, slot, value) for rule in KNOWN_DEFECTS.values())
     }
-    undocumented = {
-        value
-        for value in outcome.refused
-        if not any(rule(flavour, slot, value) for rule in DOCUMENTED.values())
+
+    def documented(value):
+        return value not in outcome.executed and any(
+            rule(flavour, slot, value) for rule in DOCUMENTED.values()
+        )
+
+    # A documented cell may be refused or arrive changed, never execute.
+    failing = {
+        value for value in outcome.failed | outcome.refused if not documented(value)
     }
-    failing = outcome.failed | undocumented
     dump = os.environ.get("HC_CORPUS_DUMP")
     if dump:
         with open(dump, "a", encoding="utf-8", newline="\n") as handle:
@@ -763,7 +771,9 @@ def slot_session(runner: Runner, tools, tmp_path) -> Outcome:
     for label, (sends, expected) in specials.items():
         if _session_run(runner, sends) != expected:
             failed.add(label)
-    return Outcome(outcome.values | set(specials), outcome.refused, failed)
+    return Outcome(
+        outcome.values | set(specials), outcome.refused, failed, outcome.executed
+    )
 
 
 def slot_exec(tools, tmp_path, program: str) -> Outcome:

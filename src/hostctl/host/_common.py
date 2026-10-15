@@ -46,8 +46,10 @@ from ..process import Process, TerminalRequest
 from ..shell import Shell, ShellFlavour
 
 from ..shell._grammar import (  # noqa: F401  (re-exported below)
+    Cmdlet as Cmdlet,
     Command as Command,
     Exec as Exec,
+    PSParam as PSParam,
     ExecValue as ExecValue,
     starts_direct_command as starts_direct_command,
 )

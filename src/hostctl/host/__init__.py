@@ -1,7 +1,9 @@
 """Host contracts and built-in host implementations."""
 
 from ._common import (
+    Cmdlet as Cmdlet,
     Exec as Exec,
+    PSParam as PSParam,
     Host as Host,
     HostConfig as HostConfig,
     HostInfo as HostInfo,
@@ -67,7 +69,9 @@ from .composite_path import (
 
 __all__ = [
     "uri_hostname",
+    "Cmdlet",
     "Exec",
+    "PSParam",
     "ConnectionString",
     "Host",
     "HostConfig",

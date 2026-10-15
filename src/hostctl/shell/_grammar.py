@@ -13,6 +13,7 @@ here.
 from __future__ import annotations
 
 import dataclasses as _dc
+import re as _re
 import typing as _ty
 from pathlib import PurePath as _PurePath
 
@@ -70,7 +71,61 @@ class Exec:
         object.__setattr__(self, "args", tuple(args))
 
 
-Command = _ty.Union[str, PathLike, Exec, _ty.Sequence[object]]
+_PS_PARAMETER = _re.compile(r"^-[A-Za-z][A-Za-z0-9]*:?$")
+
+
+@_dc.dataclass(frozen=True)
+class PSParam:
+    """A PowerShell parameter name, rendered bare inside a PowerShell command.
+
+    PowerShell's binder does not read a quoted string as a parameter name, so
+    a plain string in a structured command is always a value. Use
+    ``PSParam("-LiteralPath")`` where a cmdlet needs the name itself::
+
+        host.run(Cmdlet("Remove-Item", PSParam("-LiteralPath"), path))
+
+    The name is a leading dash, letters and digits, and an optional trailing
+    colon (``-Path:``). Not iterable, like `Exec`; other shells refuse it.
+    """
+
+    name: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not _PS_PARAMETER.match(self.name):
+            raise ValueError(f"not a PowerShell parameter name: {self.name!r}")
+
+
+@_dc.dataclass(frozen=True)
+class Cmdlet:
+    """One PowerShell command whose arguments the cmdlet binder reads.
+
+    ``Cmdlet(name, *args)`` renders ``& 'name' args``: every plain string is a
+    PowerShell string literal and a `PSParam` is a bare parameter name. No
+    C-runtime quoting is applied, because no native program re-parses the
+    line, so this is the spelling for cmdlets, functions and aliases. A
+    command that may be a native program or a batch file is a plain tuple.
+
+    Not iterable, like `Exec`; other shells refuse it.
+    """
+
+    name: str
+    args: _ty.Tuple[_ty.Union[str, bytes, _PurePath, _Pathname, PSParam], ...]
+
+    def __init__(self, name: str, *args: object) -> None:
+        if not isinstance(name, str) or not name:
+            raise TypeError("Cmdlet name must be a non-empty str")
+        for value in args:
+            if isinstance(value, (tuple, list)):
+                raise TypeError("cmdlet arguments must be scalar values")
+            if not isinstance(value, (str, bytes, _PurePath, _Pathname, PSParam)):
+                raise TypeError(
+                    "cmdlet arguments must be str, bytes, path or PSParam values"
+                )
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "args", tuple(args))
+
+
+Command = _ty.Union[str, PathLike, Exec, Cmdlet, _ty.Sequence[object]]
 
 
 def starts_direct_command(

@@ -27,7 +27,7 @@ from ..executor import (
     Input,
     PathLike,
 )
-from ._grammar import Command, Exec
+from ._grammar import Cmdlet, Command, Exec, PSParam
 from ..process import Process, TerminalRequest
 
 _Result = typing.TypeVar("_Result", covariant=True)
@@ -68,6 +68,34 @@ class ShellTarget(str, enum.Enum):
     #: The program slot of a command line, read by `CreateProcess` before any
     #: shell sees it.
     PROGRAM = "program"
+    #: A batch file's own `%*`/`%1` expansion: the argument is spliced into a
+    #: line that cmd then parses again, whichever shell started the batch file.
+    BATCH = "batch"
+    #: A program the flavour cannot classify -- a bare name, a `.ps1`, any
+    #: PATHEXT type -- and which may therefore turn out to be a batch file.
+    UNRESOLVED = "unresolved"
+
+
+_NATIVE_SUFFIXES = (".exe", ".com")
+_BATCH_SUFFIXES = (".bat", ".cmd")
+
+
+def program_target(program: str, builtins: typing.Collection[str] = ()) -> ShellTarget:
+    """Classify a Windows program by its name alone.
+
+    A builtin is the shell's own; `.exe`/`.com` is a native program; `.bat`/
+    `.cmd` is a batch file, whose arguments cmd parses again. Everything else
+    -- a bare name, `.ps1`, any other PATHEXT type -- is `UNRESOLVED`, since
+    only the target's search path can say what it runs.
+    """
+    name = program.casefold()
+    if name in builtins:
+        return ShellTarget.SHELL
+    if name.endswith(_NATIVE_SUFFIXES):
+        return ShellTarget.NATIVE
+    if name.endswith(_BATCH_SUFFIXES):
+        return ShellTarget.BATCH
+    return ShellTarget.UNRESOLVED
 
 
 class ShellOperator(enum.Enum):
@@ -356,10 +384,22 @@ class ShellFlavour(abc.ABC):
 
     def structured_command(self, values: typing.Iterable[object]) -> str:
         values = tuple(values)
+        if any(isinstance(value, PSParam) for value in values):
+            raise TypeError(
+                f"PSParam is a PowerShell token; {self.name} has no use for it"
+            )
+        if not values:
+            return self.structured_command_prefix
         target = self.command_target(values)
+        # The first element names the program; it is never argv data.
+        head = self.argument(values[0], target=ShellTarget.SHELL)
         return self.structured_command_prefix + " ".join(
-            self.argument(value, target=target) for value in values
+            [head] + [self.argument(value, target=target) for value in values[1:]]
         )
+
+    def cmdlet_command(self, value: Cmdlet) -> str:
+        """Render a `Cmdlet`; only PowerShell has cmdlets."""
+        raise TypeError(f"Cmdlet is a PowerShell command and cannot run in {self.name}")
 
     @abc.abstractmethod
     def environment_assignment(self, key: str, value: object) -> str:
@@ -386,6 +426,10 @@ class ShellFlavour(abc.ABC):
                 "Exec is executed directly and cannot be rendered into a shell "
                 "script; this host does not support direct execution"
             )
+        if isinstance(value, Cmdlet):
+            return self.cmdlet_command(value)
+        if isinstance(value, PSParam):
+            raise TypeError("PSParam is only valid inside a PowerShell command")
         if isinstance(value, (bytes, PurePath, Path, os.PathLike)):
             return self.quote(value)
         if isinstance(value, str):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -10,7 +11,7 @@ from pathlib import PurePosixPath
 import pytest
 from pathapi import PosixPathname
 
-from hostctl import Exec, LocalHost, POSIX_SHELL, POWERSHELL
+from hostctl import Exec, LocalExecutor, LocalHost, POSIX_SHELL, POWERSHELL
 from hostctl.executor._common import command_text
 from hostctl.host._common import starts_direct_command
 
@@ -172,11 +173,53 @@ def test_powershell_structured_command_still_renders_through_the_call_operator()
 
 @pytest.mark.skipif(os.name != "nt", reason="the .bat dispatch is Windows-only")
 @pytest.mark.parametrize(
-    ("value", "must_not_contain"),
+    "template",
     (
-        ('x" & echo INJECTED-VIA-EXEC & "', "INJECTED-VIA-EXEC"),
-        ("%USERNAME%", os.environ.get("USERNAME", "\x00")),
+        'x" & echo INJ>{marker} & "',
+        'x"&echo INJ>{marker}',
+        "a|echo INJ>{marker}",
+        "a&echo INJ>{marker}",
     ),
+)
+def test_exec_of_a_batch_file_never_runs_an_argument(tmp_path, template):
+    """A `%*` shim splices every argument into a line cmd parses again."""
+    shim = tmp_path / "hc shim dir" / "hc shim.cmd"
+    shim.parent.mkdir()
+    dump = tmp_path / "dump.py"
+    dump.write_text("import json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+    shim.write_bytes(f'@"{sys.executable}" "{dump}" %*\r\n'.encode())
+    marker = tmp_path / "marker"
+
+    LocalExecutor()(str(shim), template.format(marker=marker), "tail", check=False)
+
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the .bat dispatch is Windows-only")
+@pytest.mark.parametrize("value", ("plain", "a b", "100%", "%USERNAME%", "x&y", "c^d"))
+def test_exec_of_a_batch_file_with_a_spaced_path_delivers_the_argument(tmp_path, value):
+    shim = tmp_path / "hc shim dir" / "hc shim.cmd"
+    shim.parent.mkdir()
+    dump = tmp_path / "dump.py"
+    dump.write_text("import json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+    shim.write_bytes(f'@"{sys.executable}" "{dump}" %*\r\n'.encode())
+
+    result = LocalExecutor()(str(shim), value, "tail", text=True)
+
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == [value, "tail"]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the .bat dispatch is Windows-only")
+@pytest.mark.parametrize("name", ('a"b.bat', "a%b.bat"))
+def test_exec_refuses_a_batch_path_cmd_would_read_differently(name):
+    with pytest.raises(ValueError, match="batch file path"):
+        LocalExecutor()("C:\\dir\\" + name, "x")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the .bat dispatch is Windows-only")
+@pytest.mark.parametrize(
+    ("value", "must_not_contain"),
+    (("%USERNAME%", os.environ.get("USERNAME", "\x00")),),
 )
 def test_exec_of_a_batch_file_is_not_reparsed_by_cmd(tmp_path, value, must_not_contain):
     """`Exec` promises one program plus argv, never interpreted by a shell.

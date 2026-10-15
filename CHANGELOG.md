@@ -7,11 +7,173 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **Windows PowerShell 5 no longer splits a native argument at a space that
+  follows a quote.** `host.run(("tool.exe", 'report" /MIR'))` reached the
+  child as `report"` and `/MIR`, an argument turned into a flag. PS 5 wraps an
+  argument in quotes only when whitespace sits at an even count of `"`; a
+  value that cannot be passed that way now raises `ValueError` (use `PWSH` or
+  `Exec`) instead of arriving split.
+- **A batch file never executes an argument.** `Exec(shim_cmd, 'x"&echo ...')`,
+  a structured command to a `.bat`/`.cmd` under `cmd`, `powershell` or `pwsh`,
+  and a bare name that PATHEXT resolves to a batch file all let a value close
+  cmd's quoting and run the rest (and expanded `%VAR%`). Every argument to a
+  batch target is now one inert token (`"` + body + `"`, `"` as `""`, `%` as
+  `%%cd:~,%`). A Microsoft C runtime reads `""` as one quote; a
+  `CommandLineToArgvW` consumer may split a value that has whitespace after a
+  quote.
+  - **Breaking, 0.4.0**: an argument to a program of unknown type (a bare
+    name, `.ps1`) raises `ValueError` when it holds `"` (cmd) or any of
+    `" & | < >` (PowerShell), since the program may be a batch file. Name the
+    program with its suffix, use `Cmdlet` for a cmdlet, or use `Exec`.
+  - **Breaking, 0.4.0**: a local `Exec` of a batch file raises `ValueError`
+    when the program path contains `"` or `%`.
+- **`WinRMConfig` refuses `transport` `basic`, `plaintext` or `ssl` over plain
+  HTTP** unless `allow_cleartext=True` (URI query `allow_cleartext=true`), on
+  both the pywinrm and PSRP legs. They sent the password in cleartext on
+  pywinrm. This ships in 0.4.0.
+
+### Fixed
+
+- A local `Exec` of a `.bat`/`.cmd` in a directory whose path has a space no
+  longer fails with `FileNotFoundError`, and a `cmd` structured command whose
+  program path has a space starts instead of reporting `'"C:\Program' is not
+  recognized`. The first element of a structured command is the program and
+  takes the quoting of a command word, not of argv data.
+- `iterdir()` of a regular file on a POSIX QGA guest raises `NotADirectoryError`
+  instead of listing nothing: the guest helper reads `find`'s record for the
+  starting point, and follows it with `-H` when it is a link.
+- **`move()` between two WinRM hosts, or two QGA hosts, copies and deletes**
+  instead of raising `ValueError`; a direct `rename()` across hosts raises
+  `OSError(EXDEV)`. `chmod("755")` works on WinRM and QGA paths.
+- **`Path.copy()` into a WinRM, container or QGA path refuses a source name that
+  is not one path component** (`ValueError`), where `..\x` could land outside
+  the destination.
+- **`hostctl cp` keeps a transport's native copy** instead of bypassing the
+  source path's own `copy()`.
+- **A serial or QEMU console process can no longer free a lease it does not
+  hold.** Closing a stale process after the host was closed and reopened
+  released the new process's lease, so a third `open()` succeeded and read the
+  second process's bytes. A release is now bound to its own acquisition, and
+  closing the host (or the executor) ends a live process: its reads and writes
+  raise `ConnectionError` and its `close()` is a no-op.
+- **Text-mode serial reads no longer corrupt a character split across reads.**
+  An idle line reads empty, which is not EOF; the decoder was finalized on it,
+  so a split UTF-8 character raised `UnicodeDecodeError` or became two
+  U+FFFD. The text read now returns `""` and keeps the partial character for
+  the next read.
+- `typing.get_type_hints()` works on every public function and method on
+  Python 3.9 (18 raised there, 7 on 3.14), and `SystemHost.run` carries the
+  same annotations as `Host.run`.
+- **QGA writes work on Windows guests again.** A write went through a
+  temporary file and a replacing rename that the Windows helper refuses, so
+  every write failed since the helper probe landed in 0.3.0. A QGA write is now
+  in place (not atomic), which also keeps a POSIX file's inode, mode, owner and
+  symlink; only `open("x")` writes a temporary file and renames it.
+- A POSIX QGA `rename()` onto an existing target replaces it, as `os.rename`
+  does, and a skipped `mv -n` no longer reports success without moving;
+  a Windows guest raises `FileExistsError`.
+- `iterdir()` of a dash-leading relative path (`-delete`) no longer runs
+  `find` with it as an expression: the starting point is anchored with `./`.
+- QGA `exists()` below a regular file returns `False`; a guest-file-read reply
+  longer than requested and a deeply nested reply raise `QgaProtocolError`; a
+  listing skips names that are not one path component; a helper-less QGA path
+  provider declares `exists`.
+- Container overwrites keep the file's owner, group and mode instead of
+  re-owning it to root; `exists()` and `open("x"/"a"/"r+")` read one archive
+  header instead of downloading the whole subtree, and an engine error is no
+  longer reported as `FileExistsError`; `write_bytes` `PermissionError` carries
+  `errno` and `filename`.
+- A container path taken before `ContainerHost.close()` raises instead of
+  reopening docker-py's client, and a Windows container follows relative links
+  with Windows path syntax.
+- Two threads on a fresh PSRP host opened two pools, and one was never
+  closed.
+- A whole-file WinRM read is one round trip (it was one per 8 KiB on Python
+  3.9-3.13), and `open("x")` on an existing file no longer downloads it.
+- A WinRM rename onto an existing entry raises `FileExistsError`, removing a
+  non-empty directory raises `OSError` with `ENOTEMPTY`, and `scandir` of a file
+  and a failed reparse point carry an errno, as the local filesystem's do.
+- `transport="ssl"` over PSRP raised at the first send; it is now Basic over
+  HTTPS, as on pywinrm.
+- `RunspaceSession.invoke(script, *args)` rendered `-LiteralPath` as a quoted
+  string, which PowerShell's binder rejects; it uses the flavour's
+  `structured_command`.
+- Writes to a WinRM path over pywinrm work again; every write raised
+  `OSError`. `run()` commands over about 3 KB no longer fail with "The command
+  line is too long".
+- A native (password-free) WinRM command that failed remotely raised
+  `ConnectionError` instead of returning its status, so `check=False` could
+  not inspect it; a command printing about 20,000 lines hit the deadline
+  because the relay was quadratic.
+- `host.executor(program, *args)` on a composed or local host raised
+  `NameError`; both executor wrappers are now one class.
+- A composed host's path now forwards `_utime`, `hardlink_to`, `owner`,
+  `group`, `resolve` and a relative `absolute()` to its backend, which
+  `PathSyncer` needs to carry mtimes across: a second `stat_checksum` sync into
+  an SSH host copies nothing instead of everything. `supports()` answers
+  `Utime`, `Hardlink`, `Owned`, `Resolve`, `NativeChecksum` and `Chown` from
+  the backend path class, so it no longer claims a digest `LocalPath` lacks or
+  a `chown` a WinRM or container path cannot do. `PathProvider` declares
+  `utime` and `hardlink_to` by default.
+- Concurrent `run()` and `close()` on one host no longer raise `RuntimeError`
+  ("dictionary changed size during iteration") from provider selection, which
+  read and wrote its decline and probe maps without its lock. Two hosts opened
+  concurrently from one config no longer share a transport, or split one host's
+  executor and path legs across two.
+- `ConnectionString("nas:8443")` and `ConnectionString("10.1.1.1:22")` with no
+  scheme raise "no scheme" instead of reading `nas` as the scheme, which left
+  the host empty and `is_local` true for a remote machine (Python 3.9 did the
+  same for the address form). With `scheme=` or `defaults=` they parse as host
+  and port. The `ConnectionString` docstring and the API header said a bare host
+  parses without a scheme; they now say it needs one.
+- `SshConfig`, `WinRMConfig`, `ContainerConfig` and the system configs refuse
+  a URI given as their host with a message that redacts its password;
+  `WinRMConfig("winrm://u:pw@h", "u")` used to render the password in
+  `connection_uri` and `repr`. A percent-encoded C1 control character
+  (`%C2%9B`) in a system URI's host or userinfo is refused like the C0 ones,
+  instead of reaching `authority` and `info().hostname` decoded.
+- A provider's probe narrows its declared capabilities in every reader.
+  `select(capability=)`, `host.capabilities`, `executor_capabilities`,
+  `provider_details` and a composed path's dispatch each read a different
+  union of the two, so a probe that narrowed `spawn` away was still chosen for
+  it and reported. `ProviderSelector.effective_capabilities(provider)` is the
+  one answer: the declared set intersected with what the probe states, or the
+  declared set when it states none; a capability a probe adds is ignored.
+- `host.path(backend=name)` probes through the selector, as `.via(name)`
+  does, so a probe that raises is `OperationNotStarted` and is cached, where a
+  raw transport error escaped and the probe re-ran on every call.
+- `host_checksum` on a Windows SSH target hands `certutil` and `Get-FileHash`
+  the file the transfer wrote, as `C:\data\file.txt`: `certutil` read the SFTP
+  spelling `/C:/data/file.txt` as an option, and PowerShell hashed the logical
+  text. A file on this machine's filesystem is hashed in process whichever host
+  owns it; a composed local host (`posix://?executor=local&path=local`)
+  spawned one process per file.
+- One broken `hostctl.configs` plugin no longer breaks every other unclaimed
+  scheme: the entry point named for the scheme loads first, a plugin that fails
+  to import is warned about and skipped, and only its own scheme raises
+  `RuntimeError` from the import error.
+- Default ports, IPv6 bracketing and the local-host check come from netimps
+  where hostctl wrote its own: an SSH, QGA-over-SSH, WinRM or PSRP port, an
+  endpoint or URI authority with a port, `HostInfo.hostname` (a bare IPv6
+  address `::1` is no longer reported as `:`), and `ConnectionString.is_local`,
+  which now also answers `*.localhost`, short IPv4 spellings and this machine's
+  own name. `import hostctl` still does not import netimps.
+
 ### Changed
 
 - The config extension hooks `_from_parsed_uri` and `_create_host` are documented
   as the override points for a `HostConfig` subclass, with a worked example in
   the extending guide. Their names are unchanged and no `from_uri` is added.
+- **Breaking, 0.4.0: `Cmdlet` and `PSParam` replace the PowerShell `-Name`
+  inference.** A plain string in a structured command is always a value; a
+  string shaped like `-LiteralPath` was rendered bare, which hid a real
+  argument from a native program and let a program-shaped value read as a
+  parameter. Write `Cmdlet("Remove-Item", PSParam("-LiteralPath"), path)`.
+  Both are exported by `hostctl`, `hostctl.host` and `hostctl.shell`, are
+  non-iterable like `Exec`, and raise `TypeError` for any other shell.
+  `ShellTarget` gains `BATCH` and `UNRESOLVED`.
 - **The `hostctl` command needs the `cli` extra** (`pip install
   "hostctl[cli]"`, which adds `duho>=0.7.5,<0.8`). Without it the console
   script prints one line naming the extra and exits non-zero. The command
@@ -137,13 +299,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   assemble yourself. `posix://...?executor=local` now builds the same
   providers.
 
-### Security
-
-- **`WinRMConfig` refuses `transport` `basic`, `plaintext` or `ssl` over plain
-  HTTP** unless `allow_cleartext=True` (URI query `allow_cleartext=true`), on
-  both the pywinrm and PSRP legs. They sent the password in cleartext on
-  pywinrm. This ships in 0.4.0.
-
 ### Removed
 
 - **`PosixHost.from_ssh(config)` and `WindowsHost.from_winrm(config)`**, which
@@ -151,128 +306,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   could not fail for a config that picked its own paths. Use `config.open()`
   or `Host(uri)`; `SshConfig("host").open()` is a `PosixHost`, and a config with
   Windows paths opens a `WindowsHost`.
-
-### Fixed
-
-- `iterdir()` of a regular file on a POSIX QGA guest raises `NotADirectoryError`
-  instead of listing nothing: the guest helper reads `find`'s record for the
-  starting point, and follows it with `-H` when it is a link.
-- **`move()` between two WinRM hosts, or two QGA hosts, copies and deletes**
-  instead of raising `ValueError`; a direct `rename()` across hosts raises
-  `OSError(EXDEV)`. `chmod("755")` works on WinRM and QGA paths.
-- **`Path.copy()` into a WinRM, container or QGA path refuses a source name that
-  is not one path component** (`ValueError`), where `..\x` could land outside
-  the destination.
-- **`hostctl cp` keeps a transport's native copy** instead of bypassing the
-  source path's own `copy()`.
-- **A serial or QEMU console process can no longer free a lease it does not
-  hold.** Closing a stale process after the host was closed and reopened
-  released the new process's lease, so a third `open()` succeeded and read the
-  second process's bytes. A release is now bound to its own acquisition, and
-  closing the host (or the executor) ends a live process: its reads and writes
-  raise `ConnectionError` and its `close()` is a no-op.
-- **Text-mode serial reads no longer corrupt a character split across reads.**
-  An idle line reads empty, which is not EOF; the decoder was finalized on it,
-  so a split UTF-8 character raised `UnicodeDecodeError` or became two
-  U+FFFD. The text read now returns `""` and keeps the partial character for
-  the next read.
-- `typing.get_type_hints()` works on every public function and method on
-  Python 3.9 (18 raised there, 7 on 3.14), and `SystemHost.run` carries the
-  same annotations as `Host.run`.
-- **QGA writes work on Windows guests again.** A write went through a
-  temporary file and a replacing rename that the Windows helper refuses, so
-  every write failed since the helper probe landed in 0.3.0. A QGA write is now
-  in place (not atomic), which also keeps a POSIX file's inode, mode, owner and
-  symlink; only `open("x")` writes a temporary file and renames it.
-- A POSIX QGA `rename()` onto an existing target replaces it, as `os.rename`
-  does, and a skipped `mv -n` no longer reports success without moving;
-  a Windows guest raises `FileExistsError`.
-- `iterdir()` of a dash-leading relative path (`-delete`) no longer runs
-  `find` with it as an expression: the starting point is anchored with `./`.
-- QGA `exists()` below a regular file returns `False`; a guest-file-read reply
-  longer than requested and a deeply nested reply raise `QgaProtocolError`; a
-  listing skips names that are not one path component; a helper-less QGA path
-  provider declares `exists`.
-- Container overwrites keep the file's owner, group and mode instead of
-  re-owning it to root; `exists()` and `open("x"/"a"/"r+")` read one archive
-  header instead of downloading the whole subtree, and an engine error is no
-  longer reported as `FileExistsError`; `write_bytes` `PermissionError` carries
-  `errno` and `filename`.
-- A container path taken before `ContainerHost.close()` raises instead of
-  reopening docker-py's client, and a Windows container follows relative links
-  with Windows path syntax.
-- Two threads on a fresh PSRP host opened two pools, and one was never
-  closed.
-- A whole-file WinRM read is one round trip (it was one per 8 KiB on Python
-  3.9-3.13), and `open("x")` on an existing file no longer downloads it.
-- A WinRM rename onto an existing entry raises `FileExistsError`, removing a
-  non-empty directory raises `OSError` with `ENOTEMPTY`, and `scandir` of a file
-  and a failed reparse point carry an errno, as the local filesystem's do.
-- `transport="ssl"` over PSRP raised at the first send; it is now Basic over
-  HTTPS, as on pywinrm.
-- `RunspaceSession.invoke(script, *args)` rendered `-LiteralPath` as a quoted
-  string, which PowerShell's binder rejects; it uses the flavour's
-  `structured_command`.
-- Writes to a WinRM path over pywinrm work again; every write raised
-  `OSError`. `run()` commands over about 3 KB no longer fail with "The command
-  line is too long".
-- A native (password-free) WinRM command that failed remotely raised
-  `ConnectionError` instead of returning its status, so `check=False` could
-  not inspect it; a command printing about 20,000 lines hit the deadline
-  because the relay was quadratic.
-- `host.executor(program, *args)` on a composed or local host raised
-  `NameError`; both executor wrappers are now one class.
-- A composed host's path now forwards `_utime`, `hardlink_to`, `owner`,
-  `group`, `resolve` and a relative `absolute()` to its backend, which
-  `PathSyncer` needs to carry mtimes across: a second `stat_checksum` sync into
-  an SSH host copies nothing instead of everything. `supports()` answers
-  `Utime`, `Hardlink`, `Owned`, `Resolve`, `NativeChecksum` and `Chown` from
-  the backend path class, so it no longer claims a digest `LocalPath` lacks or
-  a `chown` a WinRM or container path cannot do. `PathProvider` declares
-  `utime` and `hardlink_to` by default.
-- Concurrent `run()` and `close()` on one host no longer raise `RuntimeError`
-  ("dictionary changed size during iteration") from provider selection, which
-  read and wrote its decline and probe maps without its lock. Two hosts opened
-  concurrently from one config no longer share a transport, or split one host's
-  executor and path legs across two.
-- `ConnectionString("nas:8443")` and `ConnectionString("10.1.1.1:22")` with no
-  scheme raise "no scheme" instead of reading `nas` as the scheme, which left
-  the host empty and `is_local` true for a remote machine (Python 3.9 did the
-  same for the address form). With `scheme=` or `defaults=` they parse as host
-  and port. The `ConnectionString` docstring and the API header said a bare host
-  parses without a scheme; they now say it needs one.
-- `SshConfig`, `WinRMConfig`, `ContainerConfig` and the system configs refuse
-  a URI given as their host with a message that redacts its password;
-  `WinRMConfig("winrm://u:pw@h", "u")` used to render the password in
-  `connection_uri` and `repr`. A percent-encoded C1 control character
-  (`%C2%9B`) in a system URI's host or userinfo is refused like the C0 ones,
-  instead of reaching `authority` and `info().hostname` decoded.
-- A provider's probe narrows its declared capabilities in every reader.
-  `select(capability=)`, `host.capabilities`, `executor_capabilities`,
-  `provider_details` and a composed path's dispatch each read a different
-  union of the two, so a probe that narrowed `spawn` away was still chosen for
-  it and reported. `ProviderSelector.effective_capabilities(provider)` is the
-  one answer: the declared set intersected with what the probe states, or the
-  declared set when it states none; a capability a probe adds is ignored.
-- `host.path(backend=name)` probes through the selector, as `.via(name)`
-  does, so a probe that raises is `OperationNotStarted` and is cached, where a
-  raw transport error escaped and the probe re-ran on every call.
-- `host_checksum` on a Windows SSH target hands `certutil` and `Get-FileHash`
-  the file the transfer wrote, as `C:\data\file.txt`: `certutil` read the SFTP
-  spelling `/C:/data/file.txt` as an option, and PowerShell hashed the logical
-  text. A file on this machine's filesystem is hashed in process whichever host
-  owns it; a composed local host (`posix://?executor=local&path=local`)
-  spawned one process per file.
-- One broken `hostctl.configs` plugin no longer breaks every other unclaimed
-  scheme: the entry point named for the scheme loads first, a plugin that fails
-  to import is warned about and skipped, and only its own scheme raises
-  `RuntimeError` from the import error.
-- Default ports, IPv6 bracketing and the local-host check come from netimps
-  where hostctl wrote its own: an SSH, QGA-over-SSH, WinRM or PSRP port, an
-  endpoint or URI authority with a port, `HostInfo.hostname` (a bare IPv6
-  address `::1` is no longer reported as `:`), and `ConnectionString.is_local`,
-  which now also answers `*.localhost`, short IPv4 spellings and this machine's
-  own name. `import hostctl` still does not import netimps.
 
 ## [0.3.2] - 2026-09-23
 

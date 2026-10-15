@@ -43,12 +43,27 @@ syntactic -- enough that this shell sees one word and expands nothing.
 `argument(value, *, target=ShellTarget...)` quotes for whatever parses the token
 NEXT: `SHELL` (a cmd builtin, split by cmd itself), `NATIVE` (a child's own argv
 parser -- the C runtime on Windows, nothing on POSIX), `CMDLET` (PowerShell's
-binder) or `PROGRAM` (the program slot, read by `CreateProcess`). Where the two
-layers coincide -- every POSIX-family shell, since `execve` takes a vector --
-the default `argument()` is just `quote()`. `command_target(values)` infers the
-target where it is decidable (cmd knows its own builtin list) and answers
-`NATIVE` otherwise; PowerShell deliberately does NOT guess whether a name is a
-cmdlet, because that needs a runspace.
+binder), `PROGRAM` (the program slot, read by `CreateProcess`), `BATCH` (a batch
+file's `%*`/`%1`, which cmd parses again) or `UNRESOLVED` (a program that may
+turn out to be a batch file). Where the layers coincide -- every POSIX-family
+shell, since `execve` takes a vector -- the default `argument()` is just
+`quote()`. `command_target(values)` classifies a Windows program by its name:
+a cmd builtin is `SHELL`, `.exe`/`.com` is `NATIVE`, `.bat`/`.cmd` is `BATCH`,
+anything else (a bare name, `.ps1`) is `UNRESOLVED`. The FIRST element of a
+structured command is the program and is never argv data: cmd quotes it like a
+builtin operand, PowerShell as a literal. A `BATCH` argument is one token
+(`"` + body + `"`, `"` -> `""`, `%` -> `%%cd:~,%`): a Microsoft C runtime reads
+`""` as one quote, a `CommandLineToArgvW` consumer (node, most system tools)
+may split a value with whitespace after a quote, and none executes it. An
+`UNRESOLVED` argument raises `ValueError` for a character a batch re-parse
+would act on (`"` on cmd; `" & | < >` on PowerShell); `%`, `^`, `!` corrupt but
+cannot start a command. Windows PowerShell 5 raises for a native argument it
+would split (whitespace only after an odd count of quotes); `PWSH` and `Exec`
+carry those. PowerShell cannot tell a cmdlet from a program (that needs a
+runspace), so `Cmdlet(name, *args)` is the cmdlet spelling -- PowerShell
+literals, no C-runtime escaping, nothing refused -- and `PSParam("-Name")` is
+the one token rendered bare. A plain string is always a value; there is no
+`-Name` inference. Other shells raise `TypeError` for either marker.
 
 `cwd_guard` declares how a failed `cd` is stopped from running the payload:
 `"operator"` fuses the change onto a GROUPED payload with the AND operator,
@@ -140,9 +155,13 @@ an iterable marker would be quoted into an argv instead of taking the direct
 branch; `command_text` raises if an `Exec` reaches it.
 One platform exception, handled rather than inherited: Windows dispatches a
 `.bat`/`.cmd` target through cmd.exe, so a local `Exec` of one is quoted with
-cmd's rules instead of the C runtime's. Without that an argument could close
-the quoting and run a second cmd command, and `%VAR%` expanded before the
-batch file saw it.
+cmd's rules instead of the C runtime's: the program in plain quotes (a `"` or
+`%` in its path raises `ValueError`), every argument as a batch token (see
+`ShellTarget.BATCH`). Without that an argument could close the quoting and run
+a second cmd command, and `%VAR%` expanded before the batch file saw it.
+`Cmdlet(name, *args)` and `PSParam(name)` (exported by `hostctl`,
+`hostctl.host` and `hostctl.shell`) are the PowerShell-only command markers, as
+non-iterable as `Exec`.
 `Shell.execute(command, *args)` keeps its own program-plus-argv signature and
 wraps into an `Exec` only when dispatching to a host `run(*cmds)` and only when
 argv values are present -- `Shell.run` renders every command into one script

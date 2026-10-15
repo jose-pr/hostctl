@@ -34,8 +34,10 @@ from .executor import (
 from .host import (
     ContainerConfig as ContainerConfig,
     ConnectionString as ConnectionString,
+    Cmdlet as Cmdlet,
     ContainerHost as ContainerHost,
     Exec as Exec,
+    PSParam as PSParam,
     Host as Host,
     HostConfig as HostConfig,
     HostInfo as HostInfo,
@@ -153,7 +155,9 @@ __all__ = [
     "IosConfig",
     "IosHost",
     # Executors and processes
+    "Cmdlet",
     "Exec",
+    "PSParam",
     "Executor",
     "ExecutionOptions",
     "ExecutorCapability",

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from hostctl import Exec
+from hostctl import Cmdlet, Exec
 
 from .providers import fake_providers, live_providers, provider_context
 
@@ -182,7 +182,10 @@ def test_shell_command_shapes_and_operators_remain_explicit(provider):
         # Sequence syntax is portable to POSIX sh and Windows PowerShell 5;
         # raw strings remain shell source rather than argv data.
         raw = host.run("echo first; echo second")
-        argv = host.run(("echo", "a & b"))
+        # `echo` is a PowerShell alias, not a program: a bare name could be a
+        # batch file there, so the cmdlet spelling is the one that carries `&`.
+        powershell = host.shell_flavour.name in ("powershell", "pwsh")
+        argv = host.run(Cmdlet("echo", "a & b") if powershell else ("echo", "a & b"))
         joined = host.run(("echo", "one"), ("echo", "two"))
     assert b"first" in raw.stdout and b"second" in raw.stdout
     assert b"a & b" in argv.stdout

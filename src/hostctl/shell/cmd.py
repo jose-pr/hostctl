@@ -13,7 +13,9 @@ from ._common import (
     ShellOperator,
     ShellTarget,
     ShellToken,
+    program_target,
 )
+from ._grammar import PSParam
 
 
 def _argument(value: object) -> str:
@@ -97,6 +99,33 @@ def _builtin_argument(value: object) -> str:
     if span or not parts:
         parts.append('"' + "".join(span) + '"')
     return "".join(parts)
+
+
+def _batch_token(text: str) -> str:
+    r"""Quote one value for a batch file's `%*`/`%1`, which cmd parses again.
+
+    Wrapped in `"`, with `"` doubled to `""` (backslashes before it doubled,
+    as are trailing ones) and `%` written `%%cd:~,%`, which cmd expands back
+    to a literal percent sign. Inside the span cmd treats `& | < > ^` as data,
+    and a Microsoft C runtime reads `""` as one `"`. A consumer using
+    `CommandLineToArgvW` (node, most system tools) may split a value that has
+    whitespace after a quote; it never executes it.
+    """
+    pieces = []
+    backslashes = 0
+    for char in text:
+        if char == "\\":
+            backslashes += 1
+            continue
+        if char == '"':
+            pieces.append("\\" * (backslashes * 2) + '""')
+        elif char == "%":
+            pieces.append("\\" * backslashes + "%%cd:~,%")
+        else:
+            pieces.append("\\" * backslashes + char)
+        backslashes = 0
+    pieces.append("\\" * (backslashes * 2))
+    return '"' + "".join(pieces) + '"'
 
 
 def _program(path: str) -> str:
@@ -193,6 +222,14 @@ class CmdShellFlavour(ShellFlavour):
             return _program(text)
         if target is ShellTarget.SHELL:
             return _builtin_argument(text)
+        if target is ShellTarget.BATCH:
+            return _batch_token(text)
+        if target is ShellTarget.UNRESOLVED and '"' in text:
+            raise ValueError(
+                "a quote in an argument to a program of unknown type could be "
+                "re-parsed by cmd if the program is a batch file; name the "
+                "program with its .exe or .bat suffix"
+            )
         return _argument(text)
 
     def escape_for_one_parse(self, text: str) -> str:
@@ -215,19 +252,34 @@ class CmdShellFlavour(ShellFlavour):
         return _echo_argument(text)
 
     def command_target(self, values: typing.Sequence[object]) -> ShellTarget:
-        if values and self._text(values[0]).casefold() in self.builtins:
-            return ShellTarget.SHELL
-        return ShellTarget.NATIVE
+        """Classify the program by its name: builtin, `.exe`/`.com`, batch file.
+
+        Anything else -- a bare name, a script type PATHEXT knows -- might
+        resolve to a batch file, which re-parses its arguments with cmd.
+        """
+        if not values:
+            return ShellTarget.NATIVE
+        return program_target(self._text(values[0]), self.builtins)
 
     def structured_command(self, values: typing.Iterable[object]) -> str:
         values = tuple(values)
+        if any(isinstance(value, PSParam) for value in values):
+            raise TypeError("PSParam is a PowerShell token; cmd has no use for it")
         if values and self._text(values[0]).casefold() == "echo":
             # `echo` is not a different TARGET -- it is a different escape
             # for the same one. Alone among the builtins it does not consume
             # quotes, it prints them, so quoting would change the output it
             # exists to produce, while its tail is still one operand.
             return " ".join(_echo_argument(self._text(value)) for value in values)
-        return super().structured_command(values)
+        if not values:
+            return ""
+        target = self.command_target(values)
+        # The first element is the program, never argv data: cmd splits it as
+        # a command word, so it takes the quoting a builtin operand takes.
+        head = self.argument(values[0], target=ShellTarget.SHELL)
+        return " ".join(
+            [head] + [self.argument(value, target=target) for value in values[1:]]
+        )
 
     def group(self, command: str) -> str:
         """cmd groups with parentheses."""

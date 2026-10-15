@@ -12,6 +12,7 @@ import pytest
 from hostctl import (
     BASH,
     CMD,
+    Cmdlet,
     FISH,
     Executor,
     ExecutorCapability,
@@ -481,7 +482,7 @@ def test_powershell_command_survives_a_remote_cmd_login_shell(value):
 
 
 def test_powershell_command_is_inert_under_any_parser():
-    rendered = POWERSHELL.command((("Write-Output", 'a" & echo INJECTED & "'),))
+    rendered = POWERSHELL.command((Cmdlet("Write-Output", 'a" & echo INJECTED & "'),))
 
     assert "-EncodedCommand" in rendered.command
     assert "INJECTED" not in rendered.command
@@ -975,8 +976,8 @@ def test_powershell_structured_arguments_reach_a_native_child_intact(value):
 
 def test_powershell_7_does_not_add_c_runtime_escaping():
     """pwsh passes native arguments through without PS 5's rewrite."""
-    assert PWSH.structured_command(("tool", 'a"b')) == "& 'tool' 'a\"b'"
-    assert POWERSHELL.structured_command(("tool", 'a"b')) == "& 'tool' 'a\\\"b'"
+    assert PWSH.structured_command(("tool.exe", 'a"b')) == "& 'tool.exe' 'a\"b'"
+    assert POWERSHELL.structured_command(("tool.exe", 'a"b')) == "& 'tool.exe' 'a\\\"b'"
 
 
 def test_fish_quotes_a_trailing_backslash_without_escaping_its_own_quote():

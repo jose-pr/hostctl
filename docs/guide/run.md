@@ -320,13 +320,31 @@ A **structured element** is a value, and a value carrying any control character
 at all is refused, because a newline inside a quoted argument is how a second
 command gets smuggled in.
 
-In a structured PowerShell command, a token that is exactly a parameter name
-(`-LiteralPath`, `-Force`, `-Path:`) is rendered unquoted so the binder reads
-it as one; `host.run(["Remove-Item", "-LiteralPath", path])` therefore binds
-and deletes. Every other element is a quoted string literal. A value that
-happens to look like a parameter name but is meant as data cannot be expressed
-through the structured grammar -- render it as raw source, or pass the `--`
-separator the target program provides.
+### Structured commands on Windows
+
+A structured command's first element is the program, and what follows is
+quoted for whatever parses it next, which on Windows depends on the program:
+
+- **`.exe`/`.com`** is a native program. Windows PowerShell 5 raises
+  `ValueError` for an argument it would split (every space after an odd number
+  of quotes); use `PWSH` or `Exec` for those.
+- **`.bat`/`.cmd`** is a batch file, whose arguments cmd parses again. Each
+  argument becomes one batch token, so none of `& | < > ^ "` can run anything.
+- **A cmd builtin** (`del`, `mkdir`, ...) is split by cmd itself.
+- **Anything else** (a bare name, `.ps1`) may turn out to be a batch file, so
+  an argument containing `"` (cmd) or `" & | < >` (PowerShell) raises
+  `ValueError`. Name the program with its suffix.
+
+PowerShell cannot tell a cmdlet from a program without a runspace. `Cmdlet`
+is the spelling for a cmdlet, function or alias: `Cmdlet("Write-Output", text)`
+renders PowerShell string literals, applies no C-runtime escaping and refuses
+nothing. `PSParam("-LiteralPath")` renders a parameter name bare, which the
+binder needs; a plain string is always a value::
+
+    host.run(Cmdlet("Remove-Item", PSParam("-LiteralPath"), path))
+
+Both raise `TypeError` for any other shell. Where a value that looks like a
+parameter name is meant as data, pass it as a plain string.
 
 A structured element is a **value**, so it cannot carry a control
 character: `["printf", "%s\\n", value]` is refused, because a newline inside a

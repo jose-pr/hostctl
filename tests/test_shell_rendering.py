@@ -10,7 +10,18 @@ import sys
 import pytest
 
 from hostctl.executor._common import ExecutorCapability, normalize_input
-from hostctl.shell import CMD, POSIX_SHELL, ZSH, PowerShellFlavour, Shell
+from hostctl.shell import (
+    CMD,
+    POSIX_SHELL,
+    PWSH,
+    ZSH,
+    Cmdlet,
+    POWERSHELL,
+    PowerShellFlavour,
+    PSParam,
+    Shell,
+    ShellTarget,
+)
 
 
 class _Recorder:
@@ -152,12 +163,16 @@ def test_a_cmd_executable_containing_a_quote_is_refused():
     ("command", "expected"),
     (
         (
-            ("Remove-Item", "-LiteralPath", r"C:\tmp\x.txt"),
+            Cmdlet("Remove-Item", PSParam("-LiteralPath"), r"C:\tmp\x.txt"),
             r"& 'Remove-Item' -LiteralPath 'C:\tmp\x.txt'",
         ),
-        (("prog", "-Path:", "v"), "& 'prog' -Path: 'v'"),
-        # Not a parameter name: it needs quoting, so it gets it.
-        (("prog", "-not a name"), "& 'prog' '-not a name'"),
+        (("prog.exe", PSParam("-Path:"), "v"), "& 'prog.exe' -Path: 'v'"),
+        # A plain string is a value, however much it looks like a name.
+        (
+            Cmdlet("Get-Item", "-LiteralPath", "v"),
+            "& 'Get-Item' '-LiteralPath' 'v'",
+        ),
+        (Cmdlet("prog", "-not a name"), "& 'prog' '-not a name'"),
         # The first element is the command, never a parameter name.
         (("-Weird",), "& '-Weird'"),
     ),
@@ -167,12 +182,11 @@ def test_powershell_binds_a_named_parameter(command, expected):
 
     Measured against a real powershell.exe: `Remove-Item -LiteralPath`
     rendered as three string literals returned 1, reported "A positional
-    parameter cannot be found", and left the file in place. Rendered with
-    the name unquoted it returns 0 and the file is gone.
+    parameter cannot be found", and left the file in place. `PSParam` is the
+    one spelling that renders a name bare; nothing is inferred from the shape
+    of a string.
     """
-    from hostctl.shell import PowerShellFlavour
-
-    assert PowerShellFlavour(7).structured_command(command) == expected
+    assert PowerShellFlavour(7).command_text(command) == expected
 
 
 def test_raw_shell_source_may_span_lines():
@@ -267,12 +281,18 @@ def test_powershell_5_escapes_for_a_native_line_and_not_for_a_cmdlet():
 
 def test_the_target_is_inferred_where_it_is_decidable():
     """cmd knows its own builtin list; PowerShell cannot know a cmdlet."""
-    from hostctl.shell import POWERSHELL, ShellTarget
-
     assert CMD.command_target(("del", "/q", "x")) is ShellTarget.SHELL
     assert CMD.command_target(("tool.exe", "x")) is ShellTarget.NATIVE
-    # Deliberately not guessed: it needs a runspace to answer.
-    assert POWERSHELL.command_target(("Remove-Item", "x")) is ShellTarget.NATIVE
+    assert CMD.command_target(("TOOL.COM", "x")) is ShellTarget.NATIVE
+    assert CMD.command_target(("run.bat", "x")) is ShellTarget.BATCH
+    assert CMD.command_target((r"C:\a\Run.CMD", "x")) is ShellTarget.BATCH
+    # A bare name, or a script type PATHEXT knows, may be a batch file.
+    assert CMD.command_target(("git", "x")) is ShellTarget.UNRESOLVED
+    assert CMD.command_target(("tool.ps1", "x")) is ShellTarget.UNRESOLVED
+    # PowerShell cannot know a cmdlet from a program: only a suffix decides.
+    assert POWERSHELL.command_target(("Remove-Item", "x")) is ShellTarget.UNRESOLVED
+    assert POWERSHELL.command_target(("tool.exe", "x")) is ShellTarget.NATIVE
+    assert POWERSHELL.command_target(("run.cmd", "x")) is ShellTarget.BATCH
 
 
 def test_the_cwd_guard_covers_the_whole_payload_by_declaration():
@@ -313,3 +333,152 @@ def test_an_operator_guard_without_a_command_slot_is_refused():
 
     with pytest.raises(ValueError, match="context_order"):
         _Broken().script(("a",), cwd="/srv")
+
+
+@pytest.mark.parametrize(
+    ("value", "token"),
+    (
+        ("plain", '"plain"'),
+        ("a b", '"a b"'),
+        ("", '""'),
+        ('say "hi"', '"say ""hi"""'),
+        ("100%", '"100%%cd:~,%"'),
+        ("%OS%", '"%%cd:~,%OS%%cd:~,%"'),
+        ("trail\\", '"trail\\\\"'),
+        ('a\\"b', '"a\\\\""b"'),
+        ("x&y|z<w>q^r", '"x&y|z<w>q^r"'),
+    ),
+)
+def test_a_batch_argument_is_one_quoted_token(value, token):
+    """A batch file's `%*` is spliced into a line cmd parses again.
+
+    Inside the span cmd keeps `& | < > ^` as data, `%` is written as an
+    expansion of an empty variable's slice so it survives the second
+    percent pass, and `""` is the only quote cmd keeps balanced.
+    """
+    assert CMD.argument(value, target=ShellTarget.BATCH) == token
+
+
+def test_a_batch_command_uses_the_batch_token_for_every_argument():
+    rendered = CMD.structured_command((r"C:\tools\run.bat", 'a"b', "c d"))
+
+    assert rendered == 'C:\\tools\\run.bat "a""b" "c d"'
+
+
+def test_a_program_with_a_space_is_quoted_plainly_in_cmd():
+    """The first element is read as a command word, not as argv data."""
+    rendered = CMD.structured_command((r"C:\Program Files\App\app.exe", "x"))
+
+    assert rendered == '"C:\\Program Files\\App\\app.exe" x'
+
+
+def test_a_program_with_a_space_is_a_literal_in_powershell():
+    for flavour in (POWERSHELL, PWSH):
+        rendered = flavour.structured_command((r"C:\Program Files\App\app.exe", "x"))
+        assert rendered == "& 'C:\\Program Files\\App\\app.exe' 'x'"
+
+
+def test_cmd_refuses_a_quote_for_a_program_it_cannot_classify():
+    with pytest.raises(ValueError, match="batch file"):
+        CMD.structured_command(("git", 'say "hi"'))
+    # Nothing a batch re-parse could act on: `%`, `^` and `!` corrupt but
+    # cannot start a command, so they are not refused.
+    assert CMD.structured_command(("git", "100%")) == "git " + CMD.quote("100%")
+    # A program known to be native keeps the quote.
+    assert CMD.structured_command(("tool.exe", 'say "hi"'))
+
+
+@pytest.mark.parametrize("value", ('a"b', "a&b", "a|b", "a<b", "a>b"))
+@pytest.mark.parametrize("flavour", (POWERSHELL, PWSH))
+def test_powershell_refuses_a_batch_active_value_for_an_unclassified_program(
+    flavour, value
+):
+    """PowerShell passes a value with no space unquoted, so a batch file
+    behind a bare name would execute the part after the metacharacter."""
+    with pytest.raises(ValueError, match="batch file"):
+        flavour.structured_command(("hcshim", value))
+    # The suffix says what it is, and each target has its own rule.
+    assert flavour.structured_command(("hcshim.exe", value))
+    assert flavour.structured_command(("hcshim.bat", value))
+    # A cmdlet is its own spelling and nothing is refused.
+    assert flavour.command_text(Cmdlet("Write-Output", value))
+
+
+def test_powershell_batch_argument_is_a_literal_of_the_batch_token():
+    for flavour in (POWERSHELL, PWSH):
+        rendered = flavour.structured_command(("run.cmd", 'x" & y', "100%"))
+        assert rendered == "& 'run.cmd' '\"x\"\" & y\"' '\"100%%cd:~,%\"'"
+
+
+def test_pwsh_refuses_a_batch_argument_its_binder_would_quote_again():
+    """pwsh does not count a quote that follows a backslash, so for
+    `q\\\\" x` it sees an even count at the space and wraps the token."""
+    with pytest.raises(ValueError, match="second time"):
+        PWSH.structured_command(("run.cmd", 'q\\\\" x'))
+    # Windows PowerShell counts every quote and leaves it alone.
+    assert POWERSHELL.structured_command(("run.cmd", 'q\\\\" x'))
+
+
+@pytest.mark.parametrize(
+    "value",
+    ('x" y', 'report" /MIR', '" "', '"a b"', 'a\\"b c', 'k" v w'),
+)
+def test_powershell_5_refuses_what_its_binder_would_split(value):
+    """PS 5 wraps a native argument only when whitespace sits at an even
+    count of quotes; with `\\"` as the only literal-quote spelling, a value
+    whose every space follows an odd count cannot be passed at all."""
+    with pytest.raises(ValueError, match="PWSH"):
+        POWERSHELL.structured_command(("tool.exe", value))
+    # pwsh passes it as one argument.
+    assert PWSH.structured_command(("tool.exe", value))
+
+
+@pytest.mark.parametrize(
+    "value",
+    ('my file" /MIR "z', 'a b" c', 'one " two " three', "a b", "plain", ""),
+)
+def test_powershell_5_still_passes_a_value_its_binder_wraps(value):
+    assert POWERSHELL.structured_command(("tool.exe", value))
+
+
+def test_a_plain_string_is_never_a_parameter_name():
+    rendered = PWSH.structured_command(("tool.exe", "-Force"))
+
+    assert rendered == "& 'tool.exe' '-Force'"
+
+
+def test_psparam_validates_its_name_and_is_not_iterable():
+    import collections.abc
+
+    assert PSParam("-Path:").name == "-Path:"
+    for bad in ("Path", "-a b", "-1x", "--x", "-a'b", ""):
+        with pytest.raises(ValueError):
+            PSParam(bad)
+    assert not isinstance(PSParam("-Force"), collections.abc.Iterable)
+    assert not isinstance(Cmdlet("Get-Item"), collections.abc.Iterable)
+
+
+def test_cmdlet_arguments_are_scalar_values():
+    with pytest.raises(TypeError):
+        Cmdlet("Get-Item", ["a"])
+    with pytest.raises(TypeError):
+        Cmdlet("Get-Item", 3)
+    with pytest.raises(TypeError):
+        Cmdlet("")
+
+
+def test_other_shells_refuse_the_powershell_markers():
+    for flavour in (POSIX_SHELL, ZSH, CMD):
+        with pytest.raises(TypeError):
+            flavour.script([Cmdlet("Get-Item", "x")])
+        with pytest.raises(TypeError):
+            flavour.script([("prog", PSParam("-Force"))])
+
+
+def test_a_cmdlet_takes_no_c_runtime_escaping():
+    """No native program re-parses a cmdlet line, so a quote stays a quote."""
+    value = 'a "quoted" value'
+
+    assert POWERSHELL.command_text(Cmdlet("Write-Output", value)) == (
+        "& 'Write-Output' 'a \"quoted\" value'"
+    )

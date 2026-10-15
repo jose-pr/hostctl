@@ -165,21 +165,30 @@ def _batch_safe(argv):
     The inserted shell is the platform's, so the escaping has to be too: the
     line is built with cmd's own quoting and submitted as a command line.
     That is not an added shell layer; it is the one Windows already added,
-    finally accounted for. A `"` inside a value still cannot round-trip
-    through a batch `%1` -- that is cmd's own limitation -- but it can no
-    longer execute anything.
+    finally accounted for. Each argument is the batch token (see
+    `ShellTarget.BATCH`): a Microsoft C runtime reads its `""` as one quote,
+    while a consumer using `CommandLineToArgvW` may split a value with
+    whitespace after a quote; either way it executes nothing.
+
+    The program is quoted plainly: `CreateProcess` reads that token before
+    cmd does, so no escape can serve both, and a `"` or `%` in the path is
+    refused.
     """
     if os.name != "nt" or not argv:
         return argv
-    program = argv[0]
-    if not str(program).casefold().endswith(_BATCH_SUFFIXES):
+    program = str(argv[0])
+    if not program.casefold().endswith(_BATCH_SUFFIXES):
         return argv
+    if '"' in program or "%" in program:
+        raise ValueError(
+            f"a batch file path must not contain a quote or a percent sign: {program!r}"
+        )
     from ..shell import CMD, ShellTarget
 
-    # The public hook, not a private helper reached across packages: the
-    # inserted shell is cmd, and what re-parses the line after it is the
-    # batch file's own C runtime -- which is exactly `ShellTarget.NATIVE`.
-    return " ".join(CMD.argument(value, target=ShellTarget.NATIVE) for value in argv)
+    return " ".join(
+        [f'"{program}"']
+        + [CMD.argument(value, target=ShellTarget.BATCH) for value in argv[1:]]
+    )
 
 
 class LocalExecutor(Executor[subprocess.CompletedProcess]):

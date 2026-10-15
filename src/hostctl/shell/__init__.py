@@ -12,6 +12,7 @@ from ._common import (
     ShellSession as ShellSession,
     ShellToken as ShellToken,
 )
+from ._grammar import Cmdlet as Cmdlet, PSParam as PSParam
 from .cmd import CmdShellFlavour as CmdShellFlavour
 from .fish import FishShellFlavour as FishShellFlavour
 from .posix import (
@@ -104,12 +105,14 @@ __all__ = [
     "ZSH",
     "FISH",
     "CMD",
+    "Cmdlet",
     "BashShellFlavour",
     "CmdShellFlavour",
     "FishShellFlavour",
     "POWERSHELL",
     "PosixShellFlavour",
     "PowerShellFlavour",
+    "PSParam",
     "PWSH",
     "Shell",
     "ShellCommand",

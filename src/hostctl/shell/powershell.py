@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import subprocess
-import re
 import typing
 from pathlib import PureWindowsPath
 
@@ -15,7 +14,10 @@ from ._common import (
     ShellOperator,
     ShellTarget,
     ShellToken,
+    program_target,
 )
+from ._grammar import Cmdlet, PSParam
+from .cmd import _batch_token
 
 
 def _literal(value: object) -> str:
@@ -69,15 +71,30 @@ def _crt_escape(value: str) -> str:
     return "".join(result)
 
 
-#: A PowerShell parameter name and nothing else: a leading dash, letters
-#: and digits, and an optional trailing colon (`-Path:`, the explicit-bind
-#: spelling). Deliberately narrow -- anything that needs quoting cannot
-#: match.
-_PARAMETER_NAME = re.compile(r"^-[A-Za-z][A-Za-z0-9]*:?$")
+def _binder_wraps(token: str, *, major_version: int) -> bool:
+    """Whether PowerShell re-wraps `token` in quotes for a native command line.
+
+    The legacy binder wraps an argument when whitespace sits at an even count
+    of `"` before it, counting every quote it can see (the `\\"` this package
+    emits included); version 7 does not count a quote that directly follows a
+    backslash. A token it wraps again is delivered with the extra pair read
+    as structure by the child, so the caller refuses it rather than send it.
+    """
+    quotes = 0
+    previous = ""
+    for char in token:
+        if char == '"':
+            if not (major_version >= 7 and previous == "\\"):
+                quotes += 1
+        elif char.isspace() and quotes % 2 == 0:
+            return True
+        previous = char
+    return False
 
 
-def _is_parameter_name(value: object) -> bool:
-    return isinstance(value, str) and _PARAMETER_NAME.match(value) is not None
+#: Characters a batch file's re-parse would act on, which PowerShell passes
+#: through unquoted when the value has no whitespace.
+_BATCH_ACTIVE = frozenset('"&|<>')
 
 
 class PowerShellFlavour(ShellFlavour):
@@ -136,51 +153,91 @@ class PowerShellFlavour(ShellFlavour):
     def structured_command(self, values: typing.Iterable[object]) -> str:
         """Render `& 'program' 'argument' ...` for the call operator.
 
-        A token that is exactly a PARAMETER NAME (`-LiteralPath`, `-Force`,
-        `-Path:`) is left unquoted. PowerShell's binder does not read a
-        quoted string as a parameter name -- it binds it positionally -- so
-        `["Remove-Item", "-LiteralPath", path]` rendered as three string
-        literals failed to bind and deleted nothing, with no spelling in
-        this grammar that could reach a named parameter at all. The pattern
-        admits nothing that needs quoting (no space, no quote, no dollar),
-        and for a native program an unquoted `-Force` arrives exactly as a
-        quoted one does, so this changes only the cmdlet case.
-
-        On PowerShell 5 each remaining element additionally carries
-        C-runtime escaping, because PS 5 rebuilds the native command line
-        itself and does it wrongly for quotes, empty values and trailing
-        backslashes. PowerShell 7 passes arguments to a native program
-        without that rewrite, so the escaping would be visible in the child
-        and is not applied.
+        The first element is the program and takes a plain literal. The
+        rest are classified by the program's name (`command_target`): a
+        native program, a batch file, or a name that could be either. A
+        `PSParam` is the one token rendered bare, for a program that reads
+        its own parameter names; cmdlets are `Cmdlet`.
         """
         values = tuple(values)
+        if not values:
+            return self.structured_command_prefix
+        if isinstance(values[0], PSParam):
+            raise TypeError("a PSParam cannot be the command itself")
         target = self.command_target(values)
-        rendered = []
-        for index, value in enumerate(values):
-            # Positional, not a target: the FIRST element is the command, so
-            # a `-Name`-shaped first element is a command named `-Name`.
-            if index and _is_parameter_name(value):
-                rendered.append(typing.cast(str, value))
+        rendered = [self.argument(values[0], target=ShellTarget.SHELL)]
+        for value in values[1:]:
+            if isinstance(value, PSParam):
+                rendered.append(value.name)
             else:
                 rendered.append(self.argument(value, target=target))
         return self.structured_command_prefix + " ".join(rendered)
 
+    def cmdlet_command(self, value: Cmdlet) -> str:
+        """Render `& 'Name' args` for a cmdlet, function or alias.
+
+        Arguments are PowerShell literals: no native program re-parses the
+        line, so no C-runtime escaping applies and nothing is refused.
+        """
+        rendered = [self.quote(value.name)]
+        for item in value.args:
+            if isinstance(item, PSParam):
+                rendered.append(item.name)
+            else:
+                rendered.append(self.argument(item, target=ShellTarget.CMDLET))
+        return self.structured_command_prefix + " ".join(rendered)
+
+    def command_target(self, values: typing.Sequence[object]) -> ShellTarget:
+        """Classify the program by its name; PowerShell cannot know a cmdlet.
+
+        Whether `Remove-Item` is a cmdlet or an executable on the guest's
+        PATH needs a runspace to answer, so a name with no suffix is
+        `UNRESOLVED` and the caller who knows says `Cmdlet`.
+        """
+        if not values or isinstance(values[0], PSParam):
+            return ShellTarget.NATIVE
+        return program_target(self._text(values[0]))
+
     def argument(
         self, value: object, *, target: ShellTarget = ShellTarget.NATIVE
     ) -> str:
-        """PowerShell 5 rebuilds a NATIVE command line; a cmdlet call is not one.
+        """Render one value for the parser that reads it after PowerShell.
 
-        So the C-runtime layer belongs to `NATIVE` on PowerShell 5 and
-        nowhere else: applied to a cmdlet argument it would be visible in
-        the bound parameter, and PowerShell 7 does not rebuild the line at
-        all. `command_target` deliberately does not try to tell the two
-        apart -- whether `Remove-Item` is a cmdlet or an executable on the
-        target's PATH needs a runspace to answer -- so a caller who knows
-        passes `target=ShellTarget.CMDLET` here.
+        PowerShell 5 rebuilds a NATIVE command line, so the C-runtime layer
+        belongs to `NATIVE` on 5 and nowhere else: applied to a cmdlet
+        argument it would be visible in the bound parameter, and 7 does not
+        rebuild the line. A `BATCH` target gets the batch token. A value that
+        a native line cannot carry, or that a possible batch file would
+        execute, raises rather than arriving changed.
         """
+        text = self._text(value)
+        if target is ShellTarget.BATCH:
+            token = _batch_token(text)
+            if _binder_wraps(token, major_version=self.major_version):
+                raise ValueError(
+                    f"{self.name} would quote this batch-file argument a second "
+                    f"time and the batch file would receive it split: {text!r}"
+                )
+            return _literal(token)
+        if target is ShellTarget.UNRESOLVED:
+            if _BATCH_ACTIVE.intersection(text):
+                raise ValueError(
+                    f"{text!r} could be executed if the program turns out to be a "
+                    "batch file; name the program with its .exe or .bat suffix, "
+                    "or use Cmdlet for a cmdlet"
+                )
+            target = ShellTarget.NATIVE
         if target is ShellTarget.NATIVE and self.major_version < 7:
-            return _literal(_crt_escape(self._text(value)))
-        return self.quote(value)
+            token = _crt_escape(text)
+            if any(char.isspace() for char in token) and not _binder_wraps(
+                token, major_version=5
+            ):
+                raise ValueError(
+                    "Windows PowerShell 5 would split this argument at a space "
+                    f"that follows a quote: {text!r}; use pwsh (PWSH), or Exec"
+                )
+            return _literal(token)
+        return self.quote(text)
 
     def operator(self, value: ShellOperator) -> str:
         if self.major_version >= 7 and value in (
