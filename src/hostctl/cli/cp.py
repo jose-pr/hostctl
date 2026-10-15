@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import contextlib
 
-from pathapi import Path as NextPath
-
 from ._common import Credentialed
 
 
@@ -32,10 +30,7 @@ class Cp(Credentialed):
         with contextlib.ExitStack() as stack:
             source = self.path_operand(stack, self.source)
             target = self.path_operand(stack, self.target)
-            # Python 3.14's stdlib pathlib.Path.copy() wins LocalPath's mixed
-            # MRO, so route through pathapi to keep one copy contract.
-            NextPath.copy(
-                source,
+            source.copy(
                 target,
                 overwrite=self.overwrite,
                 recursive=self.recursive,

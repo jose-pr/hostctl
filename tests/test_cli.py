@@ -111,6 +111,26 @@ def test_remote_operand_split_rejects_a_port_taken_as_the_path():
             split_operand(rejected)
 
 
+def test_cp_copies_through_the_source_path(monkeypatch):
+    """The source path's own `copy()` runs, so a transport's native copy is
+    not bypassed by a generic one."""
+    from hostctl.cli._common import Credentialed
+
+    calls = []
+
+    class _Source:
+        def copy(self, target, **options):
+            calls.append((target, options))
+
+    operands = {"a": _Source(), "b": object()}
+    monkeypatch.setattr(
+        Credentialed, "path_operand", lambda self, stack, value: operands[value]
+    )
+
+    assert main(["cp", "--overwrite", "--recursive", "a", "b"]) == 0
+    assert calls == [(operands["b"], {"overwrite": True, "recursive": True})]
+
+
 def test_cp_refuses_overwrite_without_flag(tmp_path, capsys):
     source = tmp_path / "source"
     target = tmp_path / "target"
