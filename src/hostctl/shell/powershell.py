@@ -23,6 +23,9 @@ from .cmd import _batch_token, _echo_argument
 
 #: Keeps progress records off stderr; a script that sets it itself still wins.
 _PRELUDE = "$ProgressPreference='SilentlyContinue'"
+#: pwsh colours tables and error records when TERM names a colour terminal,
+#: even into a pipe. Guarded: the executable may be a PowerShell without it.
+_PLAIN_OUTPUT = "if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }"
 
 
 def _literal(value: object) -> str:
@@ -358,7 +361,10 @@ class PowerShellFlavour(ShellFlavour):
         # The epilogue starts with a newline so a trailing `#` comment cannot
         # swallow it; joined with `;` it is only safe on a body that has none.
         epilogue = self.execution_epilogue
-        script = _PRELUDE + (";" + body if body else "") + epilogue
+        prelude = _PRELUDE
+        if self.major_version >= 7:
+            prelude += ";" + _PLAIN_OUTPUT
+        script = prelude + (";" + body if body else "") + epilogue
         one_line = not (set(body) & {"\r", "\n", "#"})
         if login_shell == "posix":
             # The portable join keeps the newline: nothing here crosses cmd.
@@ -367,7 +373,7 @@ class PowerShellFlavour(ShellFlavour):
             # `-Command` is plain-text stderr and, unlike a long
             # `-EncodedCommand`, is not refused by endpoint protection. A
             # newline cannot cross `cmd.exe /c`, hence the one-line rule.
-            joined = _PRELUDE + (";" + body if body else "") + ";"
+            joined = prelude + (";" + body if body else "") + ";"
             joined += epilogue.lstrip("\n")
             line = subprocess.list2cmdline((*options, "-Command", joined))
             return ShellCommand(_echo_argument(line), None)
@@ -392,6 +398,8 @@ class PowerShellFlavour(ShellFlavour):
     def invocation(
         self, script: str, *, executable: typing.Optional[str] = None
     ) -> typing.Sequence[str]:
+        if self.major_version >= 7:
+            script = _PLAIN_OUTPUT + (";" + script if script else "")
         return (
             executable or self.default_executable,
             "-NoProfile",

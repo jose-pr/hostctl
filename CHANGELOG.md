@@ -452,6 +452,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   contains `[`, `]`, `*` or `?`: it is backtick-escaped after `&`, where
   `C:\x\[ab]\t.cmd` ran `C:\x\a\t.cmd` if that existed. A relative path cannot
   be spelled literally on 5; see the divergence ledger.
+- Captured pwsh 7 output is plain text: `PWSH` scripts set
+  `$PSStyle.OutputRendering = 'PlainText'`, where a `TERM` naming a colour
+  terminal put ANSI colour codes into formatted tables and error records even
+  through a pipe (`run(..., capture_output=True)` returned
+  `'\x1b[32;1ma\x1b[0m'` for `a`).
 
 ### Security
 

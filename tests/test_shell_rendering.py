@@ -553,6 +553,16 @@ def test_windows_powershell_escapes_wildcards_in_an_absolute_program_path():
     assert POWERSHELL.structured_command((r".\[ab]\t.exe",)) == "& '.\\[ab]\\t.exe'"
 
 
+def test_pwsh_renders_captured_output_as_plain_text():
+    """pwsh colours tables and errors for a colour TERM, even into a pipe."""
+    plain = "if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }"
+
+    assert PWSH.invocation("x", executable="pwsh")[-1] == plain + ";x"
+    assert plain in PWSH.command(["x"], stdin_free=True).stdin
+    assert all(plain not in part for part in POWERSHELL.invocation("x"))
+    assert plain not in POWERSHELL.command(["x"], stdin_free=True).stdin
+
+
 def test_a_standalone_path_is_a_one_element_command():
     """PowerShell prints a quoted string; it needs the call operator to run."""
     exe = PureWindowsPath(r"C:\Windows\System32\whoami.exe")

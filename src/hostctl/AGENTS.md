@@ -553,7 +553,10 @@ channel's stdin (`-Command -`, `ShellCommand.stdin`) when `stdin_free`, which
 `SystemHost` sets only for a login-shell provider whose call has no `input=`/
 `stdin=`; a multi-line script or taken stdin falls back to `-EncodedCommand`
 (CLIXML stderr, decoded by `SshExecutor` for `run()`; endpoint protection flags
-it). Every form starts with `$ProgressPreference='SilentlyContinue'`.
+it). Every form starts with `$ProgressPreference='SilentlyContinue'`. `PWSH`
+(major version 7+) adds `if ($PSStyle) { $PSStyle.OutputRendering =
+'PlainText' }` there and at the start of `invocation()`'s script, so captured
+output carries no ANSI colour when `TERM` names a colour terminal.
 A timed-out `SshProcess.wait()` keeps the output it drained for `read()`;
 the exception carries a copy.
 `host` and `username` are refused where OpenSSH would refuse them (a leading
