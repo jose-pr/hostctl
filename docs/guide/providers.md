@@ -58,9 +58,10 @@ ordered, percent-encoded, secret-free provider descriptors in repeated
 from hostctl import HostConfig, PathProvider, SshConfig, register_system_provider
 
 # `sftp` is built in; `rpc` resolves only once something registers it.
-register_system_provider(
-    "rpc", lambda config, kind: PathProvider("rpc", rpc_path) if kind == "path" else None
-)
+def rpc(config, kind):
+    return PathProvider("rpc", rpc_path) if kind == "path" else None
+
+register_system_provider("rpc", rpc)
 
 config = HostConfig(
     "posix://node?executor=ssh&path=sftp&path=rpc",
