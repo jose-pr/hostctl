@@ -18,6 +18,8 @@ from urllib.parse import quote, unquote, urlencode
 
 from pathapi import Path, Pathname, PosixPathname, WindowsPathname
 from pathapi import FileStat
+from pathapi.protocols import Chmod, Create, Listing, Move, Remove, Stat
+from pathapi.providers import notimplemented
 
 from ..executor import QemuExecutor
 from ..executor._qga import (
@@ -1122,8 +1124,30 @@ class _QgaReadStream(io.RawIOBase):
             pass
 
 
+#: The guest-helper operations each protocol's primitives need. QGA's file
+#: RPCs move bytes and nothing else, so these hold only with a helper.
+_HELPER_OPERATIONS = {
+    Stat: ("stat",),
+    Listing: ("scandir",),
+    Create: ("mkdir",),
+    Remove: ("unlink", "rmdir"),
+    Chmod: ("chmod",),
+    Move: ("rename",),
+}
+
+
 class _QgaPathMixin(StagedOpenMixin):
     __slots__ = ()
+
+    def _supports(self, protocol) -> typing.Optional[bool]:
+        """Answer from the helper probed at discovery; no request is made."""
+        operations = _HELPER_OPERATIONS.get(protocol)
+        if operations is None:
+            return None
+        helper = self.backend.helper
+        return helper is not None and all(
+            callable(getattr(helper, name, None)) for name in operations
+        )
 
     def exists(self, *, follow_symlinks: bool = True) -> bool:
         # pathapi answers this from `stat()`, swallowing OSError but not
@@ -1197,6 +1221,10 @@ class _QgaPathMixin(StagedOpenMixin):
         """
         return self.with_segments(target) if isinstance(target, str) else target
 
+    @notimplemented(
+        "QEMU Guest Agent has no symlink RPC; the guest-file-* commands "
+        "only open, read, write, seek, flush, and close regular files"
+    )
     def _symlink_to(self, target, target_is_directory: bool = False):
         """Always raise -- QGA exposes no symlink RPC.
 
@@ -1206,10 +1234,12 @@ class _QgaPathMixin(StagedOpenMixin):
         different failure and permission semantics, so the gap is reported
         explicitly instead of being faked.
         """
-        self.backend.symlink(str(self), str(target))
 
-    def readlink(self):
-        return self.with_segments(self.backend.readlink(str(self)))
+    @notimplemented(
+        "QEMU Guest Agent has no readlink RPC; the guest-file-* commands "
+        "only open, read, write, seek, flush, and close regular files"
+    )
+    def readlink(self): ...
 
     def _mkdir(self, mode: int):
         self.backend.mkdir(str(self), mode)

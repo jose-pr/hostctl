@@ -372,3 +372,43 @@ def test_copy_into_a_guest_with_a_helper_replaces_the_target(tmp_path):
     Path(source).copy(target, overwrite=True)
 
     assert bytes(transport.files["/srv/report.csv"]) == b"id,value\n3,4\n"
+
+
+def test_supports_answers_from_the_probed_helper():
+    """`pathapi.protocols.supports()` says what a QGA path can do without a
+    call that raises: the helper decides the metadata and namespace
+    protocols, and no build of QGA can read or make a link."""
+    from pathapi.protocols import (
+        BinaryOpen,
+        Create,
+        Listing,
+        Readlink,
+        Remove,
+        Stat,
+        Symlink,
+        supports,
+    )
+
+    class _StatOnly:
+        def stat(self, path, *, follow_symlinks=True):
+            return FileStat(st_mode=stat.S_IFREG | 0o444)
+
+    bare = PosixQemuPath(
+        "/value",
+        backend=QgaPathBackend(_Transport(), supported_commands=FILE_COMMANDS),
+    )
+    partial = PosixQemuPath(
+        "/value",
+        backend=QgaPathBackend(
+            _Transport(), supported_commands=FILE_COMMANDS, helper=_StatOnly()
+        ),
+    )
+
+    assert supports(bare, BinaryOpen)
+    for protocol in (Stat, Listing, Create, Remove, Readlink, Symlink):
+        assert not supports(bare, protocol), protocol
+    assert supports(partial, Stat)
+    assert not supports(partial, Listing)
+    assert not supports(partial, Remove)
+    with pytest.raises(NotImplementedError, match="no readlink RPC"):
+        partial.readlink()

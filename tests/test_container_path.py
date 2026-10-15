@@ -562,3 +562,25 @@ def test_a_single_member_hardlink_archive_is_an_oserror_not_a_tar_error():
         ContainerPathBackend(container).read_bytes("/links/hard-link")
 
     assert not isinstance(raised.value, tarfile.TarError)
+
+
+def test_supports_says_what_the_archive_api_cannot_do():
+    """The archive API reads, writes and links; it cannot create a directory,
+    remove, rename or change metadata, and `supports()` says so."""
+    from pathapi.protocols import (
+        BinaryOpen,
+        Chmod,
+        Create,
+        Listing,
+        Move,
+        Readlink,
+        Remove,
+        Symlink,
+        supports,
+    )
+
+    for cls in (PosixContainerPath, WindowsContainerPath):
+        for protocol in (BinaryOpen, Listing, Readlink, Symlink):
+            assert supports(cls, protocol), (cls, protocol)
+        for protocol in (Create, Chmod, Remove, Move):
+            assert not supports(cls, protocol), (cls, protocol)

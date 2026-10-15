@@ -14,6 +14,7 @@ import typing
 from pathlib import PurePath as _StdPurePath
 from pathapi import Path, PosixPathname, WindowsPathname
 from pathapi import FileStat
+from pathapi.providers import notimplemented
 from ._staged_io import copy_from, StagedOpenMixin, staged_open
 
 
@@ -735,20 +736,23 @@ class _ContainerPathMixin(StagedOpenMixin):
     def readlink(self):
         return self.with_segments(self.backend.readlink(str(self)))
 
-    def _mkdir(self, mode: int):
-        raise NotImplementedError("Docker archive APIs cannot create directories")
+    # Marked absent, so `pathapi.protocols.supports()` answers `Create`,
+    # `Chmod`, `Remove` and `Move` False instead of a caller having to call
+    # and catch.
+    @notimplemented("Docker archive APIs cannot create directories")
+    def _mkdir(self, mode: int): ...
 
-    def chmod(self, mode: int, *, follow_symlinks: bool = True):
-        raise NotImplementedError("Docker archive APIs cannot change metadata")
+    @notimplemented("Docker archive APIs cannot change metadata")
+    def chmod(self, mode: int, *, follow_symlinks: bool = True): ...
 
-    def unlink(self, missing_ok=False):
-        raise NotImplementedError("Docker archive APIs cannot remove paths")
+    @notimplemented("Docker archive APIs cannot remove paths")
+    def unlink(self, missing_ok=False): ...
 
-    def rmdir(self):
-        raise NotImplementedError("Docker archive APIs cannot remove paths")
+    @notimplemented("Docker archive APIs cannot remove paths")
+    def rmdir(self): ...
 
-    def rename(self, target):
-        raise NotImplementedError("Docker archive APIs cannot rename paths")
+    @notimplemented("Docker archive APIs cannot rename paths")
+    def rename(self, target): ...
 
 
 class PosixContainerPath(_ContainerPathMixin, PosixPathname, Path):
