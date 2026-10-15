@@ -14,7 +14,12 @@ import pytest
 
 from hostctl import Cmdlet, Exec
 
-from .providers import deterministic_providers, live_providers, provider_context
+from .providers import (
+    contract_providers,
+    live_providers,
+    provider_context,
+    require,
+)
 
 
 def test_live_provider_registry_is_env_gated():
@@ -22,10 +27,11 @@ def test_live_provider_registry_is_env_gated():
     assert providers and providers[0].name == "local"
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_direct_argv_and_capture(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    require(provider, "local-python")
     with provider_context(provider) as host:
         result = host.run(
             Exec(
@@ -45,10 +51,11 @@ def test_direct_argv_and_capture(provider):
     assert result.stderr.startswith(b"err")
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_text_env_and_nonzero_check(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    require(provider, "local-python")
     if "env" not in provider.capabilities:
         pytest.skip(f"{provider.name} does not support environment overrides")
     code = "import os; print(os.environ['HOSTCTL_CONFORMANCE'])"
@@ -71,17 +78,22 @@ def test_text_env_and_nonzero_check(provider):
             # variable is visible is true under replace semantics too, which
             # is how the local executor came to replace the environment while
             # every other transport added to it.
-            survived = host.run(
-                Exec(
-                    sys.executable,
-                    "-c",
-                    "import os; print(os.environ.get('HOSTCTL_INHERITED', '<gone>'))",
-                ),
-                env={"HOSTCTL_CONFORMANCE": "1"},
-                text=True,
+            # A live server never sees this process's environment, so there
+            # the target's own PATH is the inherited value that must survive.
+            name = "PATH" if provider.live else inherited
+            probe = Exec(
+                sys.executable,
+                "-c",
+                f"import os; print(os.environ.get({name!r}, '<gone>'))",
             )
+            expected = (
+                host.run(probe, text=True).stdout.splitlines()[0]
+                if provider.live
+                else "kept"
+            )
+            survived = host.run(probe, env={"HOSTCTL_CONFORMANCE": "1"}, text=True)
             assert (
-                survived.stdout.splitlines()[0] == "kept"
+                expected != "<gone>" and survived.stdout.splitlines()[0] == expected
             ), f"{provider.name} replaced the environment instead of adding to it"
     finally:
         os.environ.pop(inherited, None)
@@ -94,11 +106,12 @@ def test_text_env_and_nonzero_check(provider):
             host.run(Exec(sys.executable, "-c", "raise SystemExit(4)"))
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_env_values_never_reach_exception_text(provider):
     """An environment value embedded in the command is masked in what is shown."""
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    require(provider, "local-python")
     if "env" not in provider.capabilities:
         pytest.skip(f"{provider.name} does not support environment overrides")
     secret = "dummy-not-a-secret-7f3a"
@@ -120,7 +133,7 @@ def test_env_values_never_reach_exception_text(provider):
             assert secret not in str(expired.value) + repr(expired.value)
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_errors_alone_selects_text_mode(provider):
     """`subprocess.run`'s rule: any of text/encoding/errors means `str`.
 
@@ -131,6 +144,7 @@ def test_errors_alone_selects_text_mode(provider):
     """
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    require(provider, "local-python")
     with provider_context(provider) as host:
         result = host.run(
             Exec(sys.executable, "-c", "print('value')"), errors="replace"
@@ -143,7 +157,7 @@ def test_errors_alone_selects_text_mode(provider):
     assert isinstance(binary.stdout, bytes)
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_uncaptured_output_reaches_the_substituted_stdout(provider, monkeypatch):
     """A buffered transport writes an uncaptured stream to `sys.stdout`.
 
@@ -158,6 +172,7 @@ def test_uncaptured_output_reaches_the_substituted_stdout(provider, monkeypatch)
     """
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    require(provider, "local-python")
     if provider.name == "local":
         pytest.skip("local inherits the real stdout descriptor; nothing to route")
     sink = io.StringIO()
@@ -172,10 +187,11 @@ def test_uncaptured_output_reaches_the_substituted_stdout(provider, monkeypatch)
     assert "routed" in sink.getvalue()
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_cwd_is_applied_only_when_supported(provider, tmp_path):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    require(provider, "local-python")
     if "cwd" not in provider.capabilities:
         pytest.skip(f"{provider.name} does not support cwd")
     with provider_context(provider) as host:
@@ -187,24 +203,26 @@ def test_cwd_is_applied_only_when_supported(provider, tmp_path):
     assert Path(result.stdout.strip()) == tmp_path
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_silent_capture_is_empty_bytes(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    require(provider, "local-python")
     with provider_context(provider) as host:
         result = host.run(Exec(sys.executable, "-c", "pass"))
     assert result.stdout == b""
     assert result.stderr == b""
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_shell_command_shapes_and_operators_remain_explicit(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
     with provider_context(provider) as host:
-        invocation = host.shell_flavour.invocation("echo first")
-        if shutil.which(invocation[0]) is None:
-            pytest.skip(f"shell executable {invocation[0]!r} is unavailable")
+        # The executable, not `invocation()`: cmd has no argv spelling.
+        shell = host.shell_flavour.default_executable
+        if shutil.which(shell) is None:
+            pytest.skip(f"shell executable {shell!r} is unavailable")
         # Sequence syntax is portable to POSIX sh and Windows PowerShell 5;
         # raw strings remain shell source rather than argv data.
         raw = host.run("echo first; echo second")
@@ -218,10 +236,11 @@ def test_shell_command_shapes_and_operators_remain_explicit(provider):
     assert b"one" in joined.stdout and b"two" in joined.stdout
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_timeout_and_input_are_subprocess_compatible(provider):
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    require(provider, "local-python")
     required = {"input", "timeout"}
     missing = required - provider.capabilities
     if missing:
@@ -239,7 +258,7 @@ def test_timeout_and_input_are_subprocess_compatible(provider):
             )
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_every_timeout_carries_the_same_payload(provider):
     """`subprocess.TimeoutExpired` is the shared type, and the attributes
     hung off it were per-transport: `.orphaned` and `.pid` existed only on
@@ -251,6 +270,7 @@ def test_every_timeout_carries_the_same_payload(provider):
     """
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    require(provider, "local-python")
     if "timeout" not in provider.capabilities:
         pytest.skip(f"{provider.name} does not support timeout")
     with provider_context(provider) as host:
@@ -267,7 +287,7 @@ def test_every_timeout_carries_the_same_payload(provider):
     assert error.stderr is not None
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_the_registry_capabilities_match_the_host_that_was_built(provider):
     """The registry's capability strings are hand-written in parallel with the
     hosts, and every case in this battery skips itself when a capability is
@@ -301,7 +321,7 @@ def test_the_registry_capabilities_match_the_host_that_was_built(provider):
         )
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_a_shell_rendered_command_times_out_too(provider):
     """Every timeout case in this battery used `Exec`.
 
@@ -313,12 +333,14 @@ def test_a_shell_rendered_command_times_out_too(provider):
     """
     if "run" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no run capability")
+    require(provider, "local-python")
     if "timeout" not in provider.capabilities:
         pytest.skip(f"{provider.name} does not support timeout")
     with provider_context(provider) as host:
-        invocation = host.shell_flavour.invocation("echo probe")
-        if shutil.which(invocation[0]) is None:
-            pytest.skip(f"shell executable {invocation[0]!r} is unavailable")
+        # The executable, not `invocation()`: cmd has no argv spelling.
+        shell = host.shell_flavour.default_executable
+        if shutil.which(shell) is None:
+            pytest.skip(f"shell executable {shell!r} is unavailable")
         # Rendered as shell source, not as argv: `structured_command` is
         # what a flavour calls a command line, call operator included.
         script = host.shell_flavour.structured_command(

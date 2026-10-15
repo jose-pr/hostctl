@@ -815,7 +815,9 @@ def fake_providers() -> tuple[Provider, ...]:
 
     Each factory constructs a concrete :class:`Host` implementation with its
     own fake session/client boundary.  The fake boundary executes locally so
-    the shared contract remains deterministic and network-free.
+    the shared contract remains deterministic and network-free -- and every
+    fake declares `local-python`: its target is this interpreter and this
+    machine's filesystem.
     """
 
     return (
@@ -823,7 +825,17 @@ def fake_providers() -> tuple[Provider, ...]:
             "local",
             _local,
             frozenset(
-                ("run", "path", "args", "cwd", "env", "input", "timeout", "symlink")
+                (
+                    "run",
+                    "path",
+                    "args",
+                    "cwd",
+                    "env",
+                    "input",
+                    "timeout",
+                    "symlink",
+                    "local-python",
+                )
             ),
         ),
         Provider(
@@ -843,13 +855,14 @@ def fake_providers() -> tuple[Provider, ...]:
                     # the asyncssh channel shape, so the production SshProcess
                     # adapter really runs.  Never touches the network.
                     "spawn",
+                    "local-python",
                 )
             ),
         ),
         Provider(
             "winrm",
             lambda: _fake(FakeWinRMHost),
-            frozenset(("run", "path", "args", "cwd", "env", "symlink")),
+            frozenset(("run", "path", "args", "cwd", "env", "symlink", "local-python")),
         ),
         Provider(
             "container",
@@ -858,7 +871,18 @@ def fake_providers() -> tuple[Provider, ...]:
             # subprocess wrapped in Docker's exec stream framing, so
             # ContainerProcess's real demultiplexing runs.  No daemon, no
             # socket, no network.
-            frozenset(("run", "path", "args", "cwd", "env", "symlink", "spawn")),
+            frozenset(
+                (
+                    "run",
+                    "path",
+                    "args",
+                    "cwd",
+                    "env",
+                    "symlink",
+                    "spawn",
+                    "local-python",
+                )
+            ),
         ),
         Provider(
             "qemu",
@@ -868,7 +892,7 @@ def fake_providers() -> tuple[Provider, ...]:
             # REPLACES the environment -- so hostctl embeds assignments in a
             # rendered script and a direct `Exec` refuses them, exactly as it
             # already refused cwd.
-            frozenset(("run", "path", "args", "input", "timeout")),
+            frozenset(("run", "path", "args", "input", "timeout", "local-python")),
             symlink_gap=(
                 "QEMU Guest Agent has no symlink RPC (guest-file-* covers only "
                 "open/read/write/seek/flush/close)"
@@ -879,7 +903,7 @@ def fake_providers() -> tuple[Provider, ...]:
             lambda: _fake(FakeQemuWindowsHost),
             # Paths only: the shipped Windows helper runs the WinRM scripts
             # through guest-exec, which the transport interprets.
-            frozenset(("path",)),
+            frozenset(("path", "local-python")),
             symlink_gap=(
                 "QEMU Guest Agent has no symlink RPC (guest-file-* covers only "
                 "open/read/write/seek/flush/close)"
@@ -892,7 +916,7 @@ def fake_providers() -> tuple[Provider, ...]:
             # A serial console is a persistent merged byte stream, so spawn is
             # its native mode; `loop://` is pyserial's in-memory loopback and
             # opens no device and no socket.
-            frozenset(("session", "spawn")),
+            frozenset(("session", "spawn", "local-python")),
         ),
     )
 
@@ -954,6 +978,19 @@ def deterministic_providers() -> tuple[Provider, ...]:
     )
 
 
+def contract_providers() -> tuple[Provider, ...]:
+    """Every leg the contract suites run over: deterministic plus live.
+
+    The live `local` and `loop-serial` legs duplicate the `local` and
+    `serial` fakes, so they stay with `test_live.py`.
+    """
+    return deterministic_providers() + tuple(
+        provider
+        for provider in live_providers()
+        if provider.name not in ("local", "loop-serial")
+    )
+
+
 def require(provider: Provider, token: str) -> None:
     """Skip unless `provider` declares `token`, naming both."""
     if token not in provider.capabilities:
@@ -964,6 +1001,10 @@ def conformance_path(host, provider: Provider, tmp_path: Path, *parts: str):
     """Return an existing, transport-native scratch root joined with parts."""
 
     token = tmp_path.name
+    if provider.live:
+        # A live remote has no `/hostctl-conformance`; only one on this
+        # machine can be handed `tmp_path`.
+        require(provider, "local-python")
     if provider.name in ("winrm", "qemu-windows"):
         root = host.path(r"C:\hostctl-conformance", token)
     elif provider.name in ("ssh", "ssh-inproc", "qemu"):
@@ -997,36 +1038,43 @@ def live_providers() -> tuple[Provider, ...]:
     if os.environ.get("HOSTCTL_TEST_SSH_LOCAL") == "1":
         # The SSH fixture is intentionally environment-only.  Connection
         # failures are reported as pytest skips by provider_context, never
-        # replaced with LocalHost.
+        # replaced with LocalHost. The server is on this machine, so it runs
+        # this interpreter and sees `tmp_path`: hence `local-python`.
         providers.append(
             Provider(
                 "ssh-local",
                 _ssh_local,
-                frozenset(("run", "path")),
+                frozenset(
+                    (
+                        "run",
+                        "path",
+                        "args",
+                        "cwd",
+                        "env",
+                        "input",
+                        "timeout",
+                        "spawn",
+                        "local-python",
+                    )
+                ),
                 True,
                 symlink_gap=_LIVE_SYMLINK_GAP,
             )
         )
     if os.environ.get("HOSTCTL_TEST_DOCKER") == "1":
-        try:
-            import docker
-
-            client = docker.from_env()
-            client.ping()
-        except Exception:
-            pass
-        else:
-            providers.append(
-                Provider(
-                    "docker-live",
-                    _docker_live,
-                    frozenset(("run", "path")),
-                    True,
-                    symlink_gap=_LIVE_SYMLINK_GAP,
-                )
+        # Registered on the gate alone: an unreachable engine fails the
+        # factory, which `provider_context` reports as a skip with the cause.
+        providers.append(
+            Provider(
+                "docker-live",
+                _docker_live,
+                frozenset(("run", "path", "spawn")),
+                True,
+                symlink_gap=_LIVE_SYMLINK_GAP,
             )
+        )
     for name, variable, capabilities in (
-        ("ssh-uri", "HOSTCTL_TEST_SSH_URI", frozenset(("run", "path"))),
+        ("ssh-uri", "HOSTCTL_TEST_SSH_URI", frozenset(("run", "path", "spawn"))),
         ("winrm-uri", "HOSTCTL_TEST_WINRM_URI", frozenset(("run", "path"))),
         ("qemu-uri", "HOSTCTL_TEST_QEMU_URI", frozenset(("run", "path"))),
     ):

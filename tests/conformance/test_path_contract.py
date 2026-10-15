@@ -9,12 +9,10 @@ import pytest
 
 from pathapi import Path as NextPath
 
-from .providers import conformance_path, deterministic_providers, provider_context
+from .providers import conformance_path, contract_providers, provider_context
 
 _PATH_PROVIDERS = tuple(
-    provider
-    for provider in deterministic_providers()
-    if "path" in provider.capabilities
+    provider for provider in contract_providers() if "path" in provider.capabilities
 )
 
 
@@ -45,7 +43,7 @@ def _link_target_parts(path) -> tuple:
     return tuple(parts)
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_path_round_trip_and_type(provider, tmp_path):
     if "path" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no path capability")
@@ -70,7 +68,7 @@ if os.name != "nt":
 
 
 @pytest.mark.parametrize("name", _URI_SYNTAX_NAMES)
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_path_names_containing_uri_syntax_address_the_right_file(
     provider, tmp_path, name
 ):
@@ -89,7 +87,22 @@ def test_path_names_containing_uri_syntax_address_the_right_file(
         assert path.read_bytes() == b"addressed"
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+def _error_type_legs():
+    for provider in contract_providers():
+        windows_server = os.environ.get("HOSTCTL_TEST_SSH_FLAVOUR") == "windows"
+        if provider.name == "ssh-local" and windows_server:
+            reason = (
+                "Windows OpenSSH's SFTP server opens a directory for reading and "
+                "an unsized read returns b'' (asyncssh reads fstat's st_size, 0)"
+            )
+            yield pytest.param(
+                provider, marks=pytest.mark.xfail(strict=True, reason=reason)
+            )
+        else:
+            yield provider
+
+
+@pytest.mark.parametrize("provider", tuple(_error_type_legs()), ids=lambda p: p.name)
 def test_path_error_types(provider, tmp_path):
     if "path" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no path capability")
@@ -119,7 +132,7 @@ def test_path_error_types(provider, tmp_path):
             list(file_path.iterdir())
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_path_empty_text_and_metadata_roundtrip(provider, tmp_path):
     if "path" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no path capability")
@@ -133,7 +146,7 @@ def test_path_empty_text_and_metadata_roundtrip(provider, tmp_path):
         assert text.stat().st_size == len("héllo".encode())
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_path_dangling_symlink_exists_is_boolean(provider, tmp_path):
     if "path" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no path capability")
@@ -162,7 +175,7 @@ def test_path_dangling_symlink_exists_is_boolean(provider, tmp_path):
         assert link.is_symlink() is True
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_path_symlink_round_trips_through_readlink(provider, tmp_path):
     """A backend advertising symlinks must read back the stored target."""
 
@@ -190,7 +203,7 @@ def test_path_symlink_round_trips_through_readlink(provider, tmp_path):
         assert _link_target_parts(link.readlink()) == _link_target_parts(target)
 
 
-@pytest.mark.parametrize("provider", deterministic_providers(), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_path_symlink_gap_is_explicit(provider, tmp_path):
     """A backend without symlink support must say so, never fail silently."""
 
@@ -198,6 +211,9 @@ def test_path_symlink_gap_is_explicit(provider, tmp_path):
         pytest.skip(f"{provider.name} has no path capability")
     if "symlink" in provider.capabilities:
         pytest.skip(f"{provider.name} supports symlinks")
+    if provider.live:
+        # A live gap is the remote's unknown policy, not a missing primitive.
+        pytest.skip(f"{provider.name}: {provider.symlink_gap}")
     with provider_context(provider) as host:
         link = conformance_path(host, provider, tmp_path, "unsupported-link")
         with pytest.raises(NotImplementedError):
@@ -214,6 +230,7 @@ def test_path_contract_uses_real_transport_backend(provider, tmp_path):
         "local": ("LocalPath",),
         "ssh": ("SFTPPath",),
         "ssh-inproc": ("SFTPPath",),
+        "ssh-local": ("SFTPPath",),
         "winrm": ("WinRMPath",),
         "container": ("PosixContainerPath", "WindowsContainerPath"),
         "qemu": ("PosixQemuPath", "WindowsQemuPath"),

@@ -1,7 +1,9 @@
 """Opt-in live provider smoke legs.
 
 The default local leg always runs. Docker and SSH registrations are enabled by
-environment variables in CI and skipped transparently otherwise.
+environment variables in CI and skipped transparently otherwise. The contract
+suites run over the same live legs (`contract_providers()`); these are the
+cases that only make sense against a real remote.
 """
 
 from __future__ import annotations
@@ -80,10 +82,9 @@ def test_ssh_local_gate_is_explicit():
 def test_live_sftp_addresses_uri_syntax_filenames(name):
     """Only a real SFTP server settles this one.
 
-    The remote path is embedded in an `sftp://` URI, and the fakes reach
-    their sandbox without going through that construction -- so the encoding
-    is proven here and by `tests/test_host_remote.py`, not by the fake
-    conformance leg.
+    The SSH path leg passes the remote name to sftppath as a keyword, never
+    inside a URI, so no percent-decoding may touch it; this proves the name
+    reaches a real server's filesystem intact.
     """
     # Any registered SSH leg, by prefix: the localhost sshd leg is named
     # "ssh-local" and the URI-driven one "ssh-uri". Looking up the bare name
