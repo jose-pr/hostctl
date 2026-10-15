@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - A WinRM, Docker archive or QGA write stream whose `with` block raises
     still uploads nothing, and no longer also emits a `ResourceWarning`; one
     collected unclosed still warns. The stream is pathapi's `DiscardOnError`.
+  - `pathlib.Path(src).copy(host_path)` onto an existing directory of a
+    WinRM, Docker archive or QGA host raises `FileExistsError`, as onto a local
+    directory; it merged before.
+  - A WinRM, Docker archive or QGA write stream whose upload fails on
+    `close()` is closed; write again to retry.
 - **Requires netimps 0.4** (`netimps>=0.4.0,<0.5`, was `>=0.3.0,<0.4`). No
   hostctl code changed, but three things change for a caller:
   - `winrm`, `winrms`, `wsman`, `wsmans` and `psrp` now have default ports
@@ -149,6 +154,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`move()` between two WinRM hosts, or two QGA hosts, copies and deletes**
+  instead of raising `ValueError`; a direct `rename()` across hosts raises
+  `OSError(EXDEV)`. `chmod("755")` works on WinRM and QGA paths.
+- **`Path.copy()` into a WinRM, container or QGA path refuses a source name that
+  is not one path component** (`ValueError`), where `..\x` could land outside
+  the destination.
+- **`hostctl cp` keeps a transport's native copy** instead of bypassing the
+  source path's own `copy()`.
 - **A serial or QEMU console process can no longer free a lease it does not
   hold.** Closing a stale process after the host was closed and reopened
   released the new process's lease, so a third `open()` succeeded and read the

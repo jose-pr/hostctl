@@ -654,6 +654,14 @@ first prompt (`ValueError` unless positive); it is not part of the URI.
 pair of a login sequence, and `ConsoleProtocolError` what a profile raises
 when the console does not answer the way the protocol requires.
 
+WinRM, container and QGA paths share one base. `rename()` onto a path of
+another host raises `OSError(EXDEV)`, which `move()` takes as the cue to copy
+and delete; `chmod()` takes a mode int or an octal string. A write stream
+(`open("w")`, `"r+"`, `"a"`) uploads once on `close()` and is closed even when
+the upload fails, so write again to retry. `pathlib.Path(src).copy(dest)` onto
+such a path raises `FileExistsError` for an existing directory and
+`ValueError` for a source name that is not one path component.
+
 `TerminalOptions(term, columns, rows, pixel_width, pixel_height)` is the
 resolved terminal request `spawn(terminal=...)` produces.
 
