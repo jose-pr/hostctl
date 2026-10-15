@@ -12,6 +12,7 @@ inside the wheel.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -24,37 +25,64 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="module")
-def wheel(tmp_path_factory):
+def tree(tmp_path_factory):
+    """A copy of the tracked tree to build from, with the unshared files an
+    exclusion exists for planted in it.
+
+    Building from the checkout itself would write those files into `src/`,
+    and an interrupted run would leave them there. The tracked files are
+    copied with their working-tree contents, so the build tests the edit
+    under test and not the last commit.
+    """
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=str(ROOT),
+            capture_output=True,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        pytest.skip(f"the tracked file list is unavailable: {error}")
+    copy = tmp_path_factory.mktemp("tree")
+    for name in listed.decode("utf-8").split("\0"):
+        source = ROOT / name
+        # No .gitignore: the build manifest must exclude the planted files on
+        # its own, not lean on the ignore file hatchling also honours.
+        if name and name != ".gitignore" and source.is_file():
+            target = copy / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+    for planted in (
+        "src/hostctl/AGENTS.local.md",
+        "CLAUDE.md",
+        "src/hostctl/CLAUDE.md",
+    ):
+        (copy / planted).write_text(
+            "machine-specific notes" + chr(10), encoding="utf-8"
+        )
+    return copy
+
+
+@pytest.fixture(scope="module")
+def wheel(tmp_path_factory, tree):
     pytest.importorskip("hatchling", reason="the build backend is not installed")
     pytest.importorskip("build", reason="the build frontend is not installed")
     output = tmp_path_factory.mktemp("dist")
-    # Plant the file the exclusion exists for, so the assertion below is
-    # never vacuous. It is ignored by git and removed again below.
-    planted = ROOT / "src" / "hostctl" / "AGENTS.local.md"
-    planted_existed = planted.exists()
-    if not planted_existed:
-        planted.write_text("machine-specific notes" + chr(10), encoding="utf-8")
     # `-n`: no isolation, so this needs no network and uses the backend that
     # is already installed.
     built = subprocess.run(
         [sys.executable, "-m", "build", "--wheel", "-n", "-o", str(output)],
-        cwd=str(ROOT),
+        cwd=str(tree),
         capture_output=True,
         text=True,
     )
     if built.returncode != 0:
-        if not planted_existed:
-            planted.unlink(missing_ok=True)
         pytest.skip(
             f"wheel build unavailable: {built.stdout[-400:]}{built.stderr[-400:]}"
         )
     wheels = sorted(output.glob("*.whl"))
     assert wheels, built.stdout
-    try:
-        yield wheels[-1]
-    finally:
-        if not planted_existed:
-            planted.unlink(missing_ok=True)
+    return wheels[-1]
 
 
 def test_the_wheel_ships_the_api_header(wheel):
@@ -89,7 +117,7 @@ def test_the_shipped_header_names_every_public_export():
 
 
 @pytest.fixture(scope="module")
-def sdist(tmp_path_factory):
+def sdist(tmp_path_factory, tree):
     """The other artifact. Both packaging leaks so far were found by hand.
 
     The wheel is what most consumers install, but the sdist is what a
@@ -99,29 +127,19 @@ def sdist(tmp_path_factory):
     pytest.importorskip("hatchling", reason="the build backend is not installed")
     pytest.importorskip("build", reason="the build frontend is not installed")
     output = tmp_path_factory.mktemp("sdist")
-    planted = ROOT / "src" / "hostctl" / "AGENTS.local.md"
-    planted_existed = planted.exists()
-    if not planted_existed:
-        planted.write_text("machine-specific notes" + chr(10), encoding="utf-8")
     built = subprocess.run(
         [sys.executable, "-m", "build", "--sdist", "-n", "-o", str(output)],
-        cwd=str(ROOT),
+        cwd=str(tree),
         capture_output=True,
         text=True,
     )
     if built.returncode != 0:
-        if not planted_existed:
-            planted.unlink(missing_ok=True)
         pytest.skip(
             f"sdist build unavailable: {built.stdout[-400:]}{built.stderr[-400:]}"
         )
     archives = sorted(output.glob("*.tar.gz"))
     assert archives, built.stdout
-    try:
-        yield archives[-1]
-    finally:
-        if not planted_existed:
-            planted.unlink(missing_ok=True)
+    return archives[-1]
 
 
 def _sdist_names(archive):
@@ -151,7 +169,27 @@ def test_the_sdist_never_ships_private_or_unshared_files(sdist):
 
     assert [name for name in names if ".local." in name] == []
     assert [name for name in names if name.split("/")[0] == ".agents"] == []
-    assert [name for name in names if name.startswith("CLAUDE")] == []
+    assert [
+        name for name in names if any(p.startswith("CLAUDE") for p in name.split("/"))
+    ] == []
+
+
+def test_the_sdist_leaves_out_contributor_files(sdist):
+    """The root `AGENTS.md` orients a contributor to a checkout and
+    `benchmarks/` is run on demand; neither is part of a source build."""
+    names = _sdist_names(sdist)
+
+    assert "AGENTS.md" not in names
+    assert [name for name in names if name.split("/")[0] == "benchmarks"] == []
+    assert "src/hostctl/AGENTS.md" in names
+
+
+def test_the_wheel_never_ships_an_assistant_file(wheel):
+    names = zipfile.ZipFile(wheel).namelist()
+
+    assert [
+        name for name in names if any(p.startswith("CLAUDE") for p in name.split("/"))
+    ] == []
 
 
 @pytest.mark.parametrize(
