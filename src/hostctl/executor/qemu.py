@@ -91,6 +91,7 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
         max_poll_interval: float = 0.25,
         clock: typing.Callable[[], float] = time.monotonic,
         sleep: typing.Callable[[float], None] = time.sleep,
+        merged_capture: typing.Optional[typing.Callable[[], bool]] = None,
     ) -> None:
         if poll_interval <= 0:
             raise ValueError("poll_interval must be positive")
@@ -106,6 +107,8 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
         #: build could not notice a dead agent for ten minutes.
         self._agent_timeout = agent_timeout
         self._transport = transport
+        #: Answers whether the agent can capture stderr merged into stdout.
+        self._merged_capture = merged_capture
         self._poll_interval = poll_interval
         self._max_poll_interval = max_poll_interval
         self._clock = clock
@@ -156,6 +159,9 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
             "arg": argv,
             "capture-output": True,
         }
+        if stderr is subprocess.STDOUT and self._merged_capture is not None:
+            if self._merged_capture():
+                arguments["capture-output"] = "merged"
         normalized_env = normalize_environment(env)
         if normalized_env is not None:
             arguments["env"] = [

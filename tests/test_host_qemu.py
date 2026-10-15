@@ -9,8 +9,9 @@ from hostctl.host.qemu import PosixQemuPath, WindowsQemuPath
 
 
 class _Transport:
-    def __init__(self, *, windows=False):
+    def __init__(self, *, windows=False, version=None):
         self.windows = windows
+        self.version = version
         self.requests = []
         self.closed = False
 
@@ -21,6 +22,7 @@ class _Transport:
             return {}
         if command == "guest-info":
             return {
+                **({"version": self.version} if self.version else {}),
                 "supported_commands": [
                     {"name": name, "enabled": True}
                     for name in (
@@ -33,7 +35,7 @@ class _Transport:
                         "guest-get-osinfo",
                         "guest-get-host-name",
                     )
-                ]
+                ],
             }
         if command == "guest-get-osinfo":
             # What qemu-ga actually sends: `id` is the os-release ID, and
@@ -280,3 +282,26 @@ def test_open_serial_forwards_text_mode_to_the_console():
     )
     with host.open_serial(encoding="utf-8") as console:
         assert console.read() + console.read() == "é"
+
+
+def _capture_mode(version, *, windows=False):
+    import subprocess
+
+    transport = _Transport(windows=windows, version=version)
+    host = QemuHost(QemuConfig("guest", transport_factory=lambda: transport))
+
+    host._executor("echo", stderr=subprocess.STDOUT)
+    started = [r for r, _ in transport.requests if r["execute"] == "guest-exec"]
+    return started[-1]["arguments"]["capture-output"]
+
+
+def test_stderr_into_stdout_asks_a_modern_posix_agent_to_interleave():
+    assert _capture_mode("8.2.2") == "merged"
+
+
+@pytest.mark.parametrize(
+    ("version", "windows"),
+    (("7.2.0", False), ("8.2.2", True), (None, False), ("garbage", False)),
+)
+def test_stderr_into_stdout_falls_back_where_the_agent_cannot_merge(version, windows):
+    assert _capture_mode(version, windows=windows) is True

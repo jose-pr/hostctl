@@ -7,6 +7,7 @@ import binascii
 import dataclasses
 import io
 import logging
+import re
 import subprocess
 import threading
 import typing
@@ -310,8 +311,12 @@ class QemuHost(Host):
         self._commands: typing.Optional[typing.FrozenSet[str]] = None
         self._os_info: typing.Mapping[str, object] = {}
         self._hostname: typing.Optional[str] = None
+        #: qemu-ga's `guest-info` version string, once discovered.
+        self._agent_version: typing.Optional[str] = None
         self._executor = QemuExecutor(
-            lambda: self.transport, agent_timeout=config.agent_timeout
+            lambda: self.transport,
+            agent_timeout=config.agent_timeout,
+            merged_capture=self._merges_output,
         )
         self._path_backend: typing.Optional[QgaPathBackend] = None
         #: The probed guest helper, or `None` once probing has failed.
@@ -414,6 +419,7 @@ class QemuHost(Host):
         info = transport.execute({"execute": "guest-info"}, self.config.agent_timeout)
         if not isinstance(info, typing.Mapping):
             raise ConnectionError("guest-info returned a non-object result")
+        version = info.get("version")
         entries = info.get("supported_commands", ())
         commands = set()
         if isinstance(entries, typing.Iterable):
@@ -444,6 +450,7 @@ class QemuHost(Host):
             if isinstance(value, typing.Mapping):
                 hostname = value.get("host-name")
                 self._hostname = str(hostname) if hostname else None
+        self._agent_version = version if isinstance(version, str) else None
         self._commands = discovered
 
     def close(self) -> None:
@@ -452,6 +459,7 @@ class QemuHost(Host):
 
     def _close_locked(self) -> None:
         self._commands = None
+        self._agent_version = None
         self._os_info = {}
         self._hostname = None
         self._path_helper = _UNPROBED
@@ -508,6 +516,19 @@ class QemuHost(Host):
         if commands & self._POSIX_ONLY_COMMANDS:
             return "posix"
         return None
+
+    def _merges_output(self) -> bool:
+        """Whether the agent can interleave stderr into stdout itself.
+
+        `capture-output: "merged"` exists from qemu-ga 8.0 and is compiled
+        out of the Windows agent, so both facts must be positively known.
+        """
+        self.connect()
+        match = re.match(r"(\d+)\.(\d+)", self._agent_version or "")
+        if not match or (int(match[1]), int(match[2])) < (8, 0):
+            return False
+        family = self._probe_os_family()
+        return family is not None and "windows" not in family
 
     @property
     def _windows(self) -> bool:
