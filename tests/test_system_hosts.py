@@ -977,3 +977,48 @@ def test_a_composed_hosts_executor_passes_argv_as_one_exec():
     assert executor.executor_capabilities == frozenset({"args"})
     with pytest.raises(AttributeError):
         executor.no_such_attribute
+
+
+def test_concurrent_hosts_from_one_config_do_not_share_a_transport(monkeypatch):
+    """The transport cache lived on the shared config, so two threads opening
+    hosts from it swapped each other's cache mid-build: one host's executor
+    and path legs ended on different connections, or two hosts on one."""
+    import threading
+    import time
+
+    from hostctl import SshConfig
+    from hostctl.host import system as system_module
+
+    real = system_module._ssh_provider
+
+    def slow_sftp(config, kind):
+        time.sleep(0.02)  # widen the window between the executor and path legs
+        return real(config, kind)
+
+    monkeypatch.setitem(system_module._SYSTEM_PROVIDER_RESOLVERS, "sftp", slow_sftp)
+    config = PosixConfig(
+        "node",
+        executor=("ssh",),
+        path=("sftp",),
+        provider_options={"ssh": SshConfig("example.invalid")},
+    )
+    hosts = [None, None]
+
+    def build(index):
+        hosts[index] = config._create_host()
+
+    threads = [threading.Thread(target=build, args=(i,)) for i in range(2)]
+    threads[0].start()
+    time.sleep(0.005)
+    threads[1].start()
+    for thread in threads:
+        thread.join()
+
+    transports = []
+    for host in hosts:
+        executor = host._executor_selector.providers[0]
+        path = host._path_selector.providers[0]
+        assert executor.transport is path.transport
+        transports.append(executor.transport)
+    assert transports[0] is not transports[1]
+    assert "_provider_transports" not in vars(config)

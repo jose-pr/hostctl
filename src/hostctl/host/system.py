@@ -7,6 +7,7 @@ import logging
 import subprocess
 import threading
 import typing
+from contextvars import ContextVar
 from urllib.parse import unquote, quote, urlencode
 
 from pathapi import Path
@@ -69,26 +70,48 @@ def _local_provider(config, kind):
     return PathProvider("local", lambda *parts: LocalPath(*parts))
 
 
-def _ssh_provider(config, kind):
+#: The transports one `_create_host()` call has built, by option key. Scoped to
+#: the call (and so to its thread), because the executor and path providers of
+#: ONE host must share a connection and two hosts must not.
+_TRANSPORTS: "ContextVar[typing.Optional[dict]]" = ContextVar(
+    "hostctl_transports", default=None
+)
+
+
+def _shared_transport(key, build):
+    """The transport for `key` within this `_create_host()` call, built once."""
+    cache = _TRANSPORTS.get()
+    if cache is None:
+        return build()
+    if key not in cache:
+        cache[key] = build()
+    return cache[key]
+
+
+def _transport_provider(config, kind, option, label, load):
+    """Resolve one provider of a transport-backed pair from `provider_options`.
+
+    `load()` imports lazily: (config type, transport type, executor provider
+    type, path provider type).
+    """
+    config_type, transport_type, executor_type, path_type = load()
+    value = _provider_option(config, option)
+    if not isinstance(value, config_type):
+        raise ValueError(
+            f"system {label} descriptors require "
+            f"provider_options={{'{option}': {config_type.__name__}(...)}}"
+        )
+    transport = _shared_transport(option, lambda: transport_type(value))
+    return executor_type(transport) if kind == "executor" else path_type(transport)
+
+
+def _load_ssh():
     from ._ssh import SftpPathProvider, SshConfig, SshExecutorProvider, _SshTransport
 
-    value = _provider_option(config, "ssh")
-    if not isinstance(value, SshConfig):
-        raise ValueError(
-            "system SSH descriptors require provider_options={'ssh': SshConfig(...)}"
-        )
-    transports = getattr(config, "_provider_transports", {})
-    transport = transports.get("ssh")
-    if transport is None:
-        transport = _SshTransport(value)
-        transports["ssh"] = transport
-        config._provider_transports = transports
-    if kind == "executor":
-        return SshExecutorProvider(transport)
-    return SftpPathProvider(transport)
+    return SshConfig, _SshTransport, SshExecutorProvider, SftpPathProvider
 
 
-def _winrm_provider(config, kind):
+def _load_winrm():
     from ._winrm import (
         WinRMConfig,
         WinRMExecutorProvider,
@@ -96,20 +119,15 @@ def _winrm_provider(config, kind):
         _WinRMTransport,
     )
 
-    value = _provider_option(config, "winrm")
-    if not isinstance(value, WinRMConfig):
-        raise ValueError(
-            "system WinRM descriptors require provider_options={'winrm': WinRMConfig(...)}"
-        )
-    transports = getattr(config, "_provider_transports", {})
-    transport = transports.get("winrm")
-    if transport is None:
-        transport = _WinRMTransport(value)
-        transports["winrm"] = transport
-        config._provider_transports = transports
-    if kind == "executor":
-        return WinRMExecutorProvider(transport)
-    return WinRMPathProvider(transport)
+    return WinRMConfig, _WinRMTransport, WinRMExecutorProvider, WinRMPathProvider
+
+
+def _ssh_provider(config, kind):
+    return _transport_provider(config, kind, "ssh", "SSH", _load_ssh)
+
+
+def _winrm_provider(config, kind):
+    return _transport_provider(config, kind, "winrm", "WinRM", _load_winrm)
 
 
 register_system_provider("local", _local_provider)
@@ -224,7 +242,6 @@ class SystemConfig(HostConfig):
         self.executors = tuple(executor)
         self.paths = tuple(path)
         self.options = dict(options)
-        self._provider_transports = {}
 
     def _build_providers(self, kind: str):
         descriptors = self.executors if kind == "executor" else self.paths
@@ -306,19 +323,15 @@ class SystemConfig(HostConfig):
                 f"{type(self).__name__} is abstract and creates no host; "
                 f"use a concrete system configuration ({names})"
             )
-        # A fresh transport cache per host. The cache exists so that ONE
-        # host's executor and path providers share a connection -- not so that
-        # two hosts do. Kept on the config, it outlived the host: two
-        # `config.open()` calls returned hosts wired to the same SSH/WinRM
-        # transport, and either one's `close()` tore down the connection the
-        # other was using mid-command.
-        previous = self._provider_transports
-        self._provider_transports = {}
+        # A fresh transport cache per call: one host's executor and path
+        # providers share a connection, and two hosts never do -- either one's
+        # `close()` would tear down the connection the other is using.
+        token = _TRANSPORTS.set({})
         try:
             executor_providers = self._build_providers("executor")
             path_providers = self._build_providers("path")
         finally:
-            self._provider_transports = previous
+            _TRANSPORTS.reset(token)
         return self.host_type(
             self,
             executor_providers=executor_providers,

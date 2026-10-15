@@ -169,6 +169,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the backend path class, so it no longer claims a digest `LocalPath` lacks or
   a `chown` a WinRM or container path cannot do. `PathProvider` declares
   `utime` and `hardlink_to` by default.
+- Concurrent `run()` and `close()` on one host no longer raise `RuntimeError`
+  ("dictionary changed size during iteration") from provider selection, which
+  read and wrote its decline and probe maps without its lock. Two hosts opened
+  concurrently from one config no longer share a transport, or split one host's
+  executor and path legs across two.
 
 ## [0.3.2] - 2026-09-23
 
