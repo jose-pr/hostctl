@@ -77,16 +77,28 @@ def _kill_tree(process: "subprocess.Popen") -> None:
         except (OSError, subprocess.SubprocessError):
             pass
     else:
-        # The child was started in its own session, so the process group id
-        # is the child's pid and the whole tree is one signal away.
+        # A child started in its own session leads its process group, so the
+        # whole tree is one signal away. One that stayed in the caller's
+        # session (a terminal exists) does not, and only it is killed.
         try:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            group = os.getpgid(process.pid)
+            if group == process.pid:
+                os.killpg(group, signal.SIGKILL)
         except (OSError, AttributeError):
             pass
     try:
         process.kill()
     except OSError:
         pass
+
+
+def _has_controlling_tty() -> bool:
+    try:
+        descriptor = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return False
+    os.close(descriptor)
+    return True
 
 
 def _run_bounded(
@@ -118,8 +130,10 @@ def _run_bounded(
         errors=errors,
         text=text,
         # POSIX only: a new session makes the child its own process group
-        # leader, which is what lets one killpg reach every descendant.
-        start_new_session=os.name != "nt",
+        # leader, which is what lets one killpg reach every descendant -- but
+        # it also drops the controlling terminal, so it is skipped when this
+        # process has one and the child keeps `/dev/tty`.
+        start_new_session=os.name != "nt" and not _has_controlling_tty(),
     ) as process:
         try:
             out, err = process.communicate(input, timeout=timeout)

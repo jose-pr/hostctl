@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -94,14 +95,21 @@ def test_local_input_is_normalized_to_the_stream_mode(value, encoding, expected)
         ("zz", False, b"zz"),
         (None, True, None),
         (None, False, None),
-        # An int is a file descriptor, not payload, and must pass through.
-        (subprocess.DEVNULL, True, subprocess.DEVNULL),
     ],
 )
 def test_normalize_input_matches_the_requested_mode(value, text_mode, expected):
     from hostctl.executor._common import normalize_input
 
     assert normalize_input(value, text_mode=text_mode) == expected
+
+
+@pytest.mark.parametrize("value", (3, subprocess.DEVNULL, 1.5, ["x"]))
+def test_normalize_input_refuses_what_is_not_a_payload(value):
+    """An int reached `subprocess`' writer thread: a hang on 3.14."""
+    from hostctl.executor._common import normalize_input
+
+    with pytest.raises(TypeError, match="input must be"):
+        normalize_input(value, text_mode=False)
 
 
 def test_normalize_input_honours_encoding_and_errors():
@@ -241,6 +249,88 @@ def test_local_host_is_a_system_host():
     # But a local path stays a plain pathlib object: one provider reaching
     # one filesystem has nothing for a composite to decide.
     assert type(host.path("x")).__name__ == "LocalPath"
+
+
+def test_output_written_around_a_dispatch_keeps_its_order():
+    """The binary fallback wrote past text still pending in the wrapper."""
+    code = (
+        "import sys\n"
+        "from hostctl.executor import dispatch_output\n"
+        "sys.stdout.write('1-before\\n')\n"
+        "dispatch_output(None, None, b'2-output\\n', None, encoding=None, errors=None)\n"
+        "sys.stdout.write('3-after\\n')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")},
+    )
+
+    assert result.stdout.split() == ["1-before", "2-output", "3-after"]
+
+
+def test_an_invalid_environment_name_is_refused_before_any_provider_runs():
+    from hostctl import ExecutorProvider, PosixHost
+
+    called = []
+
+    def execute(command, *args, **options):
+        called.append(command)
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    embedded = PosixHost(executor_providers=(ExecutorProvider("fake", execute),))
+    native = LocalHost()
+    for host in (embedded, native):
+        with pytest.raises(ValueError, match="invalid environment variable name"):
+            host.run("true", env={"A.B": "1"})
+
+    assert called == []
+
+
+def test_a_non_payload_input_fails_at_once_instead_of_hanging():
+    import time
+
+    from hostctl.executor import LocalExecutor
+
+    started = time.monotonic()
+    with pytest.raises(TypeError, match="input must be"):
+        LocalExecutor()(
+            sys.executable, "-c", "import sys; sys.stdin.read()", input=3, timeout=30
+        )
+
+    assert time.monotonic() - started < 5
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX terminal")
+def test_a_timeout_keeps_the_controlling_terminal(monkeypatch):
+    """`timeout=` started a new session, so a child that opens /dev/tty
+    failed ENXIO where the same call without a timeout worked."""
+    import os
+    import pty
+
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).parents[1] / "src"))
+
+    child = (
+        "import os, sys\n"
+        "from hostctl.executor import LocalExecutor\n"
+        'code = \'import os\\ntry:\\n open("/dev/tty").close(); print("tty ok")\\n'
+        'except OSError as e:\\n print("tty FAIL", e.errno)\\n\'\n'
+        "r = LocalExecutor()(sys.executable, '-c', code, timeout=30)\n"
+        "sys.stdout.write(r.stdout.decode())\n"
+    )
+    captured = []
+
+    def reader(descriptor):
+        data = os.read(descriptor, 1024)
+        captured.append(data)
+        return data
+
+    status = pty.spawn([sys.executable, "-c", child], reader)
+
+    assert b"tty ok" in b"".join(captured), captured
+    assert status == 0
 
 
 def test_an_unsupported_local_os_still_builds_a_host(monkeypatch):

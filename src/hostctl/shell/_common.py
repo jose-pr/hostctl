@@ -14,7 +14,8 @@ import typing
 import types
 from pathlib import Path, PurePath, PurePosixPath
 
-from ..executor import ExecutorCapability
+from ..executor import ExecutorCapability, validate_environment_names
+from ..executor._common import command_text
 from ..executor import (
     CaptureOutput,
     Environment,
@@ -26,7 +27,6 @@ from ._grammar import Cmdlet, Command, Exec, PSParam
 from ..process import Process, TerminalRequest
 
 _Result = typing.TypeVar("_Result", covariant=True)
-_ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class _CommandHost(typing.Protocol):
@@ -290,10 +290,6 @@ class ShellFlavour(abc.ABC):
             "the command line is already rendered for exactly one"
         )
 
-    def command_path(self, value: PathLike) -> PurePath:
-        """Return a direct-command marker using the target shell's path syntax."""
-        return self.path_flavor(value)
-
     #: Whether `invocation()` can express this shell as argv.
     #:
     #: False for `cmd`: Windows builds a child's command line with
@@ -306,21 +302,7 @@ class ShellFlavour(abc.ABC):
     @staticmethod
     def _text(value: object) -> str:
         """Normalize values and reject shell control characters."""
-        # `__fspath__` first, and by attribute rather than `isinstance`, so a
-        # duck-typed path that never registered with `os.PathLike` still
-        # renders as its filesystem representation. See
-        # `executor._common.command_text`, which follows the same rule.
-        fspath = getattr(value, "__fspath__", None)
-        if callable(fspath):
-            try:
-                resolved = fspath()
-            except Exception:
-                resolved = None
-            if isinstance(resolved, (str, bytes)):
-                value = resolved
-        if isinstance(value, bytes):
-            value = value.decode("utf-8", "surrogateescape")
-        text = str(value)
+        text = command_text(value, errors="surrogateescape")
         if any(ord(char) < 32 or ord(char) == 127 for char in text):
             raise ValueError("shell values cannot contain control characters")
         return text
@@ -413,8 +395,7 @@ class ShellFlavour(abc.ABC):
         for key, value in env.items():
             if isinstance(key, bytes):
                 key = key.decode("utf-8", "surrogateescape")
-            if not isinstance(key, str) or not _ENVIRONMENT_KEY.fullmatch(key):
-                raise ValueError(f"invalid environment variable name: {key!r}")
+            validate_environment_names({key: value})
             assignments.append(self.environment_assignment(key, value))
         return self.command_separator.join(assignments)
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import typing
 from pathlib import PureWindowsPath
 
@@ -18,13 +17,8 @@ from ._common import (
 from ._grammar import PSParam
 
 
-def _argument(value: object) -> str:
+def _argument(value: str) -> str:
     """Quote one argv value for cmd.exe and a C-runtime child program."""
-    if isinstance(value, os.PathLike):
-        value = os.fspath(value)
-    elif isinstance(value, bytes):
-        value = value.decode("utf-8", "surrogateescape")
-    value = str(value)
     if value and not any(char.isspace() or char in '&|<>()@^"%!' for char in value):
         return value
     value = value.replace("^", "^^").replace("%", "^%").replace("!", "^!")
@@ -49,13 +43,9 @@ def _argument(value: object) -> str:
     return '^"' + "".join(escaped) + '^"'
 
 
-def _echo_argument(value: object) -> str:
+def _echo_argument(value: str) -> str:
     """Escape data for `echo`, which prints quotes rather than consuming them."""
-    if isinstance(value, os.PathLike):
-        value = os.fspath(value)
-    elif isinstance(value, bytes):
-        value = value.decode("utf-8", "surrogateescape")
-    text = str(value).replace("^", "^^")
+    text = value.replace("^", "^^")
     for character in '&|<>()"%!':
         text = text.replace(character, f"^{character}")
     return text
@@ -68,7 +58,7 @@ def _echo_argument(value: object) -> str:
 _BUILTIN_SAFE = frozenset("._-:\\/")
 
 
-def _builtin_argument(value: object) -> str:
+def _builtin_argument(text: str) -> str:
     """Quote and escape data for a cmd.exe builtin, which has no C argv parser.
 
     Caret escaping alone is not enough: a builtin's operands are split on
@@ -78,11 +68,6 @@ def _builtin_argument(value: object) -> str:
     `%VAR%` and would end the span on a `"`, so those two characters are
     emitted caret-escaped *outside* the quotes instead.
     """
-    if isinstance(value, os.PathLike):
-        value = os.fspath(value)
-    elif isinstance(value, bytes):
-        value = value.decode("utf-8", "surrogateescape")
-    text = str(value)
     if text and all(char.isalnum() or char in _BUILTIN_SAFE for char in text):
         return text
 
@@ -268,7 +253,12 @@ class CmdShellFlavour(ShellFlavour):
             # for the same one. Alone among the builtins it does not consume
             # quotes, it prints them, so quoting would change the output it
             # exists to produce, while its tail is still one operand.
-            return " ".join(_echo_argument(self._text(value)) for value in values)
+            # `echo(` prints its operand verbatim, where a bare `echo off`,
+            # `echo /?` or `echo` alone would switch echo off, print help, or
+            # print the echo state.
+            return "echo(" + " ".join(
+                _echo_argument(self._text(value)) for value in values[1:]
+            )
         if not values:
             return ""
         word = self._text(values[0]).casefold()
@@ -326,10 +316,7 @@ class CmdShellFlavour(ShellFlavour):
         A value of `""` is beyond cmd: `set KEY=` deletes the variable, and
         cmd has no spelling for an empty one. The variable arrives unset.
         """
-        text = self._text(value).replace("^", "^^")
-        for character in '&|<>()"%!':
-            text = text.replace(character, f"^{character}")
-        return f"set {key}={text}"
+        return "set " + key + "=" + _echo_argument(self._text(value))
 
     def change_directory(self, cwd: PathLike) -> str:
         return f"cd /d {_builtin_argument(self._text(cwd))}"

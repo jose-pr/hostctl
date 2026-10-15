@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -19,7 +20,7 @@ FileHandle = typing.Union[int, typing.BinaryIO, typing.TextIO]
 #: them -- a `socket.recv_into` buffer, a slice of a `mmap` -- and the whole
 #: point of `normalize_input` is that the sink must never see a type it
 #: cannot write.
-Input = typing.Optional[typing.Union[bytes, bytearray, memoryview, str, int]]
+Input = typing.Optional[typing.Union[bytes, bytearray, memoryview, str]]
 PathLike = typing.Union[str, os.PathLike[str]]
 Environment = typing.Mapping[typing.Union[str, bytes], object]
 CaptureOutput = typing.Literal[True, False, "stdout", "stderr"]
@@ -127,8 +128,15 @@ def normalize_input(
     binary mode encodes them. `encoding`/`errors` default to UTF-8/strict,
     matching `subprocess`.
     """
-    if input is None or isinstance(input, int):
-        return input
+    if input is None:
+        return None
+    if not isinstance(input, (bytes, bytearray, memoryview, str)):
+        # `subprocess` hands any other value to its writer thread, which dies
+        # without closing the pipe: the call hangs until `timeout` on 3.14.
+        raise TypeError(
+            "input must be bytes, bytearray, memoryview or str, "
+            f"not {type(input).__name__}"
+        )
     if text_mode:
         if isinstance(input, (bytes, bytearray, memoryview)):
             # A `bytearray` reached the text-mode writer thread untouched
@@ -233,11 +241,32 @@ def expired(
     return error
 
 
+#: A name every transport can carry: embedded `export`/`$env:`/`set` lines
+#: and a native environment block alike.
+ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def validate_environment_names(env: typing.Optional[Environment]) -> None:
+    """Raise `ValueError` for an environment variable name a transport cannot carry.
+
+    One rule, applied before a provider is selected: a name that only some
+    transports could carry made the same call valid or not depending on which
+    provider won.
+    """
+    if not env:
+        return
+    for key in env:
+        name = key.decode("utf-8", "surrogateescape") if isinstance(key, bytes) else key
+        if not isinstance(name, str) or not ENVIRONMENT_NAME.fullmatch(name):
+            raise ValueError(f"invalid environment variable name: {key!r}")
+
+
 def normalize_environment(
     env: typing.Optional[Environment],
 ) -> typing.Optional[typing.Dict[str, str]]:
     if env is None:
         return None
+    validate_environment_names(env)
     return {
         key.decode() if isinstance(key, bytes) else str(key): (
             value.decode() if isinstance(value, bytes) else str(value)
@@ -272,6 +301,12 @@ def write_output(
             # UnicodeDecodeError -- and the mirror direction died with
             # UnicodeEncodeError on a narrow console codepage.
             buffer = getattr(stream, "buffer", None)
+            if buffer is not None:
+                # Text already written to the wrapper is still pending in it;
+                # the buffer write below would overtake it.
+                pending = getattr(stream, "flush", None)
+                if pending is not None:
+                    pending()
             if isinstance(value, bytes):
                 if buffer is not None:
                     buffer.write(value)

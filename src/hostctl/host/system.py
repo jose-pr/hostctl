@@ -12,7 +12,7 @@ from urllib.parse import unquote, quote, urlencode
 
 from pathapi import Path
 
-from ..executor._common import command_text
+from ..executor._common import command_text, validate_environment_names
 from ..provider import OperationNotStarted, ProviderSelector
 from ..shell import POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ..shell._invocation import for_login_shell, shell_invocation
@@ -927,6 +927,9 @@ class SystemHost(Host):
             raise NotImplementedError(
                 f"{type(self).__name__} does not provide the 'run' capability"
             )
+        # Before any provider is selected: whether a name is valid must not
+        # depend on which provider happens to carry the call.
+        validate_environment_names(env)
         # No `retry_declined()` here. Clearing every refusal per call re-dialled
         # a dead primary on EVERY run() -- ~9 s each against a refused port --
         # although the fallback was serving. The selector re-admits an earlier

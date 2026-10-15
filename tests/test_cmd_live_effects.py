@@ -102,6 +102,16 @@ def test_a_spaced_standalone_path_runs_as_a_command(tmp_path):
         assert result.stdout.strip()
 
 
+@pytest.mark.parametrize("operand", ("off", "/?", ""))
+def test_structured_echo_prints_its_operand_verbatim(operand, tmp_path):
+    """Bare `echo off` switched echo off, `echo /?` printed help and `echo`
+    alone printed the echo state; `echo(` prints what it is given."""
+    result = _run(CMD.command((("echo", operand),)), cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == operand
+
+
 def test_start_runs_a_spaced_batch_file(tmp_path):
     """The first quoted word of `start` is a window title; an explicit empty
     title makes the program the program."""

@@ -79,10 +79,14 @@ divergence comes from:
 - `normalize_input(input, *, text_mode, encoding=None, errors=None)` -- match
   `input` to the stream mode about to be used. A mismatch is not a clean
   error: the writer thread dies without closing the pipe and the call blocks
-  forever. Covers `bytes`, `bytearray` and `memoryview`.
+  forever. Covers `bytes`, `bytearray` and `memoryview`; `Input` is those and
+  `str`, and anything else (an `int`, say) raises `TypeError`.
 - `normalize_environment(env)` -- `None` stays `None`; everything else becomes
   a `str`-keyed dict, so a transport never has to guess at `Path` or `int`
-  values.
+  values. Names are checked first by `validate_environment_names(env)`, which
+  raises `ValueError("invalid environment variable name: ...")` for a name
+  outside `[A-Za-z_][A-Za-z0-9_]*`; `SystemHost.run()` calls it before it
+  selects a provider, so the same call is valid or not on every transport.
 - `capture_streams(capture_output, stdout, stderr)` -- resolve the three
   spellings of "capture" into one `(stdout, stderr)` pair.
 - `dispatch_output(stdout_target, stderr_target, stdout, stderr, *,

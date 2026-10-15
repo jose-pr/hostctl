@@ -39,12 +39,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
+- **Breaking, 0.4.0**: `ShellFlavour.command_path()`, which nothing called.
 - **Breaking, 0.4.0**: `ShellFlavour.terminate_submission()` and
   `submission_terminators`. `ShellSession.send()` writes the script and the
   line terminator and nothing else.
+- **`PosixHost.from_ssh(config)` and `WindowsHost.from_winrm(config)`**, which
+  ship removed in 0.4.0. Each was `config._create_host()` plus a check that
+  could not fail for a config that picked its own paths. Use `config.open()`
+  or `Host(uri)`; `SshConfig("host").open()` is a `PosixHost`, and a config with
+  Windows paths opens a `WindowsHost`.
 
 ### Fixed
 
+- **Output stays in order around a dispatched command.** The binary fallback
+  of `dispatch_output` wrote past text still pending in `sys.stdout`, so a
+  command's output could print before the line written before it.
+- **A local `timeout=` no longer detaches the terminal.** A child started
+  with a timeout got a new session and could not open `/dev/tty`; the new
+  session is now used only when this process has no controlling terminal.
+  A timed-out command started from a terminal may therefore leave
+  grandchildren running (see the divergence ledger).
+- A structured `cmd` `echo` prints its operand verbatim: `("echo", "off")`
+  switched echo off, `("echo", "/?")` printed help and `("echo",)` printed
+  the echo state.
 - **A relative `cwd` means the process's directory on POSIX and fish.** `cd --
   sub` consulted `CDPATH` first, so with `CDPATH` set the payload ran in
   another tree with status 0. It is rendered `cd -- ./sub`, which fails when
@@ -248,6 +265,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The config extension hooks `_from_parsed_uri` and `_create_host` are documented
   as the override points for a `HostConfig` subclass, with a worked example in
   the extending guide. Their names are unchanged and no `from_uri` is added.
+- **Breaking, 0.4.0: an environment variable name outside
+  `[A-Za-z_][A-Za-z0-9_]*` raises `ValueError` on every transport**, before a
+  provider is selected. Only the embedding transports refused `A.B` or
+  `ProgramFiles(x86)` before, so the same call was valid or not depending on
+  which provider won. `validate_environment_names` is exported by
+  `hostctl.executor`.
+- **Breaking, 0.4.0: `Input` no longer includes `int`.** `input=3` reached
+  `subprocess`' writer thread and hung until `timeout` on Python 3.14; it now
+  raises `TypeError` at once.
 - **Breaking, 0.4.0: `Shell` is not an `Executor`.** `Shell.execute()` and
   `shell(command, *args)` are removed; calling a `Shell` configures it
   (`host.shell(cwd=..., env=...)`) and a positional argument raises
@@ -356,14 +382,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   "ambiguous host URI"); `register_system_provider(name, resolver)` raises for
   a name already registered. Pass `replace=True` to take the name over on
   purpose. Redefining the same class (a module reload) is not a duplicate.
-
-### Removed
-
-- **`PosixHost.from_ssh(config)` and `WindowsHost.from_winrm(config)`**, which
-  ship removed in 0.4.0. Each was `config._create_host()` plus a check that
-  could not fail for a config that picked its own paths. Use `config.open()`
-  or `Host(uri)`; `SshConfig("host").open()` is a `PosixHost`, and a config with
-  Windows paths opens a `WindowsHost`.
 
 ## [0.3.2] - 2026-09-23
 
