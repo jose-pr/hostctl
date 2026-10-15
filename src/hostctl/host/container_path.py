@@ -11,12 +11,10 @@ import stat as _stat
 import tarfile
 import typing
 
-from pathlib import PurePath as _StdPurePath
-from pathapi import Path, PosixPathname, WindowsPathname
 from pathapi import FileStat
 from pathapi.providers import notimplemented
 from ..executor.container import _status_code
-from ._staged_io import copy_from, staged_open
+from ._backend_path import PosixBackendPath, WindowsBackendPath
 
 
 class ContainerArchiveClient(typing.Protocol):
@@ -635,77 +633,15 @@ class ContainerPathBackend:
 
 
 class _ContainerPathMixin:
-    """Shared pathapi operations for both container path flavours."""
+    """What differs for container paths: the Docker archive API cannot mutate."""
 
     __slots__ = ()
-
-    def copy(self, target, **kwargs):
-        return Path.copy(self, target, **kwargs)
-
-    def move(self, target, **kwargs):
-        return Path.move(self, target, **kwargs)
-
-    def _copy_from(self, source, **kwargs):
-        """CPython 3.14's `Path.copy()` destination hook.
-
-        One shared implementation (`_staged_io.copy_from`). This body used to
-        be copied verbatim into four modules, and every copy diverged from
-        what stdlib actually calls it with: it raised `FileExistsError` where
-        stdlib overwrites, and opened a directory `"rb"`.
-        """
-        return copy_from(self, source, **kwargs)
-
-    @property
-    def backend(self) -> ContainerPathBackend:
-        return self._backend
-
-    def with_segments(self, *segments: str):
-        return type(self)(*segments, backend=self.backend)
-
-    def __truediv__(self, key):
-        return type(self)(self, key, backend=self.backend)
-
-    def joinpath(self, *args):
-        return type(self)(self, *args, backend=self.backend)
-
-    @property
-    def parent(self):
-        return type(self)(str(super().parent), backend=self.backend)
-
-    def stat(self, *, follow_symlinks: bool = True) -> FileStat:
-        return self.backend.stat(str(self), follow_symlinks=follow_symlinks)
-
-    def _scandir(self):
-        yield from self.backend.scandir(str(self))
-
-    def iterdir(self):
-        for name, _ in self._scandir():
-            yield self / name
-
-    def _open(self, mode="r", buffering=-1):
-        del buffering
-        return staged_open(self.backend, str(self), mode)
-
-    def _symlink_target(self, target):
-        """Normalise a `str` target WITH this path's backend.
-
-        `Path._symlink_target` builds `type(self)(target)`, and these
-        classes refuse a construction without a backend -- so the public
-        `symlink_to()` raised `TypeError` before reaching the primitive.
-        """
-        return self.with_segments(target) if isinstance(target, str) else target
 
     def _symlink_to(self, target, target_is_directory: bool = False):
         """Create this path as a symlink to ``target``.
 
-        The PRIMITIVE: `pathapi`'s public wrapper supplies `force=`
-        and target normalisation, which overriding the public name made
-        unreachable.
-
-        ``target_is_directory`` exists only for
-        :meth:`pathlib.Path.symlink_to` signature parity; it is a local
-        Windows filesystem hint with no representation in a tar member, so
-        it is accepted and ignored like every other non-local backend.
+        ``target_is_directory`` exists only for signature parity; a tar
+        member has no representation of it, so it is accepted and ignored.
         """
         self.backend.symlink(str(self), str(target))
 
@@ -731,63 +667,15 @@ class _ContainerPathMixin:
     def rename(self, target): ...
 
 
-class PosixContainerPath(_ContainerPathMixin, PosixPathname, Path):
+class PosixContainerPath(_ContainerPathMixin, PosixBackendPath):
     """A POSIX container path backed by Docker archive operations."""
 
-    __slots__ = ("_backend",)
-
-    def __init__(self, *segments, backend=None):
-        # Python 3.14's pathlib.PurePath.__init__ no longer accepts kwargs.
-        # Path state is initialized by __new__; backend is attached there.
-        if not hasattr(self, "_raw_paths") and not hasattr(self, "_parts"):
-            _StdPurePath.__init__(self, *segments)
-
-    def __new__(
-        cls,
-        *segments: typing.Union[str, PosixPathname],
-        backend: typing.Optional[ContainerPathBackend] = None,
-    ):
-        inherited = next(
-            (
-                segment.backend
-                for segment in segments
-                if isinstance(segment, _ContainerPathMixin)
-            ),
-            None,
-        )
-        self = super().__new__(cls, *segments)
-        self._backend = backend or inherited
-        if self._backend is None:
-            raise TypeError("PosixContainerPath requires a backend")
-        return self
+    __slots__ = ()
+    _backend_type = ContainerPathBackend
 
 
-class WindowsContainerPath(_ContainerPathMixin, WindowsPathname, Path):
+class WindowsContainerPath(_ContainerPathMixin, WindowsBackendPath):
     """A Windows container path backed by Docker archive operations."""
 
-    __slots__ = ("_backend",)
-
-    def __init__(self, *segments, backend=None):
-        # Python 3.14's pathlib.PurePath.__init__ no longer accepts kwargs.
-        # Path state is initialized by __new__; backend is attached there.
-        if not hasattr(self, "_raw_paths") and not hasattr(self, "_parts"):
-            _StdPurePath.__init__(self, *segments)
-
-    def __new__(
-        cls,
-        *segments: typing.Union[str, WindowsPathname],
-        backend: typing.Optional[ContainerPathBackend] = None,
-    ):
-        inherited = next(
-            (
-                segment.backend
-                for segment in segments
-                if isinstance(segment, _ContainerPathMixin)
-            ),
-            None,
-        )
-        self = super().__new__(cls, *segments)
-        self._backend = backend or inherited
-        if self._backend is None:
-            raise TypeError("WindowsContainerPath requires a backend")
-        return self
+    __slots__ = ()
+    _backend_type = ContainerPathBackend

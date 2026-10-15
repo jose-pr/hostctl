@@ -14,13 +14,12 @@ import typing
 import warnings
 import uuid
 from pathlib import PurePath, PureWindowsPath
-from pathlib import PurePath as _StdPurePath
 from urllib.parse import quote, unquote, urlencode
 
-from pathapi import Path, Pathname, PosixPathname, WindowsPathname
+from pathapi import Pathname, WindowsPathname
 from pathapi import FileStat
 from pathapi.protocols import Chmod, Create, Listing, Move, Remove, Stat
-from pathapi.providers import is_safe_child_name, is_windows_flavoured, notimplemented
+from pathapi.providers import notimplemented
 
 from ..executor import QemuExecutor
 from ..executor._qga import (
@@ -57,8 +56,8 @@ from ._common import (
     strict_uri_query,
     uri_hostname,
 )
+from ._backend_path import PosixBackendPath, WindowsBackendPath
 from ._ssh import SshConfig, _SshTransport
-from ._staged_io import copy_from, staged_open
 
 QemuTransport = typing.Literal["libvirt", "unix", "ssh"]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
@@ -1148,56 +1147,7 @@ class _QgaPathMixin:
         # boolean probe raised. The backend can still answer with file RPCs.
         return self.backend.exists(str(self), follow_symlinks=follow_symlinks)
 
-    def copy(self, target, **kwargs):
-        return Path.copy(self, target, **kwargs)
-
-    def move(self, target, **kwargs):
-        return Path.move(self, target, **kwargs)
-
-    def _copy_from(self, source, **kwargs):
-        """CPython 3.14's `Path.copy()` destination hook.
-
-        One shared implementation (`_staged_io.copy_from`). This body used to
-        be copied verbatim into four modules, and every copy diverged from
-        what stdlib actually calls it with: it raised `FileExistsError` where
-        stdlib overwrites, and opened a directory `"rb"`.
-        """
-        return copy_from(self, source, **kwargs)
-
-    @property
-    def backend(self) -> QgaPathBackend:
-        return self._backend
-
-    def with_segments(self, *segments: str):
-        return type(self)(*segments, backend=self.backend)
-
-    def __truediv__(self, key):
-        return type(self)(self, key, backend=self.backend)
-
-    def joinpath(self, *args):
-        return type(self)(self, *args, backend=self.backend)
-
-    @property
-    def parent(self):
-        return type(self)(str(super().parent), backend=self.backend)
-
-    def stat(self, *, follow_symlinks: bool = True) -> FileStat:
-        return self.backend.stat(str(self), follow_symlinks=follow_symlinks)
-
-    def _scandir(self):
-        # A listing is untrusted input: a name that is not one path component
-        # (`..`, `a/b`) would make `self / name` address outside the directory.
-        windows = is_windows_flavoured(self)
-        for name, value in self.backend.scandir(str(self)):
-            if is_safe_child_name(name, windows=windows):
-                yield name, value
-
-    def iterdir(self):
-        for name, _ in self._scandir():
-            yield self / name
-
-    def _open(self, mode="r", buffering=-1):
-        del buffering
+    def _check_open(self, mode: str) -> None:
         if "x" in mode and self.backend.helper is None:
             # `staged_open` would return a writable stream and only call
             # `write_bytes` from `close()`, so the refusal arrived after the
@@ -1208,16 +1158,6 @@ class _QgaPathMixin:
             raise NotImplementedError(
                 "exclusive QGA writes require a transactional guest helper"
             )
-        return staged_open(self.backend, str(self), mode)
-
-    def _symlink_target(self, target):
-        """Normalise a `str` target WITH this path's backend.
-
-        `Path._symlink_target` builds `type(self)(target)`, and these
-        classes refuse a construction without a backend -- so the public
-        `symlink_to()` raised `TypeError` before reaching the primitive.
-        """
-        return self.with_segments(target) if isinstance(target, str) else target
 
     @notimplemented(
         "QEMU Guest Agent has no symlink RPC; the guest-file-* commands "
@@ -1242,85 +1182,23 @@ class _QgaPathMixin:
     def _mkdir(self, mode: int):
         self.backend.mkdir(str(self), mode)
 
-    def chmod(self, mode: int, *, follow_symlinks: bool = True):
-        self.backend.chmod(str(self), mode, follow_symlinks=follow_symlinks)
-
-    def unlink(self, missing_ok=False):
-        self.backend.unlink(str(self), missing_ok=missing_ok)
-
-    def rmdir(self):
-        self.backend.rmdir(str(self))
-
-    def rename(self, target):
-        if not isinstance(target, _QgaPathMixin):
-            target = type(self)(target, backend=self.backend)
-        if target.backend is not self.backend:
-            raise ValueError("cannot rename across QGA path backends")
+    def _rename_on_backend(self, target) -> None:
         # `os.rename`'s own rule per family: a POSIX guest replaces, a Windows
         # guest refuses an existing target.
         self.backend.rename(
             str(self), str(target), replace=not isinstance(self, WindowsPathname)
         )
-        return target
 
 
-class PosixQemuPath(_QgaPathMixin, PosixPathname, Path):
+class PosixQemuPath(_QgaPathMixin, PosixBackendPath):
     """A POSIX guest path backed by QEMU Guest Agent."""
 
-    __slots__ = ("_backend",)
-
-    def __init__(self, *segments, backend=None):
-        # Python 3.14's pathlib.PurePath.__init__ no longer accepts kwargs.
-        # Path state is initialized by __new__; backend is attached there.
-        if not hasattr(self, "_raw_paths") and not hasattr(self, "_parts"):
-            _StdPurePath.__init__(self, *segments)
-
-    def __new__(
-        cls,
-        *segments: typing.Union[str, PosixPathname],
-        backend: typing.Optional[QgaPathBackend] = None,
-    ):
-        inherited = next(
-            (
-                segment.backend
-                for segment in segments
-                if isinstance(segment, _QgaPathMixin)
-            ),
-            None,
-        )
-        self = super().__new__(cls, *segments)
-        self._backend = backend or inherited
-        if self._backend is None:
-            raise TypeError("PosixQemuPath requires a backend")
-        return self
+    __slots__ = ()
+    _backend_type = QgaPathBackend
 
 
-class WindowsQemuPath(_QgaPathMixin, WindowsPathname, Path):
+class WindowsQemuPath(_QgaPathMixin, WindowsBackendPath):
     """A Windows guest path backed by QEMU Guest Agent."""
 
-    __slots__ = ("_backend",)
-
-    def __init__(self, *segments, backend=None):
-        # Python 3.14's pathlib.PurePath.__init__ no longer accepts kwargs.
-        # Path state is initialized by __new__; backend is attached there.
-        if not hasattr(self, "_raw_paths") and not hasattr(self, "_parts"):
-            _StdPurePath.__init__(self, *segments)
-
-    def __new__(
-        cls,
-        *segments: typing.Union[str, WindowsPathname],
-        backend: typing.Optional[QgaPathBackend] = None,
-    ):
-        inherited = next(
-            (
-                segment.backend
-                for segment in segments
-                if isinstance(segment, _QgaPathMixin)
-            ),
-            None,
-        )
-        self = super().__new__(cls, *segments)
-        self._backend = backend or inherited
-        if self._backend is None:
-            raise TypeError("WindowsQemuPath requires a backend")
-        return self
+    __slots__ = ()
+    _backend_type = QgaPathBackend

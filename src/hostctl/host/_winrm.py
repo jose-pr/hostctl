@@ -15,10 +15,8 @@ import subprocess
 import threading
 import typing
 import uuid
-from pathlib import PurePath as _StdPurePath
 from urllib.parse import quote, unquote, urlencode
 
-from pathapi import Path, WindowsPathname
 from pathapi import FileStat
 
 from ..executor import (
@@ -57,7 +55,7 @@ from ._common import (
     uri_hostname,
 )
 from ..shell import POWERSHELL, ShellFlavour
-from ._staged_io import copy_from, staged_open
+from ._backend_path import WindowsBackendPath
 
 log = logging.getLogger("hostctl.host.winrm")
 
@@ -1023,96 +1021,18 @@ class _WinRMReadStream(io.RawIOBase):
         return len(data)
 
 
-class WinRMPath(WindowsPathname, Path):
+class WinRMPath(WindowsBackendPath):
     """A Windows path whose I/O executes through a WinRM host."""
 
-    __slots__ = ("_backend",)
-
-    def copy(self, target, **kwargs):
-        return Path.copy(self, target, **kwargs)
-
-    def move(self, target, **kwargs):
-        return Path.move(self, target, **kwargs)
-
-    def _copy_from(self, source, **kwargs):
-        """CPython 3.14's `Path.copy()` destination hook.
-
-        One shared implementation (`_staged_io.copy_from`). This body used to
-        be copied verbatim into four modules, and every copy diverged from
-        what stdlib actually calls it with: it raised `FileExistsError` where
-        stdlib overwrites, and opened a directory `"rb"`.
-        """
-        return copy_from(self, source, **kwargs)
-
-    def __init__(self, *segments, backend=None):
-        # Python 3.14's pathlib.PurePath.__init__ no longer accepts kwargs.
-        # Path state is initialized by __new__; backend is attached there.
-        if not hasattr(self, "_raw_paths") and not hasattr(self, "_parts"):
-            _StdPurePath.__init__(self, *segments)
-
-    def __new__(
-        cls,
-        *segments: typing.Union[str, WindowsPathname],
-        backend: typing.Optional[WinRMPathBackend] = None,
-    ):
-        inherited = next(
-            (segment.backend for segment in segments if isinstance(segment, WinRMPath)),
-            None,
-        )
-        self = super().__new__(cls, *segments)
-        self._backend = backend or inherited
-        if self._backend is None:
-            raise TypeError("WinRMPath requires a backend")
-        return self
-
-    @property
-    def backend(self) -> WinRMPathBackend:
-        return self._backend
-
-    def with_segments(self, *segments: str):
-        return type(self)(*segments, backend=self.backend)
-
-    def __truediv__(self, key):
-        return type(self)(self, key, backend=self.backend)
-
-    def joinpath(self, *args):
-        return type(self)(self, *args, backend=self.backend)
-
-    @property
-    def parent(self):
-        return type(self)(str(super().parent), backend=self.backend)
-
-    def stat(self, *, follow_symlinks: bool = True) -> FileStat:
-        return self.backend.stat(str(self), follow_symlinks=follow_symlinks)
-
-    def _scandir(self):
-        yield from self.backend.scandir(str(self))
-
-    def iterdir(self):
-        for name, _ in self._scandir():
-            yield self / name
-
-    def _open(self, mode="r", buffering=-1):
-        del buffering
-        return staged_open(self.backend, str(self), mode)
-
-    def _symlink_target(self, target):
-        """Normalise a `str` target WITH this path's backend.
-
-        `Path._symlink_target` builds `type(self)(target)`, and these
-        classes refuse a construction without a backend -- so the public
-        `symlink_to()` raised `TypeError` before reaching the primitive.
-        """
-        return self.with_segments(target) if isinstance(target, str) else target
+    __slots__ = ()
+    _backend_type = WinRMPathBackend
 
     def _symlink_to(self, target, target_is_directory: bool = False):
         """Create this path as a symbolic link to ``target``.
 
         The PRIMITIVE, not the public method: `pathapi`'s wrapper adds
         `force=` (remove an existing entry first) and normalises a `str`
-        target without re-parsing it as URI syntax. Overriding the public
-        name made both unreachable, so `symlink_to(target, force=True)`
-        silently ignored `force`.
+        target without re-parsing it as URI syntax.
 
         Windows only permits this from an elevated session or with
         Developer Mode enabled; otherwise the backend raises
@@ -1128,24 +1048,10 @@ class WinRMPath(WindowsPathname, Path):
     def _mkdir(self, mode: int):
         self.backend.mkdir(str(self))
 
-    def chmod(self, mode: int, *, follow_symlinks: bool = True):
+    def _chmod_on_backend(self, mode: int, follow_symlinks: bool) -> None:
         if not follow_symlinks:
             raise NotImplementedError("WinRMPath chmod does not support links")
         self.backend.chmod(str(self), mode)
-
-    def unlink(self, missing_ok=False):
-        self.backend.unlink(str(self), missing_ok=missing_ok)
-
-    def rmdir(self):
-        self.backend.rmdir(str(self))
-
-    def rename(self, target):
-        if not isinstance(target, WinRMPath):
-            target = type(self)(target, backend=self.backend)
-        if target.backend is not self.backend:
-            raise ValueError("cannot rename across WinRM path backends")
-        self.backend.rename(str(self), str(target))
-        return target
 
 
 class WinRMExecutorProvider(ExecutorProvider):
