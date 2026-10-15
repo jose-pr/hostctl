@@ -154,6 +154,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `iterdir()` of a regular file on a POSIX QGA guest raises `NotADirectoryError`
+  instead of listing nothing: the guest helper reads `find`'s record for the
+  starting point, and follows it with `-H` when it is a link.
 - **`move()` between two WinRM hosts, or two QGA hosts, copies and deletes**
   instead of raising `ValueError`; a direct `rename()` across hosts raises
   `OSError(EXDEV)`. `chmod("755")` works on WinRM and QGA paths.

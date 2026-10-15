@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import errno
+import os
 import stat as _stat
 import subprocess
 import typing
@@ -160,13 +161,14 @@ class PosixGuestPathHelper:
     def scandir(self, path: str) -> typing.List[typing.Tuple[str, FileStat]]:
         # `find` takes no `--` before its starting points, so a relative path
         # is anchored with `./` instead: `-delete` would otherwise be read as
-        # an expression and run against the current directory.
+        # an expression and run against the current directory. Its first
+        # record is the starting point itself (`-H` follows it if it is a
+        # link), which is how a regular file is told from an empty directory.
         argv = [
             "find",
+            "-H",
             path if path.startswith("/") else "./" + path,
             "-maxdepth",
-            "1",
-            "-mindepth",
             "1",
             "-printf",
             _SCANDIR_FORMAT,
@@ -182,8 +184,12 @@ class PosixGuestPathHelper:
                 f"guest find returned {len(fields)} fields for {path!r}, "
                 "which is not a whole number of records"
             )
+        if not fields:
+            raise OSError(f"guest find printed no record for {path!r}")
+        if fields[4] != b"d":
+            raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), path)
         entries = []
-        for index in range(0, len(fields), 5):
+        for index in range(5, len(fields), 5):
             name, mode, size, mtime, kind = fields[index : index + 5]
             entries.append(
                 (

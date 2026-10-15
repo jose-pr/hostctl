@@ -113,10 +113,6 @@ def test_path_error_types(provider, tmp_path):
             directory.read_bytes()
         file_path = conformance_path(host, provider, tmp_path, "file")
         file_path.write_bytes(b"x")
-        if provider.name == "qemu":
-            # GNU `find FILE -mindepth 1` lists nothing and exits 0, so a
-            # POSIX guest's listing of a regular file is empty, not an error.
-            pytest.skip("qemu POSIX guest listing a regular file is not an error")
         with pytest.raises(NotADirectoryError):
             list(file_path.iterdir())
 

@@ -98,6 +98,11 @@ def test_scandir_survives_a_newline_in_a_filename():
     """
     payload = b"\0".join(
         [
+            b"x",
+            b"755",
+            b"4096",
+            b"1790043376.3",
+            b"d",
             b"sub",
             b"755",
             b"40",
@@ -133,7 +138,7 @@ def test_the_scandir_format_travels_as_an_escape_not_a_nul():
     `find` interprets the `\\0` escape itself; a real NUL could never reach
     it. Measured: sent as an escape, find emits the separator.
     """
-    guest = _Guest({"find": (0, b"", b"")})
+    guest = _Guest({"find": (0, b"x\x00755\x000\x000\x00d\x00", b"")})
 
     PosixGuestPathHelper(guest).scandir("/tmp/x")
 
@@ -183,6 +188,7 @@ def test_every_mutation_passes_paths_as_argv_after_a_double_dash(call, expected)
 #: The only option-shaped argv elements a helper command may carry before
 #: its `--`: literal spellings, never a caller's path.
 _LITERAL_OPTIONS = {
+    "-H",
     "-L",
     "-c",
     "-maxdepth",
@@ -206,7 +212,7 @@ def test_a_dash_leading_path_is_never_an_option(hostile):
     guest = _Guest(
         {
             "stat": (0, b"41ed 0 0\n", b""),
-            "find": (0, b"", b""),
+            "find": (0, b"x\x00755\x000\x000\x00d\x00", b""),
         }
     )
     helper = PosixGuestPathHelper(guest)
@@ -221,8 +227,8 @@ def test_a_dash_leading_path_is_never_an_option(hostile):
 
     for program, argv in guest.calls:
         if program == "find":
-            assert argv[0] == "./" + hostile
-            options = argv[1:]
+            assert argv[1] == "./" + hostile
+            options = argv[:1] + argv[2:]
         else:
             cut = argv.index("--")
             options = argv[:cut]
@@ -233,11 +239,11 @@ def test_a_dash_leading_path_is_never_an_option(hostile):
 
 
 def test_an_absolute_path_is_the_find_starting_point_as_it_is():
-    guest = _Guest({"find": (0, b"", b"")})
+    guest = _Guest({"find": (0, b"x\x00755\x000\x000\x00d\x00", b"")})
 
     PosixGuestPathHelper(guest).scandir("/srv/-delete")
 
-    assert guest.calls[-1][1][0] == "/srv/-delete"
+    assert guest.calls[-1][1][1] == "/srv/-delete"
 
 
 def test_a_rename_that_mv_skipped_raises_file_exists():
@@ -407,7 +413,12 @@ def test_a_probed_guest_gets_a_real_path_surface():
     guest = _Guest(
         {
             "stat": (0, b"41ed\n", b""),
-            "find": (0, b"one.txt\x00644\x007\x001790043376.3\x00f\x00", b""),
+            "find": (
+                0,
+                b"srv\x00755\x000\x000\x00d\x00"
+                b"one.txt\x00644\x007\x001790043376.3\x00f\x00",
+                b"",
+            ),
         }
     )
     transport = _QgaTransport(
@@ -486,3 +497,12 @@ def test_a_guest_that_names_no_family_gets_no_helper():
 
     assert host._path_backend.helper is None
     assert not guest.calls
+
+
+def test_scandir_of_a_regular_file_raises_not_a_directory():
+    """GNU `find FILE -maxdepth 1` prints FILE's own record and exits 0, so a
+    listing of a file is told from an empty directory by that first record."""
+    guest = _Guest({"find": (0, b"f\x00644\x001\x000\x00f\x00", b"")})
+
+    with pytest.raises(NotADirectoryError):
+        PosixGuestPathHelper(guest).scandir("/tmp/f")

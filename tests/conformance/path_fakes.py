@@ -12,6 +12,7 @@ import base64
 import errno
 import json
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -718,6 +719,11 @@ class GnuGuestPrograms:
         return 0, (out + "\n").encode("utf-8"), b""
 
     def _find(self, argv):
+        # `-H` follows the starting point when it is a link; without
+        # `-mindepth 1` the starting point is printed first, as GNU find does.
+        follow = argv[0] == "-H"
+        if follow:
+            argv = argv[1:]
         start = argv[0]
         if start.startswith("-"):
             # GNU find reads a leading `-x` as an expression and would run
@@ -727,26 +733,31 @@ class GnuGuestPrograms:
         fmt = argv[argv.index("-printf") + 1]
         directory = self.sandbox.local(start)
         try:
-            os.stat(directory)
+            top = os.stat(directory) if follow else os.lstat(directory)
         except FileNotFoundError:
             text = "find: '%s': No such file or directory\n" % start
             return 1, b"", text.encode("utf-8")
+
+        def record(name, value):
+            letter = next(
+                (name for test, name in _TYPE_LETTERS if test(value.st_mode)), "U"
+            )
+            text = (
+                fmt.replace("%f", name)
+                .replace("%m", format(stat.S_IMODE(value.st_mode), "o"))
+                .replace("%s", str(value.st_size))
+                .replace("%T@", "%.10f" % value.st_mtime)
+                .replace("%y", letter)
+                .replace("\\0", "\0")
+            )
+            return text.encode("utf-8", "surrogateescape")
+
         records = bytearray()
-        if directory.is_dir():
+        if "-mindepth" not in argv:
+            records += record(posixpath.basename(start.rstrip("/")) or "/", top)
+        if stat.S_ISDIR(top.st_mode):
             for child in sorted(directory.iterdir(), key=lambda item: item.name):
-                value = child.lstat()
-                letter = next(
-                    (name for test, name in _TYPE_LETTERS if test(value.st_mode)), "U"
-                )
-                record = (
-                    fmt.replace("%f", child.name)
-                    .replace("%m", format(stat.S_IMODE(value.st_mode), "o"))
-                    .replace("%s", str(value.st_size))
-                    .replace("%T@", "%.10f" % value.st_mtime)
-                    .replace("%y", letter)
-                    .replace("\\0", "\0")
-                )
-                records += record.encode("utf-8", "surrogateescape")
+                records += record(child.name, child.lstat())
         return 0, bytes(records), b""
 
     def _mkdir(self, argv):
