@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import contextlib
-import threading
-import types
 import typing
 
-from ..executor import expired
 from ..executor._common import LeaseToken
 from ._common import (
     IncrementalTextDecoder,
     Process,
     ProcessData,
+    ReentrantLock,
+    _LeasedStreamProcess,
     raise_normalized,
 )
 from ..executor.serial import SerialLike, normalize_serial_error
@@ -21,30 +20,31 @@ if typing.TYPE_CHECKING:  # pragma: no cover - import cycle at runtime
     from ..serial import SerialConsoleProtocol
 
 
-class SerialProcess(Process):
+class SerialProcess(_LeasedStreamProcess):
     """Exclusive raw access to one serial connection."""
+
+    _closed_message = "serial process is closed"
+    _wait_label = "serial session"
+    _stderr_message = "serial has one merged byte stream"
+    _eof_message = "serial connections do not support half-close"
+    _terminate_message = "serial has no generic terminate signal"
+    _kill_message = "serial has no generic kill signal"
 
     def __init__(
         self,
         serial_port: SerialLike,
         *,
-        io_lock: threading.RLock,
+        io_lock: ReentrantLock,
         token: LeaseToken,
         release: typing.Callable[[], None],
     ) -> None:
+        super().__init__(io_lock=io_lock, token=token, release=release)
         self._serial = serial_port
-        self._io_lock = io_lock
-        self._token = token
-        self._release = release
-        self._closed = token.ended
-
-    @property
-    def returncode(self) -> typing.Optional[int]:
-        return 0 if self._closed.is_set() else None
 
     def _require_open(self) -> None:
-        if self._closed.is_set() or not self._serial.is_open:
-            raise ConnectionError("serial process is closed")
+        super()._require_open()
+        if not self._serial.is_open:
+            raise ConnectionError(self._closed_message)
 
     def write(
         self, data: ProcessData, *, timeout: typing.Optional[float] = None
@@ -128,12 +128,6 @@ class SerialProcess(Process):
             except Exception:
                 pass
 
-    def read_stderr(self, size: int = -1) -> bytes:
-        raise NotImplementedError("serial has one merged byte stream")
-
-    def send_eof(self) -> None:
-        raise NotImplementedError("serial connections do not support half-close")
-
     def resize(
         self,
         columns: int,
@@ -142,19 +136,6 @@ class SerialProcess(Process):
         pixel_height: int = 0,
     ) -> None:
         raise NotImplementedError("serial terminals cannot be resized generically")
-
-    def wait(self, timeout: typing.Optional[float] = None) -> int:
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout must not be negative")
-        if not self._closed.wait(timeout):
-            raise expired("serial session", timeout, orphaned=True)
-        return 0
-
-    def terminate(self) -> None:
-        raise NotImplementedError("serial has no generic terminate signal")
-
-    def kill(self) -> None:
-        raise NotImplementedError("serial has no generic kill signal")
 
     def send_break(self, duration: float = 0.25) -> None:
         if duration < 0:
@@ -197,23 +178,6 @@ class SerialProcess(Process):
     def rts(self, value: bool) -> None:
         self._require_open()
         self._serial.rts = bool(value)
-
-    def close(self) -> None:
-        if self._closed.is_set():
-            return
-        self._release()
-
-    def __enter__(self) -> SerialProcess:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: typing.Optional[typing.Type[BaseException]],
-        exc_value: typing.Optional[BaseException],
-        traceback: typing.Optional[types.TracebackType],
-    ) -> bool:
-        self.close()
-        return False
 
 
 class SerialConsoleProcess(Process):

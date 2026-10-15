@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import errno
+import functools
 import threading
-import types
 import typing
 
-from ..executor import expired
-from ._common import IncrementalTextDecoder, Process, ProcessData, raise_normalized
-
-#: What `threading.RLock()` returns. `threading.RLock` itself is a
-#: FACTORY FUNCTION, not a class, so it cannot annotate anything --
-#: a re-entrant lock's only portable spelling is the protocol it
-#: satisfies.
-_ReentrantLock = typing.ContextManager[bool]
+from ..executor._common import LeaseToken, StreamLease
+from ._common import (
+    IncrementalTextDecoder,
+    ProcessData,
+    ReentrantLock,
+    _LeasedStreamProcess,
+    raise_normalized,
+)
 
 
 class QemuConsoleStream(typing.Protocol):
@@ -71,20 +71,26 @@ class QemuSerialConsole:
         self._stream = stream
         self._owns_stream = owns_stream if stream is not None else True
         self._resize = resize
-        self._lease = threading.Lock()
+        self._lease = StreamLease(
+            "QEMU console already has an active process", on_end=self._on_lease_end
+        )
         self._io_lock = threading.RLock()
 
-    def open(self) -> QemuSerialProcess:
-        if not self._lease.acquire(blocking=False):
-            raise RuntimeError("QEMU console already has an active process")
+    def open(
+        self,
+        *,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
+    ) -> QemuSerialProcess:
+        """Lease the stream; `encoding`/`errors` make the process read `str`."""
+        token = self._lease.acquire()
         try:
             stream = self._stream
             if stream is None:
                 if self._factory is None:
                     # An injected stream is consumed by the process that
                     # owned it -- it was finished on teardown, so there is
-                    # nothing left to reopen. A bare AssertionError said
-                    # none of that, and vanished entirely under -O.
+                    # nothing left to reopen.
                     raise RuntimeError(
                         "this console's stream was consumed; supply a "
                         "stream_factory to reopen it"
@@ -92,60 +98,57 @@ class QemuSerialConsole:
                 stream = self._factory()
                 self._stream = stream
         except Exception as exc:
-            self._lease.release()
+            self._lease.release(token)
             raise_normalized(exc, normalize_qemu_console_error)
         return QemuSerialProcess(
             stream,
             io_lock=self._io_lock,
-            release=self._release,
+            token=token,
+            release=functools.partial(self._lease.release, token),
             close_stream=self._owns_stream,
             resize=self._resize,
+            encoding=encoding,
+            errors=errors,
         )
 
-    def _release(self) -> None:
+    def _on_lease_end(self) -> None:
         if self._owns_stream:
             self._stream = None
-        self._lease.release()
 
 
-class QemuSerialProcess(Process):
+class QemuSerialProcess(_LeasedStreamProcess):
     """Raw merged byte I/O over one libvirt console/channel stream."""
+
+    _closed_message = "QEMU console process is closed"
+    _wait_label = "QEMU serial console"
+    _stderr_message = "QEMU serial consoles have one merged byte stream"
+    _eof_message = "QEMU console streams do not support a generic half-close"
+    _terminate_message = "QEMU serial consoles have no generic terminate signal"
+    _kill_message = "QEMU serial consoles have no generic kill signal"
 
     def __init__(
         self,
         stream: QemuConsoleStream,
         *,
-        io_lock: typing.Optional["_ReentrantLock"] = None,
+        io_lock: typing.Optional[ReentrantLock] = None,
+        token: typing.Optional[LeaseToken] = None,
         release: typing.Callable[[], None],
         close_stream: bool = True,
         resize: typing.Optional[ConsoleResize] = None,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
     ) -> None:
+        super().__init__(io_lock=io_lock, token=token, release=release)
         self._stream = stream
-        self._io_lock = io_lock or threading.RLock()
-        # Guards the teardown decision only; never held across I/O.
-        self._finish_lock = threading.Lock()
-        self._finishing = False
-        self._release = release
         self._close_stream = close_stream
         self._resize = resize
         self._encoding = encoding
         self._errors = errors or "strict"
-        self._closed = threading.Event()
         self._decoder = (
             IncrementalTextDecoder(encoding, self._errors)
             if encoding is not None
             else None
         )
-
-    @property
-    def returncode(self) -> typing.Optional[int]:
-        return 0 if self._closed.is_set() else None
-
-    def _require_open(self) -> None:
-        if self._closed.is_set():
-            raise ConnectionError("QEMU console process is closed")
 
     def write(self, data: ProcessData) -> None:
         if isinstance(data, str):
@@ -192,18 +195,10 @@ class QemuSerialProcess(Process):
         except Exception as exc:
             raise_normalized(exc, normalize_qemu_console_error)
         if not value:
-            self._finish(closing_stream=self._close_stream)
+            self.close()
         if self._decoder is not None:
             return self._decoder.decode(value, final=not value)
         return value
-
-    def read_stderr(self, size: int = -1) -> bytes:
-        raise NotImplementedError("QEMU serial consoles have one merged byte stream")
-
-    def send_eof(self) -> None:
-        raise NotImplementedError(
-            "QEMU console streams do not support a generic half-close"
-        )
 
     def resize(
         self,
@@ -226,61 +221,15 @@ class QemuSerialProcess(Process):
         except Exception as exc:
             raise_normalized(exc, normalize_qemu_console_error)
 
-    def wait(self, timeout: typing.Optional[float] = None) -> int:
-        if timeout is not None and timeout < 0:
-            raise ValueError("timeout must not be negative")
-        if not self._closed.wait(timeout):
-            raise expired("QEMU serial console", timeout, orphaned=True)
-        return 0
-
-    def terminate(self) -> None:
-        raise NotImplementedError(
-            "QEMU serial consoles have no generic terminate signal"
-        )
-
-    def kill(self) -> None:
-        raise NotImplementedError("QEMU serial consoles have no generic kill signal")
-
-    def close(self) -> None:
-        self._finish(closing_stream=self._close_stream)
-
-    def _finish(self, *, closing_stream: bool) -> None:
-        # Check-then-act on `_closed` let a concurrent close() and an
-        # EOF-driven finish both run: the console lease was released twice,
-        # which either raises "release unlocked lock" out of close() or frees
-        # a lease a new owner already holds. One winner claims the teardown.
-        with self._finish_lock:
-            if self._closed.is_set() or self._finishing:
-                return
-            self._finishing = True
-        error: typing.Optional[Exception] = None
-        if closing_stream:
-            try:
-                with self._io_lock:
-                    self._stream.finish()
-            except Exception as exc:
-                error = exc
-                try:
-                    self._stream.abort()
-                except Exception:
-                    pass
-        self._closed.set()
+    def _teardown(self) -> None:
+        if not self._close_stream:
+            return
         try:
-            self._release()
-        finally:
-            with self._finish_lock:
-                self._finishing = False
-        if error is not None:
-            raise_normalized(error, normalize_qemu_console_error)
-
-    def __enter__(self) -> QemuSerialProcess:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: typing.Optional[typing.Type[BaseException]],
-        exc_value: typing.Optional[BaseException],
-        traceback: typing.Optional[types.TracebackType],
-    ) -> bool:
-        self.close()
-        return False
+            with self._io_lock:
+                self._stream.finish()
+        except Exception as exc:
+            try:
+                self._stream.abort()
+            except Exception:
+                pass
+            raise_normalized(exc, normalize_qemu_console_error)

@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import dataclasses
+import threading
 import typing
 import types
 import codecs
 
+from ..executor._common import LeaseToken
+from ..executor._common import expired
 from ..executor._common import raise_normalized as raise_normalized
 
 ProcessData = typing.Union[str, bytes]
+
+#: What `threading.RLock()` returns. `threading.RLock` itself is a
+#: FACTORY FUNCTION, not a class, so it cannot annotate anything --
+#: a re-entrant lock's only portable spelling is the protocol it
+#: satisfies.
+ReentrantLock = typing.ContextManager[bool]
 
 
 class IncrementalTextDecoder:
@@ -136,3 +145,95 @@ class Process(typing.Protocol):
         traceback: typing.Optional[types.TracebackType],
     ) -> bool:
         raise NotImplementedError(f"{type(self).__name__}.__exit__")
+
+
+class _LeasedStreamProcess(Process):
+    """A merged byte stream that holds one :class:`StreamLease` acquisition.
+
+    Subclasses give the transport's I/O and its message texts, and put
+    anything that must run once at close in `_teardown()`. The lease ending
+    -- through `close()` or revoked by its owner -- is the process's "closed"
+    state: `returncode` is then 0, `wait()` returns and I/O raises
+    `ConnectionError`.
+    """
+
+    _closed_message = "process is closed"
+    _wait_label = "stream"
+    _stderr_message = "the stream is merged"
+    _eof_message = "the stream cannot be half-closed"
+    _terminate_message = "the stream has no terminate signal"
+    _kill_message = "the stream has no kill signal"
+
+    def __init__(
+        self,
+        *,
+        io_lock: typing.Optional[ReentrantLock] = None,
+        token: typing.Optional[LeaseToken] = None,
+        release: typing.Callable[[], None],
+    ) -> None:
+        self._io_lock = io_lock or threading.RLock()
+        # A process built without a lease (a test double, a one-off stream)
+        # carries a token of its own, so `close()` still ends it.
+        token = token or LeaseToken()
+        self._token = token
+        self._release = release
+        self._closed = token.ended
+        # Decides who tears down; never held across I/O.
+        self._claim_lock = threading.Lock()
+        self._claimed = False
+
+    @property
+    def returncode(self) -> typing.Optional[int]:
+        return 0 if self._closed.is_set() else None
+
+    def _require_open(self) -> None:
+        if self._closed.is_set():
+            raise ConnectionError(self._closed_message)
+
+    def read_stderr(self, size: int = -1) -> bytes:
+        raise NotImplementedError(self._stderr_message)
+
+    def send_eof(self) -> None:
+        raise NotImplementedError(self._eof_message)
+
+    def terminate(self) -> None:
+        raise NotImplementedError(self._terminate_message)
+
+    def kill(self) -> None:
+        raise NotImplementedError(self._kill_message)
+
+    def wait(self, timeout: typing.Optional[float] = None) -> int:
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must not be negative")
+        if not self._closed.wait(timeout):
+            raise expired(self._wait_label, timeout, orphaned=True)
+        return 0
+
+    def _teardown(self) -> None:
+        """Run once, by the one close() that wins; may raise after release."""
+
+    def close(self) -> None:
+        # Check-then-act on `_closed` let a concurrent close() and an
+        # EOF-driven close both run, releasing the lease twice. One winner
+        # claims the teardown.
+        with self._claim_lock:
+            if self._closed.is_set() or self._claimed:
+                return
+            self._claimed = True
+        try:
+            self._teardown()
+        finally:
+            self._closed.set()
+            self._release()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(
+        self,
+        exc_type: typing.Optional[typing.Type[BaseException]],
+        exc_value: typing.Optional[BaseException],
+        traceback: typing.Optional[types.TracebackType],
+    ) -> bool:
+        self.close()
+        return False

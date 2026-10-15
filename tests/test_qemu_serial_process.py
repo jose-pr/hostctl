@@ -215,3 +215,28 @@ def test_reopening_a_consumed_injected_stream_says_why():
 
     with pytest.raises(RuntimeError, match="stream_factory"):
         console.open()
+
+
+def test_a_stale_close_does_not_free_the_lease_of_its_successor():
+    calls = []
+
+    def factory():
+        calls.append(True)
+        return _Stream()
+
+    console = QemuSerialConsole(stream_factory=factory)
+    first = console.open()
+    first.close()
+    second = console.open()
+    first.close()
+    with pytest.raises(RuntimeError, match="active process"):
+        console.open()
+    second.close()
+
+
+def test_console_text_mode_reads_str_and_reassembles_a_split_character():
+    stream = _Stream((b"\xc3", b"\xa9"))
+    process = QemuSerialConsole(stream=stream).open(encoding="utf-8")
+    assert process.read() + process.read() == "é"
+    process.write("hi")
+    assert b"".join(stream.sent) == b"hi"

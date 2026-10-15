@@ -10,7 +10,7 @@ import time
 import types
 import typing
 
-from ._common import LeaseToken, StreamLease, raise_normalized
+from ._common import StreamLease, raise_normalized
 
 if typing.TYPE_CHECKING:
     from ..process.serial import SerialProcess
