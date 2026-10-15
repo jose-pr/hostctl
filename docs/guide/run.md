@@ -313,6 +313,12 @@ package renders for. Windows OpenSSH's stock server uses `cmd.exe /c`, so a
 `cmd`-dialect command line is parsed by cmd *twice* -- and unescaped, that is
 command injection, not just corruption.
 
+`run()` and `spawn()` share the rule. On a POSIX server the string is joined
+so that every sh-family shell (sh, bash, zsh, dash, BusyBox ash) *and fish* read
+it back verbatim; csh and tcsh are not supported. A fish login shell honours a
+backslash inside single quotes where sh does not, so a backslash and a single
+quote are written outside the quotes.
+
 `SshConfig(login_shell="auto" | "cmd" | "powershell" | "posix")` says which.
 `auto` reads the dialect: a Windows path flavour means the stock `cmd.exe`.
 The server's shell is configurable (`HKLM\SOFTWARE\OpenSSH\DefaultShell`),

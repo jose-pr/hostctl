@@ -1,4 +1,5 @@
 import os
+import shlex
 import subprocess
 from pathlib import PurePosixPath
 
@@ -583,9 +584,10 @@ def test_direct_exec_embeds_cwd_and_env_a_provider_cannot_carry():
     host.run(Exec("/usr/bin/make"), cwd="/srv/build", env={"CC": "clang"}, check=False)
 
     command, args, options = calls[-1]
-    assert "/srv/build" in command and command.startswith("cd ")
-    assert "CC=clang" in command
-    assert "/usr/bin/make" in command
+    script = shlex.split(command)[2]
+    assert "cd -- /srv/build" in script
+    assert "CC=clang" in script
+    assert "/usr/bin/make" in script
     # Never smuggled back through the options a provider did not ask for.
     assert "cwd" not in options and "env" not in options
 

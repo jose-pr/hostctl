@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shlex
 import typing
 from pathlib import Path, PurePath, PurePosixPath
 
@@ -12,6 +11,7 @@ from ._common import (
     ShellFlavour,
     ShellOperator,
     ShellToken,
+    login_join,
     posix_cwd_operand,
 )
 
@@ -79,12 +79,13 @@ class FishShellFlavour(ShellFlavour):
         executable: typing.Optional[str] = None,
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
+        login_shell: typing.Optional[str] = None,
     ) -> ShellCommand:
         command = self.invocation(
             self.script(cmds, cwd=cwd, env=env),
             executable=executable,
         )
-        return ShellCommand(shlex.join(command), None)
+        return ShellCommand(login_join(command), None)
 
     def invocation(
         self, script: str, *, executable: typing.Optional[str] = None

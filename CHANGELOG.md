@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   instead of a base64 `-EncodedCommand` argument. Endpoint-protection
   heuristics scan the command line, and a base64 PowerShell launch is what
   they flag; the script now never appears there. Results are unchanged.
+- **Breaking, 0.4.0**: `ShellFlavour.command()` takes `login_shell=None`; a
+  custom flavour must accept it to be used over SSH. The POSIX `command()`
+  puts `cwd` inside the script instead of a leading `cd ... &&`, and joins
+  with a quoting that sh-family shells and fish read identically.
 - The config extension hooks `_from_parsed_uri` and `_create_host` are documented
   as the override points for a `HostConfig` subclass, with a worked example in
   the extending guide. Their names are unchanged and no `from_uri` is added.
@@ -213,6 +217,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `<redacted>`; the value still reaches the remote command line. fish
   `set -gx` and quoted values containing `'` are also redacted in raw
   command text.
+- `spawn()` over SSH escapes the command line for a `cmd` login shell, as
+  `run()` does; an argument such as `a&b` ran as a second command (command
+  injection).
+- A fish login shell over SSH reads structured arguments verbatim; a value
+  ending in a backslash could end the quoting early and run what followed
+  (command injection).
 - `run(timeout=)` over SSH returns within about three seconds of the deadline
   even when the server or command ignores TERM, and `TimeoutExpired.orphaned`
   is true unless the command was seen to end.

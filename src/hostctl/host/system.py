@@ -21,7 +21,7 @@ from ..executor._common import (
 )
 from ..provider import OperationNotStarted, ProviderSelector
 from ..shell import POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
-from ..shell._invocation import for_login_shell, shell_invocation
+from ..shell._invocation import render_command, shell_invocation
 from ..shell._common import wants_epilogue
 from ._common import (
     CaptureOutput,
@@ -190,11 +190,6 @@ class _ShellContext(typing.NamedTuple):
     cwd: typing.Optional[PathLike]
     env: typing.Optional[typing.Any]
     epilogue: bool
-
-
-def _for_login_shell(flavour, command, provider) -> str:
-    """`for_login_shell` for the provider's declared login shell."""
-    return for_login_shell(flavour, command, getattr(provider, "login_shell", None))
 
 
 def _shell_invocation(flavour, cmds, *, cwd, env, epilogue, executable, provider=None):
@@ -1003,14 +998,16 @@ class SystemHost(Host):
         an out-of-band environment for providers that cannot embed one, and
         it is the only path that needs the login-shell layer.
         """
-        rendered = flavour.command(
+        rendered = render_command(
+            flavour,
             cmds,
             executable=executable,
             cwd=context.cwd,
             env=context.env,
+            login_shell=getattr(provider, "login_shell", None),
         )
         return (
-            _for_login_shell(flavour, rendered.command, provider),
+            rendered.command,
             (),
             self._out_of_band_env(provider, rendered, options),
         )

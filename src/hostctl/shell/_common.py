@@ -151,6 +151,44 @@ EnvironmentSelection = typing.Optional[Environment]
 _INHERIT_ENV: Environment = types.MappingProxyType({})
 
 
+#: Characters a word may hold and still need no quoting under sh, bash, zsh,
+#: dash, ash and fish alike. Narrower than `shlex.quote`'s set: `%` is fish's
+#: PID expansion.
+_LOGIN_SAFE = frozenset(
+    "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789" "@+=:,./_-"
+)
+
+
+def login_join(argv: typing.Iterable[str]) -> str:
+    """Join argv so sh, bash, zsh, dash, ash and fish all read it back verbatim.
+
+    Inside single quotes fish honours a backslash escape and sh does not, so
+    a backslash and a single quote are written outside the quotes, where both
+    agree. A leading `=` is quoted because zsh expands it.
+    """
+    words = []
+    for value in argv:
+        if not value:
+            words.append("''")
+        elif value[0] != "=" and all(char in _LOGIN_SAFE for char in value):
+            words.append(value)
+        else:
+            parts = []
+            run = ""
+            for char in value:
+                if char in "\\'":
+                    if run:
+                        parts.append("'" + run + "'")
+                        run = ""
+                    parts.append("\\" + char)
+                else:
+                    run += char
+            if run:
+                parts.append("'" + run + "'")
+            words.append("".join(parts))
+    return " ".join(words)
+
+
 @dataclasses.dataclass(frozen=True)
 class ShellCommand:
     """A transport-ready command and any environment sent out of band."""
@@ -556,19 +594,24 @@ class ShellFlavour(abc.ABC):
         executable: typing.Optional[str] = None,
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
+        login_shell: typing.Optional[str] = None,
     ) -> ShellCommand:
         """Build the command submitted to an SSH exec channel.
 
-        The returned string is read by the **remote login shell**, so each
-        flavour must say which parser it escaped for:
+        The string is parsed first by `login_shell`: `None` means nothing
+        parses it before the command line's own shell (as with
+        `CreateProcess`), `"posix"` an sh-family shell or fish, `"cmd"` and
+        `"powershell"` those shells. Each flavour's rule:
 
-        * POSIX and fish quote with `shlex`, for a POSIX login shell.
+        * POSIX and fish join the invocation with `login_join`, which sh,
+          bash, zsh, dash, ash and fish read back identically; `cwd` is part
+          of the script. csh and tcsh are not supported.
         * PowerShell renders `-EncodedCommand <base64 utf-16le>`, which is
           inert under cmd.exe (Windows OpenSSH's default shell), PowerShell
           and a POSIX shell alike.
-        * `cmd` escapes exactly one cmd layer, which makes it a command LINE
-          for direct submission rather than text for a remote login shell --
-          see the divergence ledger in `docs/guide/contracts.md`.
+        * `cmd` escapes exactly one cmd layer and, for `login_shell="cmd"`,
+          one more for the login shell's own parse -- see the divergence
+          ledger in `docs/guide/contracts.md`.
         """
 
     @abc.abstractmethod

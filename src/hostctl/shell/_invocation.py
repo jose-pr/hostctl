@@ -5,38 +5,30 @@ from __future__ import annotations
 import typing
 
 from ..executor import CommandLine, Environment, PathLike
-from ._common import ShellFlavour, ShellToken
+from ._common import ShellCommand, ShellFlavour, ShellToken
 
 
-def for_login_shell(
-    flavour: ShellFlavour, command: str, login_shell: typing.Optional[str]
-) -> str:
-    """Escape a rendered command line for the shell that will parse it.
+def render_command(
+    flavour: ShellFlavour,
+    cmds: typing.Iterable[ShellToken],
+    *,
+    executable: typing.Optional[str] = None,
+    cwd: typing.Optional[PathLike] = None,
+    env: typing.Optional[Environment] = None,
+    login_shell: typing.Optional[str] = None,
+) -> ShellCommand:
+    """`flavour.command()` for a line a login shell parses before it runs.
 
-    A command line is rendered for exactly ONE parse. A transport that
-    delivers it to a login shell -- SSH does; `CreateProcess` does not --
-    makes that shell parse it first, consuming the layer the flavour
-    applied. Only the transport knows this, so it passes `login_shell`, the
-    name of what parses the line on arrival.
-
-    Measured against a real cmd.exe standing in for Windows OpenSSH's stock
-    server: 4 of 8 adversarial values survived unescaped, and two of the
-    failures were command injection (`a&b`, `x|y`).
+    A transport that delivers a command string to a login shell (SSH does;
+    `CreateProcess` does not) passes `login_shell`, the name of what parses
+    it on arrival. The keyword is left off when there is none, so a flavour
+    written before it existed keeps working for local use.
     """
-    if flavour.argv_invocation:
-        # The flavour renders argv, so what a transport sends is a SCRIPT and
-        # the login shell's single parse is the one it was rendered for. This
-        # is every POSIX-family flavour: `$SHELL -c <script>` is exactly the
-        # target, and adding a layer here would corrupt it.
-        return command
-    if login_shell is not None and login_shell == flavour.name:
-        # A command LINE delivered to the same shell it was rendered for:
-        # that shell parses it, and then the line's own `/c` parses it again.
-        # A different login shell either does not parse it or could not run
-        # it anyway, and PowerShell's `-EncodedCommand` is inert under all of
-        # them.
-        return flavour.escape_for_one_parse(command)
-    return command
+    if login_shell is None:
+        return flavour.command(cmds, executable=executable, cwd=cwd, env=env)
+    return flavour.command(
+        cmds, executable=executable, cwd=cwd, env=env, login_shell=login_shell
+    )
 
 
 def shell_invocation(
@@ -56,10 +48,17 @@ def shell_invocation(
     sees them (`CmdShellFlavour.invocation`), which silently corrupted every
     value carrying a quote or a metacharacter. For those the rendered command
     line is submitted instead, marked so the executor does not re-quote it.
-    `login_shell` is what `for_login_shell` asks.
+    `login_shell` is what `render_command` asks.
     """
     if not flavour.argv_invocation:
-        rendered = flavour.command(cmds, executable=executable, cwd=cwd, env=env)
-        return (CommandLine(for_login_shell(flavour, rendered.command, login_shell)),)
+        rendered = render_command(
+            flavour,
+            cmds,
+            executable=executable,
+            cwd=cwd,
+            env=env,
+            login_shell=login_shell,
+        )
+        return (CommandLine(rendered.command),)
     script = flavour.script(cmds, cwd=cwd, env=env, epilogue=epilogue)
     return tuple(flavour.invocation(script, executable=executable))

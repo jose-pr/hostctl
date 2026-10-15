@@ -55,6 +55,7 @@ from ..shell import (
     ShellFlavourSelection,
     shell_flavour,
 )
+from ..shell._invocation import render_command
 
 SshKeySource = typing.Union[str, bytes, os.PathLike[str]]
 SshClientKeys = typing.Optional[
@@ -95,8 +96,9 @@ class SshConfig(HostConfig, schemes=("ssh",)):
     #: line's own shell runs.
     #:
     #: AsyncSSH sends one string and the server hands it to a login shell.
-    #: On a POSIX server that is `$SHELL -c`, which is exactly what this
-    #: package renders for -- one parse, nothing to add. Windows OpenSSH's
+    #: On a POSIX server that is `$SHELL -c`; `"posix"` covers every sh-family
+    #: shell and fish (csh and tcsh are unsupported), and the string is
+    #: rendered so each reads it back verbatim. Windows OpenSSH's
     #: stock server hands it to `cmd.exe /c`, so a `cmd`-dialect command
     #: line (which already carries one cmd layer) is parsed by cmd TWICE:
     #: measured against a real cmd.exe, 4 of 8 adversarial values survived
@@ -489,11 +491,13 @@ class _SshTransport:
         if self.config.dialect == "auto" and selected_executable is None:
             assert self._resolved_dialect is not None
             selected_executable = self._resolved_dialect[2]
-        shell_command = selected_flavour.command(
+        shell_command = render_command(
+            selected_flavour,
             cmds,
             executable=selected_executable,
             cwd=cwd,
             env=env,
+            login_shell=self.config.resolved_login_shell,
         )
         remote_command = shell_command.command
         remote_env = shell_command.environment
@@ -531,11 +535,13 @@ class _SshTransport:
             if self.config.dialect == "auto" and selected_executable is None:
                 assert self._resolved_dialect is not None
                 selected_executable = self._resolved_dialect[2]
-            shell_command = selected_flavour.command(
+            shell_command = render_command(
+                selected_flavour,
                 cmds,
                 executable=selected_executable,
                 cwd=cwd,
                 env=env,
+                login_shell=self.config.resolved_login_shell,
             )
             command: typing.Optional[str] = shell_command.command
             remote_env = shell_command.environment

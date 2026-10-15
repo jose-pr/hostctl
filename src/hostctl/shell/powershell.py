@@ -300,6 +300,7 @@ class PowerShellFlavour(ShellFlavour):
         executable: typing.Optional[str] = None,
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
+        login_shell: typing.Optional[str] = None,
     ) -> ShellCommand:
         script = self.script(cmds, cwd=cwd, env=env)
         # `-EncodedCommand`, not `-Command`: this string is submitted to an

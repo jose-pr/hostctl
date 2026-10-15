@@ -12,6 +12,7 @@ from ._common import (
     ShellFlavour,
     ShellOperator,
     ShellToken,
+    login_join,
     posix_cwd_operand,
 )
 
@@ -59,15 +60,13 @@ class PosixShellFlavour(ShellFlavour):
         executable: typing.Optional[str] = None,
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
+        login_shell: typing.Optional[str] = None,
     ) -> ShellCommand:
         command = self.invocation(
-            self.script(cmds, env=env),
+            self.script(cmds, cwd=cwd, env=env),
             executable=executable,
         )
-        remote_command = shlex.join(command)
-        if cwd:
-            remote_command = f"{self.change_directory(cwd)}{self.operator(ShellOperator.AND)}{remote_command}"
-        return ShellCommand(remote_command, None)
+        return ShellCommand(login_join(command), None)
 
     def invocation(
         self, script: str, *, executable: typing.Optional[str] = None

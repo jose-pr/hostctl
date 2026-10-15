@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import shlex
 import subprocess
 import sys
 from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
@@ -246,10 +247,12 @@ def test_posix_dialect_quotes_cwd_and_embeds_environment():
     host, stub = _host()
     host.run(["printf", "%s", "a b"], cwd="/tmp/a b", env={"NAME": "value"})
     command, options = stub.calls[0]
-    assert "cd -- '/tmp/a b'" in command
-    assert command.count("cd -- ") == 1
-    assert "'a b'" in command
-    assert "export NAME=value" in command
+    # The login shell reads the line; the script is its third word.
+    script = shlex.split(command)[2]
+    assert "cd -- '/tmp/a b'" in script
+    assert script.count("cd -- ") == 1
+    assert "'a b'" in script
+    assert "export NAME=value" in script
     assert options["env"] is None
 
 

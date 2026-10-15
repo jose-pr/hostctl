@@ -328,6 +328,7 @@ class CmdShellFlavour(ShellFlavour):
         executable: typing.Optional[str] = None,
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
+        login_shell: typing.Optional[str] = None,
     ) -> ShellCommand:
         script = self.script(cmds, cwd=cwd, env=env)
         # Bound out of the f-string on purpose: a multi-line expression
@@ -336,10 +337,12 @@ class CmdShellFlavour(ShellFlavour):
             executable or self.default_executable,
             target=ShellTarget.PROGRAM,
         )
-        return ShellCommand(
-            f'{program} /d /v:off /s /c "{script}"',
-            None,
-        )
+        line = f'{program} /d /v:off /s /c "{script}"'
+        if login_shell == "cmd":
+            # The login shell parses the line once before this /c does. Any
+            # other login shell either does not parse it or could not run it.
+            line = self.escape_for_one_parse(line)
+        return ShellCommand(line, None)
 
     def invocation(
         self, script: str, *, executable: typing.Optional[str] = None

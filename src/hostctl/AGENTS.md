@@ -37,6 +37,9 @@ cmd TWICE. `"auto"` reads the dialect (a Windows path flavour means the stock
 `cmd.exe`); name it explicitly when the server's `DefaultShell` has been
 changed. `ShellFlavour.escape_for_one_parse(text)` is the outer layer this
 selects, implemented by `cmd` and refused by default rather than guessed.
+`"posix"` covers every sh-family shell and fish; csh and tcsh are unsupported.
+`run()` and `spawn()` both render through `render_command(...,
+login_shell=...)`, so they cannot disagree.
 
 A shell flavour answers TWO quoting questions, not one. `quote(value)` is
 syntactic -- enough that this shell sees one word and expands nothing.
@@ -293,8 +296,14 @@ and `parse_credentials`.
 - Raw strings stay verbatim; tuple/list commands quote each item as data;
   standalone and structured paths are quoted; top-level commands otherwise
   use the flavour's `command_separator`.
-- `ShellFlavour.command(cmds, *, executable=None, cwd=None, env=None) ->
-  ShellCommand` wraps that script for an SSH exec channel.
+- `ShellFlavour.command(cmds, *, executable=None, cwd=None, env=None,
+  login_shell=None) -> ShellCommand` wraps that script for an SSH exec channel.
+  `login_shell` names what parses the string first (`None`: nothing, as with
+  `CreateProcess`; `"posix"`: an sh-family shell or fish; `"cmd"`;
+  `"powershell"`). POSIX and fish join with `login_join`, which every
+  sh-family shell and fish read back verbatim, with `cwd` inside the script;
+  `cmd` adds the second escape for `"cmd"`. A custom flavour must accept the
+  keyword to be used over SSH.
 - Structured values are normalized through the base class (including bytes and
   iterable argv sequences); empty structured commands and control characters
   are rejected. Raw empty command strings are skipped when joining.
