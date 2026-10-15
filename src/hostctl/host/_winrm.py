@@ -29,6 +29,7 @@ from ..executor import (
     pypsrp_available,
     require_pypsrp,
 )
+from ..executor.winrm import _PywinrmStdinSession
 from ..process import RunspaceSession
 from ..provider import (
     ExecutorProvider,
@@ -71,17 +72,9 @@ MessageEncryption = typing.Literal["auto", "always", "never"]
 WinRMProviderName = typing.Literal["auto", "pywinrm", "psrp"]
 
 
-#: Script bytes pywinrm can actually carry, derived rather than guessed.
-#:
-#: `Session.run_ps` base64-encodes the script as UTF-16-LE and sends it as one
-#: `powershell -encodedcommand <b64>` string, which the WinRS server runs
-#: through cmd.exe (WINRS_SKIP_CMD_SHELL=FALSE). Base64 of UTF-16-LE is 8/3 of
-#: the script's ASCII length, cmd.exe rejects a command line beyond ~8180
-#: characters, and the fixed prefix costs ~31 -- so the ceiling is
-#: (8180 - 31) * 3 / 8 ~= 3055 bytes. The previous 6000 was over twice what
-#: fits, and any write batching more than one chunk failed with
-#: `OSError('The command line is too long.')`.
-_PYWINRM_SCRIPT_BUDGET = 3_000
+#: Script bytes one remote call may carry. Every leg delivers the script on
+#: stdin or as a message, so no command line bounds it.
+_SCRIPT_BUDGET = 256_000
 
 
 @dataclasses.dataclass
@@ -229,24 +222,15 @@ class _WinRMTransport:
             lambda: self.session,
             lambda: float(self.config.read_timeout_sec),
         )
-        # WinRS/pywinrm carries the generated script on a command line and
-        # therefore uses a conservative budget.  Native PowerShell remoting
-        # and PSRP feed scripts through stdin/messages and can safely batch
-        # larger payloads.
         #: True when the local PowerShell relays the command itself. That
         #: session reports the remote status through its own
         #: `__HOSTCTL_LASTEXITCODE__` marker line, so the flavour's
         #: `; exit $LASTEXITCODE` epilogue must not be appended -- the `exit`
         #: ends the remote pipeline before the marker can be emitted.
         self._native_session = native and self._provider != "psrp"
-        script_budget = (
-            256_000
-            if self._provider == "psrp" or self._native_session
-            else _PYWINRM_SCRIPT_BUDGET
-        )
         self._path_backend = WinRMPathBackend(
             self.run,
-            max_script_bytes=script_budget,
+            max_script_bytes=_SCRIPT_BUDGET,
         )
 
     @property
@@ -330,14 +314,18 @@ class _WinRMTransport:
                     "WinRM support requires the 'winrm' extra: "
                     "pip install hostctl[winrm]"
                 ) from exc
-            self._session = winrm.Session(
-                self.config.endpoint,
-                auth=(self.config.username, self.config.password),
-                transport=self.config.transport,
-                server_cert_validation=self.config.server_cert_validation,
-                message_encryption=self.config.message_encryption,
-                operation_timeout_sec=self.config.operation_timeout_sec,
-                read_timeout_sec=self.config.read_timeout_sec,
+            # `winrm.Session` still owns endpoint and auth handling; only its
+            # protocol is used, because `run_ps` goes through cmd.exe.
+            self._session = _PywinrmStdinSession(
+                winrm.Session(
+                    self.config.endpoint,
+                    auth=(self.config.username, self.config.password),
+                    transport=self.config.transport,
+                    server_cert_validation=self.config.server_cert_validation,
+                    message_encryption=self.config.message_encryption,
+                    operation_timeout_sec=self.config.operation_timeout_sec,
+                    read_timeout_sec=self.config.read_timeout_sec,
+                ).protocol
             )
         return self._session
 
@@ -458,20 +446,29 @@ def _encoded(value: str) -> str:
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
 
+def _append_operation(encoded: str) -> str:
+    """One chunk appended to the temporary file; also sizes the chunks."""
+    return (
+        "$b=[Convert]::FromBase64String('"
+        + encoded
+        + "');$s=[IO.File]::Open($p,[IO.FileMode]::Append,"
+        "[IO.FileAccess]::Write,[IO.FileShare]::None);"
+        "try{$s.Write($b,0,$b.Length)}finally{$s.Dispose()}"
+    )
+
+
 class WinRMPathBackend:
     """Structured PowerShell filesystem operations for :class:`WinRMPath`."""
 
-    # WinRS command lines are much smaller than a local PowerShell stdin
-    # stream.  Keep each generated script below the conservative 6 KiB
-    # budget used by pywinrm, while native adapters may opt into larger
-    # batches through ``max_script_bytes``.
+    # `max_script_bytes` is the transport's per-call script budget; a write
+    # batches as many chunks as fit in one script.
     chunk_size = 48 * 1024
 
     def __init__(
         self,
         run: typing.Callable[..., subprocess.CompletedProcess],
         *,
-        max_script_bytes: int = 6_000,
+        max_script_bytes: int,
     ) -> None:
         self._run = run
         if max_script_bytes < 2_048:
@@ -678,43 +675,35 @@ class WinRMPathBackend:
                 "$s=[IO.File]::Open($p,[IO.FileMode]::CreateNew,"
                 "[IO.FileAccess]::Write,[IO.FileShare]::None);$s.Dispose()",
             )
-            # Build one script per transport-sized batch.  This avoids a
-            # round-trip for every tiny chunk while never exceeding the
-            # WinRS command-line budget.
+            # One script per batch of chunks: a round trip per chunk would
+            # cost far more than the base64 does.
             batches: typing.List[typing.List[str]] = []
             batch: typing.List[str] = []
             batch_size = 0
-            payload_size = min(self.chunk_size, 1536)
             # MEASURED, not guessed: the fixed cost is this path's own
-            # prelude, which carries the base64 of the path itself. A flat
-            # 1200-byte reserve was smaller than that for a long path, so the
-            # emitted script exceeded the very budget this loop exists to
-            # respect, and the command line was rejected by the far end.
+            # prelude, which carries the base64 of the path itself.
             overhead = len(self._script(temporary, "", target=path).encode("utf-8"))
-            script_budget = self.max_script_bytes - overhead
-            if script_budget < payload_size * 2:
+            room = self.max_script_bytes - overhead - len(_append_operation(""))
+            payload_size = min(self.chunk_size, (room // 4) * 3)
+            if payload_size < 3:
                 raise OSError(
-                    f"the WinRM script budget ({self.max_script_bytes} bytes) "
-                    f"cannot hold this path's prelude ({overhead} bytes); "
-                    "raise max_script_bytes or use a shorter path"
+                    errno.ENAMETOOLONG,
+                    f"the script budget ({self.max_script_bytes} bytes) cannot "
+                    f"hold this path's prelude ({overhead} bytes) and one chunk",
+                    path,
                 )
+            script_budget = self.max_script_bytes - overhead
             for offset in range(0, len(value), payload_size):
                 encoded = base64.b64encode(
                     value[offset : offset + payload_size]
                 ).decode("ascii")
-                operation = (
-                    "$b=[Convert]::FromBase64String('"
-                    + encoded
-                    + "');$s=[IO.File]::Open($p,[IO.FileMode]::Append,"
-                    "[IO.FileAccess]::Write,[IO.FileShare]::None);"
-                    "try{$s.Write($b,0,$b.Length)}finally{$s.Dispose()}"
-                )
-                if batch and batch_size + len(operation) > script_budget:
+                operation = _append_operation(encoded)
+                if batch and batch_size + len(operation) + 1 > script_budget:
                     batches.append(batch)
                     batch = []
                     batch_size = 0
                 batch.append(operation)
-                batch_size += len(operation)
+                batch_size += len(operation) + 1
             if batch:
                 batches.append(batch)
             for operations in batches:

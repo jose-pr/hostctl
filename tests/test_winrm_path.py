@@ -11,7 +11,7 @@ from pathapi import Path
 from pathapi import FileStat
 
 from hostctl import WinRMPath
-from hostctl.host._winrm import WinRMPathBackend
+from hostctl.host._winrm import _SCRIPT_BUDGET, WinRMPathBackend
 
 
 class _MemoryBackend:
@@ -152,7 +152,7 @@ def test_winrm_backend_prelude_and_command_budget_for_large_write():
         scripts.append(script)
         return subprocess.CompletedProcess(script, 0, "", "")
 
-    backend = WinRMPathBackend(run)
+    backend = WinRMPathBackend(run, max_script_bytes=_SCRIPT_BUDGET)
     backend.write_bytes(r"C:\large.bin", b"x" * (1024 * 1024))
     assert scripts
     assert all(
@@ -186,7 +186,7 @@ def test_winrm_backend_marker_error_mapping(marker, error_type):
             script, 0, f"HOSTCTL_ERROR:{marker}:{encoded}", ""
         )
 
-    backend = WinRMPathBackend(run)
+    backend = WinRMPathBackend(run, max_script_bytes=_SCRIPT_BUDGET)
     with pytest.raises(error_type, match="detail"):
         backend.stat(r"C:\hostile'$(rm x).txt")
 
@@ -207,14 +207,15 @@ def test_winrm_backend_hostile_path_is_encoded_and_json_stat_is_parsed():
         }
         return subprocess.CompletedProcess(script, 0, json.dumps(value), "")
 
-    backend = WinRMPathBackend(run)
+    backend = WinRMPathBackend(run, max_script_bytes=_SCRIPT_BUDGET)
     result = backend.stat(r"C:\foo'$(rm x).txt")
     assert result.st_size == 3
     assert "foo'$(rm x)" not in scripts[0]
     assert "OutputEncoding" in scripts[0]
 
 
-@pytest.mark.parametrize("size", [0, 1535, 1536, 1537, 3072])
+@pytest.mark.parametrize("budget", [_SCRIPT_BUDGET, 2048], ids=["production", "floor"])
+@pytest.mark.parametrize("size", [0, 1535, 1536, 1537, 3072, 70_000])
 @pytest.mark.parametrize(
     "path",
     [
@@ -227,14 +228,21 @@ def test_winrm_backend_hostile_path_is_encoded_and_json_stat_is_parsed():
     ],
     ids=["short", "long"],
 )
-def test_winrm_backend_write_chunk_boundaries_stay_within_budget(size, path):
+def test_winrm_backend_write_chunk_boundaries_stay_within_budget(size, path, budget):
     scripts = []
 
     def run(script, **kwargs):
         scripts.append(script)
         return subprocess.CompletedProcess(script, 0, "", "")
 
-    backend = WinRMPathBackend(run)
+    backend = WinRMPathBackend(run, max_script_bytes=budget)
+    if budget == 2048 and len(path) > 300:
+        # The prelude of a long path alone exceeds the floor budget.
+        with pytest.raises(OSError) as raised:
+            backend.write_bytes(path, b"x" * size)
+        assert raised.value.errno == __import__("errno").ENAMETOOLONG
+        assert raised.value.filename == path
+        return
     backend.write_bytes(path, b"x" * size)
     assert all(
         len(script.encode("utf-8")) <= backend.max_script_bytes for script in scripts
@@ -249,7 +257,7 @@ def test_winrm_open_read_uses_lazy_range_requests():
         payload = __import__("base64").b64encode(b"ab").decode("ascii")
         return subprocess.CompletedProcess(script, 0, payload, "")
 
-    backend = WinRMPathBackend(run)
+    backend = WinRMPathBackend(run, max_script_bytes=_SCRIPT_BUDGET)
     with backend.open_read(r"C:\large.bin") as stream:
         assert stream.read(2) == b"ab"
     assert len(scripts) == 1
@@ -361,7 +369,7 @@ def test_a_mapped_error_carries_errno_and_the_path():
             script, 0, f"HOSTCTL_ERROR:missing:{marker}", ""
         )
 
-    backend = WinRMPathBackend(run)
+    backend = WinRMPathBackend(run, max_script_bytes=_SCRIPT_BUDGET)
 
     with pytest.raises(FileNotFoundError) as raised:
         backend.read_bytes(r"C:\absent.txt")
@@ -381,7 +389,9 @@ def test_a_relative_link_target_resolves_against_the_links_directory():
 
     class _Backend(WinRMPathBackend):
         def __init__(self):
-            super().__init__(lambda script, **kwargs: None)
+            super().__init__(
+                lambda script, **kwargs: None, max_script_bytes=_SCRIPT_BUDGET
+            )
 
         def _execute(self, path, body, **kwargs):
             seen.append(path)
@@ -406,7 +416,9 @@ def test_a_self_referential_link_stops_rather_than_recursing():
 
     class _Backend(WinRMPathBackend):
         def __init__(self):
-            super().__init__(lambda script, **kwargs: None)
+            super().__init__(
+                lambda script, **kwargs: None, max_script_bytes=_SCRIPT_BUDGET
+            )
 
         def _execute(self, path, body, **kwargs):
             return json.dumps({"mode": "l", "link": True, "target": path})

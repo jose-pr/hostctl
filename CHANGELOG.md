@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (was 7.1), `serial` requires pyserial 3.3 (was 3.5), `psrp` is limited to
   pypsrp 0.9.x (was `<1`), and `qemu-libvirt` accepts libvirt-python 12 and
   later (was `<12`).
+- **The pywinrm leg no longer loads the remote user's PowerShell profile and
+  runs non-interactive**, as the native leg already did. It starts
+  `powershell.exe` directly and sends the script on stdin, instead of through
+  cmd.exe. This ships in 0.4.0.
 
 ### Added
 
@@ -114,6 +118,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A container path taken before `ContainerHost.close()` raises instead of
   reopening docker-py's client, and a Windows container follows relative links
   with Windows path syntax.
+- Writes to a WinRM path over pywinrm work again; every write raised
+  `OSError`. `run()` commands over about 3 KB no longer fail with "The command
+  line is too long".
 
 ## [0.3.2] - 2026-09-23
 

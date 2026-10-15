@@ -137,7 +137,9 @@ ending in a `#` comment cannot swallow it.
 - SSH `input=`, `cwd=`, `env=`, `timeout=` and `encoding=`/`errors=` follow
   the subprocess-shaped contract.
 - WinRM buffers output to caller-owned file handles. It cannot stream stdin or
-  select another executable. `read_timeout_sec` is a transport-read setting,
+  select another executable. The pywinrm leg sends the script on stdin to a
+  directly started `powershell.exe`, so a command has no command-line length
+  limit. `read_timeout_sec` is a transport-read setting,
   not a total command deadline; native current-context remoting does not kill
   a remote command when that read window elapses. Remote exit codes are
   preserved, while transport/authentication failures are normalized to

@@ -40,6 +40,11 @@ from pathapi import FileStat
 from ..executor._qga import guest_oserror
 
 #: `find -printf`'s type letters, in `stat` terms.
+#: Script bytes one `guest-exec` call may carry: the script travels as an
+#: `-EncodedCommand` argv, which CreateProcess caps at 32,767 characters --
+#: about 12,265 script bytes after base64 of UTF-16.
+_GUEST_EXEC_SCRIPT_BUDGET = 12_000
+
 _FILE_TYPES = {
     "f": _stat.S_IFREG,
     "d": _stat.S_IFDIR,
@@ -307,7 +312,9 @@ class WindowsGuestPathHelper:
             return None
         if getattr(result, "returncode", 1) != 0:
             return None
-        return cls(WinRMPathBackend(run_script))
+        return cls(
+            WinRMPathBackend(run_script, max_script_bytes=_GUEST_EXEC_SCRIPT_BUDGET)
+        )
 
     # -- metadata --------------------------------------------------------
 

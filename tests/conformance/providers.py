@@ -420,31 +420,63 @@ class _FakeSshRunProcess:
         )()
 
 
-class FakeWinRMSession(_FakeTransport):
-    def run_ps(self, script):
+class LocalWinRSProtocol:
+    """pywinrm's `Protocol` with the WinRS hop replaced by a local process.
+
+    The far end is not available here, so the hop is emulated: the command
+    must be started without cmd.exe and with a stdin that is not a console,
+    which is what the stdin session asks of a real server.
+    """
+
+    def __init__(self):
+        self.largest_send = 0
+        self._processes = {}
+
+    def open_shell(self, *args, **kwargs):
+        return "shell"
+
+    def run_command(
+        self,
+        shell,
+        command,
+        arguments=(),
+        console_mode_stdin=True,
+        skip_cmd_shell=False,
+    ):
+        assert skip_cmd_shell is True
+        assert console_mode_stdin is False
+        assert command == "powershell.exe"
         executable = "powershell.exe" if os.name == "nt" else shutil.which("pwsh")
         if not executable:
             raise NotImplementedError("PowerShell is unavailable for fake WinRM")
-        invocation = (
-            script
-            if os.name == "nt"
-            and script.casefold().startswith(("powershell.exe ", "pwsh "))
-            else [executable, "-NoProfile", "-NonInteractive", "-Command", script]
+        process = subprocess.Popen(
+            [executable, *arguments],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
-        result = subprocess.run(
-            invocation,
-            capture_output=True,
-            check=False,
-        )
-        return type(
-            "Response",
-            (),
-            {
-                "status_code": result.returncode,
-                "std_out": result.stdout,
-                "std_err": result.stderr,
-            },
-        )()
+        command_id = "command-%d" % len(self._processes)
+        self._processes[command_id] = process
+        return command_id
+
+    def send_command_input(self, shell, command_id, stdin_input, end=False):
+        assert isinstance(stdin_input, bytes)
+        self.largest_send = max(self.largest_send, len(stdin_input))
+        process = self._processes[command_id]
+        process.stdin.write(stdin_input)
+        if end:
+            process.stdin.close()
+
+    def get_command_output(self, shell, command_id):
+        process = self._processes[command_id]
+        out, err = process.communicate()
+        return out, err, process.returncode
+
+    def cleanup_command(self, shell, command_id):
+        self._processes.pop(command_id, None)
+
+    def close_shell(self, shell):
+        pass
 
 
 class _ExecResult:
@@ -661,9 +693,9 @@ class FakeWinRMHost:
 
     def __new__(cls):
         from hostctl import WindowsHost, WinRMConfig
+        from hostctl.executor.winrm import _PywinrmStdinSession
         from hostctl.host._winrm import (
             WinRMExecutorProvider,
-            WinRMPathBackend,
             WinRMPathProvider,
             _WinRMTransport,
         )
@@ -675,9 +707,11 @@ class FakeWinRMHost:
             provider="pywinrm",
         )
         transport = _WinRMTransport(config)
-        transport._session = FakeWinRMSession("winrm", LocalExecutor())
+        transport._session = _PywinrmStdinSession(LocalWinRSProtocol())
         runner = WinRMFilesystemRunner()
-        transport._path_backend = WinRMPathBackend(runner)
+        # Keep the transport-built backend and replace only the hop it runs
+        # scripts through: its budget and chunking are what production uses.
+        transport._path_backend._run = runner
         host = WindowsHost(
             config,
             executor_providers=(WinRMExecutorProvider(transport),),

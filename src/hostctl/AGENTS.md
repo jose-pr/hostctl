@@ -532,6 +532,9 @@ selects PSRP when `hostctl[psrp]` is installed on Python 3.10+, otherwise
 pywinrm; `provider="psrp"` requires the extra.
 
 The WinRM executor provider supports PowerShell `run()` and Windows-semantic `WinRMPath`.
+The pywinrm leg runs `powershell.exe -NoProfile -NonInteractive -Command -`
+without cmd.exe and sends the script on stdin, so scripts and `run()` commands
+have no command-line cap; every leg shares one 256,000-byte script budget.
 Password-free configs on Windows use current-context native PowerShell
 remoting; explicit credentials use pywinrm. On that native path
 `server_cert_validation="ignore"` becomes `New-PSSessionOption -SkipCACheck

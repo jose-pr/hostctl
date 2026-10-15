@@ -18,26 +18,56 @@ import subprocess
 
 import pytest
 
-from hostctl.host._winrm import WinRMPathBackend
+from conformance.providers import LocalWinRSProtocol
+from hostctl import WinRMConfig
+from hostctl.executor.winrm import _PywinrmStdinSession
+from hostctl.host._winrm import _SCRIPT_BUDGET, _WinRMTransport
 
 pytestmark = pytest.mark.skipif(
     os.name != "nt", reason="the generated scripts are Windows PowerShell"
 )
 
 
-def _powershell_runner(script, *, check=False, encoding="utf-8", **_options):
-    return subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-        capture_output=True,
-        text=True,
-        encoding=encoding,
-        check=False,
+@pytest.fixture
+def transport():
+    """The production pywinrm leg; only the WinRS hop is a local process."""
+    built = _WinRMTransport(
+        WinRMConfig("fake", "fake", "fake", provider="pywinrm", transport="ntlm")
     )
+    built._session = _PywinrmStdinSession(LocalWinRSProtocol())
+    return built
 
 
 @pytest.fixture
-def backend():
-    return WinRMPathBackend(_powershell_runner)
+def backend(transport):
+    return transport._path_backend
+
+
+@pytest.mark.parametrize("size", [0, 2, 5000, 1 << 20])
+def test_a_write_round_trips_at_the_production_budget(transport, tmp_path, size):
+    """Every pywinrm write used to raise OSError: the budget was smaller than
+    the minimum the writer needed."""
+    backend = transport._path_backend
+    assert backend.max_script_bytes == _SCRIPT_BUDGET
+    target = str(tmp_path / "blob.bin")
+    data = os.urandom(size)
+
+    backend.write_bytes(target, data)
+
+    assert backend.read_bytes(target) == data
+    assert [entry.name for entry in tmp_path.iterdir()] == ["blob.bin"]
+
+
+def test_a_long_command_is_not_bounded_by_a_command_line(transport):
+    """cmd.exe rejected a `powershell -encodedcommand` line past ~8 KB."""
+    result = transport.run(
+        "$x='" + "z" * 6000 + "'; Write-Output $x.Length",
+        check=False,
+        encoding="utf-8",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "6000"
 
 
 def test_write_bytes_creates_then_overwrites(backend, tmp_path):

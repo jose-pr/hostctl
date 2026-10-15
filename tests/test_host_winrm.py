@@ -13,8 +13,8 @@ import pytest
 
 from pathapi import Path as NextPath
 from hostctl import Shell, WinRMConfig, WinRMPath
-from hostctl.host._winrm import _WinRMTransport
-from hostctl.executor.winrm import NativeWinRMSession
+from hostctl.host._winrm import _SCRIPT_BUDGET, _WinRMTransport
+from hostctl.executor.winrm import NativeWinRMSession, _PywinrmStdinSession
 
 
 class _Response:
@@ -170,18 +170,78 @@ def test_winrm_config_exposes_secure_transport_settings():
     assert config.message_encryption == "always"
 
 
-def test_winrm_path_budget_tracks_provider(monkeypatch):
-    monkeypatch.setattr("hostctl.host._winrm.pypsrp_available", lambda: False)
-    pywinrm = _WinRMTransport(WinRMConfig("host", "user", "secret", provider="pywinrm"))
-    # Derived from what pywinrm actually sends: the script is base64 UTF-16-LE
-    # (8/3 of its length) inside a `powershell -encodedcommand` command line
-    # that cmd.exe caps at ~8180 characters. 6000 was over twice what fits.
-    assert pywinrm._path_backend.max_script_bytes == 3000
-    encoded = pywinrm._path_backend.max_script_bytes * 8 / 3
-    assert encoded + len("powershell.exe -encodedcommand ") < 8180
+@pytest.mark.parametrize("provider", ["pywinrm", "psrp"])
+def test_every_leg_uses_one_script_budget(monkeypatch, provider):
     monkeypatch.setattr("hostctl.host._winrm.pypsrp_available", lambda: True)
-    psrp = _WinRMTransport(WinRMConfig("host", "user", "secret", provider="psrp"))
-    assert psrp._path_backend.max_script_bytes == 256000
+    transport = _WinRMTransport(
+        WinRMConfig("host", "user", "secret", provider=provider)
+    )
+    assert transport._path_backend.max_script_bytes == _SCRIPT_BUDGET
+
+
+class _RecordingProtocol:
+    def __init__(self, fail=False):
+        self.calls = []
+        self.sends = []
+        self.fail = fail
+
+    def open_shell(self):
+        self.calls.append("open_shell")
+        return "S"
+
+    def run_command(self, shell, command, arguments=(), **flags):
+        self.calls.append(("run_command", shell, command, list(arguments), flags))
+        return "C"
+
+    def send_command_input(self, shell, command_id, data, end=False):
+        assert isinstance(data, bytes)
+        self.sends.append((len(data), end))
+
+    def get_command_output(self, shell, command_id):
+        if self.fail:
+            raise RuntimeError("boom")
+        return b"out", b"err", 3
+
+    def cleanup_command(self, shell, command_id):
+        self.calls.append("cleanup_command")
+
+    def close_shell(self, shell):
+        self.calls.append("close_shell")
+
+
+def test_the_stdin_session_starts_powershell_without_cmd_and_streams_the_script():
+    protocol = _RecordingProtocol()
+    response = _PywinrmStdinSession(protocol).run_ps("x" * 200_000)
+
+    assert (response.status_code, response.std_out, response.std_err) == (
+        3,
+        b"out",
+        b"err",
+    )
+    assert protocol.calls[1] == (
+        "run_command",
+        "S",
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", "-"],
+        {"console_mode_stdin": False, "skip_cmd_shell": True},
+    )
+    assert len(protocol.sends) == 5
+    assert all(size <= 65_536 for size, _ in protocol.sends)
+    assert [end for _, end in protocol.sends] == [False] * 4 + [True]
+    assert protocol.calls[-2:] == ["cleanup_command", "close_shell"]
+
+
+def test_the_stdin_session_sends_one_slice_for_an_empty_script():
+    protocol = _RecordingProtocol()
+    _PywinrmStdinSession(protocol).run_ps("")
+    assert len(protocol.sends) == 1 and protocol.sends[0][1] is True
+
+
+def test_the_stdin_session_closes_the_shell_when_the_read_fails():
+    protocol = _RecordingProtocol(fail=True)
+    with pytest.raises(RuntimeError, match="boom"):
+        _PywinrmStdinSession(protocol).run_ps("Write-Output x")
+    assert protocol.calls[-2:] == ["cleanup_command", "close_shell"]
 
 
 def test_native_winrm_timeout_names_remote_host(monkeypatch):

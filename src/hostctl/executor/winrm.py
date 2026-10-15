@@ -35,7 +35,7 @@ class WinRMSession(typing.Protocol):
 
 
 @dataclasses.dataclass
-class _NativeResponse:
+class _Response:
     status_code: int
     std_out: bytes
     std_err: bytes
@@ -69,6 +69,64 @@ def _native_exit_epilogue(marker: str) -> str:
 
 def _b64(value: str) -> str:
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+#: Largest single Send to the remote shell: 64 KiB of script is about 87 KB as
+#: base64, under the smallest default `MaxEnvelopeSizekb` (150).
+_STDIN_CHUNK = 64 * 1024
+
+_PS_ARGV = ("-NoProfile", "-NonInteractive", "-Command", "-")
+
+
+class _PywinrmStdinSession:
+    """Run a script through pywinrm's `Protocol`, with the script on stdin.
+
+    `Session.run_ps` puts the script on a `powershell -encodedcommand` line
+    that cmd.exe parses and caps near 8 KB. Here PowerShell starts directly
+    (`skip_cmd_shell`) and reads one ASCII bootstrap line from stdin, so no
+    command line bounds the script. `-Command -` writes plain text to stderr,
+    so there is no CLIXML to strip.
+    """
+
+    def __init__(self, protocol: typing.Any) -> None:
+        self._protocol = protocol
+
+    def run_ps(self, script: str) -> _Response:
+        protocol = self._protocol
+        bootstrap = (
+            "$s=[Text.Encoding]::UTF8.GetString("
+            f"[Convert]::FromBase64String('{_b64(script)}'));"
+            ". ([ScriptBlock]::Create($s))\r\n"
+        ).encode("ascii")
+        shell = protocol.open_shell()
+        command_id = None
+        try:
+            command_id = protocol.run_command(
+                shell,
+                "powershell.exe",
+                list(_PS_ARGV),
+                console_mode_stdin=False,
+                skip_cmd_shell=True,
+            )
+            last = len(bootstrap) - 1
+            for start in range(0, len(bootstrap), _STDIN_CHUNK):
+                protocol.send_command_input(
+                    shell,
+                    command_id,
+                    bootstrap[start : start + _STDIN_CHUNK],
+                    end=start + _STDIN_CHUNK > last,
+                )
+            out, err, status = protocol.get_command_output(shell, command_id)
+        finally:
+            try:
+                if command_id is not None:
+                    protocol.cleanup_command(shell, command_id)
+            finally:
+                protocol.close_shell(shell)
+        return _Response(status, out, err)
+
+    def close(self) -> None:
+        return None
 
 
 class NativeWinRMSession:
@@ -162,7 +220,7 @@ class NativeWinRMSession:
             "[Console]::Error.Write('HOSTCTL_NATIVE_ERROR:'+$c+':'+$m);exit 1}"
         )
 
-    def run_ps(self, script: str) -> _NativeResponse:
+    def run_ps(self, script: str) -> _Response:
         wrapper = self._wrapper(script)
         try:
             result = subprocess.run(
@@ -183,7 +241,7 @@ class NativeWinRMSession:
             # Never expose the local powershell argv as the remote command.
             # The remote command keeps running: WinRS has no cancel.
             raise expired(self.host, self.timeout, orphaned=True) from exc
-        return _NativeResponse(result.returncode, result.stdout, result.stderr)
+        return _Response(result.returncode, result.stdout, result.stderr)
 
     def close(self) -> None:
         return None
