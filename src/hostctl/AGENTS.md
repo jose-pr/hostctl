@@ -721,6 +721,8 @@ hostctl shell ssh://server
 ```
 
 - The program after `run` follows `--`; it runs directly, without a shell.
+- `ls` prints one name per line with backslashes and non-printable
+  characters escaped (`\x1b`, `\u2028`); an undecodable byte is `\xNN`.
 - `cp` operands are `URI:PATH` or a local path; the colon before the path is
   required even after a port (`ssh://host:2222:/x`).
 - Each subcommand takes `--ask-password`, `-v`/`-q` and `--loglevel`; the

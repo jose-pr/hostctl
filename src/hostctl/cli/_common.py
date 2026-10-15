@@ -41,6 +41,31 @@ def write(stream: typing.Union[typing.TextIO, typing.BinaryIO], value) -> None:
         flush()
 
 
+def display_name(name: str) -> str:
+    """`name` with backslashes and non-printable characters written as escapes.
+
+    A peer chooses these bytes: an unescaped newline forges a listing line and
+    an ESC sequence drives the operator's terminal. A lone surrogate is a byte
+    the filesystem layer could not decode, written as that byte.
+    """
+    out = []
+    for char in name:
+        code = ord(char)
+        if char == "\\":
+            out.append("\\\\")
+        elif 0xDC80 <= code <= 0xDCFF:
+            out.append(f"\\x{code - 0xDC00:02x}")
+        elif char.isprintable():
+            out.append(char)
+        elif code < 0x100:
+            out.append(f"\\x{code:02x}")
+        elif code < 0x10000:
+            out.append(f"\\u{code:04x}")
+        else:
+            out.append(f"\\U{code:08x}")
+    return "".join(out)
+
+
 def usable_credentials(uri: str, credentials: dict) -> dict:
     """Keep only what the target scheme can accept.
 

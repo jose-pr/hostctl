@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from ._common import HostCommand, write
+from ._common import HostCommand, display_name, write
 
 
 class Ls(HostCommand):
@@ -19,5 +19,5 @@ class Ls(HostCommand):
     def __call__(self) -> int:
         with self.connect() as host:
             for child in host.path(self.path).iterdir():
-                write(sys.stdout, f"{child.name}\n")
+                write(sys.stdout, display_name(child.name) + "\n")
         return 0

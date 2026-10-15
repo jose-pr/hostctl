@@ -187,6 +187,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `hostctl ls` escapes control characters, backslashes and undecodable bytes
+  in names, so a name can no longer forge listing lines or send terminal
+  escape sequences, and an undecodable name no longer raises.
 - `hostctl run`/`ls`/`cp` on an unreachable host exit 125 with one line
   instead of a traceback and status 1. `hostctl info` exits 125 (126 on an
   authentication refusal) instead of printing an identity made up from the

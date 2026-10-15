@@ -43,6 +43,10 @@ Passwords are never accepted as command-line arguments. Set
 interactive hidden prompt. Transport extras remain optional and produce their
 normal actionable import error when absent.
 
+`ls` prints one name per line, with backslashes and non-printable characters
+escaped (`\x1b`, `\x0a`, `\\`), because the host chooses those bytes: a name
+cannot forge a second line or drive your terminal.
+
 `cp` accepts local paths or `URI:PATH` operands and delegates to
 `pathapi.Path.copy()`. The colon before the path is required even when the
 URI carries a port — `ssh://host:2222:/tmp/x`, never `ssh://host:2222/tmp/x`,

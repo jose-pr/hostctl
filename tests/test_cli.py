@@ -418,3 +418,54 @@ def test_every_epilog_uri_dispatches():
         for token in line.split():
             if "://" in token or token.startswith("local:/"):
                 assert split_operand(token)
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    (
+        ("a\nb", "a\\x0ab"),
+        ("\x1b]0;x\x07", "\\x1b]0;x\\x07"),
+        ("tab\there", "tab\\x09here"),
+        ("back\\slash", "back\\\\slash"),
+        ("\udcff", "\\xff"),
+        ("\u2028", "\\u2028"),
+        ("\U000e0001", "\\U000e0001"),
+        (" ", " "),
+        ("na\u00efve caf\u00e9", "na\u00efve caf\u00e9"),
+    ),
+)
+def test_display_name_escapes_what_a_peer_could_use_to_forge_output(name, expected):
+    from hostctl.cli._common import display_name
+
+    assert display_name(name) == expected
+
+
+def test_ls_writes_one_line_per_name_whatever_the_name_holds(monkeypatch, capsysbinary):
+    import contextlib
+
+    from hostctl.cli import ls as lsmod
+
+    class Child:
+        def __init__(self, name):
+            self.name = name
+
+    class Fake:
+        def path(self, _):
+            class P:
+                def iterdir(self):
+                    return iter(
+                        [Child("report.txt"), Child("\x1b[2Jclean\nfake-entry.txt")]
+                    )
+
+            return P()
+
+    @contextlib.contextmanager
+    def connect(self):
+        yield Fake()
+
+    monkeypatch.setattr(lsmod.Ls, "connect", connect)
+
+    assert main(["ls", "ssh://hostile", "/srv"]) == 0
+    out = capsysbinary.readouterr().out
+    assert out == b"report.txt\n\\x1b[2Jclean\\x0afake-entry.txt\n"
+    assert not [byte for byte in out if byte < 0x20 and byte != 0x0A]
