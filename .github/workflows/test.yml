@@ -240,3 +240,35 @@ jobs:
           # set nowhere, so the live serial leg had never run.
           HOSTCTL_TEST_SERIAL_URI: "serial:///loop%3A%2F%2F"
         run: python -m pytest -q -rs tests/conformance tests/test_serial_live.py
+
+  # pytruenas composes hostctl. Informative until pytruenas has ported to 0.4
+  # and this job has been green once; then drop continue-on-error to gate.
+  downstream-pytruenas:
+    name: "Downstream: pytruenas suite (informative)"
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/checkout@v4
+        with:
+          repository: jose-pr/pytruenas
+          ref: main
+          path: pytruenas
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      # pytruenas first, so this checkout replaces the hostctl it pulls in.
+      - name: Install pytruenas, then this checkout over its hostctl
+        run: |
+          python -m pip install "./pytruenas[dev,config,codegen]"
+          python -m pip install -e ".[ssh]"
+      - name: Run the pytruenas suite
+        run: |
+          set -o pipefail
+          cd pytruenas
+          python -m pytest -q -rf -p no:cacheprovider | tee ../downstream.log
+      - name: Summarize
+        if: always()
+        run: tail -n 1 downstream.log >> "$GITHUB_STEP_SUMMARY"
