@@ -56,6 +56,7 @@ from ..shell import (
     shell_flavour,
 )
 from ..shell._invocation import render_command
+from ..shell._common import ShellCommand
 
 SshKeySource = typing.Union[str, bytes, os.PathLike[str]]
 SshClientKeys = typing.Optional[
@@ -398,13 +399,32 @@ class _SshTransport:
         return self._executor
 
     def info(self) -> HostInfo:
-        flavour = self.shell_flavour
-        result = self.run(
-            flavour.info_script,
-            check=False,
-            encoding="utf-8",
-        )
+        rendered = self._render((self.shell_flavour.info_script,))
+        result = self.executor(rendered.command, check=False, encoding="utf-8")
         return parse_host_info(result.stdout)
+
+    def _render(
+        self,
+        cmds: typing.Iterable[Command],
+        *,
+        executable: typing.Optional[str] = None,
+        cwd: typing.Optional[PathLike] = None,
+        env: typing.Optional[Environment] = None,
+    ) -> ShellCommand:
+        """The only place this transport renders: `command()` for the login shell."""
+        flavour = self.shell_flavour
+        program = executable or self.config.executable
+        if program is None and self.config.dialect == "auto":
+            assert self._resolved_dialect is not None
+            program = self._resolved_dialect[2]
+        return render_command(
+            flavour,
+            cmds,
+            executable=program,
+            cwd=cwd,
+            env=env,
+            login_shell=self.config.resolved_login_shell,
+        )
 
     def _drop_if_forked(self) -> bool:
         """After `fork()` the cached objects belong to the parent: forget them.
@@ -516,19 +536,6 @@ class _SshTransport:
         # cached and leaves it usable, so the next path() reconnects.
         backend.close()
 
-    def warm_sftp(self) -> None:
-        """Establish the SFTP client from the *calling* thread.
-
-        sftppath's native recursive operations (`rm`, `copy`) run on its own
-        event-loop thread, where a synchronous connect cannot be made; a
-        client already cached is what they use. Warming it here costs the
-        connection that is about to be made anyway.
-        """
-        self.path("/")  # absolute: asks nothing of the server
-        client = getattr(self._sftp_backend, "client", None)
-        if client is not None:
-            client()
-
     def _login_directory(self) -> str:
         """The SFTP login directory, asked once per connection generation.
 
@@ -562,8 +569,7 @@ class _SshTransport:
     def path(self, *segments: PathLike) -> HostPath:
         from .. import _async
 
-        sftppath = _async.sftppath()
-        AsyncSSHBackend, SFTPPath = sftppath.AsyncSSHBackend, sftppath.SFTPPath
+        SFTPPath = _async.sftppath().SFTPPath
 
         pure = self.config.path_flavor(*segments)
         remote_path = pure.as_posix()
@@ -575,78 +581,23 @@ class _SshTransport:
             remote_path = (
                 (base + "/" + remote_path) if remote_path not in ("", ".") else base
             ) or "/"
+        return SFTPPath(remote_path, backend=self._backend())
+
+    def _backend(self) -> typing.Any:
+        """The SFTP backend this host shares, built once."""
+        from .. import _async
+
         with self._ssh_lock:
             if self._sftp_backend is None:
                 # The options carry `config=None` (see `connect_opts`), which
                 # sftppath keeps, so this leg reads no ssh_config either.
-                self._sftp_backend = AsyncSSHBackend(
+                self._sftp_backend = _async.sftppath().AsyncSSHBackend(
                     self.config.host,
                     self.config.port,
                     user=self.config.username or "root",
                     connect_opts=self.config.connect_opts(),
                 )
-            return SFTPPath(remote_path, backend=self._sftp_backend)
-
-    def run(
-        self,
-        *cmds: Command,
-        bufsize: int = -1,
-        executable: typing.Optional[str] = None,
-        stdin: typing.Optional[FileHandle] = None,
-        stdout: typing.Optional[FileHandle] = None,
-        stderr: typing.Optional[FileHandle] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
-        capture_output: CaptureOutput = True,
-        check: bool = True,
-        encoding: typing.Optional[str] = None,
-        errors: typing.Optional[str] = None,
-        input: Input = None,
-        timeout: typing.Optional[float] = None,
-        text: typing.Optional[bool] = None,
-    ) -> subprocess.CompletedProcess:
-        reject_stdin_conflict(input, stdin)
-        direct = starts_direct_command(cmds)
-        if direct is not None:
-            command, args = direct
-            cmds = ((command, *args),)
-        if wants_text(text, encoding, errors) and encoding is None:
-            # `wants_text`, not a local `if text`: `errors="replace"` selects
-            # text mode too, and deciding it here differently from the
-            # exported rule is exactly how SSH, PSRP and serial came to
-            # disagree with the other four transports.
-            encoding = "utf-8"
-        selected_flavour = self.shell_flavour
-        selected_executable = executable or self.config.executable
-        if self.config.dialect == "auto" and selected_executable is None:
-            assert self._resolved_dialect is not None
-            selected_executable = self._resolved_dialect[2]
-        shell_command = render_command(
-            selected_flavour,
-            cmds,
-            executable=selected_executable,
-            cwd=cwd,
-            env=env,
-            login_shell=self.config.resolved_login_shell,
-        )
-        remote_command = shell_command.command
-        remote_env = shell_command.environment
-
-        return self.executor(
-            remote_command,
-            bufsize=bufsize,
-            stdin=stdin,
-            stdout=stdout,
-            stderr=stderr,
-            env=remote_env,
-            capture_output=capture_output,
-            check=check,
-            encoding=encoding,
-            errors=errors,
-            input=input,
-            timeout=timeout,
-            text=text,
-        )
+            return self._sftp_backend
 
     def spawn(
         self,
@@ -660,19 +611,7 @@ class _SshTransport:
     ) -> Process:
         """Start a persistent SSH process, optionally allocating a PTY."""
         if cmds:
-            selected_flavour = self.shell_flavour
-            selected_executable = executable or self.config.executable
-            if self.config.dialect == "auto" and selected_executable is None:
-                assert self._resolved_dialect is not None
-                selected_executable = self._resolved_dialect[2]
-            shell_command = render_command(
-                selected_flavour,
-                cmds,
-                executable=selected_executable,
-                cwd=cwd,
-                env=env,
-                login_shell=self.config.resolved_login_shell,
-            )
+            shell_command = self._render(cmds, executable=executable, cwd=cwd, env=env)
             command: typing.Optional[str] = shell_command.command
             remote_env = shell_command.environment
         else:
@@ -812,35 +751,31 @@ class SftpPathProvider(PathProvider):
             )
         return ProviderProbe("available", capabilities=self.capabilities)
 
-    # Closing is owned by SshExecutorProvider for the shared transport;
-    # connecting is not, because the SFTP client has to be established from
-    # the caller's thread before any native recursive operation runs.
+    # Closing is owned by SshExecutorProvider for the shared transport.
     #
-    # Composite paths call this before EVERY dispatch, so once connected it
-    # must stay cheap: a lock, a liveness check and a cache hit.
+    # Composite paths call this before EVERY dispatch, so it stays cheap: the
+    # client is cached after the first call. Opening it here keeps a failed
+    # connection a pre-dispatch decline rather than an error mid-operation.
     def connect(self):
         from .. import _async
 
         try:
-            self.transport.connect()
-            try:
-                self.transport.warm_sftp()
-            except Exception as exc:
-                # sftppath maps its own errors to OSError types; an asyncssh
-                # error that still arrives raw (`HostKeyNotVerifiable` is not
-                # an OSError) is mapped as the transport's own connect does.
-                normalized = _async.normalize_asyncssh_error(exc)
-                if normalized is exc:
-                    raise
-                raise normalized from exc
-        except (OSError, TimeoutError) as exc:
+            client = getattr(self.transport._backend(), "client", None)
+            if client is not None:
+                client()
+        except Exception as exc:
+            # sftppath translates asyncssh's errors but not its timeouts: on
+            # 3.9 a connect timeout is `asyncio.TimeoutError`, not the builtin.
+            mapped = _async.normalize_asyncssh_error(exc)
+            if not isinstance(mapped, (OSError, TimeoutError)):
+                raise
             log.debug(
                 "SFTP provider declining before dispatch: %s: %s",
-                type(exc).__name__,
-                ProviderSelector.redact(exc),
+                type(mapped).__name__,
+                ProviderSelector.redact(mapped),
             )
             raise OperationNotStarted(
-                "SFTP connection failed before dispatch", cause=exc
+                "SFTP connection failed before dispatch", cause=mapped
             ) from exc
 
 

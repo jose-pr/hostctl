@@ -73,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   login directory, as `run()`'s working directory does, instead of the
   filesystem root; `host.path()` with no segments is the login directory. The
   directory is read once per connection, so building a relative path connects.
+- A host used only for paths no longer also opens and authenticates the SSH
+  exec connection; each connection authenticates once.
 - The PowerShell dialect over SSH sends `-Command` where the login shell
   allows it, a script with a `#` comment on the channel's stdin when the call
   has no input of its own, and `-EncodedCommand` only as the last resort.

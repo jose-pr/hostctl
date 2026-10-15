@@ -118,13 +118,38 @@ class _TimeoutSSH(_StubSSH):
         return self.process
 
 
-def _host(shell=None, result=None):
-    host = _SshTransport(
-        shell or SshConfig("nas.example.com", username="admin", password="secret")
+def _compose(config, stub):
+    """A composed host over one transport whose connection is `stub`.
+
+    `host.transport` is the shared transport, for assertions about it.
+    """
+    from hostctl import _async
+    from hostctl.host import PosixHost, WindowsHost
+    from hostctl.host._ssh import ssh_providers
+
+    executor, paths = ssh_providers(config)
+    transport = executor.transport
+    transport._ssh = stub
+    transport._loop_generation = _async.loop_generation()
+    kind = WindowsHost if issubclass(config.path_flavor, PureWindowsPath) else PosixHost
+    host = kind(
+        config,
+        executor_providers=(executor,),
+        path_providers=(paths,),
+        shell=(
+            config.dialect
+            if config.dialect != "auto"
+            else (lambda: transport.shell_flavour)
+        ),
     )
+    host.transport = transport
+    return host
+
+
+def _host(shell=None, result=None):
+    config = shell or SshConfig("nas.example.com", username="admin", password="secret")
     stub = _StubSSH(result)
-    host._ssh = stub
-    return host, stub
+    return _compose(config, stub), stub
 
 
 def test_ssh_result_is_real_completed_process_and_asyncssh_never_checks():
@@ -235,8 +260,7 @@ def test_ssh_check_is_applied_after_completed_process_conversion():
 
 
 def test_ssh_timeout_uses_subprocess_exception_contract():
-    host = _SshTransport(SshConfig("host"))
-    host._ssh = _TimeoutSSH()
+    host = _compose(SshConfig("host"), _TimeoutSSH())
 
     with pytest.raises(subprocess.TimeoutExpired) as raised:
         host.run("sleep", timeout=0.25)
@@ -430,15 +454,16 @@ def test_sftp_path_survives_uri_syntax_in_a_filename(remote):
 
 def test_sftp_backend_is_reused_and_invalidated_on_close():
     host, stub = _host()
-    first = host.path("/etc")
-    second = host.path("/var")
+    transport = host.transport
+    first = transport.path("/etc")
+    second = transport.path("/var")
     assert first.backend is second.backend
     backend = first.backend
-    host.close()
-    assert host._sftp_backend is None
+    transport.close()
+    assert transport._sftp_backend is None
     assert stub.closed and stub.waited
     # A later path call gets a fresh backend after lifecycle close.
-    assert host.path("/tmp").backend is not backend
+    assert transport.path("/tmp").backend is not backend
 
 
 def test_auto_posix_probe_preserves_shell_executable():
@@ -530,13 +555,14 @@ def test_closing_a_host_whose_sftp_invalidation_fails_still_closes_ssh():
         def close(self):
             raise OSError("sftp close failed")
 
-    host._sftp_backend = _FailingBackend()
+    transport = host.transport
+    transport._sftp_backend = _FailingBackend()
 
     with pytest.raises(OSError, match="sftp close failed"):
-        host.close()
+        transport.close()
 
     assert stub.closed, "the SSH connection was left open"
-    assert host._ssh is None
+    assert transport._ssh is None
 
 
 def test_a_forked_child_does_not_reuse_the_parents_connection(monkeypatch):
@@ -547,6 +573,7 @@ def test_a_forked_child_does_not_reuse_the_parents_connection(monkeypatch):
     from hostctl import _async
 
     host, stub = _host()
+    host = host.transport
     assert host.ssh is stub
 
     # What the child sees: a different process, so a different loop.

@@ -546,9 +546,13 @@ Timeouts raise `subprocess.TimeoutExpired`: the executor sends TERM, waits up
 to 2 s for the channel to close, then closes it and waits 1 s more, so the call
 returns within about three seconds of the deadline. `orphaned` is false only
 when the channel closed during the TERM grace.
-A composed SSH host opens **two** connections and authenticates twice: the
-exec leg is hostctl's own, the path leg is `sftppath`'s SFTP backend,
-which takes connect options rather than a live connection. `bufsize` is
+A composed SSH host has two connections, each opened when first needed and
+each authenticating once: the exec connection on the first command (or the
+first relative path), hostctl's own; the SFTP connection on the first path
+operation, `sftppath`'s backend, which takes connect options rather than a live
+connection. A host used only for absolute paths never opens the exec one.
+`_SshTransport` renders in one place (`_render`) for `spawn()` and `info()`;
+`SystemHost` renders `run()` itself. `bufsize` is
 asyncssh's stdin CHUNK size here, not `subprocess`'s buffering policy, so
 values below 512 are refused rather than obeyed. `run()` buffers the whole
 response in memory even when `stdout=` names a sink, and a file-object

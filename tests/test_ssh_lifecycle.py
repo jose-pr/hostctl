@@ -116,3 +116,27 @@ def test_connect_timeout_round_trips_the_uri_and_is_validated():
     assert "connect_timeout" not in SshConfig("h", connect_timeout=None).connect_opts()
     with pytest.raises(ValueError, match="connect_timeout"):
         SshConfig("h", connect_timeout=0)
+
+
+async def _no_command(process):
+    process.exit(0)
+
+
+def test_a_paths_only_host_authenticates_once_and_removes_recursively(tmp_path):
+    from conformance.inprocess_ssh import InProcessSSHServer
+
+    (tmp_path / "tree" / "inner").mkdir(parents=True)
+    (tmp_path / "tree" / "inner" / "leaf.txt").write_text("x")
+    with InProcessSSHServer(_no_command, sftp_root=tmp_path) as server:
+        host = server.config()._create_host()
+        try:
+            # The first SFTP operation is a recursive remove: the client it
+            # needs must already be cached on the calling thread.
+            host.path("/tree").rm(recursive=True)
+        finally:
+            host.close()
+
+    assert not (tmp_path / "tree").exists()
+    assert [e for e in server.events if e[0] == "begin_auth"] == [
+        ("begin_auth", "tester")
+    ]
