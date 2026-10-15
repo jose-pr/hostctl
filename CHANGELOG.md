@@ -52,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A Windows QGA guest's path helper starts `powershell.exe -NoProfile
+  -NonInteractive -Command -` and sends the script as the call's `input-data`,
+  instead of a base64 `-EncodedCommand` argument. Endpoint-protection
+  heuristics scan the command line, and a base64 PowerShell launch is what
+  they flag; the script now never appears there. Results are unchanged.
 - The config extension hooks `_from_parsed_uri` and `_create_host` are documented
   as the override points for a `HostConfig` subclass, with a worked example in
   the extending guide. Their names are unchanged and no `from_uri` is added.

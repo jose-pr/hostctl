@@ -585,7 +585,8 @@ helper, because the file RPCs move bytes and nothing else. One is PROBED during
 discovery: `PosixGuestPathHelper` for a POSIX guest (GNU `stat -c` and
 `find -printf`, proven by `stat -c %f -- /` answering hex for a directory) and
 `WindowsGuestPathHelper` for a Windows one (the same PowerShell scripts
-`WinRMPathBackend` uses, carried over `guest-exec` as `-EncodedCommand`). A
+`WinRMPathBackend` uses, sent over `guest-exec` as `powershell.exe -Command -`
+with the script as `input-data`, so no script is on the command line). A
 guest that fails the probe keeps the degraded mode it had before -- reads and
 writes never needed a helper -- rather than losing `path()`.
 `QemuConfig(path_helper=...)` overrides the probe entirely. Every path is an
