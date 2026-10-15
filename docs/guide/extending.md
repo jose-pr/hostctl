@@ -2,8 +2,58 @@
 
 `Host` is the operational contract; `HostConfig` owns secret-safe connection
 identity, URI selection, and lifecycle. Installed integrations register config
-subclasses through the `hostctl.configs` entry-point group. Registry hooks are
-protected implementation details.
+subclasses through the `hostctl.configs` entry-point group. The registry state
+(`_uri_schemes`, the caches) is a protected implementation detail; the two
+hooks below are the documented override points.
+
+## Implementing a config
+
+A config declares its scheme and overrides two hooks:
+
+- `@classmethod _from_parsed_uri(cls, parsed, **credentials) -> MyConfig` builds
+  the config from a `urlsplit` result. Use `strict_uri_query`,
+  `strict_uri_credentials` and `uri_host`.
+- `_create_host(self) -> Host` returns the host. Callers reach it through
+  `config.open()` or `with config as host`, never directly.
+
+The single underscore means "override in a subclass, never call". Declare
+`uri_credentials = ("password", ...)` so dispatch rejects any other credential
+before construction. There is no `from_uri`: `HostConfig(uri)` is the one
+entry point, and a narrowed parse is
+`config = HostConfig(uri); isinstance(config, MyConfig)`.
+
+```python
+from hostctl import HostConfig, PosixHost, strict_uri_query
+
+
+class PlugConfig(HostConfig, schemes=("plug",)):
+    uri_credentials = ("password",)
+
+    def __init__(self, host, password=None):
+        super().__init__()
+        self.host = host
+        self.password = password
+
+    @property
+    def connection_uri(self):
+        return f"plug://{self.host}"
+
+    @classmethod
+    def _from_parsed_uri(cls, parsed, **credentials):
+        strict_uri_query(parsed, ())
+        return cls(parsed.hostname, credentials.get("password"))
+
+    def _create_host(self):
+        return PosixHost(self)
+```
+
+Register it under the `hostctl.configs` entry-point group, with the scheme as
+the entry point's name:
+
+```toml
+[project.entry-points."hostctl.configs"]
+plug = "my_package:PlugConfig"
+```
 
 Three registries take extensions, each with the same shape: a name is
 registered once (`replace=True` replaces it deliberately), a plugin comes in

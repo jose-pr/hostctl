@@ -464,7 +464,11 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
 
     @_abc.abstractmethod
     def _create_host(self) -> Host:
-        """Create the operational host represented by this configuration."""
+        """Create the operational host represented by this configuration.
+
+        Documented override point: implement it in a subclass, and reach it
+        through :meth:`open` or ``with config as host``.
+        """
 
     def open(self) -> Host:
         """Return a host context manager for this configuration."""
@@ -598,7 +602,11 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
     def _from_parsed_uri(
         cls, parsed: _SplitResult, **credentials: object
     ) -> HostConfig:
-        """Construct from a URI selected by :meth:`_matches_uri`."""
+        """Construct from a URI selected by :meth:`_matches_uri`.
+
+        Documented override point for a config subclass; callers use
+        ``HostConfig(uri)``.
+        """
         raise NotImplementedError(f"{cls.__name__} does not implement URI construction")
 
     @classmethod

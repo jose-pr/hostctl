@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The config extension hooks `_from_parsed_uri` and `_create_host` are documented
+  as the override points for a `HostConfig` subclass, with a worked example in
+  the extending guide. Their names are unchanged and no `from_uri` is added.
 - **The `hostctl` command needs the `cli` extra** (`pip install
   "hostctl[cli]"`, which adds `duho>=0.7.5,<0.8`). Without it the console
   script prints one line naming the extra and exits non-zero. The command

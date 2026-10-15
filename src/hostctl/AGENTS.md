@@ -193,8 +193,17 @@ and dispatches it with no args, and that script is shell text, not a program.
   never a connection string.
 - `with config as host:` and `with config.open() as host:` connect and always
   close. Re-entering the same active config raises `RuntimeError`.
-- External config implementations declare `schemes=(...)`; registry hooks and
-  caches are protected implementation details. A scheme another live config
+- Implementing a config: `class MyConfig(HostConfig, schemes=("mine",))` with
+  `uri_credentials = ("password", ...)`;
+  `@classmethod _from_parsed_uri(cls, parsed, **credentials) -> MyConfig`
+  builds it from a `urlsplit` result (use `strict_uri_query`,
+  `strict_uri_credentials`, `uri_host`); `_create_host(self) -> Host` returns
+  the host, which callers reach through `config.open()` or `with config as
+  host`. The single underscore means "override in a subclass, never call";
+  there is no `from_uri`. A narrowed parse is `config = HostConfig(uri);
+  isinstance(config, SshConfig)`. Registry state (`_uri_schemes`, caches) stays
+  private.
+- External config implementations declare `schemes=(...)`. A scheme another live config
   already claims raises `ValueError("host scheme 'x' is already registered by
   Name")` at class definition; redefining the same module-qualified class
   replaces it, and `replace=True` takes the scheme over. One plugin that fails
