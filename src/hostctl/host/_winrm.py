@@ -218,16 +218,21 @@ class _WinRMTransport:
             or (self.config.provider == "auto" and not native and pypsrp_available())
             else "pywinrm"
         )
-        self._executor = WinRMExecutor(
-            lambda: self.session,
-            lambda: float(self.config.read_timeout_sec),
-        )
         #: True when the local PowerShell relays the command itself. That
         #: session reports the remote status through its own
         #: `__HOSTCTL_LASTEXITCODE__` marker line, so the flavour's
         #: `; exit $LASTEXITCODE` epilogue must not be appended -- the `exit`
         #: ends the remote pipeline before the marker can be emitted.
         self._native_session = native and self._provider != "psrp"
+        # Only the native leg reports its own status and takes a per-call
+        # deadline: the local powershell.exe relays the call, so it has a
+        # wall clock to bound. pywinrm and PSRP poll for output instead.
+        self._executor = WinRMExecutor(
+            lambda: self.session,
+            lambda: float(self.config.read_timeout_sec),
+            manages_status=self._native_session,
+            accepts_timeout=self._native_session,
+        )
         self._path_backend = WinRMPathBackend(
             self.run,
             max_script_bytes=_SCRIPT_BUDGET,

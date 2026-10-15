@@ -178,8 +178,8 @@ def test_psrp_executor_projects_native_last_exit_code():
 def test_runspace_capture_exit_consumes_the_marker_line(monkeypatch):
     """The single owner of the marker convention, tested directly.
 
-    Both halves matter: the line must not reach the caller as output, and a
-    zero exit code reported alongside pipeline errors stays a failure.
+    Both halves matter: the line must not reach the caller as output, and the
+    status it carries is the script's own, whatever the error stream holds.
     """
 
     class Pipeline:
@@ -219,11 +219,13 @@ def test_runspace_capture_exit_consumes_the_marker_line(monkeypatch):
     assert result.output == ("ok",)
     assert result.returncode == 7
 
-    # A remote zero beside pipeline errors is still a failure.
-    failed = RunspaceSession(pool=Pool(0, had_errors=True)).invoke(
+    # A status of 0 beside a non-terminating error is a success: the script
+    # computed it from its last statement, as every other leg does.
+    soft = RunspaceSession(pool=Pool(0, had_errors=True)).invoke(
         "cmd", capture_exit=True
     )
-    assert failed.returncode == 1
+    assert soft.returncode == 0
+    assert soft.had_errors is True
 
     # The script the pipeline received carries the epilogue, and resets
     # `$LASTEXITCODE` first: this runspace is persistent, so a pure-PowerShell
@@ -240,6 +242,49 @@ def test_runspace_capture_exit_consumes_the_marker_line(monkeypatch):
     # On its own LINE: joined with `;`, a payload ending in a `#` comment
     # commented the epilogue out and the pipeline reported a stale status.
     assert script.splitlines()[-1].startswith("Write-Output ('__HOSTCTL_LASTEXITCODE_")
+
+
+def test_runspace_without_a_status_line_fails_when_the_pipeline_had_errors(
+    monkeypatch,
+):
+    """A terminating error leaves no status line; the rule is then 1."""
+
+    class Pipeline:
+        streams = types.SimpleNamespace(error=[])
+        state = "Completed"
+
+        def __init__(self, pool):
+            self.had_errors = pool.had_errors
+
+        def add_script(self, script):
+            pass
+
+        def invoke(self):
+            return ["ok"]
+
+    class Pool:
+        def __init__(self, had_errors):
+            self.had_errors = had_errors
+
+    fake = types.ModuleType("pypsrp")
+    fake_powershell = types.ModuleType("pypsrp.powershell")
+    fake_powershell.PowerShell = Pipeline
+    monkeypatch.setitem(__import__("sys").modules, "pypsrp", fake)
+    monkeypatch.setitem(__import__("sys").modules, "pypsrp.powershell", fake_powershell)
+
+    failed = RunspaceSession(pool=Pool(True)).invoke("cmd", capture_exit=True)
+    assert failed.returncode == 1
+    clean = RunspaceSession(pool=Pool(False)).invoke("cmd", capture_exit=True)
+    assert clean.returncode == 0
+
+
+def test_the_status_expression_is_the_flavours():
+    """Every leg reports one status; the PowerShell flavour's epilogue is the
+    other copy of the expression."""
+    from hostctl.executor.winrm import POWERSHELL_STATUS
+    from hostctl.shell import POWERSHELL
+
+    assert POWERSHELL.execution_epilogue == "\nexit " + POWERSHELL_STATUS
 
 
 def test_the_runspace_marker_is_per_call():

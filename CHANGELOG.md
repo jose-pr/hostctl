@@ -55,9 +55,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   runs non-interactive**, as the native leg already did. It starts
   `powershell.exe` directly and sends the script on stdin, instead of through
   cmd.exe. This ships in 0.4.0.
+- **One status rule on every WinRM leg**, which ships in 0.4.0: 0 when the last
+  statement succeeded, else the native exit code, else 1. PSRP reports a
+  non-terminating error followed by a successful statement as 0, where it was
+  1, and a remote ACL `PermissionDenied` is a status rather than
+  `PermissionError`. Only transport and authentication failures raise.
 
 ### Added
 
+- `run(timeout=)` on the native WinRM leg; it overrides `read_timeout_sec` as
+  the total deadline for that call.
 - `pathapi.protocols.supports(path, Protocol)` answers for a host path. A
   composed host's path answers from the operations its providers declare
   (only the pinned provider after `.via()`), without probing; a container path
@@ -121,6 +128,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Writes to a WinRM path over pywinrm work again; every write raised
   `OSError`. `run()` commands over about 3 KB no longer fail with "The command
   line is too long".
+- A native (password-free) WinRM command that failed remotely raised
+  `ConnectionError` instead of returning its status, so `check=False` could
+  not inspect it; a command printing about 20,000 lines hit the deadline
+  because the relay was quadratic.
 
 ## [0.3.2] - 2026-09-23
 

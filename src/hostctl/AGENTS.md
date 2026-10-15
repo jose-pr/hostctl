@@ -542,10 +542,17 @@ remoting; explicit credentials use pywinrm. On that native path
 carried back explicitly, so a native command failing only by status is
 reported as a failure rather than as success. `WinRMPath.open("rb")` fetches
 bounded ranges; writable modes stage content and transfer Base64 chunks on
-close. WinRM stdin and command
-deadlines remain unsupported. Transport timeouts are not a total command
-deadline. pywinrm Session has no guaranteed close API; hostctl calls `close()`
-only when a provided session exposes it.
+close. WinRM stdin is
+unsupported. The native leg's `read_timeout_sec` is a total per-call deadline
+(default 30 s) that `run(timeout=)` overrides; the remote command keeps running
+(`orphaned=True`). pywinrm and PSRP have no total deadline and refuse
+`timeout=`. Every leg reports one status: 0 when the last statement succeeded,
+else the native exit code, else 1; a terminating error that sends no status is
+1. Remote error records are a non-zero status with the text on stderr; only
+transport and authentication failures raise (`ConnectionError`,
+`PermissionError`). A remote ACL denial is a status, not `PermissionError`.
+pywinrm Session has no guaranteed close API; hostctl calls `close()` only when
+a provided session exposes it.
 `pypsrp_available()` reports whether the optional PSRP dependency imports;
 `require_pypsrp()` raises the install hint when it does not. PSRP runspaces
 are exposed separately through the WinRM transport provider and

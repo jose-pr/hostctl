@@ -60,11 +60,24 @@ def exit_marker() -> str:
     return f"{NATIVE_EXIT_MARKER[:-2]}_{uuid.uuid4().hex}__"
 
 
-#: Runs *inside* the remote script block, appended on its own line so that the
-#: payload's last statement -- comment, `}` or bare expression alike -- cannot
-#: swallow it.
-def _native_exit_epilogue(marker: str) -> str:
-    return f"Write-Output ('{marker}:' + [string]([int]$LASTEXITCODE))"
+#: The status every WinRM leg reports: 0 when the last statement succeeded
+#: (`$?`), else the native exit code if there is one, else 1. Same expression
+#: as the PowerShell flavour's `execution_epilogue`.
+POWERSHELL_STATUS = (
+    "$(if ($?) { 0 } elseif ($LASTEXITCODE) { $LASTEXITCODE } else { 1 })"
+)
+
+#: Clears a status left by an earlier native command in a persistent session.
+LASTEXITCODE_RESET = "$global:LASTEXITCODE=0"
+
+
+def status_epilogue(marker: str) -> str:
+    """Report `POWERSHELL_STATUS` as a `marker:N` output line.
+
+    Appended on its own line to the remote script, so the payload's last
+    statement -- comment, `}` or bare expression alike -- cannot swallow it.
+    """
+    return f"Write-Output ('{marker}:' + {POWERSHELL_STATUS})"
 
 
 def _b64(value: str) -> str:
@@ -170,12 +183,17 @@ class NativeWinRMSession:
     def _wrapper(self, script: str, marker: typing.Optional[str] = None) -> str:
         """Build the local PowerShell program that performs one remote call.
 
-        Everything variable is base64 -- the host, the payload, and the exit
-        epilogue -- so no caller-supplied text is ever spliced into PowerShell
-        source.  The connection options are assembled as a list rather than
-        patched into rendered text afterwards: the previous `str.replace`
-        approach silently did nothing without a port and produced a hashtable
-        `Invoke-Command` rejects with one.
+        Everything variable is base64 -- the host, the payload, the status
+        epilogue and the marker -- so no caller-supplied text is ever spliced
+        into PowerShell source.  The connection options are assembled as a
+        list rather than patched into rendered text afterwards: the previous
+        `str.replace` approach silently did nothing without a port and
+        produced a hashtable `Invoke-Command` rejects with one.
+
+        Remote output streams through one pipeline. Error records from the
+        remote side go to stderr; a transport failure (the local session
+        itself could not run the call) is reported as a final
+        `MARKER:error:KIND:MESSAGE` stderr line instead.
         """
         marker = marker or exit_marker()
         options = [
@@ -192,36 +210,71 @@ class NativeWinRMSession:
             # pywinrm's `server_cert_validation="ignore"`.
             prelude = "$so=New-PSSessionOption -SkipCACheck -SkipCNCheck;"
             options.append("SessionOption=$so")
+
+        def decoded(name: str, value: str) -> str:
+            return (
+                f"${name}=[Text.Encoding]::UTF8.GetString("
+                f"[Convert]::FromBase64String('{_b64(value)}'));"
+            )
+
+        relay = (
+            "ForEach-Object{"
+            "if($_ -is [Management.Automation.ErrorRecord]){"
+            "if($_.Exception -is "
+            "[Management.Automation.Remoting.PSRemotingTransportException])"
+            "{$tx=$_}else{Write-Error -ErrorRecord $_}}"
+            "elseif(([string]$_).StartsWith($m))"
+            "{$c=[int](([string]$_).Split(':')[1])}"
+            "else{$_}}"
+        )
+        # A transport failure is authentication when the documented remoting
+        # ids or Win32 codes (ERROR_ACCESS_DENIED, ERROR_LOGON_FAILURE) say so.
+        report = (
+            "if($tx){$k='transport';$i=[string]$tx.FullyQualifiedErrorId;"
+            "$n=0;try{$n=[int]$tx.Exception.ErrorCode}catch{};"
+            "if($i.StartsWith('AccessDenied') -or $i.StartsWith('LogonFailure') "
+            "-or $n -eq 5 -or $n -eq 1326){$k='auth'};"
+            "[Console]::Error.WriteLine($m+'error:'+$k+':'+"
+            "[Convert]::ToBase64String("
+            "[Text.Encoding]::UTF8.GetBytes($tx.Exception.Message)));exit 1};"
+            "exit $c"
+        )
         return (
             "$OutputEncoding=[Console]::OutputEncoding="
             "[Text.UTF8Encoding]::new($false);"
             "$ErrorActionPreference='Stop';"
-            "$h=[Text.Encoding]::UTF8.GetString("
-            f"[Convert]::FromBase64String('{_b64(self.host)}'));"
-            "$s=[Text.Encoding]::UTF8.GetString("
-            f"[Convert]::FromBase64String('{_b64(script)}'));"
-            "$e=[Text.Encoding]::UTF8.GetString("
-            f"[Convert]::FromBase64String('{_b64(_native_exit_epilogue(marker))}'));"
+            + decoded("h", self.host)
+            + decoded("s", script)
+            + decoded("e", status_epilogue(marker))
+            + decoded("m", marker + ":")
             + prelude
             + "$o=@{"
             + ";".join(options)
-            + "};"
-            "try{$global:LASTEXITCODE=0;"
+            + "};$c=1;$tx=$null;"
+            + f"try{{{LASTEXITCODE_RESET};"
             "$b=[ScriptBlock]::Create($s+[Environment]::NewLine+$e);"
-            "$r=Invoke-Command @o -ScriptBlock $b;"
-            "$c=[int]$global:LASTEXITCODE;$out=@();"
-            "foreach($v in $r){$t=[string]$v;"
-            f"if($t.StartsWith('{marker}:'))"
-            "{$c=[int]($t.Split(':')[1])}else{$out+=$v}};"
-            "$out;exit $c}"
-            "catch{$c=[string]$_.CategoryInfo.Category;"
-            "$m=[Convert]::ToBase64String("
-            "[Text.Encoding]::UTF8.GetBytes($_.Exception.Message));"
-            "[Console]::Error.Write('HOSTCTL_NATIVE_ERROR:'+$c+':'+$m);exit 1}"
+            "$ErrorActionPreference='Continue';"
+            "Invoke-Command @o -ScriptBlock $b -ErrorAction Continue 2>&1 | "
+            + relay
+            + ";"
+            + report
+            + "}catch{"
+            # PowerShell 7 raises a remote `throw` locally as a RemoteException;
+            # that is the command failing, not the transport.
+            "if($_.Exception -is [Management.Automation.RemoteException])"
+            "{[Console]::Error.WriteLine([string]$_.Exception.Message);exit 1};"
+            "[Console]::Error.WriteLine($m+'error:transport:'+"
+            "[Convert]::ToBase64String("
+            "[Text.Encoding]::UTF8.GetBytes($_.Exception.Message)));exit 1}"
         )
 
-    def run_ps(self, script: str) -> _Response:
-        wrapper = self._wrapper(script)
+    def run_ps(
+        self, script: str, *, timeout: typing.Optional[float] = None
+    ) -> _Response:
+        """Run one script; `timeout` overrides the session deadline per call."""
+        marker = exit_marker()
+        wrapper = self._wrapper(script, marker)
+        deadline = timeout if timeout is not None else self.timeout
         try:
             result = subprocess.run(
                 (
@@ -235,12 +288,25 @@ class NativeWinRMSession:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False,
-                timeout=self.timeout,
+                timeout=deadline,
             )
         except subprocess.TimeoutExpired as exc:
             # Never expose the local powershell argv as the remote command.
             # The remote command keeps running: WinRS has no cancel.
-            raise expired(self.host, self.timeout, orphaned=True) from exc
+            raise expired(self.host, deadline, orphaned=True) from exc
+        # Only the wrapper's own last stderr line can carry this call's marker;
+        # remote text that merely resembles it is returned as stderr.
+        lines = [line for line in result.stderr.splitlines() if line.strip()]
+        prefix = f"{marker}:error:".encode("ascii")
+        if lines and lines[-1].startswith(prefix):
+            try:
+                _, _, kind, encoded = lines[-1].decode("ascii").strip().split(":", 3)
+                detail = base64.b64decode(encoded).decode("utf-8", "replace")
+            except Exception:
+                kind, detail = "transport", result.stderr.decode("utf-8", "replace")
+            if kind == "auth":
+                raise PermissionError(detail)
+            raise ConnectionError(detail)
         return _Response(result.returncode, result.stdout, result.stderr)
 
     def close(self) -> None:
@@ -248,7 +314,13 @@ class NativeWinRMSession:
 
 
 class WinRMExecutor(Executor[subprocess.CompletedProcess]):
-    """Execute finalized PowerShell scripts through a pywinrm session."""
+    """Execute finalized PowerShell scripts through a WinRM session.
+
+    `manages_status` declares that the session reports the remote status
+    itself, so the flavour's own `exit` epilogue must stay off the script.
+    `accepts_timeout` lets `run(timeout=)` through as the session's per-call
+    deadline; without it a `timeout=` is refused.
+    """
 
     executor_capabilities = frozenset((ExecutorCapability.SCRIPT,))
 
@@ -256,9 +328,17 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
         self,
         session: typing.Callable[[], WinRMSession],
         transport_timeout: typing.Optional[typing.Callable[[], float]] = None,
+        *,
+        manages_status: bool = False,
+        accepts_timeout: bool = False,
     ) -> None:
         self._session = session
         self._transport_timeout = transport_timeout
+        self._accepts_timeout = accepts_timeout
+        capabilities = {ExecutorCapability.SCRIPT}
+        if manages_status:
+            capabilities.add(ExecutorCapability.MANAGES_STATUS)
+        self.executor_capabilities = frozenset(capabilities)
 
     def __call__(
         self,
@@ -282,7 +362,7 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
         if args:
             raise NotImplementedError("WinRMExecutor does not support native arguments")
         command = command_text(command)
-        if timeout is not None:
+        if timeout is not None and not self._accepts_timeout:
             raise NotImplementedError(
                 "WinRMExecutor timeout is unsupported; configure transport timeouts"
             )
@@ -290,28 +370,18 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
             raise NotImplementedError("WinRMExecutor does not support stdin/input")
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         try:
-            result = self._session().run_ps(command)
+            session = self._session()
+            if timeout is None:
+                result = session.run_ps(command)
+            else:
+                result = session.run_ps(command, timeout=timeout)  # type: ignore[call-arg]
         except Exception as exc:
-            normalized = self._normalize_error(exc, command)
+            normalized = self._normalize_error(exc, command, timeout)
             if normalized is exc:
                 raise
             raise normalized from exc
         out = result.std_out
         err = result.std_err
-        marker = b"HOSTCTL_NATIVE_ERROR:"
-        if result.status_code and err.startswith(marker):
-            try:
-                _, category, encoded = err.decode("ascii").split(":", 2)
-                detail = base64.b64decode(encoded).decode("utf-8", "replace")
-            except Exception:
-                category, detail = "transport", err.decode("utf-8", "replace")
-            if category in ("AuthenticationError", "PermissionDenied"):
-                raise PermissionError(detail)
-            if category not in ("RemoteError", "Remote"):
-                raise ConnectionError(detail)
-            # Remote errors are represented as a normal non-zero completion;
-            # check=False must be able to inspect them.
-            err = detail.encode(encoding or "utf-8", errors or "replace")
         if wants_text(text, encoding, errors):
             codec = encoding or "utf-8"
             out = out.decode(codec, errors or "strict")
@@ -340,14 +410,17 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
             completed.check_returncode()
         return completed
 
-    def _normalize_error(self, exc: Exception, command: str) -> Exception:
+    def _normalize_error(
+        self, exc: Exception, command: str, timeout: typing.Optional[float] = None
+    ) -> Exception:
         # The dependency-free cases FIRST. Returning early on the optional
         # import also disabled this branch, so on a native-only install --
         # the documented password-free Windows path, which needs no winrm
         # extra -- a timeout crossed the boundary as a builtin `TimeoutError`
         # and `except subprocess.TimeoutExpired` did not catch it.
+        if timeout is None and self._transport_timeout:
+            timeout = self._transport_timeout()
         if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)):
-            timeout = self._transport_timeout() if self._transport_timeout else None
             return expired(command, timeout, orphaned=True)
         try:
             import requests
@@ -363,7 +436,6 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
                 winrm.exceptions.WinRMOperationTimeoutError,
             ),
         ):
-            timeout = self._transport_timeout() if self._transport_timeout else None
             # WinRS has no cancel, so the remote command keeps running.
             return expired(command, timeout, orphaned=True)
         if isinstance(

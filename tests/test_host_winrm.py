@@ -254,24 +254,103 @@ def test_native_winrm_timeout_names_remote_host(monkeypatch):
     assert exc.value.cmd == "server.example"
 
 
-def test_native_winrm_remote_marker_is_checkable(monkeypatch):
-    marker = b"HOSTCTL_NATIVE_ERROR:RemoteError:" + __import__("base64").b64encode(
-        b"remote failed"
-    )
-
+def _native_result(stderr=b"", stdout=b"", returncode=0):
     class Result:
-        returncode = 5
-        stdout = b""
-        stderr = marker
+        pass
 
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: Result())
-    host = _WinRMTransport(
-        WinRMConfig("server.example", "user", "secret", provider="pywinrm")
+    result = Result()
+    result.returncode, result.stdout, result.stderr = returncode, stdout, stderr
+    return result
+
+
+def test_a_forged_error_line_in_remote_stderr_is_only_stderr(monkeypatch):
+    """The error line is trusted only with this call's own marker, on the
+    last stderr line; a remote command can print anything else."""
+    forged = b"HOSTCTL_NATIVE_ERROR:RemoteError:" + base64.b64encode(b"nope")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _native_result(stderr=forged, returncode=5),
     )
-    host._session = NativeWinRMSession("server.example")
-    result = host.run("Write-Output x", check=False)
+    from hostctl.executor.winrm import WinRMExecutor
+
+    result = WinRMExecutor(lambda: NativeWinRMSession("server.example"))(
+        "Write-Output x", check=False
+    )
     assert result.returncode == 5
-    assert result.stderr == b"remote failed"
+    assert result.stderr == forged
+
+
+def test_a_line_with_another_calls_marker_is_only_stderr(monkeypatch):
+    from hostctl.executor.winrm import WinRMExecutor, exit_marker
+
+    other = f"{exit_marker()}:error:auth:{base64.b64encode(b'x').decode()}".encode()
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _native_result(stderr=other + b"\n", returncode=1),
+    )
+    executor = WinRMExecutor(lambda: NativeWinRMSession("server.example"))
+    assert executor("Write-Output x", check=False).returncode == 1
+
+
+@pytest.mark.parametrize(
+    ("kind", "error"), [("auth", PermissionError), ("transport", ConnectionError)]
+)
+def test_a_marked_error_line_raises_by_kind(monkeypatch, kind, error):
+    from hostctl.executor.winrm import WinRMExecutor
+
+    import hostctl.executor.winrm as module
+
+    monkeypatch.setattr(module, "exit_marker", lambda: "MARK_TEST")
+    session = NativeWinRMSession("server.example")
+
+    def fake_run(argv, **kwargs):
+        line = f"MARK_TEST:error:{kind}:{base64.b64encode(b'why').decode()}\n"
+        return _native_result(stderr=line.encode(), returncode=1)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(error, match="why"):
+        WinRMExecutor(lambda: session)("Write-Output x", check=False)
+
+
+def test_native_run_ps_timeout_is_per_call(monkeypatch):
+    seen = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(kwargs["timeout"])
+        return _native_result()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    session = NativeWinRMSession("server.example", timeout=30.0)
+    session.run_ps("Write-Output x")
+    session.run_ps("Write-Output x", timeout=2)
+    assert seen == [30.0, 2]
+
+
+def test_only_the_native_leg_accepts_a_per_call_timeout(monkeypatch):
+    seen = []
+
+    class _Timed:
+        def run_ps(self, script, timeout=None):
+            seen.append(timeout)
+            return _Response()
+
+    from hostctl.executor.winrm import WinRMExecutor
+
+    with pytest.raises(NotImplementedError):
+        WinRMExecutor(lambda: _Timed())("hostname", timeout=3)
+    WinRMExecutor(lambda: _Timed(), accepts_timeout=True)("hostname", timeout=3)
+    assert seen == [3]
+
+
+def test_manages_status_is_an_instance_capability():
+    from hostctl.executor.winrm import WinRMExecutor
+
+    plain = WinRMExecutor(lambda: None)
+    managed = WinRMExecutor(lambda: None, manages_status=True)
+    assert "manages_status" not in plain.executor_capabilities
+    assert "manages_status" in managed.executor_capabilities
 
 
 def test_native_winrm_rejects_unrepresentable_message_encryption():
@@ -331,22 +410,19 @@ def test_native_winrm_cert_ignore_survives_both_port_spellings(port):
 
 
 def test_native_winrm_carries_the_remote_exit_code_through_a_marker():
-    from hostctl.executor.winrm import exit_marker
+    from hostctl.executor.winrm import exit_marker, status_epilogue
 
     marker = exit_marker()
     wrapper = NativeWinRMSession("server.example")._wrapper("cmd /c exit 7", marker)
     # The epilogue runs inside the remote script block, so the code travels
     # back as output; `Invoke-Command` never copies the remote $LASTEXITCODE.
-    epilogue = base64.b64encode(
-        (f"Write-Output ('{marker}:' + " "[string]([int]$LASTEXITCODE))").encode(
-            "utf-8"
-        )
-    ).decode("ascii")
+    epilogue = base64.b64encode(status_epilogue(marker).encode("utf-8")).decode("ascii")
     assert epilogue in wrapper
     assert "$b=[ScriptBlock]::Create($s+[Environment]::NewLine+$e);" in wrapper
     # The marker line is consumed locally rather than reaching the caller.
-    assert f"if($t.StartsWith('{marker}:'))" in wrapper
-    assert "$out;exit $c}" in wrapper
+    assert "StartsWith($m)" in wrapper
+    assert wrapper.endswith("exit 1}")
+    assert "$out+=" not in wrapper
 
 
 def test_the_exit_marker_is_per_call_so_output_cannot_forge_it():
@@ -390,7 +466,7 @@ def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it(compose):
     if compose:
         payload = POWERSHELL.script((payload,), for_session=True)
     wrapper = NativeWinRMSession("server.example")._wrapper(payload)
-    local = _in_a_separate_runspace(wrapper)
+    local = _in_a_job(wrapper)
     result = subprocess.run(
         ("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "-"),
         input=local.encode("utf-8"),
@@ -408,7 +484,7 @@ def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it(compose):
     )
     result = subprocess.run(
         ("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "-"),
-        input=_in_a_separate_runspace(echoing).encode("utf-8"),
+        input=_in_a_job(echoing).encode("utf-8"),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -416,15 +492,125 @@ def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it(compose):
     assert result.stdout.strip() == b"a"
 
 
-def _in_a_separate_runspace(wrapper):
-    """Replace the remote hop with a local runspace, which is what a remote
-    one is: a scope of its own, where `exit` ends the block and not us."""
+def _in_a_job(wrapper):
+    """Replace the remote hop with a job: a separate PowerShell process, so a
+    scope of its own where `exit` ends the block and error records are relayed
+    the way `Invoke-Command` relays them."""
+    needle = "Invoke-Command @o -ScriptBlock $b"
+    assert needle in wrapper
     return wrapper.replace(
-        "Invoke-Command @o -ScriptBlock $b",
-        "$(try{$ps=[PowerShell]::Create();"
-        "[void]$ps.AddScript($b.ToString());$ps.Invoke()}"
-        "finally{$ps.Dispose()})",
+        needle, "Start-Job -ScriptBlock $b | Receive-Job -Wait -AutoRemoveJob"
     )
+
+
+_WINDOWS_ONLY = pytest.mark.skipif(
+    os.name != "nt", reason="the wrapper is a Windows PowerShell program"
+)
+
+
+def _run_wrapper(wrapper, hop):
+    return subprocess.run(
+        ("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "-"),
+        input=hop(wrapper).encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def _through_a_job(monkeypatch):
+    real = subprocess.run
+
+    def hop_run(argv, **kwargs):
+        kwargs["input"] = _in_a_job(kwargs["input"].decode("utf-8")).encode("utf-8")
+        return real(argv, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", hop_run)
+
+
+@_WINDOWS_ONLY
+@pytest.mark.parametrize(
+    ("command", "status", "output"),
+    [
+        ("Write-Output ok", 0, "ok"),
+        ("cmd /c exit 7", 7, ""),
+        (r"Get-Item C:\definitely\missing", 1, ""),
+        ("throw 'boom'", 1, ""),
+        ("Write-Error 'soft failure'; Write-Output 'after'", 0, "after"),
+        ('cmd /c "echo to-stderr 1>&2 & exit 3"', 3, ""),
+        (
+            r"Write-Output before; Get-Content C:\definitely\missing.txt",
+            1,
+            "before",
+        ),
+    ],
+)
+def test_native_remote_errors_are_statuses_not_exceptions(
+    monkeypatch, command, status, output
+):
+    """A remote error used to raise ConnectionError, so `check=False` could
+    not inspect it and `Get-Item missing` was an outage."""
+    from hostctl.executor.winrm import WinRMExecutor
+    from hostctl.shell import POWERSHELL
+
+    _through_a_job(monkeypatch)
+    executor = WinRMExecutor(
+        lambda: NativeWinRMSession("server.example", timeout=120),
+        manages_status=True,
+    )
+    result = executor(
+        POWERSHELL.script((command,), for_session=True),
+        check=False,
+        encoding="utf-8",
+    )
+    assert result.returncode == status
+    assert result.stdout.strip() == output
+    if status and "exit 7" not in command:
+        assert result.stderr.strip()
+
+
+@_WINDOWS_ONLY
+def test_native_relay_returns_every_line_in_order(monkeypatch):
+    from hostctl.executor.winrm import WinRMExecutor
+
+    _through_a_job(monkeypatch)
+    executor = WinRMExecutor(
+        lambda: NativeWinRMSession("server.example", timeout=120),
+        manages_status=True,
+    )
+    result = executor(
+        '1..5000 | ForEach-Object { "line $_" }', check=False, encoding="utf-8"
+    )
+    assert result.stdout.splitlines() == [f"line {n}" for n in range(1, 5001)]
+
+
+@_WINDOWS_ONLY
+@pytest.mark.parametrize(
+    ("error_id", "error"),
+    [
+        ("AccessDenied,PSSessionStateBroken", PermissionError),
+        ("CannotConnect,PSSessionStateBroken", ConnectionError),
+    ],
+)
+def test_native_transport_failures_raise_by_kind(error_id, error):
+    """The hop writes the error record `Invoke-Command` writes when the
+    session cannot be established."""
+    from hostctl.executor.winrm import WinRMExecutor
+
+    session = NativeWinRMSession("server.example", timeout=120)
+    needle = "Invoke-Command @o -ScriptBlock $b"
+    original = session._wrapper
+
+    def wrapper(script, marker=None):
+        return original(script, marker).replace(
+            needle,
+            "Write-Error -Exception "
+            "([Management.Automation.Remoting.PSRemotingTransportException]::new('no session')) "
+            f"-ErrorId '{error_id}' -Category OpenError",
+        )
+
+    session._wrapper = wrapper
+    with pytest.raises(error, match="no session"):
+        WinRMExecutor(lambda: session)("Write-Output x", check=False)
 
 
 @pytest.mark.skipif(

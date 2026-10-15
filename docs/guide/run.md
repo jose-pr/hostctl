@@ -139,11 +139,13 @@ ending in a `#` comment cannot swallow it.
 - WinRM buffers output to caller-owned file handles. It cannot stream stdin or
   select another executable. The pywinrm leg sends the script on stdin to a
   directly started `powershell.exe`, so a command has no command-line length
-  limit. `read_timeout_sec` is a transport-read setting,
-  not a total command deadline; native current-context remoting does not kill
-  a remote command when that read window elapses. Remote exit codes are
-  preserved, while transport/authentication failures are normalized to
-  `ConnectionError`/`PermissionError`.
+  limit. On the native current-context leg `read_timeout_sec` is a total
+  per-call deadline (default 30 s) that `run(timeout=)` overrides, and the
+  remote command keeps running when it expires; pywinrm and PSRP have no total
+  deadline and refuse `timeout=`. Every leg reports one status: 0 when the last
+  statement succeeded, else the native exit code, else 1. A remote error is that
+  status with its text on stderr; only transport and authentication failures are
+  normalized to `ConnectionError`/`PermissionError`.
 - SSH command dialect may be explicit (`POSIX_SHELL`, `POWERSHELL`, etc.) or
   positively detected with `SshConfig(dialect="auto")`. Structured commands,
   environment variables, and working directories use dialect-specific quoting.

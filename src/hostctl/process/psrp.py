@@ -205,7 +205,7 @@ class RunspaceSession:
             script_text = "& {} {}".format(command, values)
         else:
             script_text = str(script)
-        from ..executor.winrm import exit_marker
+        from ..executor.winrm import LASTEXITCODE_RESET, exit_marker, status_epilogue
 
         # A per-call nonce, for the same reason the native wrapper uses one:
         # the fixed marker is a string any command may print, and the line
@@ -217,15 +217,12 @@ class RunspaceSession:
             # command never sets it, and used to report whatever an earlier
             # *native* command had left behind -- a succeeding command raising
             # CalledProcessError with a stale status.
-            # `NativeWinRMSession._wrapper` resets it for the same reason.
             # The epilogue goes on its OWN LINE: joined with `;` after the
             # payload, a script ending in a `#` comment commented it out,
             # and the pipeline then reported whatever status the previous
             # one had left behind.
             script_text = (
-                f"$global:LASTEXITCODE=0; {script_text}"
-                + "\n"
-                + f"Write-Output ('{marker}:' + [string]([int]$LASTEXITCODE))"
+                f"{LASTEXITCODE_RESET}; {script_text}" + "\n" + status_epilogue(marker)
             )
         from pypsrp.powershell import PowerShell
 
@@ -251,12 +248,10 @@ class RunspaceSession:
                 text_value = str(value)
                 if text_value.startswith(marker + ":"):
                     try:
-                        parsed_returncode = int(text_value.split(":", 1)[1])
-                        returncode = (
-                            1
-                            if had_errors and parsed_returncode == 0
-                            else parsed_returncode
-                        )
+                        # The status the script itself computed; a
+                        # non-terminating error earlier in the pipeline does
+                        # not override it.
+                        returncode = int(text_value.split(":", 1)[1])
                     except ValueError:
                         had_errors = True
                         returncode = 1
