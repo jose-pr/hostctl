@@ -101,11 +101,11 @@ without a deprecation cycle.
 
 ## Aliases and constants
 
-`HostPath` is `pathlib_next.Path` — the type every usable `host.path()` returns,
+`HostPath` is `pathapi.Path` — the type every usable `host.path()` returns,
 re-exported so callers can annotate against it without depending on
-`pathlib_next` by name.
+`pathapi` by name.
 
-`ExecutorCommand` (`str | pathlib.PurePath | pathlib_next.Pathname`) is the
+`ExecutorCommand` (`str | pathlib.PurePath | pathapi.Pathname`) is the
 command type accepted by `Executor` and `Shell.execute()`.
 `ExecutorCapability` is the enum whose `.ARGS`, `.CWD`, and `.ENV` members
 declare native executor support. Its members subclass `str`, so

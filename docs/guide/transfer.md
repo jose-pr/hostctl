@@ -1,6 +1,6 @@
 # Copying and synchronizing between hosts
 
-Hostctl paths use the existing `pathlib_next` copy and synchronization
+Hostctl paths use the existing `pathapi` copy and synchronization
 machinery. There is deliberately no separate transfer engine:
 
 ```python
@@ -18,8 +18,8 @@ with Host("ssh://source.example") as source, Host(
 `Path.copy()` works between any two path implementations and supports
 `overwrite`, `recursive`, `follow_symlinks`, metadata preservation, and error
 handling. `Path.move()` first tries a backend rename and falls back to copy plus
-remove where supported. Recursive SFTP-to-SFTP copies retain
-`pathlib_next`'s concurrent child fan-out.
+remove where supported. A directory copied within one SFTP server runs
+as `sftppath`'s concurrent native requests.
 
 Container, WinRM, and QGA readers fetch bounded chunks rather than buffering a
 whole source file. Their writable streams stage data and commit on close, so an
@@ -29,10 +29,10 @@ gain that commit-on-close property.
 
 ## Synchronizing trees
 
-Use `pathlib_next.utils.sync.PathSyncer` for one-way tree synchronization:
+Use `pathapi.sync.PathSyncer` for one-way tree synchronization:
 
 ```python
-from pathlib_next.utils.sync import PathSyncer
+from pathapi.sync import PathSyncer
 
 from hostctl import host_checksum
 
@@ -52,7 +52,7 @@ owned by one of its hosts, it runs the platform hash tool beside the data:
 | PowerShell 5/7 | `Get-FileHash` |
 | cmd.exe | `certutil -hashfile` |
 
-Paths from another `pathlib_next` implementation fall back to bounded
+Paths from another `pathapi` implementation fall back to bounded
 read-side hashing. Pass both hosts to avoid downloading either unchanged side.
 Supported remote algorithms are MD5, SHA-1, SHA-256, SHA-384, and SHA-512.
 
@@ -72,7 +72,7 @@ which is not one: `Path.copy()` propagates `st_mode` and not timestamps, so a
 file it copies lands with a fresh modification time and compares unequal on
 the next run — a repeated `stat_checksum` sync re-copies what it copied before
 rather than settling into a no-op. That holds on every supported interpreter,
-the local path on 3.14 included: `pathlib_next` routes explicitly around
+the local path on 3.14 included: `pathapi` routes explicitly around
 CPython 3.14's own `Path.copy()` to keep one cross-version contract, so the
 stdlib's timestamp preservation is never reached.
 
@@ -87,9 +87,12 @@ remote-to-remote synchronization. `dry_run=True`, `remove_missing`, hooks, and
 
 ## Byte progress
 
-`pathlib_next.Path.copy()` does not yet expose a byte-progress hook. Use
-`ProgressReader` when progress matters more than retaining `Path.copy()`'s
-overwrite and metadata handling:
+`Path.copy(target, progress=report)` calls `report(path, bytes_copied,
+total_size)` for each chunk of each file it streams. A native transfer that
+bypasses the streaming copy -- the SFTP fan-out of a directory copied within
+one server -- does not call it.
+
+`ProgressReader` reports progress on a stream copy of your own:
 
 ```python
 import shutil
@@ -106,18 +109,8 @@ with ProgressReader(source_path.open("rb"), report, total=size) as reader:
 
 ## Current limitations
 
-- `PathSyncer` cannot preserve source symlinks and raises
-  `NotImplementedError`. A direct `Path.copy(..., follow_symlinks=True)` copies
-  the target content where the backend supports it.
-- Byte-progress integration and a backend-native checksum protocol belong in
-  `pathlib_next`; hostctl tracks those upstream rather than forking its copy
-  implementation.
-- Commit-on-close writers may buffer the destination content until close even
-  though their read sides stream.
-
-Three gaps are tracked as `pathlib_next` requests rather than hostctl features,
-because each one lives inside machinery hostctl deliberately does not fork:
-
-- Byte-progress hook in `BinaryOpen.copy` / `Path.copy()`
-- Symlink handling in `PathSyncer` (plus its unreachable `ignore_error`)
-- Optional backend-native checksum protocol
+- `PathSyncer(follow_symlinks=False)` recreates a source link on the target
+  only where the target path supports `symlink_to()`; elsewhere that entry is
+  a `NotImplementedError`, offered to `ignore_error`.
+- Commit-on-close writers (WinRM, the Docker archive API, QGA) buffer the
+  destination content until close even though their read sides stream.

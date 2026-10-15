@@ -53,7 +53,7 @@ class ManagedHost(PosixHost):
         raise ValueError(f"unknown path backend: {backend}")
 ```
 
-Such a path must implement the `pathlib_next.Path` contract. Advertise only
+Such a path must implement the `pathapi.Path` contract. Advertise only
 usable operations in `capabilities`; unsupported base `run()` and `path()` calls
 raise `NotImplementedError`. Connection URIs never contain secrets—pass those
 separately to `Host(connection_string, **options)`.

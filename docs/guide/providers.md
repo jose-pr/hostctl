@@ -304,7 +304,7 @@ A probe returns `available`, `degraded`, or `unavailable` with a reason, the
 capabilities it can honor, and an optional `system_hint`. Probes are cached for
 one connection generation, so they may perform real round trips.
 
-A path provider returns a `pathlib_next.Path`; returning anything else is a
+A path provider returns a `pathapi.Path`; returning anything else is a
 `TypeError`:
 
 ```python

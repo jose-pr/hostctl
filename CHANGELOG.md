@@ -16,10 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   no longer takes `stdout=`/`stderr=` and writes to `sys.stdout`/`sys.stderr`.
   Subcommands, operands and exit statuses are unchanged, except that the
   `--` before `run`'s program is now required.
-- **Requires netimps 0.4** (`netimps>=0.4.0,<0.5`, was `>=0.3.0,<0.4`), and the
-  `ssh` extra requires `pathlib_next[sftp-async]>=0.9.12`, the first release
-  that admits it. No hostctl code changed, but three things change for a
-  caller:
+- **Paths are `pathapi` paths** (`pathapi>=0.1.0,<0.2`, which replaces
+  `pathlib_next`; `pathlib-next` was renamed `pathapi`). `HostPath` is
+  `pathapi.Path`, `ExecutorCommand` takes a `pathapi.Pathname`, and a path
+  provider must return a `pathapi.Path`. Change `pathlib_next` imports as
+  pathapi's changelog says: `pathlib_next.utils.sync` is `pathapi.sync`,
+  `pathlib_next.utils.stat.FileStat` is `pathapi.FileStat`.
+  - The `ssh` extra is `asyncssh>=2.20,<3` and `sftppath[asyncssh]>=0.1.0,<0.2`,
+    in place of `pathlib_next[sftp-async]`. An SSH host's path is an
+    `sftppath.SFTPPath`, and its `str()` is the path on the server where it
+    was `sftp://host:22/...`.
+  - The SFTP leg still uses the exec leg's connect options, and reads no
+    `~/.ssh/config`, so both legs reach the same server.
+  - pathapi's own changes reach hostctl's paths: `touch(mode=...)` raises
+    `NotImplementedError` on a path that cannot `chmod()`, and a path class
+    without `__fspath__` is no longer `os.PathLike`.
+- **Requires netimps 0.4** (`netimps>=0.4.0,<0.5`, was `>=0.3.0,<0.4`). No
+  hostctl code changed, but three things change for a caller:
   - `winrm`, `winrms`, `wsman`, `wsmans` and `psrp` now have default ports
     (5985, 5986, 5985, 5986, 5985) where `ConnectionString.port` was `None`,
     so `str(ConnectionString("winrm://admin@host"))` renders

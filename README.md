@@ -16,7 +16,7 @@ capabilities those providers actually support.
   SSH (`asyncssh`), or PowerShell over WinRM (`pywinrm`). Two defaults differ
   from `subprocess.run` deliberately: `check` and `capture_output` are both
   `True`. Unsupported transport options raise `NotImplementedError`.
-- **`Host.path(...)`** — a `pathlib_next.Path` filesystem view: local,
+- **`Host.path(...)`** — a `pathapi.Path` filesystem view: local,
   remote SFTP, Windows over WinRM, container archives, or QEMU Guest Agent.
 - **Cross-host copy and sync** — use `Path.copy()`/`PathSyncer` directly;
   `host_checksum()` computes unchanged-file digests beside remote data.
@@ -45,7 +45,7 @@ Optional features/extras:
 
 | Extra/flag | Adds | Needed for |
 | --- | --- | --- |
-| `ssh` | `asyncssh`, `pathlib_next[sftp-async]` | `run()`/`path()` over SSH |
+| `ssh` | `asyncssh`, `sftppath[asyncssh]` | `run()`/`path()` over SSH |
 | `winrm` | `pywinrm` | PowerShell `run()` over WinRM |
 | `psrp` | `pypsrp` on Python 3.10+ | persistent typed PowerShell runspaces |
 | `container` | Docker SDK for Python | Docker Engine `run()`/`path()`/sessions |
@@ -66,7 +66,7 @@ from hostctl import (
     SshConfig,
     WinRMConfig,
 )
-from pathlib_next import WindowsPathname
+from pathapi import WindowsPathname
 
 # Local
 with LocalConfig() as host:
@@ -241,7 +241,7 @@ program serves every subcommand as an MCP tool over stdio.
 | `hostctl.provider` | Ordered executor/path provider composition |
 | `hostctl.executor` | Transport-specific command executors |
 | `hostctl.shell` | Shell flavours and persistent sessions |
-| `hostctl.sync` | Remote checksum and byte-progress helpers for `pathlib_next` |
+| `hostctl.sync` | Remote checksum and byte-progress helpers for `pathapi` |
 | `hostctl.cli` | The `hostctl` command line (`main`); needs the `cli` extra |
 
 ## Development

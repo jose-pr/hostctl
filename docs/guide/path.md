@@ -2,12 +2,12 @@
 
 `Host.path(...)` returns a `pathlib`-compatible path:
 
-- **local host** → a `pathlib_next.Path` local implementation which is also a
+- **local host** → a `pathapi.Path` local implementation which is also a
   stdlib `pathlib.Path`;
-- **SSH host** → an SFTP-backed `pathlib_next` path (the `ssh` extra);
+- **SSH host** → an `sftppath.SFTPPath` (the `ssh` extra);
 - **WinRM host** → a Windows-semantic `WinRMPath` backed by PowerShell.
 - **container host** → a POSIX- or Windows-semantic archive-backed
-  `pathlib_next.Path`, selected from container inspection.
+  `pathapi.Path`, selected from container inspection.
 - **QEMU guest** → a POSIX- or Windows-semantic QGA file-RPC path, selected
   from guest OS information.
 
