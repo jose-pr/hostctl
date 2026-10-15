@@ -47,7 +47,9 @@ Before committing: `python -m black src tests` (CI checks it) and
 
 - `test.yml` — `workflow_dispatch` (with a `ref` input) and throwaway `ci-*`
   tags, plus a Linux job that runs the conformance battery against **live**
-  sshd, Docker and serial loopback legs.
+  sshd, Docker and serial loopback legs, and an informative
+  `downstream-pytruenas` job that runs the pytruenas suite against this
+  checkout.
 - `release.yml` — on a `v*` tag: test gate → build → GitHub release → PyPI,
   plus a strict docs **build** that gates the release without deploying.
 - `docs.yml` — owns every Pages deploy: on a published release, on a push to
@@ -56,6 +58,9 @@ Before committing: `python -m black src tests` (CI checks it) and
 Pushing a `ci-*` tag is routine; delete it afterwards. **Pushing a `v*` tag is
 a release and needs the maintainer's explicit consent for that version** —
 publishing is irreversible.
+
+Before a `v*` tag the `downstream-pytruenas` job is green, or its failures are
+all named in the CHANGELOG's upgrade notes for that release.
 
 ## Conventions that are not obvious from the source
 
