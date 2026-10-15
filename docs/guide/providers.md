@@ -321,6 +321,12 @@ paths = PathProvider("rpc", lambda *segments: RpcPath(*segments), probe=probe)
 Declare only the operations you actually implement. Anything you leave out is
 refused explicitly instead of being attempted and failing deeper in the stack.
 
+**Teardown.** `host.close()` closes each provider's `transport` attribute when
+it has one, and the provider itself otherwise (its own `close()`, if it has
+one). Providers that share one transport name it as their `transport`, so it is
+closed once, not once per provider. `connect()` must be idempotent: hostctl
+calls it again after a close and, for a path provider, before every dispatch.
+
 For a worked example composing metadata, download, and SFTP legs with ordered
 selection and pinning, see [`examples/application_provider.py`](https://github.com/jose-pr/hostctl/blob/main/examples/application_provider.py).
 
@@ -341,6 +347,25 @@ them is the fastest way to see a complete provider, but they are implementation
 detail: nothing outside hostctl constructs them, and they carry no stability
 promise. Write your own `ExecutorProvider`/`PathProvider` instead of
 subclassing one.
+
+### Inspecting and replacing providers
+
+A host built from providers lists them in order, and can swap them:
+
+```python
+host.executor_providers   # tuple of the command providers, in order
+host.path_providers       # tuple of the filesystem providers, in order
+
+host.replace_providers(executor=(new_executor,), path=(new_path,))
+```
+
+`replace_providers()` takes either keyword or both; `None` keeps that set.
+The replaced providers' transports are closed (once each, unless a provider you
+kept shares the transport), and the host starts a new connection generation:
+the session initializer runs again before the next operation, on a kept
+provider too. A set with duplicate names raises before anything is closed or
+changed. A path you obtained before the call still routes to the old,
+closed providers, so call `host.path(...)` again.
 
 ## Session initialization
 

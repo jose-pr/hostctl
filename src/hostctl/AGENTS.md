@@ -359,6 +359,16 @@ hostctl applies to whatever you return.
   `executor_capabilities`, `provider_details` and a composed path's dispatch
   all read it. `supports()` on a composite stays on the declared set, which
   must not probe. Trace entries keep a constant `"policy": "ordered"`.
+- `host.executor_providers` and `host.path_providers` are the ordered tuples a
+  `SystemHost` was composed from. `host.replace_providers(*, executor=None,
+  path=None)` swaps either set (`None` keeps it), closes each replaced
+  transport once unless a kept provider shares it, and starts a new connection
+  generation, so the session initializer runs again. Duplicate names raise
+  before anything changes. Paths obtained earlier keep the old providers;
+  obtain them again.
+- Teardown: `close()` closes a provider's `transport` attribute when it has
+  one (providers sharing a transport share the attribute, so it closes once),
+  otherwise the provider's own `close()`.
 - A provider's optional `connect()` is where a pre-dispatch failure belongs.
   Composite paths call a path provider's `connect()` before **every**
   dispatch, so it must be idempotent and cheap once connected.

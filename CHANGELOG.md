@@ -116,6 +116,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   system-provider registries hold, sorted, with entry-point names included and
   not imported. Unknown system-provider descriptors load the
   `hostctl.system_providers` entry point of that name.
+- `SystemHost.executor_providers` and `path_providers` (read-only tuples, until
+  now only on `LocalHost`) and `SystemHost.replace_providers(*, executor=None,
+  path=None)`, which swaps either set, closes each replaced transport once
+  unless a kept provider shares it, and starts a new connection generation.
+  The provider teardown rule is documented in the providers guide.
 
 ### Security
 
