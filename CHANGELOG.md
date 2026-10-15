@@ -220,6 +220,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `<redacted>`; the value still reaches the remote command line. fish
   `set -gx` and quoted values containing `'` are also redacted in raw
   command text.
+- An SSH host or username that OpenSSH would refuse now raises `ValueError`
+  at construction; such a host could inject options into a ProxyCommand.
 - `spawn()` over SSH escapes the command line for a `cmd` login shell, as
   `run()` does; an argument such as `a&b` ran as a second command (command
   injection).

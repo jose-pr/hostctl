@@ -73,6 +73,53 @@ SshShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
 _LOGIN_SHELLS = frozenset(("auto", "cmd", "powershell", "posix"))
 
 
+#: Characters OpenSSH's `valid_hostname` refuses, beyond whitespace and a
+#: leading `-`. A host is substituted into a ProxyCommand (`%h`), which
+#: OpenSSH runs through a shell (CVE-2023-51385).
+_HOST_REFUSED = frozenset("'`\"$\\;&<>|(){}")
+#: The same for `valid_ruser`, which keeps `\\`, `$` and spaces legal.
+_USER_REFUSED = frozenset("'`\";&<>|(){}")
+
+
+def _refuse_unsafe_target(host: str, username: typing.Optional[str]) -> None:
+    """Refuse a host or username OpenSSH itself would refuse.
+
+    netimps decides whether the host is an address literal or a well-formed
+    name; the rest is the OpenSSH-specific list, which netimps does not know.
+    """
+    import netimps
+
+    if host.startswith("-"):
+        raise ValueError(
+            "SSH host must be one host name, as OpenSSH requires: it cannot start with '-'"
+        )
+    for char in host:
+        if char.isspace() or ord(char) < 32 or ord(char) == 127:
+            raise ValueError(
+                "SSH host must be one host name, as OpenSSH requires: it cannot contain whitespace or control characters"
+            )
+        if char in _HOST_REFUSED:
+            raise ValueError(
+                f"SSH host must be one host name, as OpenSSH requires: it cannot contain {char!r}"
+            )
+    if netimps.try_parse(host) is None and not netimps.is_valid(host, netimps.FQDN):
+        raise ValueError("SSH host must be an address or a valid host name")
+    if not username:
+        return
+    if username.startswith("-"):
+        raise ValueError("SSH username cannot start with '-'")
+    if "${" in username:
+        raise ValueError("SSH username cannot contain '${'")
+    if username.endswith("\\"):
+        raise ValueError("SSH username cannot end with a backslash")
+    for char in username:
+        if char in _USER_REFUSED:
+            raise ValueError(f"SSH username cannot contain {char!r}")
+    for index, char in enumerate(username[:-1]):
+        if char.isspace() and username[index + 1] == "-":
+            raise ValueError("SSH username cannot have whitespace before '-'")
+
+
 @dataclasses.dataclass
 class SshConfig(HostConfig, schemes=("ssh",)):
     """Explicit SSH transport, authentication, and target-shell settings."""
@@ -117,6 +164,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             raise ValueError("host must not be empty")
         # The constructor takes a HOST; the dispatcher takes a URI.
         _refuse_uri("SshConfig", self.host)
+        _refuse_unsafe_target(self.host, self.username)
         if not 1 <= self.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
         if self.dialect != "auto":

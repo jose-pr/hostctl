@@ -510,7 +510,10 @@ another SFTP connection. The path leg is given the exec leg's connect
 options. Neither leg reads an ssh_config: both receive `config=None`, so an
 alias, `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in
 `~/.ssh/config` is ignored; pass the host, key and known_hosts explicitly.
-Both legs therefore reach the same server and verify its key the same way. `str()` of an SSH host's path is the path on
+Both legs therefore reach the same server and verify its key the same way.
+`host` and `username` are refused where OpenSSH would refuse them (a leading
+`-`, whitespace, shell metacharacters; `${` in a username); the host must be
+an address or a valid name (netimps decides that). `str()` of an SSH host's path is the path on
 the server. Provider close performs all AsyncSSH operations through the
 shared bridge. Omitted `run()` stdin is an explicit EOF stream, `bufsize=0` is
 rejected, and a missing remote exit status is reported as return code `-1`.
