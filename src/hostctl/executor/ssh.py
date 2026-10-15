@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import inspect
 import os
@@ -67,6 +68,36 @@ def _input_buffer(
     return io.BytesIO(value)
 
 
+#: Seconds to wait for the channel to close after TERM; with `_CLOSE_GRACE` it
+#: bounds a timed-out call at timeout + 3 s whatever the server does.
+_TERM_GRACE = 2.0
+#: Seconds to wait for the channel to close after `close()`.
+_CLOSE_GRACE = 1.0
+
+
+async def _quietly(process: object, name: str) -> None:
+    method = getattr(process, name, None)
+    if method is None:
+        return
+    try:
+        result = method()
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        pass
+
+
+async def _closed_within(process: object, seconds: float) -> bool:
+    closer = getattr(process, "wait_closed", None)
+    if closer is None:
+        return False
+    try:
+        await asyncio.wait_for(closer(), seconds)
+    except Exception:
+        return False
+    return True
+
+
 class SshExecutor(Executor[subprocess.CompletedProcess]):
     """Execute finalized command strings through an AsyncSSH connection."""
 
@@ -77,33 +108,17 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
 
     @staticmethod
     async def _abandon(process: object) -> bool:
-        """Terminate and close a process whose wait() did not finish.
+        """Stop a process whose wait() did not finish; True if it may still run.
 
-        Returns whether termination was actually attempted, which is what
-        `TimeoutExpired.orphaned` reports.
+        TERM is a request the server may ignore, so the wait for the channel
+        to close is bounded and the channel is then closed outright.
         """
-        attempted = False
-        for name in ("terminate", "close"):
-            method = getattr(process, name, None)
-            if method is None:
-                continue
-            try:
-                result = method()
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:
-                continue
-            attempted = True
-            break
-        closer = getattr(process, "wait_closed", None)
-        if closer is not None:
-            try:
-                result = closer()
-                if inspect.isawaitable(result):
-                    await result
-            except Exception:
-                pass
-        return attempted
+        await _quietly(process, "terminate")
+        if await _closed_within(process, _TERM_GRACE):
+            return False
+        await _quietly(process, "close")
+        await _closed_within(process, _CLOSE_GRACE)
+        return True
 
     def __call__(
         self,
@@ -175,7 +190,7 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             )
 
         stdout_target, stderr_target = stdout, stderr
-        terminated = False
+        orphaned = True
         # Resolved on the calling thread: the accessor connects, and
         # connecting runs on the bridge loop -- asking for it from inside the
         # loop waits on a future only that loop can complete.
@@ -188,7 +203,7 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             # remote command, with nothing to terminate and `orphaned` always
             # True. Creating the process here keeps the handle that
             # docs/guide/contracts.md requires for a best-effort terminate.
-            nonlocal terminated
+            nonlocal orphaned
             process = await connection.create_process(
                 command,
                 bufsize=bufsize,
@@ -204,7 +219,7 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             try:
                 return await process.wait(check=False, timeout=timeout)
             except BaseException:
-                terminated = await SshExecutor._abandon(process)
+                orphaned = await SshExecutor._abandon(process)
                 raise
 
         try:
@@ -220,7 +235,7 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
                 # from the transport rather than from the normalizer (a
                 # stdlib `TimeoutExpired` out of the channel) otherwise
                 # reached the caller without `.orphaned`/`.pid` at all.
-                normalized.orphaned = not terminated
+                normalized.orphaned = orphaned
                 if getattr(normalized, "pid", None) is None:
                     normalized.pid = None
                 if normalized.output is None:

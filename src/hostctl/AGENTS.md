@@ -503,8 +503,10 @@ verify its key the same way. `str()` of an SSH host's path is the path on
 the server. Provider close performs all AsyncSSH operations through the
 shared bridge. Omitted `run()` stdin is an explicit EOF stream, `bufsize=0` is
 rejected, and a missing remote exit status is reported as return code `-1`.
-Timeouts raise `subprocess.TimeoutExpired` with an `orphaned` flag indicating
-whether a process/channel termination hook was available.
+Timeouts raise `subprocess.TimeoutExpired`: the executor sends TERM, waits up
+to 2 s for the channel to close, then closes it and waits 1 s more, so the call
+returns within about three seconds of the deadline. `orphaned` is false only
+when the channel closed during the TERM grace.
 A composed SSH host opens **two** connections and authenticates twice: the
 exec leg is hostctl's own, the path leg is `sftppath`'s SFTP backend,
 which takes connect options rather than a live connection. `bufsize` is

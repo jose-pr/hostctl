@@ -105,7 +105,7 @@ class _UnterminableConnection(_Connection):
             raise TimeoutError
 
         async def wait_closed(self):
-            return None
+            raise ConnectionError("channel state unknown")
 
     async def create_process(self, command, **kwargs):
         self.calls.append((command, kwargs))

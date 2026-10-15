@@ -213,6 +213,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `<redacted>`; the value still reaches the remote command line. fish
   `set -gx` and quoted values containing `'` are also redacted in raw
   command text.
+- `run(timeout=)` over SSH returns within about three seconds of the deadline
+  even when the server or command ignores TERM, and `TimeoutExpired.orphaned`
+  is true unless the command was seen to end.
 - **Output stays in order around a dispatched command.** The binary fallback
   of `dispatch_output` wrote past text still pending in `sys.stdout`, so a
   command's output could print before the line written before it.
