@@ -55,7 +55,7 @@ from ._common import (
     uri_hostname,
 )
 from ._ssh import SshConfig, _SshTransport
-from ._staged_io import copy_from, StagedOpenMixin, staged_open
+from ._staged_io import copy_from, staged_open
 
 QemuTransport = typing.Literal["libvirt", "unix", "ssh"]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
@@ -1136,7 +1136,7 @@ _HELPER_OPERATIONS = {
 }
 
 
-class _QgaPathMixin(StagedOpenMixin):
+class _QgaPathMixin:
     __slots__ = ()
 
     def _supports(self, protocol) -> typing.Optional[bool]:
@@ -1210,7 +1210,7 @@ class _QgaPathMixin(StagedOpenMixin):
             raise NotImplementedError(
                 "exclusive QGA writes require a transactional guest helper"
             )
-        return staged_open(self.backend, str(self), mode, label="QGA")
+        return staged_open(self.backend, str(self), mode)
 
     def _symlink_target(self, target):
         """Normalise a `str` target WITH this path's backend.

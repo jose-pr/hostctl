@@ -54,7 +54,7 @@ from ._common import (
     uri_hostname,
 )
 from ..shell import POWERSHELL, ShellFlavour
-from ._staged_io import copy_from, StagedOpenMixin, staged_open
+from ._staged_io import copy_from, staged_open
 
 log = logging.getLogger("hostctl.host.winrm")
 
@@ -873,7 +873,7 @@ class _WinRMReadStream(io.RawIOBase):
         return len(data)
 
 
-class WinRMPath(StagedOpenMixin, WindowsPathname, Path):
+class WinRMPath(WindowsPathname, Path):
     """A Windows path whose I/O executes through a WinRM host."""
 
     __slots__ = ("_backend",)
@@ -944,7 +944,7 @@ class WinRMPath(StagedOpenMixin, WindowsPathname, Path):
 
     def _open(self, mode="r", buffering=-1):
         del buffering
-        return staged_open(self.backend, str(self), mode, label="WinRM")
+        return staged_open(self.backend, str(self), mode)
 
     def _symlink_target(self, target):
         """Normalise a `str` target WITH this path's backend.

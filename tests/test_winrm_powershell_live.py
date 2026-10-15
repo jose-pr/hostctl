@@ -74,7 +74,7 @@ def test_appending_to_a_missing_file_creates_it(backend, tmp_path):
 
     target = str(tmp_path / "audit.log")
 
-    with staged_open(backend, target, "a", label="WinRM") as stream:
+    with staged_open(backend, target, "a") as stream:
         stream.write(b"entry\n")
 
     assert backend.read_bytes(target) == b"entry\n"

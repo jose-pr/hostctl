@@ -107,38 +107,38 @@ def test_read_only_open_delegates_to_a_backend_that_streams():
             return io.BytesIO(b"streamed")
 
     backend = _Streaming()
-    stream = staged_open(backend, "/x", "r", label="test")
+    stream = staged_open(backend, "/x", "r")
     assert not isinstance(stream, StagedWriteStream)
     assert stream.read() == b"streamed"
 
     # A backend without `open_read` still gets a staged read rather than an
     # AttributeError -- this is the branch only WinRM used to guard.
-    plain = staged_open(_RecordingBackend(b"staged"), "/x", "r", label="test")
+    plain = staged_open(_RecordingBackend(b"staged"), "/x", "r")
     assert plain.read() == b"staged"
 
 
 def test_append_creates_a_missing_file_but_read_still_raises():
     missing = _RecordingBackend(contents=None)
-    with staged_open(missing, "/x", "a", label="test") as stream:
+    with staged_open(missing, "/x", "a") as stream:
         stream.write(b"tail")
     assert missing.writes == [("/x", b"tail", False)]
 
     with pytest.raises(FileNotFoundError):
-        staged_open(_RecordingBackend(contents=None), "/x", "r", label="test")
+        staged_open(_RecordingBackend(contents=None), "/x", "r")
 
 
 def test_exclusive_mode_is_forwarded_to_the_backend():
     # Absent: `x` now refuses an existing file at OPEN, so the flag's journey
     # to the backend is only observable when there is nothing there.
     backend = _RecordingBackend(contents=None)
-    with staged_open(backend, "/x", "x", label="test") as stream:
+    with staged_open(backend, "/x", "x") as stream:
         stream.write(b"new")
     assert backend.writes == [("/x", b"new", True)]
 
 
 def test_a_closed_stream_does_not_upload_twice():
     backend = _RecordingBackend()
-    stream = staged_open(backend, "/x", "w", label="test")
+    stream = staged_open(backend, "/x", "w")
     stream.write(b"once")
     stream.close()
     stream.close()
@@ -154,11 +154,10 @@ def test_a_with_block_that_raises_does_not_replace_the_destination():
     """
     backend = _RecordingBackend()
 
-    with pytest.warns(ResourceWarning, match="discarded without committing"):
-        with pytest.raises(RuntimeError):
-            with staged_open(backend, "/f", "w", label="test") as stream:
-                stream.write(b"partial")
-                raise RuntimeError("the source died mid-copy")
+    with pytest.raises(RuntimeError):
+        with staged_open(backend, "/f", "w") as stream:
+            stream.write(b"partial")
+            raise RuntimeError("the source died mid-copy")
 
     assert backend.writes == []
     assert backend.contents == b"existing"
@@ -167,7 +166,7 @@ def test_a_with_block_that_raises_does_not_replace_the_destination():
 def test_a_normal_close_still_commits():
     backend = _RecordingBackend()
 
-    with staged_open(backend, "/f", "w", label="test") as stream:
+    with staged_open(backend, "/f", "w") as stream:
         stream.write(b"done")
 
     assert [value for _, value, _ in backend.writes] == [b"done"]
@@ -181,7 +180,7 @@ def test_append_mode_writes_at_the_end_after_a_seek():
     """
     backend = _RecordingBackend()
 
-    with staged_open(backend, "/f", "a+", label="test") as stream:
+    with staged_open(backend, "/f", "a+") as stream:
         stream.seek(0)
         assert stream.read(3) == b"exi"
         stream.write(b"+new")
@@ -192,7 +191,7 @@ def test_append_mode_writes_at_the_end_after_a_seek():
 def test_append_writelines_also_lands_at_the_end():
     backend = _RecordingBackend()
 
-    with staged_open(backend, "/f", "a+", label="test") as stream:
+    with staged_open(backend, "/f", "a+") as stream:
         stream.seek(0)
         stream.writelines([b"+a", b"+b"])
 
@@ -203,19 +202,17 @@ def test_append_writelines_also_lands_at_the_end():
 def test_a_text_mode_block_that_raises_does_not_commit(flavour):
     """The guards must not depend on whether the mode carried a `b`.
 
-    `pathapi.Path.open()` wraps a text mode in a plain `TextIOWrapper`
-    whose `__exit__` and finalizer both close the buffer -- and for a staged
-    stream that close *is* the upload, so the binary guards never ran.
-    hostctl supplies its own wrapper instead.
+    A stock `TextIOWrapper`'s `__exit__` and finalizer close the buffer, and
+    for a staged stream that close *is* the upload; pathapi's `open()` wraps a
+    stream that has `discard()` in a wrapper that discards instead.
     """
     backend = _RecordingBackend()
     path = _paths()[flavour](backend)
 
-    with pytest.warns(ResourceWarning, match="discarded without committing"):
-        with pytest.raises(RuntimeError):
-            with path.open("w", encoding="utf-8") as stream:
-                stream.write("partial")
-                raise RuntimeError("the source died mid-copy")
+    with pytest.raises(RuntimeError):
+        with path.open("w", encoding="utf-8") as stream:
+            stream.write("partial")
+            raise RuntimeError("the source died mid-copy")
 
     assert backend.writes == []
 
@@ -260,7 +257,7 @@ def test_exclusive_open_refuses_an_existing_file_before_any_work():
     backend = _RecordingBackend(contents=b"existing")
 
     with pytest.raises(FileExistsError):
-        staged_open(backend, "/x", "x", label="test")
+        staged_open(backend, "/x", "x")
 
     assert backend.writes == []
 
@@ -271,10 +268,10 @@ def test_a_read_only_use_of_r_plus_uploads_nothing():
     a full transfer, a new mtime, and a clobber of concurrent changes."""
     backend = _RecordingBackend(contents=b"0123456789")
 
-    with staged_open(backend, "/x", "r+", label="test") as stream:
+    with staged_open(backend, "/x", "r+") as stream:
         assert stream.read(4) == b"0123"
 
-    with staged_open(backend, "/x", "a", label="test"):
+    with staged_open(backend, "/x", "a"):
         pass
 
     assert backend.writes == []
@@ -294,7 +291,7 @@ def test_a_failed_commit_keeps_the_staged_bytes_for_a_retry():
             super().write_bytes(path, value, exclusive=exclusive)
 
     backend = _Flaky(contents=b"")
-    stream = staged_open(backend, "/x", "w", label="test")
+    stream = staged_open(backend, "/x", "w")
     stream.write(b"payload")
 
     with pytest.raises(ConnectionResetError):

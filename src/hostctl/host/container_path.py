@@ -15,7 +15,7 @@ from pathlib import PurePath as _StdPurePath
 from pathapi import Path, PosixPathname, WindowsPathname
 from pathapi import FileStat
 from pathapi.providers import notimplemented
-from ._staged_io import copy_from, StagedOpenMixin, staged_open
+from ._staged_io import copy_from, staged_open
 
 
 class ContainerArchiveClient(typing.Protocol):
@@ -658,7 +658,7 @@ class ContainerPathBackend:
             raise OSError(f"container rejected archive for {path}")
 
 
-class _ContainerPathMixin(StagedOpenMixin):
+class _ContainerPathMixin:
     """Shared pathapi operations for both container path flavours."""
 
     __slots__ = ()
@@ -708,7 +708,7 @@ class _ContainerPathMixin(StagedOpenMixin):
 
     def _open(self, mode="r", buffering=-1):
         del buffering
-        return staged_open(self.backend, str(self), mode, label="container")
+        return staged_open(self.backend, str(self), mode)
 
     def _symlink_target(self, target):
         """Normalise a `str` target WITH this path's backend.
