@@ -156,17 +156,17 @@ class SshProcess(Process):
                 self._process.wait(check=False, timeout=timeout)
             )
         except Exception as exc:
+            # asyncssh's wait() *clears* the receive buffers into its result,
+            # or into the timeout it raises. Hold what it drained so read()
+            # can still serve it; the exception keeps a copy.
+            self._buffered_stdout += self._as_buffer(getattr(exc, "stdout", None))
+            self._buffered_stderr += self._as_buffer(getattr(exc, "stderr", None))
             normalized = _async.normalize_asyncssh_error(
                 exc, command=self._command, timeout=timeout
             )
             if normalized is exc:
                 raise
             raise normalized from exc
-        # asyncssh's wait() *clears* the receive buffers into the result. Only
-        # the return code used to be kept, so every byte the caller had not
-        # already read was destroyed and a later read() returned b"" --
-        # indistinguishable from EOF. Hold it so read() can still serve it,
-        # which is what ContainerProcess does.
         self._buffered_stdout += self._as_buffer(result.stdout)
         self._buffered_stderr += self._as_buffer(result.stderr)
         return -1 if result.returncode is None else result.returncode

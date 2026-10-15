@@ -168,3 +168,43 @@ def test_process_close_failure_is_retryable():
     with pytest.raises(ConnectionError):
         process.close()
     assert process._closed is False
+
+
+def _slow_writer(first=b"early\n", second=b"late\n"):
+    import asyncio
+
+    async def handler(process):
+        process.stdout.write(first)
+        await asyncio.sleep(2.5)
+        process.stdout.write(second)
+        process.exit(0)
+
+    return handler
+
+
+def _read_all(process):
+    chunks = []
+    while True:
+        chunk = process.read()
+        if not chunk:
+            return b"".join(chunks) if isinstance(chunk, bytes) else "".join(chunks)
+        chunks.append(chunk)
+
+
+@pytest.mark.parametrize("encoding", (None, "utf-8"))
+def test_a_timed_out_wait_keeps_the_output_it_drained(encoding):
+    pytest.importorskip("asyncssh")
+    from conformance.inprocess_ssh import InProcessSSHServer
+
+    with InProcessSSHServer(_slow_writer()) as server:
+        host = server.config()._create_host()
+        try:
+            process = host.spawn("x", encoding=encoding)
+            with pytest.raises(subprocess.TimeoutExpired):
+                process.wait(timeout=1)
+            assert process.wait() == 0
+            output = _read_all(process)
+        finally:
+            host.close()
+
+    assert output == ("early\nlate\n" if encoding else b"early\nlate\n")
