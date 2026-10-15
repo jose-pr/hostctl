@@ -305,3 +305,10 @@ def test_stderr_into_stdout_asks_a_modern_posix_agent_to_interleave():
 )
 def test_stderr_into_stdout_falls_back_where_the_agent_cannot_merge(version, windows):
     assert _capture_mode(version, windows=windows) is True
+
+
+@pytest.mark.parametrize("spelling", ("auto", "posix", "windows"))
+def test_qemu_path_flavor_strings_round_trip_through_the_uri(spelling):
+    config = QemuConfig("guest", path_flavor=spelling)
+
+    assert HostConfig(config.connection_uri) == config

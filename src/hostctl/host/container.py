@@ -5,10 +5,10 @@ from __future__ import annotations
 import dataclasses
 import subprocess
 import typing
-from pathlib import PurePath, PurePosixPath, PureWindowsPath
+from pathlib import PurePath, PureWindowsPath
 from urllib.parse import quote, unquote, urlencode
 
-from pathapi import Pathname, PosixPathname, WindowsPathname
+from pathapi import Pathname
 
 from ..executor.container import (
     ContainerExecutor,
@@ -49,6 +49,8 @@ from ._common import (
     PathLike,
     starts_direct_command,
     parse_host_info,
+    path_flavor_name,
+    path_flavor_selection,
     strict_uri_query,
 )
 from .container_path import (
@@ -60,17 +62,6 @@ from .container_path import (
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
 ContainerShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
 ContainerPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
-
-
-def _path_selection(value: str) -> ContainerPathSelection:
-    try:
-        return {
-            "auto": "auto",
-            "posix": PosixPathname,
-            "windows": WindowsPathname,
-        }[value]
-    except KeyError as exc:
-        raise ValueError("path_flavor must be 'auto', 'posix', or 'windows'") from exc
 
 
 @dataclasses.dataclass
@@ -102,33 +93,13 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
             self.dialect = shell_flavour(self.dialect)
         elif self.executable is not None:
             raise ValueError("executable cannot be combined with dialect='auto'")
-        if self.path_flavor != "auto":
-            value = self.path_flavor
-            if not isinstance(value, type) or not issubclass(
-                value, (Pathname, PurePath)
-            ):
-                raise TypeError("path_flavor must be a pure-path class or 'auto'")
-            if value is PurePath or not issubclass(
-                value, (PurePosixPath, PureWindowsPath)
-            ):
-                raise TypeError("path_flavor must use POSIX or Windows semantics")
+        self.path_flavor = path_flavor_selection(self.path_flavor, allow_auto=True)
 
     @property
     def connection_uri(self) -> str:
         query: typing.Dict[str, object] = {
             "dialect": self.dialect,
-            "path_flavor": (
-                self.path_flavor
-                if self.path_flavor == "auto"
-                else (
-                    "windows"
-                    if issubclass(
-                        typing.cast(PathnameConstructor, self.path_flavor),
-                        PureWindowsPath,
-                    )
-                    else "posix"
-                )
-            ),
+            "path_flavor": path_flavor_name(self.path_flavor),
         }
         for name in ("engine_url", "user", "workdir", "executable"):
             value = getattr(self, name)
@@ -166,7 +137,9 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
                 if query.get("dialect", "auto") == "auto"
                 else shell_flavour(query["dialect"])
             ),
-            path_flavor=_path_selection(query.get("path_flavor", "auto")),
+            path_flavor=path_flavor_selection(
+                query.get("path_flavor", "auto"), allow_auto=True
+            ),
             client_factory=typing.cast(
                 typing.Optional[typing.Callable[..., object]],
                 credentials.get("client_factory"),

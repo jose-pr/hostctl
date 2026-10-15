@@ -8,10 +8,10 @@ import os
 import subprocess
 import threading
 import typing
-from pathlib import PurePath, PurePosixPath, PureWindowsPath
+from pathlib import PurePath, PureWindowsPath
 from urllib.parse import quote, unquote, urlencode
 
-from pathapi import Pathname, PosixPathname, WindowsPathname
+from pathapi import Pathname, PosixPathname
 
 from ..executor import SshConnection, SshExecutor, wants_text
 from ..provider import (
@@ -35,6 +35,8 @@ from ._common import (
     Input,
     PathLike,
     parse_host_info,
+    path_flavor_name,
+    path_flavor_selection,
     starts_direct_command,
     strict_uri_query,
     uri_host,
@@ -63,18 +65,6 @@ SshKnownHosts = typing.Optional[
 ]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
 SshShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
-
-
-def _path_flavor_from_connection_string(value: str) -> PathnameConstructor:
-    try:
-        return {
-            "posix": PosixPathname,
-            "windows": WindowsPathname,
-        }[value]
-    except KeyError as exc:
-        raise ValueError(
-            "path_flavor must be 'posix' or 'windows' in a connection string"
-        ) from exc
 
 
 #: Login shells hostctl knows how to render for. `"auto"` is resolved from
@@ -137,16 +127,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             self.dialect = shell_flavour(self.dialect)
         elif self.executable is not None:
             raise ValueError("executable cannot be combined with dialect='auto'")
-        if not isinstance(self.path_flavor, type) or not issubclass(
-            self.path_flavor, (Pathname, PurePath)
-        ):
-            raise TypeError("path_flavor must be a pure-path class")
-        if self.path_flavor is PurePath:
-            raise TypeError(
-                "bare PurePath uses the local OS; choose a concrete path flavor"
-            )
-        if not issubclass(self.path_flavor, (PurePosixPath, PureWindowsPath)):
-            raise TypeError("path_flavor must use POSIX or Windows path semantics")
+        self.path_flavor = path_flavor_selection(self.path_flavor, allow_auto=False)
         if self.login_shell not in _LOGIN_SHELLS:
             values = ", ".join(sorted(_LOGIN_SHELLS))
             raise ValueError(f"login_shell must be one of: {values}")
@@ -178,10 +159,10 @@ class SshConfig(HostConfig, schemes=("ssh",)):
     @property
     def connection_uri(self) -> str:
         user = f"{quote(self.username, safe='')}@" if self.username else ""
-        path_flavor = (
-            "windows" if issubclass(self.path_flavor, PureWindowsPath) else "posix"
-        )
-        query = {"dialect": self.dialect, "path_flavor": path_flavor}
+        query = {
+            "dialect": self.dialect,
+            "path_flavor": path_flavor_name(self.path_flavor),
+        }
         if self.executable:
             query["executable"] = self.executable
         if self.login_shell != "auto":
@@ -213,8 +194,8 @@ class SshConfig(HostConfig, schemes=("ssh",)):
                 if query.get("dialect") == "auto"
                 else shell_flavour(query.get("dialect", POSIX_SHELL.name))
             ),
-            path_flavor=_path_flavor_from_connection_string(
-                query.get("path_flavor", "posix")
+            path_flavor=path_flavor_selection(
+                query.get("path_flavor", "posix"), allow_auto=False
             ),
             login_shell=query.get("login_shell", "auto"),
         )

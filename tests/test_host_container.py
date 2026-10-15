@@ -290,6 +290,26 @@ def test_spawn_dispatches_through_the_provider_like_run_does():
     assert connects == [True]
 
 
+@pytest.mark.parametrize("spelling", ("auto", "posix", "windows"))
+def test_container_path_flavor_strings_round_trip_through_the_uri(spelling):
+    from hostctl import HostConfig
+
+    config = ContainerConfig("web", path_flavor=spelling)
+    restored = HostConfig(config.connection_uri)
+
+    assert restored == config
+    assert f"path_flavor={spelling}" in config.connection_uri
+
+
+def test_container_path_flavor_accepts_the_strings_the_qemu_config_does():
+    from pathapi import PosixPathname, WindowsPathname
+
+    assert ContainerConfig("web", path_flavor="posix").path_flavor is PosixPathname
+    assert ContainerConfig("web", path_flavor="windows").path_flavor is WindowsPathname
+    with pytest.raises(ValueError, match="'auto', 'posix', or 'windows'"):
+        ContainerConfig("web", path_flavor="native")
+
+
 def test_a_path_taken_before_host_close_refuses_and_never_touches_the_client():
     import tarfile
 

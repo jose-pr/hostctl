@@ -13,7 +13,7 @@ import threading
 import typing
 import warnings
 import uuid
-from pathlib import PurePath, PurePosixPath, PureWindowsPath
+from pathlib import PurePath, PureWindowsPath
 from pathlib import PurePath as _StdPurePath
 from urllib.parse import quote, unquote, urlencode
 
@@ -50,6 +50,8 @@ from ._common import (
     HostPath,
     Input,
     PathLike,
+    path_flavor_name,
+    path_flavor_selection,
     starts_direct_command,
     strict_uri_credentials,
     strict_uri_query,
@@ -63,17 +65,6 @@ QemuTransport = typing.Literal["libvirt", "unix", "ssh"]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
 QemuShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
 QemuPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
-
-
-def _path_selection(value: str) -> QemuPathSelection:
-    try:
-        return {
-            "auto": "auto",
-            "posix": PosixPathname,
-            "windows": WindowsPathname,
-        }[value]
-    except KeyError as exc:
-        raise ValueError("path_flavor must be 'auto', 'posix', or 'windows'") from exc
 
 
 @dataclasses.dataclass
@@ -142,34 +133,12 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             raise ValueError("ssh config requires transport='ssh'")
         if self.dialect != "auto":
             self.dialect = shell_flavour(self.dialect)
-        if isinstance(self.path_flavor, str):
-            self.path_flavor = _path_selection(self.path_flavor)
-        if self.path_flavor != "auto":
-            value = self.path_flavor
-            if not isinstance(value, type) or not issubclass(
-                value, (Pathname, PurePath)
-            ):
-                raise TypeError("path_flavor must be a pure-path class or 'auto'")
-            if value is PurePath or not issubclass(
-                value, (PurePosixPath, PureWindowsPath)
-            ):
-                raise TypeError("path_flavor must use POSIX or Windows semantics")
+        self.path_flavor = path_flavor_selection(self.path_flavor, allow_auto=True)
 
     @property
     def connection_uri(self) -> str:
         dialect = "auto" if self.dialect == "auto" else str(self.dialect)
-        path_flavor = (
-            "auto"
-            if self.path_flavor == "auto"
-            else (
-                "windows"
-                if issubclass(
-                    typing.cast(PathnameConstructor, self.path_flavor),
-                    PureWindowsPath,
-                )
-                else "posix"
-            )
-        )
+        path_flavor = path_flavor_name(self.path_flavor)
         query: typing.Dict[str, object] = {
             "agent_timeout": self.agent_timeout,
             "max_reply_size": self.max_reply_size,
@@ -239,7 +208,9 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
                 if query.get("dialect", "auto") == "auto"
                 else shell_flavour(query["dialect"])
             ),
-            "path_flavor": _path_selection(query.get("path_flavor", "auto")),
+            "path_flavor": path_flavor_selection(
+                query.get("path_flavor", "auto"), allow_auto=True
+            ),
             "transport_factory": credentials.get("transport_factory"),
             "serial_console": credentials.get("serial_console"),
             "path_helper": credentials.get("path_helper"),

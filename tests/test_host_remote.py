@@ -321,7 +321,7 @@ def test_powershell_dialect_uses_powershell_quoting_cwd_and_environment():
 def test_shell_validates_dialect_and_path_style():
     with pytest.raises(ValueError):
         SshConfig("host", dialect="csh")
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError, match="'posix' or 'windows'"):
         SshConfig("host", path_flavor="native")
 
 
@@ -379,9 +379,17 @@ def test_ssh_path_flavor_requires_a_concrete_pure_path_constructor():
     config = SshConfig("host", path_flavor=PureWindowsPath)
     assert config.path_flavor is PureWindowsPath
     with pytest.raises(TypeError, match="pure-path class"):
-        SshConfig("host", path_flavor="windows")
+        SshConfig("host", path_flavor=42)
     with pytest.raises(TypeError, match="local OS"):
         SshConfig("host", path_flavor=PurePath)
+
+
+def test_ssh_path_flavor_takes_the_same_strings_as_the_other_configs():
+    assert SshConfig("host", path_flavor="windows").path_flavor is WindowsPathname
+    assert SshConfig("host", path_flavor="posix").path_flavor is PosixPathname
+    # An SSH server has no "detect the guest" step: `auto` has no meaning.
+    with pytest.raises(ValueError, match="'posix' or 'windows'"):
+        SshConfig("host", path_flavor="auto")
 
 
 def test_sftp_path_styles_when_ssh_extra_is_available():

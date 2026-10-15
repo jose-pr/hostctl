@@ -9,6 +9,9 @@ import subprocess as _subprocess
 import threading as _threading
 import typing as _ty
 import unicodedata as _unicodedata
+from pathlib import PurePath as _PurePath
+from pathlib import PurePosixPath as _PurePosixPath
+from pathlib import PureWindowsPath as _PureWindowsPath
 import types as _types
 from urllib.parse import (
     SplitResult as _SplitResult,
@@ -18,6 +21,9 @@ from urllib.parse import (
 )
 
 from pathapi import Path as HostPath
+from pathapi import Pathname as _Pathname
+from pathapi import PosixPathname as _PosixPathname
+from pathapi import WindowsPathname as _WindowsPathname
 
 from ..executor import (
     CaptureOutput,
@@ -1018,6 +1024,48 @@ def strict_uri_credentials(
     )
     if unknown:
         raise ValueError(f"unknown credential argument: {sorted(unknown)[0]}")
+
+
+def path_flavor_selection(value: object, *, allow_auto: bool) -> _ty.Any:
+    """Normalise a config's `path_flavor` to a pure-path class (or `"auto"`).
+
+    Accepts `"posix"`, `"windows"` (and `"auto"` where `allow_auto`), or a
+    pure-path class with POSIX or Windows semantics. One vocabulary for every
+    config that has the field, so a URI spelling and a Python value agree.
+    """
+    if isinstance(value, str):
+        names: _ty.Dict[str, _ty.Any] = {
+            "posix": _PosixPathname,
+            "windows": _WindowsPathname,
+        }
+        if allow_auto:
+            names["auto"] = "auto"
+        try:
+            return names[value]
+        except KeyError:
+            allowed = (
+                "'auto', 'posix', or 'windows'"
+                if allow_auto
+                else ("'posix' or 'windows'")
+            )
+            raise ValueError(f"path_flavor must be {allowed}") from None
+    if not isinstance(value, type) or not issubclass(value, (_Pathname, _PurePath)):
+        suffix = " or 'auto'" if allow_auto else ""
+        raise TypeError(f"path_flavor must be a pure-path class{suffix}")
+    if value is _PurePath:
+        raise TypeError(
+            "bare PurePath uses the local OS; choose a concrete path flavor"
+        )
+    if not issubclass(value, (_PurePosixPath, _PureWindowsPath)):
+        raise TypeError("path_flavor must use POSIX or Windows semantics")
+    return value
+
+
+def path_flavor_name(value: _ty.Any) -> str:
+    """`"auto"`, `"posix"` or `"windows"`: the URI spelling of a selection."""
+    if value == "auto":
+        return "auto"
+    return "windows" if issubclass(value, _PureWindowsPath) else "posix"
 
 
 def _query_int(query: _ty.Mapping[str, str], name: str, default: int) -> int:

@@ -16,13 +16,6 @@ if typing.TYPE_CHECKING:
     from ..process.serial import SerialProcess
 
 
-#: What `threading.RLock()` returns. `threading.RLock` itself is a
-#: FACTORY FUNCTION, not a class, so it cannot annotate anything --
-#: a re-entrant lock's only portable spelling is the protocol it
-#: satisfies.
-_ReentrantLock = typing.ContextManager[bool]
-
-
 class SerialLike(typing.Protocol):
     is_open: bool
     dtr: bool
