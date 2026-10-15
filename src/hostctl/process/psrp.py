@@ -204,9 +204,9 @@ class RunspaceSession:
         from ..shell import POWERSHELL
 
         if args:
-            # The flavour's own renderer: `-Name` tokens stay unquoted, which
-            # the binder needs, and native arguments get the C-runtime
-            # escaping every other leg applies.
+            # The flavour's own renderer: a `PSParam` renders as a bare
+            # parameter name, which the binder needs, and native arguments
+            # get the C-runtime escaping every other leg applies.
             script_text = POWERSHELL.structured_command((script, *args))
         else:
             script_text = str(script)

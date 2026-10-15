@@ -557,7 +557,7 @@ def test_native_remote_errors_are_statuses_not_exceptions(
         manages_status=True,
     )
     result = executor(
-        POWERSHELL.script((command,), for_session=True),
+        POWERSHELL.script((command,), epilogue=False),
         check=False,
         encoding="utf-8",
     )

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import re
 import subprocess
 
 import pytest
@@ -80,7 +81,10 @@ def test_object_output_survives_the_epilogue(executable):
     )
 
     assert completed.returncode == 0
-    assert completed.stdout.split() == ["a", "-", "1"]
+    # pwsh 7 colours a table header when TERM names a colour terminal, even
+    # into a pipe; the colour is not what this test is about.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", completed.stdout)
+    assert plain.split() == ["a", "-", "1"]
 
 
 @pytest.mark.parametrize("executable", list(_shells()))

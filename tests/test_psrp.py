@@ -131,11 +131,11 @@ def test_runspace_structured_arguments_use_powershell_literals(monkeypatch):
     assert "'a’’b'" in result.output[0]
     assert "'$(danger)'" in result.output[0]
 
-    # A `-Name` token stays unquoted, as it does on every other leg: the
-    # binder does not read a quoted string as a parameter name.
-    from hostctl.shell import POWERSHELL
+    # A parameter name is a `PSParam`, rendered bare as on every other leg:
+    # the binder does not read a quoted string as a parameter name.
+    from hostctl.shell import POWERSHELL, PSParam
 
-    values = ("Get-ChildItem", "-LiteralPath", r"C:\Windows\win.ini")
+    values = ("Get-ChildItem", PSParam("-LiteralPath"), r"C:\Windows\win.ini")
     result = session.invoke(*values)
     assert result.output[0] == POWERSHELL.structured_command(values)
     assert " -LiteralPath " in result.output[0]
@@ -352,7 +352,9 @@ def test_the_status_expression_is_the_flavours():
     from hostctl.executor.winrm import POWERSHELL_STATUS
     from hostctl.shell import POWERSHELL
 
-    assert POWERSHELL.execution_epilogue == "\nexit " + POWERSHELL_STATUS
+    assert POWERSHELL.execution_epilogue == (
+        "\n$host.SetShouldExit(" + POWERSHELL_STATUS + ")"
+    )
 
 
 @pytest.fixture
