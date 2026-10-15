@@ -64,6 +64,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   stdio. `--ask-password` is refused there, since a tool call cannot prompt;
   use `HOSTCTL_PASSWORD`.
 - `hostctl --version`, and `-v`/`-q`/`--loglevel` on every subcommand.
+- `PromptConsoleProfile(login_timeout=10.0)` sets how long each login step and
+  the first prompt may take; the default is the previous fixed 10 seconds. It
+  is a profile argument only, not part of the `serial:///` URI.
+- `QemuHost.open_serial(encoding=, errors=)` (and `QemuSerialConsole.open`)
+  return a console that reads and writes `str`.
+
+### Fixed
+
+- **A serial or QEMU console process can no longer free a lease it does not
+  hold.** Closing a stale process after the host was closed and reopened
+  released the new process's lease, so a third `open()` succeeded and read the
+  second process's bytes. A release is now bound to its own acquisition, and
+  closing the host (or the executor) ends a live process: its reads and writes
+  raise `ConnectionError` and its `close()` is a no-op.
+- **Text-mode serial reads no longer corrupt a character split across reads.**
+  An idle line reads empty, which is not EOF; the decoder was finalized on it,
+  so a split UTF-8 character raised `UnicodeDecodeError` or became two
+  U+FFFD. The text read now returns `""` and keeps the partial character for
+  the next read.
 
 ### Fixed
 

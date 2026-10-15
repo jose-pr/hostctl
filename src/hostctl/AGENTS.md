@@ -504,7 +504,9 @@ the exclusive `x` modes are refused by `open()` without a guest helper.
 (`FileNotFoundError`, `PermissionError`, ...). `QgaProtocolError` is a
 malformed or oversized reply and is itself a `ConnectionError`.
 An injected `QemuSerialConsole` adds the `serial` capability and
-`QemuHost.open_serial()`. It is raw, exclusive, and makes no shell/status claim.
+`QemuHost.open_serial(*, encoding=None, errors=None)`. It is raw, exclusive,
+and makes no shell/status claim; `encoding=` makes the console read and write
+`str`.
 
 ## WinRM
 
@@ -556,6 +558,11 @@ Streams are merged, PTY/path/status semantics are absent unless the profile
 explicitly supplies them. Optional PySerial support is the `serial` extra and
 injected serial objects remain caller-owned. Break, DTR, and RTS are available
 on `SerialProcess`/`SerialConsoleProcess`; RFC 2217 URLs are not encrypted.
+Closing the host or `executor.close()` ends a live serial process: its reads and
+writes raise `ConnectionError` and its own `close()` is a no-op, so a stale
+handle can never free the lease of the process that replaced it.
+`PromptConsoleProfile(..., login_timeout=10.0)` bounds each login step and the
+first prompt (`ValueError` unless positive); it is not part of the URI.
 `SerialConsoleProtocol` is the profile contract, `LoginStep` one expect/send
 pair of a login sequence, and `ConsoleProtocolError` what a profile raises
 when the console does not answer the way the protocol requires.
