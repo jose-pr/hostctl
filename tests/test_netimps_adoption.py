@@ -43,9 +43,7 @@ def test_an_ipv6_host_is_bracketed_beside_its_port():
         WinRMConfig("::1", "u", password="x", port=5985).endpoint
         == "http://[::1]:5985/wsman"
     )
-    assert SshConfig("::1", port=2222).connection_uri.startswith(
-        "ssh://root@[::1]:2222?"
-    )
+    assert SshConfig("::1", port=2222).connection_uri.startswith("ssh://[::1]:2222?")
 
 
 def test_an_ssh_uri_without_a_port_gets_the_ssh_port():

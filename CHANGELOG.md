@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `SshConfig(ssh_config=)` reads one ssh_config on both legs (neither reads one
+  by default), `SshConfig(connect_options=)` passes extra keywords to
+  `asyncssh.connect` on both legs, and `SshConfig(path_flavor="auto")` asks the
+  server's login directory while the host is created.
 - `SshConfig(connect_timeout=30.0)` bounds how long an SSH connection may take
   to establish (`None` keeps asyncssh's default), and is the `connect_timeout`
   URI key.
@@ -34,8 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `QemuHost.open_serial(encoding=, errors=)` (and `QemuSerialConsole.open`)
   return a console that reads and writes `str`.
 - `ContainerConfig(path_flavor="posix")`, `"windows"` and `SshConfig(path_flavor=
-  "windows")` take the strings `QemuConfig` already accepted; `SshConfig` has
-  no `"auto"`.
+  "windows")` take the strings `QemuConfig` already accepted.
 - `run(..., stderr=subprocess.STDOUT)` on a QGA guest asks qemu-ga to
   interleave the streams (`capture-output: "merged"`) when the agent is 8.0 or
   later and the guest is not Windows.
@@ -65,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   so an alias reached the server through `run()` and failed through `path()`.
   Neither leg reads one now; pass the host, key, known_hosts file or proxy
   you took from it to `SshConfig`.
+- **Breaking, 0.4.0**: `SshConfig(username=)` defaults to `None`, the local
+  account, as `ssh` does, instead of `"root"`; pass `username="root"` to keep
+  the old behaviour. `ssh://host` carries no user, and `connection_uri` omits
+  `root@`.
 - **Breaking, 0.4.0**: `connect()` and `with host:` raise `OperationNotStarted`
   when providers were offered and none connected (a refused port, a DNS
   failure, an unknown host key or a bad key), instead of returning with

@@ -348,7 +348,7 @@ def test_powershell_dialect_uses_powershell_quoting_cwd_and_environment():
 def test_shell_validates_dialect_and_path_style():
     with pytest.raises(ValueError):
         SshConfig("host", dialect="csh")
-    with pytest.raises(ValueError, match="'posix' or 'windows'"):
+    with pytest.raises(ValueError, match="'auto', 'posix', or 'windows'"):
         SshConfig("host", path_flavor="native")
 
 
@@ -414,9 +414,10 @@ def test_ssh_path_flavor_requires_a_concrete_pure_path_constructor():
 def test_ssh_path_flavor_takes_the_same_strings_as_the_other_configs():
     assert SshConfig("host", path_flavor="windows").path_flavor is WindowsPathname
     assert SshConfig("host", path_flavor="posix").path_flavor is PosixPathname
-    # An SSH server has no "detect the guest" step: `auto` has no meaning.
-    with pytest.raises(ValueError, match="'posix' or 'windows'"):
-        SshConfig("host", path_flavor="auto")
+    # `auto` asks the server for its login directory when the host is created.
+    assert SshConfig("host", path_flavor="auto").path_flavor == "auto"
+    with pytest.raises(ValueError, match="path_flavor"):
+        SshConfig("host", path_flavor="native")
 
 
 def test_sftp_path_styles_when_ssh_extra_is_available():
@@ -607,7 +608,6 @@ def test_the_default_verifies_the_host_key_on_both_legs():
     options = SshConfig("h").connect_opts()
 
     assert options == {
-        "username": "root",
         "known_hosts": (),
         "config": None,
         "connect_timeout": 30.0,
@@ -621,7 +621,7 @@ def test_the_default_verifies_the_host_key_on_both_legs():
 
     assert backend.connect_opts["known_hosts"] == ()
     assert backend.connect_opts["config"] is None
-    assert (backend.host, backend.port, backend.user) == ("h", 22, "root")
+    assert (backend.host, backend.port, backend.user) == ("h", 22, None)
 
 
 @pytest.mark.parametrize("shell", ("/bin/ash", "/bin/ksh", "/usr/bin/mksh"))

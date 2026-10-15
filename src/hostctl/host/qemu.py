@@ -160,7 +160,8 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         )
         from netimps import join_host
 
-        authority = f"{quote(ssh.username, safe='')}@{join_host(ssh.host, ssh.port)}"
+        user = f"{quote(ssh.username, safe='')}@" if ssh.username else ""
+        authority = f"{user}{join_host(ssh.host, ssh.port)}"
         return (
             f"qga+ssh://{authority}/{quote(self.domain, safe='')}?"
             f"{urlencode(query)}"

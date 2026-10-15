@@ -488,15 +488,25 @@ hostctl applies to whatever you return.
 
 ## SSH
 
-`SshConfig(host, port=22, username="root", password=None, client_keys=None,
+`SshConfig(host, port=22, username=None, password=None, client_keys=None,
 executable=None, known_hosts=(), dialect=POSIX_SHELL,
-path_flavor=pathapi.PosixPathname, login_shell="auto")`.
+path_flavor=pathapi.PosixPathname, login_shell="auto", connect_timeout=30.0,
+ssh_config=None, connect_options={})`.
+
+`username=None` leaves the account to asyncssh (the local user, as `ssh` does);
+there is no `root` default. `ssh_config` is the one way to read an ssh_config,
+and both legs read it; `connect_options` are extra `asyncssh.connect` keywords
+for both legs (a key hostctl owns -- `host`, `port`, `username`, `password`,
+`client_keys`, `known_hosts`, `config`, `connect_timeout` -- raises and names the
+field to use), kept out of the URI and `repr()`.
 
 Authentication fields are explicit and excluded from repr. `dialect` selects
 POSIX or PowerShell command construction independently of the POSIX/Windows
 SFTP path flavor. `dialect` is a `ShellFlavour` strategy. `path_flavor` is `"posix"`,
-`"windows"` or a concrete `pathapi.Pathname` or `pathlib.PurePath` subclass
-(no `"auto"`: an SSH server names no OS); bare `PurePath` is
+`"windows"`, `"auto"` or a concrete `pathapi.Pathname` or `pathlib.PurePath`
+subclass; `"auto"` connects while the host is created and reads the SFTP login
+directory (`/C:/...` is Windows, any other `/`-rooted answer POSIX, anything
+else raises); bare `PurePath` is
 rejected because it would infer the local OS. SSH implies neither an OS nor a
 shell. `dialect="auto"` performs positive cached probing and raises rather than
 guessing. The SSH executor provider closes its AsyncSSH connection and waits for closure.

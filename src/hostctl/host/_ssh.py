@@ -5,15 +5,16 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import re
 import subprocess
 import threading
 import typing
 from pathlib import PurePath, PureWindowsPath
 from urllib.parse import quote, unquote, urlencode
 
-from pathapi import Pathname, PosixPathname
+from pathapi import Pathname, PosixPathname, WindowsPathname
 
-from ..executor import SshConnection, SshExecutor, wants_text
+from ..executor import SshConnection, SshExecutor
 from ..provider import (
     ExecutorProvider,
     OperationNotStarted,
@@ -25,23 +26,18 @@ from ..provider import (
 log = logging.getLogger("hostctl.host.ssh")
 from ..process import Process, SshProcess, TerminalRequest
 from ._common import (
-    CaptureOutput,
     Command,
     Environment,
-    FileHandle,
     HostConfig,
     HostInfo,
     HostPath,
-    Input,
     PathLike,
     _refuse_uri,
     parse_host_info,
     path_flavor_name,
     path_flavor_selection,
-    starts_direct_command,
     strict_uri_query,
     uri_hostname,
-    reject_stdin_conflict,
 )
 from ..shell import (
     BASH,
@@ -67,6 +63,19 @@ SshKnownHosts = typing.Optional[
 ]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
 SshShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
+SshPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
+
+#: `connect_options` keys hostctl owns, and the field to use instead.
+_OWNED_CONNECT_OPTIONS = {
+    "host": "host",
+    "port": "port",
+    "username": "username",
+    "password": "password",
+    "client_keys": "client_keys",
+    "known_hosts": "known_hosts",
+    "config": "ssh_config",
+    "connect_timeout": "connect_timeout",
+}
 
 
 #: Login shells hostctl knows how to render for. `"auto"` is resolved from
@@ -133,13 +142,13 @@ class SshConfig(HostConfig, schemes=("ssh",)):
 
     host: str
     port: int = 22
-    username: str = "root"
+    username: typing.Optional[str] = None
     password: typing.Optional[str] = dataclasses.field(default=None, repr=False)
     client_keys: SshClientKeys = dataclasses.field(default=None, repr=False)
     executable: typing.Optional[str] = None
     known_hosts: SshKnownHosts = ()
     dialect: SshShellSelection = POSIX_SHELL
-    path_flavor: PathnameConstructor = PosixPathname
+    path_flavor: SshPathSelection = PosixPathname
     #: What parses the command string when it ARRIVES, before the command
     #: line's own shell runs.
     #:
@@ -161,6 +170,15 @@ class SshConfig(HostConfig, schemes=("ssh",)):
     #: Seconds asyncssh may spend establishing the connection (TCP, key
     #: exchange and authentication); `None` leaves asyncssh's own default.
     connect_timeout: typing.Optional[float] = 30.0
+    #: An ssh_config to read on BOTH legs (`Host`, `HostName`, `IdentityFile`,
+    #: `ProxyJump` ...). `None`, the default, reads none. One path: OpenSSH's
+    #: `Include` covers the rest.
+    ssh_config: typing.Optional[typing.Union[str, "os.PathLike[str]"]] = None
+    #: Extra keywords for `asyncssh.connect`, given to both legs. Never part
+    #: of the URI or `repr()`, since it may hold a passphrase.
+    connect_options: typing.Mapping[str, object] = dataclasses.field(
+        default_factory=dict, repr=False
+    )
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
@@ -175,7 +193,14 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             self.dialect = shell_flavour(self.dialect)
         elif self.executable is not None:
             raise ValueError("executable cannot be combined with dialect='auto'")
-        self.path_flavor = path_flavor_selection(self.path_flavor, allow_auto=False)
+        self.path_flavor = path_flavor_selection(self.path_flavor, allow_auto=True)
+        self.connect_options = dict(self.connect_options)
+        for key in self.connect_options:
+            if key in _OWNED_CONNECT_OPTIONS:
+                raise ValueError(
+                    f"connect_options cannot set {key!r}; "
+                    f"use SshConfig({_OWNED_CONNECT_OPTIONS[key]}=...)"
+                )
         if self.connect_timeout is not None and not self.connect_timeout > 0:
             raise ValueError("connect_timeout must be greater than 0 seconds")
         if self.login_shell not in _LOGIN_SHELLS:
@@ -184,13 +209,23 @@ class SshConfig(HostConfig, schemes=("ssh",)):
 
     @property
     def resolved_login_shell(self) -> str:
-        """`login_shell` with `"auto"` answered from the dialect."""
+        """`login_shell` with `"auto"` answered from the dialect.
+
+        With `path_flavor="auto"` the answer needs the server: use the
+        transport's `login_shell`.
+        """
         if self.login_shell != "auto":
             return self.login_shell
+        if self.path_flavor == "auto":
+            raise ValueError("login_shell='auto' needs a known path_flavor")
         return "cmd" if issubclass(self.path_flavor, PureWindowsPath) else "posix"
 
     def connect_opts(self) -> typing.Dict[str, object]:
-        opts: typing.Dict[str, object] = {"username": self.username or "root"}
+        opts: typing.Dict[str, object] = {}
+        if self.username:
+            # Left out otherwise, so asyncssh uses the local account name,
+            # as `ssh` does.
+            opts["username"] = self.username
         if self.password is not None:
             opts["password"] = self.password
         if self.client_keys is not None:
@@ -198,12 +233,15 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             if isinstance(keys, (str, bytes, os.PathLike)):
                 keys = [keys]
             opts["client_keys"] = keys
-        # `config=None`: neither leg reads an ssh_config. asyncssh would load
-        # `~/.ssh/config` by default, and a library call must not depend on a
-        # personal file that hostctl overrides half of anyway (host, port and
-        # user are always passed). Both legs get these options, so they
-        # resolve and verify the host alike.
-        opts["config"] = None
+        # `config` is always passed: asyncssh would otherwise load
+        # `~/.ssh/config`, and a library call must not depend on a personal
+        # file. `ssh_config` is the explicit opt-in. Both legs get these
+        # options, so they resolve and verify the host alike.
+        opts["config"] = (
+            None
+            if self.ssh_config is None
+            else [os.path.expanduser(os.fspath(self.ssh_config))]
+        )
         # Always passed, never omitted on the default: `()` is asyncssh's own
         # "resolve known_hosts the usual way" value, and both legs receive
         # these options, so the path leg verifies the host key exactly as the
@@ -212,6 +250,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         opts["known_hosts"] = self.known_hosts
         if self.connect_timeout is not None:
             opts["connect_timeout"] = self.connect_timeout
+        opts.update(self.connect_options)
         return opts
 
     @property
@@ -229,6 +268,8 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             query["login_shell"] = self.login_shell
         if self.connect_timeout != 30.0:
             query["connect_timeout"] = self.connect_timeout
+        if self.ssh_config is not None:
+            query["ssh_config"] = os.fspath(self.ssh_config)
         from netimps import join_host
 
         return f"ssh://{user}{join_host(self.host, self.port)}?{urlencode(query)}"
@@ -237,7 +278,14 @@ class SshConfig(HostConfig, schemes=("ssh",)):
     def _from_parsed_uri(cls, parsed, **credentials: object) -> SshConfig:
         query = strict_uri_query(
             parsed,
-            {"dialect", "path_flavor", "executable", "login_shell", "connect_timeout"},
+            {
+                "dialect",
+                "path_flavor",
+                "executable",
+                "login_shell",
+                "connect_timeout",
+                "ssh_config",
+            },
         )
         if not parsed.hostname or parsed.path not in ("", "/"):
             raise ValueError("SSH URI requires a host and no path")
@@ -246,7 +294,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         return cls(
             host=uri_hostname(parsed),
             port=get_default_port("ssh") if parsed.port is None else parsed.port,
-            username=unquote(parsed.username or "") or "root",
+            username=unquote(parsed.username or "") or None,
             password=typing.cast(typing.Optional[str], credentials.get("password")),
             client_keys=typing.cast(SshClientKeys, credentials.get("client_keys")),
             executable=query.get("executable") or None,
@@ -257,21 +305,27 @@ class SshConfig(HostConfig, schemes=("ssh",)):
                 else shell_flavour(query.get("dialect", POSIX_SHELL.name))
             ),
             path_flavor=path_flavor_selection(
-                query.get("path_flavor", "posix"), allow_auto=False
+                query.get("path_flavor", "posix"), allow_auto=True
             ),
             login_shell=query.get("login_shell", "auto"),
             connect_timeout=(
                 float(query["connect_timeout"]) if "connect_timeout" in query else 30.0
             ),
+            ssh_config=query.get("ssh_config") or None,
         )
 
     def _create_host(self):
         from .system import PosixHost, WindowsHost
 
         transport = self._create_transport()
-        host_type = (
-            WindowsHost if issubclass(self.path_flavor, PureWindowsPath) else PosixHost
-        )
+        try:
+            # "auto" connects while the host is created, because the host
+            # class depends on what the server answers.
+            flavor = transport.path_flavor
+        except BaseException:
+            transport.close()
+            raise
+        host_type = WindowsHost if issubclass(flavor, PureWindowsPath) else PosixHost
         return host_type(
             self,
             executor_providers=(SshExecutorProvider(transport),),
@@ -304,6 +358,34 @@ class _SshTransport:
         self._sftp_backend: typing.Optional[object] = None
         #: SFTP `realpath(".")`, asked once per connection generation.
         self._login_dir: typing.Optional[str] = None
+        #: What `path_flavor="auto"` resolved to from the login directory.
+        self._resolved_flavor: typing.Optional[PathnameConstructor] = None
+
+    @property
+    def path_flavor(self) -> PathnameConstructor:
+        """The path constructor, with `"auto"` answered by the login directory."""
+        declared = self.config.path_flavor
+        if declared != "auto":
+            return typing.cast(PathnameConstructor, declared)
+        with self._ssh_lock:
+            if self._resolved_flavor is None:
+                answer = self._login_directory()
+                if re.match(r"^/[A-Za-z]:(/|$)", answer):
+                    self._resolved_flavor = WindowsPathname
+                elif answer.startswith("/"):
+                    self._resolved_flavor = PosixPathname
+                else:
+                    raise ValueError(
+                        f"cannot tell the server's path style from {answer!r}"
+                    )
+            return self._resolved_flavor
+
+    @property
+    def login_shell(self) -> str:
+        """What parses a delivered command line first, `"auto"` resolved."""
+        if self.config.login_shell != "auto":
+            return self.config.login_shell
+        return "cmd" if issubclass(self.path_flavor, PureWindowsPath) else "posix"
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:
@@ -314,13 +396,13 @@ class _SshTransport:
         selection = self.config.dialect
         if selection != "auto":
             return typing.cast(ShellFlavour, selection)
-        key = (selection, self.config.path_flavor, self.config.executable)
+        key = (selection, self.path_flavor, self.config.executable)
         with self._ssh_lock:
             if self._resolved_dialect is not None and self._resolved_dialect[0] == key:
                 return self._resolved_dialect[1]
             resolved, executable = (
                 self._detect_windows_shell()
-                if issubclass(self.config.path_flavor, PureWindowsPath)
+                if issubclass(self.path_flavor, PureWindowsPath)
                 else self._detect_posix_shell()
             )
             self._resolved_dialect = (key, resolved, executable)
@@ -423,7 +505,7 @@ class _SshTransport:
             executable=program,
             cwd=cwd,
             env=env,
-            login_shell=self.config.resolved_login_shell,
+            login_shell=self.login_shell,
         )
 
     def _drop_if_forked(self) -> bool:
@@ -445,6 +527,7 @@ class _SshTransport:
         self._ssh = None
         self._sftp_backend = None
         self._login_dir = None
+        self._resolved_flavor = None
         self._loop_generation = generation
         return True
 
@@ -529,6 +612,7 @@ class _SshTransport:
 
     def _invalidate_sftp(self) -> None:
         self._login_dir = None
+        self._resolved_flavor = None
         backend, self._sftp_backend = self._sftp_backend, None
         if backend is None:
             return
@@ -571,7 +655,7 @@ class _SshTransport:
 
         SFTPPath = _async.sftppath().SFTPPath
 
-        pure = self.config.path_flavor(*segments)
+        pure = self.path_flavor(*segments)
         remote_path = pure.as_posix()
         if pure.anchor:
             if not remote_path.startswith("/"):
@@ -594,7 +678,7 @@ class _SshTransport:
                 self._sftp_backend = _async.sftppath().AsyncSSHBackend(
                     self.config.host,
                     self.config.port,
-                    user=self.config.username or "root",
+                    user=self.config.username,
                     connect_opts=self.config.connect_opts(),
                 )
             return self._sftp_backend
@@ -721,7 +805,7 @@ class SshExecutorProvider(ExecutorProvider):
         The host reads this when it renders a `CommandLine`, because only
         the transport knows there is an extra parse at all.
         """
-        return self.transport.config.resolved_login_shell
+        return self.transport.login_shell
 
     def spawn(self, *args, **options):
         return self.transport.spawn(*args, **options)
