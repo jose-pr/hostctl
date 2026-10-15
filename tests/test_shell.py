@@ -12,6 +12,7 @@ import pytest
 from hostctl import (
     BASH,
     CMD,
+    ContainerConfig,
     Cmdlet,
     FISH,
     Executor,
@@ -22,6 +23,7 @@ from hostctl import (
     POSIX_SHELL,
     POWERSHELL,
     PWSH,
+    QemuConfig,
     Shell,
     ShellOperator,
     ShellSession,
@@ -817,6 +819,27 @@ def test_shell_flavour_accepts_class_and_registered_string():
     assert isinstance(constructed, _Custom)
     registered = register_shell_flavour(constructed)
     assert shell_flavour("test-custom-shell") is registered
+
+
+def test_a_shell_flavour_repr_names_its_type_and_name():
+    assert repr(POSIX_SHELL) == "<PosixShellFlavour 'posix'>"
+    assert repr(PWSH) == "<PowerShellFlavour 'pwsh'>"
+    assert repr(CMD) == "<CmdShellFlavour 'cmd'>"
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: SshConfig("h"),
+        lambda: SshConfig("h", dialect=PWSH),
+        lambda: WinRMConfig("h", "u"),
+        lambda: ContainerConfig("c", dialect=BASH),
+        lambda: QemuConfig("d", dialect=POWERSHELL),
+    ],
+    ids=["ssh", "ssh-pwsh", "winrm", "container", "qemu"],
+)
+def test_a_config_repr_shows_its_flavour_by_name(build):
+    assert "object at 0x" not in repr(build())
 
 
 def test_host_bound_shell_detects_native_cwd_and_env_support():

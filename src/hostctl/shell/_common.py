@@ -310,6 +310,9 @@ class ShellFlavour(abc.ABC):
     structured_command_prefix = ""
     path_flavor: type[PurePath] = PurePath
 
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} {self.name!r}>"
+
     def escape_for_one_parse(self, text: str) -> str:
         """Escape `text` so ONE parse by this shell hands it back verbatim.
 
