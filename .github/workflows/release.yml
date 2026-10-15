@@ -56,8 +56,8 @@ jobs:
   # A GATE, not a deploy. A broken docs site must block the release; owning
   # the deployment here meant a docs fix could not reach the site without a
   # tag, and a transient Pages/OIDC failure turned an otherwise-successful
-  # release red AFTER the package was published. `docs.yml` deploys, on the
-  # `release: published` this run produces.
+  # release red AFTER the package was published. `docs.yml` deploys; the
+  # `docs-deploy` job at the end dispatches it for this tag.
   docs-gate:
     name: Build documentation strictly (gate only)
     needs: test
@@ -74,7 +74,7 @@ jobs:
 
   github-release:
     name: Create GitHub Release
-    needs: build
+    needs: [build, docs-gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -138,3 +138,21 @@ jobs:
           # with "File already exists" and the only way forward is a new
           # version number.
           skip-existing: true
+
+  # Events made with the workflow's own GITHUB_TOKEN, such as the release above,
+  # start no workflows, so docs.yml cannot listen for the release itself. A
+  # workflow_dispatch is the exception: it deploys the docs at this tag. A
+  # pre-release leaves the published docs alone. Off the publish chain, so a
+  # docs problem never blocks a package that passed its tests.
+  docs-deploy:
+    name: Deploy the docs for this release
+    needs: github-release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch docs.yml at this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"

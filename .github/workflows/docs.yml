@@ -3,14 +3,15 @@ name: Docs
 # This workflow owns EVERY Pages deploy. The release workflow only gates on a
 # strict docs build, so a docs fix reaches the site without cutting a tag, and
 # a transient Pages/OIDC failure can never turn a release red after the package
-# has already been published.
+# has already been published. A final release dispatches it at its tag (a
+# release made with GITHUB_TOKEN starts no workflow, so it cannot listen for
+# a published-release trigger).
 on:
-  release:
-    types: [published]
   push:
     branches: [main]
     paths:
       - "docs/**"
+      - "src/**"
       - "mkdocs.yml"
       - "README.md"
       - "CHANGELOG.md"
