@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import gc
 import io
+import sys
 
 import pytest
 
@@ -375,3 +376,122 @@ def test_exclusive_open_of_a_missing_path_proceeds():
 def test_exclusive_open_of_a_directory_is_file_exists():
     with pytest.raises(FileExistsError):
         staged_open(_ProbeBackend(IsADirectoryError("/x")), "/x", "x")
+
+
+class _Child:
+    def __init__(self, name, data=b"x"):
+        self.name = name
+        self._data = data
+
+    def is_dir(self):
+        return False
+
+    def is_symlink(self):
+        return False
+
+    def open(self, mode="rb"):
+        import io
+
+        return io.BytesIO(self._data)
+
+    def stat(self):
+        raise NotImplementedError
+
+
+class _Tree(_Child):
+    def __init__(self, *children):
+        super().__init__("tree")
+        self._children = children
+
+    def is_dir(self):
+        return True
+
+    def iterdir(self):
+        return iter(self._children)
+
+
+def _windows_destination(tmp_path):
+    from hostctl.host._winrm import _SCRIPT_BUDGET, WinRMPath, WinRMPathBackend
+    from tests.conformance.path_fakes import WinRMFilesystemRunner
+
+    runner = WinRMFilesystemRunner()
+    backend = WinRMPathBackend(runner, max_script_bytes=_SCRIPT_BUDGET)
+    return runner, WinRMPath("C:/dst", backend=backend)
+
+
+@pytest.mark.parametrize("name", ["..\\escaped.txt", "..", "a/b", "C:evil"])
+def test_copy_from_refuses_a_child_name_that_is_not_one_component(tmp_path, name):
+    from hostctl.host._staged_io import copy_from
+
+    runner, destination = _windows_destination(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="refusing unsafe child name"):
+            copy_from(destination, _Tree(_Child("ok.txt"), _Child(name)))
+        assert not destination.parent.joinpath("escaped.txt").exists()
+    finally:
+        runner.close()
+
+
+def test_copy_from_refuses_an_existing_destination_directory(tmp_path):
+    from hostctl.host._staged_io import copy_from
+
+    runner, destination = _windows_destination(tmp_path)
+    try:
+        destination.mkdir()
+        with pytest.raises(FileExistsError):
+            copy_from(destination, _Tree(_Child("ok.txt")))
+    finally:
+        runner.close()
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 14) or sys.platform == "win32",
+    reason="stdlib Path.copy is 3.14+; a POSIX source can hold a backslash name",
+)
+def test_stdlib_copy_into_a_windows_host_path_cannot_escape(tmp_path):
+    import pathlib
+
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "..\\escaped.txt").write_bytes(b"x")
+    runner, destination = _windows_destination(tmp_path)
+    try:
+        with pytest.raises(ValueError, match="refusing unsafe child name"):
+            pathlib.Path(source).copy(destination)
+        assert not destination.parent.joinpath("escaped.txt").exists()
+    finally:
+        runner.close()
+
+
+def test_copy_from_preserves_mode_and_mtime_where_the_destination_can(tmp_path):
+    import stat as _stat
+
+    from hostctl.host._staged_io import copy_from
+
+    calls = []
+
+    class Source(_Child):
+        def stat(self):
+            class _Stat:
+                st_mode = _stat.S_IFREG | 0o640
+                st_mtime = 1234.5
+
+            return _Stat()
+
+    class Destination:
+        def exists(self):
+            return False
+
+        def open(self, mode="wb"):
+            return io.BytesIO()
+
+        def chmod(self, mode):
+            calls.append(("chmod", mode))
+
+        def _utime(self, **kwargs):
+            calls.append(("utime", kwargs))
+            raise NotImplementedError
+
+    copy_from(Destination(), Source("f"), preserve_metadata=True)
+
+    assert calls == [("chmod", 0o640), ("utime", {"mtime": 1234.5})]

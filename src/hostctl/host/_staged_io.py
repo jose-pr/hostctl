@@ -17,7 +17,7 @@ import io
 import stat
 import typing
 
-from pathapi.providers import DiscardOnError
+from pathapi.providers import DiscardOnError, is_safe_child_name, is_windows_flavoured
 
 Commit = typing.Callable[[bytes], None]
 
@@ -34,16 +34,14 @@ def copy_from(
     """CPython 3.14's `Path.copy()` destination hook, for one whole-file path.
 
     Stdlib calls `destination._copy_from(source, follow_symlinks=...,
-    preserve_metadata=...)` and expects it to OVERWRITE an existing file and
-    to handle a directory source by recursing. The four copies of this body
-    did neither: they raised `FileExistsError` unless given an `overwrite`
-    keyword stdlib never passes, and opened a directory `"rb"`. So
-    `pathlib.Path("report.csv").copy(ssh.path("/srv/report.csv"))` failed on
-    an existing remote file while the same call onto a local path replaced
-    it.
+    preserve_metadata=...)`: a file replaces an existing one, a directory
+    source is recreated and recursed into, and an existing destination
+    directory is `FileExistsError`. pathapi's own hook checks no child name,
+    so a source entry whose name holds a separator would land outside the destination; this
+    one refuses any name that is not a single component.
 
     `preserve_metadata` is best-effort: these backends carry a mode at most,
-    and a backend without `chmod` says so rather than failing the copy.
+    and a backend without `chmod` or `_utime` is skipped, not failed.
     """
     if not follow_symlinks and getattr(source, "is_symlink", lambda: False)():
         link = getattr(source, "readlink", None)
@@ -55,9 +53,13 @@ def copy_from(
             "copy(follow_symlinks=False) is unsupported by this backend"
         )
     if getattr(source, "is_dir", lambda: False)():
-        # A directory is copied as a directory, as stdlib does.
-        destination.mkdir(exist_ok=True)
+        destination.mkdir()
+        windows = is_windows_flavoured(destination)
         for child in source.iterdir():
+            if not is_safe_child_name(child.name, windows=windows):
+                raise ValueError(
+                    f"refusing unsafe child name {child.name!r} under {destination}"
+                )
             copy_from(
                 destination / child.name,
                 child,
@@ -73,12 +75,19 @@ def copy_from(
             writer.write(chunk)
     if preserve_metadata:
         try:
-            mode = source.stat().st_mode
+            info = source.stat()
         except (OSError, NotImplementedError):
-            mode = None
+            return destination
+        mode = getattr(info, "st_mode", None)
         if mode:
             try:
                 destination.chmod(stat.S_IMODE(mode))
+            except (OSError, NotImplementedError):
+                pass
+        mtime = getattr(info, "st_mtime", None)
+        if mtime is not None:
+            try:
+                destination._utime(mtime=mtime)
             except (OSError, NotImplementedError):
                 pass
     return destination
