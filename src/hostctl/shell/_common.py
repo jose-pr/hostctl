@@ -12,7 +12,7 @@ import os
 import re
 import typing
 import types
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PurePosixPath
 
 from ..executor import ExecutorCapability
 from ..executor import (
@@ -69,6 +69,20 @@ class ShellTarget(str, enum.Enum):
     #: A program the flavour cannot classify -- a bare name, a `.ps1`, any
     #: PATHEXT type -- and which may therefore turn out to be a batch file.
     UNRESOLVED = "unresolved"
+
+
+def posix_cwd_operand(cwd: PathLike) -> str:
+    """A POSIX path for `cd`, spelled so CDPATH cannot redirect it.
+
+    `cd` consults CDPATH for any operand whose first component is not `.` or
+    `..`, so a relative directory is written `./name`; `cd -- ./name` fails
+    when the directory is absent instead of entering a CDPATH match.
+    """
+    path = PurePosixPath(cwd)
+    text = path.as_posix()
+    if not path.is_absolute() and path.parts and path.parts[0] not in (".", ".."):
+        return "./" + text
+    return text
 
 
 def wants_epilogue(capabilities: typing.Iterable[str]) -> bool:
@@ -166,9 +180,9 @@ class ShellSession(Process):
         if not cmds and cwd is None and not env:
             raise ValueError("send requires commands, cwd, or env")
         script = self.flavour.script(cmds, cwd=cwd, env=env, epilogue=False)
-        self.process.write(
-            self.flavour.terminate_submission(script) + self.flavour.line_terminator
-        )
+        # A line terminator ends a command in every supported shell; an
+        # appended `;` broke a heredoc delimiter and an open pipeline.
+        self.process.write(script + self.flavour.line_terminator)
 
     def write(self, data):
         self.process.write(data)
@@ -228,10 +242,10 @@ class ShellFlavour(abc.ABC):
     info_script: str
     command_separator: str
     line_terminator: str = "\n"
-    #: Trailing tokens that already end a command in this flavour, so
-    #: `send()` does not append a second one. Extended by POSIX-family
-    #: flavours, which also accept `&`, `|` and their doubled forms.
-    submission_terminators: typing.Tuple[str, ...] = ()
+    #: Whether raw source may span lines (a heredoc, a block). Where it does,
+    #: the separator after a command that contains a newline is a newline:
+    #: `EOF;next` leaves the here-document open and swallows what follows.
+    multiline_source: typing.ClassVar[bool] = False
     #: Appended to a rendered script before it is executed. Declared here so
     #: `script()` reads an attribute instead of duck-probing with `getattr`.
     execution_epilogue: str = ""
@@ -255,24 +269,6 @@ class ShellFlavour(abc.ABC):
     cwd_guard: typing.ClassVar[str] = "operator"
     structured_command_prefix = ""
     path_flavor: type[PurePath] = PurePath
-
-    def terminate_submission(self, script: str) -> str:
-        """Return `script` ending in exactly one command terminator.
-
-        `send()` used to append the separator unconditionally, so ordinary
-        shell text that already ended in one became a syntax error: `;;` in
-        POSIX, and `while read x; do ...; done;;` is not a script. A
-        background `&`, a pipe left open, and `&&`/`||` are terminators too
-        -- appending after them produces `&;` and `&&;`.
-        """
-        stripped = script.rstrip()
-        if not stripped:
-            return script
-        terminators = (self.command_separator,) + self.submission_terminators
-        for terminator in sorted(terminators, key=len, reverse=True):
-            if terminator and stripped.endswith(terminator):
-                return stripped
-        return stripped + self.command_separator
 
     def escape_for_one_parse(self, text: str) -> str:
         """Escape `text` so ONE parse by this shell hands it back verbatim.
@@ -491,6 +487,8 @@ class ShellFlavour(abc.ABC):
             if not command:
                 continue
             if has_command:
+                if pending == self.command_separator:
+                    pending = self._separator_after(result[-1])
                 result.append(pending)
             result.append(command)
             has_command = True
@@ -532,7 +530,11 @@ class ShellFlavour(abc.ABC):
             rendered["cwd"] = self.join_cwd(changed, command)
             rendered["command"] = ""
         parts = [rendered[name] for name in self.context_order if rendered[name]]
-        script = self.command_separator.join(parts)
+        script = ""
+        for part in parts:
+            if script:
+                script += self._separator_after(script)
+            script += part
         if script and epilogue and self.execution_epilogue:
             script += self.execution_epilogue
         return script
@@ -541,8 +543,17 @@ class ShellFlavour(abc.ABC):
     def change_directory(self, cwd: PathLike) -> str:
         """Render a directory change which fails if the directory is absent."""
 
+    def _separator_after(self, command: str) -> str:
+        """The separator that may follow `command` without breaking it."""
+        if self.multiline_source and "\n" in command:
+            return self.line_terminator
+        return self.command_separator
+
     def group(self, command: str) -> str:
         """Wrap `command` so an operator applies to all of it, not its head."""
+        if self.multiline_source and "\n" in command:
+            # `; }` after a here-document delimiter would not close it.
+            return "{ " + command + self.line_terminator + "}"
         return "{ " + command + "; }"
 
     def join_cwd(self, changed: str, command: str) -> str:

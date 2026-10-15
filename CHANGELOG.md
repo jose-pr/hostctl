@@ -37,8 +37,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   it as the stop-parsing token however it is quoted, so the rest of the line
   reached the program unparsed and re-split. **Breaking, 0.4.0.**
 
+### Removed
+
+- **Breaking, 0.4.0**: `ShellFlavour.terminate_submission()` and
+  `submission_terminators`. `ShellSession.send()` writes the script and the
+  line terminator and nothing else.
+
 ### Fixed
 
+- **A relative `cwd` means the process's directory on POSIX and fish.** `cd --
+  sub` consulted `CDPATH` first, so with `CDPATH` set the payload ran in
+  another tree with status 0. It is rendered `cd -- ./sub`, which fails when
+  the directory is absent.
+- **A here-document or open pipeline in a session or script no longer
+  swallows the rest.** `send()` turned the delimiter `EOF` into `EOF;`, and
+  `script()` joined `EOF;echo next`; after multi-line raw source the separator
+  is now a newline (`ShellFlavour.multiline_source`), and a fish session no
+  longer sends `echo a |;`.
+- fish quotes a word containing `%`; a bare `%self` became the shell's PID.
 - **`host.shell.run()` reports the native-WinRM status.** It rendered the
   PowerShell exit epilogue itself, which ended the remote runspace before the
   status marker; it now hands the provider what `host.run()` does. A `Shell`

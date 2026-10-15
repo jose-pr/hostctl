@@ -178,4 +178,4 @@ def test_a_binary_session_takes_the_str_a_shell_renders():
 
     session.send("uptime")
 
-    assert remote.stdin.values == [b"uptime;\n"]
+    assert remote.stdin.values == [b"uptime\n"]

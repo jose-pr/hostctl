@@ -597,7 +597,7 @@ def test_shell_session_uses_flavour_wrapper_and_provider_spawn():
     assert provider.calls[0][1]["encoding"] == "utf-8"
 
     result.send(["Write-Output", "c d"], ShellOperator.PIPE, "Out-String")
-    assert "'Write-Output' 'c d' | Out-String;\n" in result.process.written
+    assert "'Write-Output' 'c d' | Out-String\n" in result.process.written
 
 
 def test_shell_session_without_spawn_fails_explicitly():
@@ -660,7 +660,7 @@ def test_shell_is_a_context_manager_opening_and_closing_one_session():
     assert process.entered is True
     assert process.exited is True
     assert process.closed is True
-    assert process.written == "echo hi;\n"
+    assert process.written == "echo hi\n"
 
 
 def test_shell_context_manager_closes_the_session_when_the_body_raises():
@@ -802,7 +802,7 @@ def test_shell_defaults_reach_the_opened_session():
     written = provider.processes[0].written
     assert "cd -- /srv/app" in written
     assert "export TZ=UTC" in written
-    assert written.startswith("export TZ=UTC;cd -- /srv/app;")
+    assert written.startswith("export TZ=UTC;cd -- /srv/app\n")
 
 
 def test_host_shell_call_returns_a_configured_shell_and_bare_access_does_not():

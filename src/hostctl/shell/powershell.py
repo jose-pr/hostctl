@@ -105,6 +105,7 @@ class PowerShellFlavour(ShellFlavour):
     # `Set-Location -ErrorAction Stop` terminates the script itself, so
     # there is nothing to fuse -- and PowerShell 5 has no `&&` to fuse with.
     cwd_guard = "statement"
+    multiline_source = True
     # Both channels, on a line of its own. `$LASTEXITCODE` alone is set only
     # by NATIVE commands: a pure-cmdlet script that failed left it $null, and
     # `exit $null` is 0 -- so `Get-Item <missing>` returned success and

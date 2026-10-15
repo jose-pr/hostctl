@@ -96,18 +96,6 @@ _PS = ("powershell", "pwsh")
 #: the corpus must be named here; a new failure is a new finding, not a row to
 #: add without one.
 KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
-    # A relative cwd consults CDPATH.
-    "078": lambda f, s, v: s == "cdpath" and v != INTERFERENCE,
-    # send() appends `;` to a heredoc terminator, and fish has no open-pipe
-    # continuation with it.
-    "079": lambda f, s, v: (
-        (v == "<heredoc>" and s == "session")
-        or (v == "<open-pipe>" and f == "fish" and s == "session")
-    ),
-    # fish expands a whole-word `%self`.
-    "222": lambda f, s, v: (
-        f == "fish" and v == "%self" and s in ("argv", "command_line", "env", "session")
-    ),
     # Windows PowerShell 5 globs a [..] in a called program path.
     "new-ps5-program-wildcard": lambda f, s, v: (
         f == "powershell" and s in ("program", "program_path") and v == "[ab]"
@@ -689,10 +677,11 @@ def slot_cdpath(runner: Runner, tmp_path) -> Outcome:
         pieces = []
         for case in group:
             base = present_base if case.data[1] else absent_base
+            # printf, not echo: zsh's echo interprets backslashes in the path.
             echo = (
-                "echo %s:(pwd)" % tag(case)
+                "printf '%%s\\n' %s:(pwd)" % tag(case)
                 if runner.name == "fish"
-                else 'echo "%s:$(pwd)"' % tag(case)
+                else "printf '%%s\\n' \"%s:$(pwd)\"" % tag(case)
             )
             pieces.append(
                 runner.flavour.change_directory(str(base))

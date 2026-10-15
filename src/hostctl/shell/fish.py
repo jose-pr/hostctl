@@ -7,11 +7,18 @@ import typing
 from pathlib import Path, PurePath, PurePosixPath
 
 from ..executor import Environment, PathLike
-from ._common import ShellCommand, ShellFlavour, ShellOperator, ShellToken
+from ._common import (
+    ShellCommand,
+    ShellFlavour,
+    ShellOperator,
+    ShellToken,
+    posix_cwd_operand,
+)
 
-#: Characters that need no quoting, matching `shlex.quote`'s own set.
+#: Characters that need no quoting: `shlex.quote`'s set without `%`, which fish
+#: expands in a whole word (`%self` is the shell's PID).
 _SAFE = frozenset(
-    "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789" "@%+=:,./-_"
+    "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "0123456789" "@+=:,./-_"
 )
 
 
@@ -42,9 +49,12 @@ class FishShellFlavour(ShellFlavour):
         escaped = text.replace("\\", r"\\").replace("'", r"\'")
         return "'" + escaped + "'"
 
+    multiline_source = True
+
     def group(self, command: str) -> str:
         """fish has no `{ ...; }`; `begin; ...; end` is its block."""
-        return "begin; " + command + "; end"
+        closing = "\n" if "\n" in command else "; "
+        return "begin; " + command + closing + "end"
 
     def operator(self, value: ShellOperator) -> str:
         return {
@@ -60,7 +70,7 @@ class FishShellFlavour(ShellFlavour):
         return f"set -gx {key} {self.quote(value)}"
 
     def change_directory(self, cwd: PathLike) -> str:
-        return f"cd -- {self.quote(PurePosixPath(cwd).as_posix())}"
+        return f"cd -- {self.quote(posix_cwd_operand(cwd))}"
 
     def command(
         self,

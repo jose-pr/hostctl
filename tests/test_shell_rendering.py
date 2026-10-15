@@ -22,6 +22,7 @@ from hostctl.shell import (
     PSParam,
     Shell,
     ShellOperator,
+    ShellSession,
     ShellTarget,
 )
 
@@ -60,22 +61,19 @@ class _Process:
 @pytest.mark.parametrize(
     ("script", "expected"),
     (
-        ("echo hi", "echo hi;\n"),
+        ("echo hi", "echo hi\n"),
         ("echo hi;", "echo hi;\n"),
-        ("echo hi ;   ", "echo hi ;\n"),
+        ("echo hi ;   ", "echo hi ;   \n"),
         ("sleep 5 &", "sleep 5 &\n"),
-        ("a | b", "a | b;\n"),
+        ("a | b", "a | b\n"),
         ("a |", "a |\n"),
         ("a &&", "a &&\n"),
     ),
 )
-def test_send_does_not_append_a_separator_the_text_already_has(script, expected):
-    """`send()` appended `;` unconditionally.
-
-    Ordinary shell text that already ended in a terminator became a syntax
-    error: `echo hi;;`, and `sleep 5 &;` is not a command in any POSIX
-    shell.
-    """
+def test_send_appends_a_newline_and_no_separator(script, expected):
+    """`send()` appended `;` unconditionally, which broke ordinary shell text
+    that already ended in a terminator (`echo hi;;`, `sleep 5 &;`), a heredoc
+    delimiter, and an open pipeline. A newline ends a command in every shell."""
     from hostctl.shell._common import ShellSession
 
     process = _Process()
@@ -546,6 +544,52 @@ def test_a_native_stop_parsing_argument_is_refused(flavour):
 def test_the_powershell_epilogue_defers_to_set_should_exit():
     assert "$host.SetShouldExit(" in POWERSHELL.execution_epilogue
     assert "exit $" not in POWERSHELL.execution_epilogue
+
+
+def test_a_relative_cwd_is_spelled_so_cdpath_cannot_redirect_it():
+    from hostctl.shell import FISH
+
+    for flavour in (POSIX_SHELL, ZSH, FISH):
+        assert flavour.script(["x"], cwd="sub").startswith("cd -- ./sub")
+        assert flavour.script(["x"], cwd="a/b").startswith("cd -- ./a/b")
+        assert flavour.script(["x"], cwd="../up").startswith("cd -- ../up")
+        assert flavour.script(["x"], cwd="/abs").startswith("cd -- /abs")
+    assert POSIX_SHELL.script(["x"], cwd="sub").startswith("cd -- ./sub&&")
+
+
+def test_a_command_after_a_heredoc_starts_on_a_new_line():
+    """`EOF;echo next` leaves the here-document open and swallows the rest."""
+    heredoc = "cat <<EOF\nhello\nEOF"
+
+    assert POSIX_SHELL.script([heredoc, "echo AFTER"]) == heredoc + "\necho AFTER"
+    assert POSIX_SHELL.script(["echo a", "echo b"]) == "echo a;echo b"
+    assert POSIX_SHELL.script([heredoc], cwd="/srv") == (
+        "cd -- /srv&&{ " + heredoc + "\n}"
+    )
+
+
+def test_session_send_writes_the_script_and_a_newline_and_nothing_else():
+    class _Sink:
+        written = ""
+
+        def write(self, data):
+            self.written += data
+
+    for line, expected in (
+        ("cat <<EOF\nhello\nEOF", "cat <<EOF\nhello\nEOF\n"),
+        ("echo a |", "echo a |\n"),
+        ("echo hi", "echo hi\n"),
+    ):
+        sink = _Sink()
+        ShellSession(POSIX_SHELL, sink).send(line)
+        assert sink.written == expected
+
+
+def test_fish_quotes_a_word_that_fish_would_expand_to_a_pid():
+    from hostctl.shell import FISH
+
+    assert FISH.quote("%self") == "'%self'"
+    assert FISH.quote("a%self") == "'a%self'"
 
 
 def test_cmd_structured_call_is_refused():

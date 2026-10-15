@@ -7,17 +7,20 @@ import typing
 from pathlib import Path, PurePath, PurePosixPath
 
 from ..executor import Environment, PathLike
-from ._common import ShellCommand, ShellFlavour, ShellOperator, ShellToken
+from ._common import (
+    ShellCommand,
+    ShellFlavour,
+    ShellOperator,
+    ShellToken,
+    posix_cwd_operand,
+)
 
 
 class PosixShellFlavour(ShellFlavour):
     name = "posix"
     default_executable = "/bin/sh"
     command_separator = ";"
-    # A command already ended by any of these needs no `;` after it: `&` and
-    # `|` terminate as surely as `;` does, and `&&`/`||` expect a command
-    # next, so `cmd &&;` is a syntax error.
-    submission_terminators = ("&&", "||", "&", "|")
+    multiline_source = True
     info_script = (
         "printf 'hostname=%s\\n' \"$(hostname 2>/dev/null)\";"
         "printf 'os_family=%s\\n' \"$(uname -s 2>/dev/null)\";"
@@ -47,7 +50,7 @@ class PosixShellFlavour(ShellFlavour):
         return f"export {key}={self.quote(value)}"
 
     def change_directory(self, cwd: PathLike) -> str:
-        return f"cd -- {self.quote(PurePosixPath(cwd).as_posix())}"
+        return f"cd -- {self.quote(posix_cwd_operand(cwd))}"
 
     def command(
         self,
