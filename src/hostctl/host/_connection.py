@@ -247,10 +247,23 @@ class ConnectionString:
                 parsed_password, parsed_extras = parse_credentials(
                     _unquote(parsed.password)
                 )
+            bad_port = False
+            try:
+                parsed_port = parsed.port
+            except ValueError:
+                bad_port = True
+            if bad_port:
+                # Raised outside the handler: urllib's message quotes the text
+                # it failed to read as a port, the start of a password cut
+                # short by `/`, and a chained context would carry it.
+                raise ValueError(
+                    "connection string has an invalid port; percent-encode "
+                    "'/', '?' and '#' in a password"
+                )
             parsed_values = {
                 "scheme": parsed.scheme.casefold() or None,
                 "host": uri_hostname(parsed) or None,
-                "port": parsed.port,
+                "port": parsed_port,
                 "username": _unquote(parsed.username) if parsed.username else None,
                 "password": parsed_password,
                 "extras": dict(parsed_extras) or None,

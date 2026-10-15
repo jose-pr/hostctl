@@ -187,6 +187,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A URI whose password holds an unencoded `/`, `?` or `#` no longer has part
+  of the password echoed in the `ValueError` from `HostConfig(uri)`,
+  `Host(uri)` or `ConnectionString(uri)`; the message now says to
+  percent-encode it.
 - Values passed in `env=` no longer appear in `CalledProcessError` or
   `TimeoutExpired` text, `repr()`, `CompletedProcess.args` or the DEBUG
   dispatch log on transports that embed them in the command. Each shows as

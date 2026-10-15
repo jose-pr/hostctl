@@ -5,6 +5,7 @@ from __future__ import annotations
 import abc as _abc
 import dataclasses as _dc
 import importlib.metadata as _metadata
+import re as _re
 import subprocess as _subprocess
 import threading as _threading
 import typing as _ty
@@ -164,6 +165,36 @@ def reject_control_characters(text: str) -> None:
 def _reject_authority_control_characters(parsed: _SplitResult) -> None:
     """Refuse control characters in the host portion of an authority."""
     reject_control_characters(parsed.hostname or "")
+
+
+def _refuse_cut_short_userinfo(parsed: _SplitResult) -> None:
+    """Refuse a URI whose password ended the authority early.
+
+    An unencoded `/`, `?` or `#` in a password ends the authority there, so
+    `ssh://user:se?cret@host` reads as the netloc `user:se` and a query
+    `cret@host`. The message never quotes the input: it holds password text.
+    """
+    netloc = _re.sub(r"\[[^\]]*\]", "", parsed.netloc)
+    if (
+        "@" not in netloc
+        and ":" in netloc
+        and "@" in parsed.path + parsed.query + parsed.fragment
+    ):
+        raise ValueError(
+            "connection URI has userinfo cut short: percent-encode '/', '?' "
+            "and '#' in the password"
+        )
+
+
+_PARAMETER_NAME = _re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
+
+
+def _parameter_label(key: str, query: str) -> str:
+    """`key` if it can be shown, else a fixed phrase: a query that was cut out
+    of a password ('cret@host') is not a parameter name."""
+    if _PARAMETER_NAME.fullmatch(key) and "@" not in query:
+        return key
+    return "(not shown: it is not a parameter name)"
 
 
 def uri_hostname(parsed: _SplitResult) -> str:
@@ -530,6 +561,7 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         """
         parsed = _urlsplit(_encode_stripped_characters(uri))
         _reject_authority_control_characters(parsed)
+        _refuse_cut_short_userinfo(parsed)
         if parsed.fragment:
             raise ValueError("connection URI fragments are not supported")
         if parsed.password is not None:
@@ -586,6 +618,7 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         there a name the config does not know is a typo worth reporting.
         """
         parsed = _urlsplit(_encode_stripped_characters(uri))
+        _refuse_cut_short_userinfo(parsed)
         matches = [
             implementation
             for implementation in cls._uri_implementations(parsed.scheme)
@@ -1008,12 +1041,15 @@ def strict_uri_query(
         if key in repeated:
             query[key] = _ty.cast(_ty.Tuple[str, ...], query.get(key, ())) + (value,)
         elif key in query:
-            raise ValueError(f"duplicate connection parameter: {key}")
+            raise ValueError(
+                f"duplicate connection parameter: {_parameter_label(key, parsed.query)}"
+            )
         else:
             query[key] = value
     unknown = set(query) - set(allowed)
     if unknown:
-        raise ValueError(f"unknown connection parameter: {sorted(unknown)[0]}")
+        label = _parameter_label(sorted(unknown)[0], parsed.query)
+        raise ValueError(f"unknown connection parameter: {label}")
     return query
 
 

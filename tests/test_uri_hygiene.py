@@ -108,3 +108,56 @@ def test_a_config_refuses_a_uri_as_its_host_without_echoing_the_password(build):
         build("winrm://u:dummyPW@h")
 
     assert "dummyPW" not in str(caught.value)
+
+
+_CUT_SHORT = (
+    ("ssh://user:Pw9?cret@host", ("Pw9", "cret")),
+    ("winrm://u:Pw9?cret@h", ("Pw9", "cret")),
+    ("ssh://user:123?a=b@host", ("123", "a=b")),
+    ("ssh://user:Pw9/cret@host", ("Pw9", "cret")),
+    ("qga+ssh://user:Pw9/cret@host?domain=d", ("Pw9", "cret")),
+    ("ssh://user:Pw9#cret@host", ("Pw9", "cret")),
+)
+
+
+@pytest.mark.parametrize("uri, fragments", _CUT_SHORT)
+def test_a_password_cut_short_is_never_echoed(uri, fragments):
+    """A generated password holding `/`, `?` or `#` ends the authority early;
+    the remainder used to be echoed as a "query key" or a "port"."""
+    with pytest.raises(ValueError) as caught:
+        HostConfig(uri)
+    shown = " ".join(
+        repr(item)
+        for item in (caught.value, caught.value.__cause__, caught.value.__context__)
+    )
+    assert "percent-encode" in str(caught.value)
+    for fragment in fragments:
+        assert fragment not in shown
+    with pytest.raises(ValueError, match="percent-encode"):
+        HostConfig.supported_credentials(uri)
+
+
+@pytest.mark.parametrize(
+    "uri", ("ssh://user:Pw9?cret@host", "ssh://user:Pw9/cret@host")
+)
+def test_a_connection_string_with_a_cut_short_password_does_not_echo_it(uri):
+    with pytest.raises(ValueError) as caught:
+        ConnectionString(uri)
+    shown = " ".join(
+        repr(item)
+        for item in (caught.value, caught.value.__cause__, caught.value.__context__)
+    )
+    assert "Pw9" not in shown
+    assert "cret" not in shown
+
+
+@pytest.mark.parametrize(
+    "uri", ("qga+unix:///run/q@v.sock?domain=d", "serial:///dev/a@b")
+)
+def test_an_at_sign_after_an_empty_authority_still_builds(uri):
+    assert HostConfig(uri)
+
+
+def test_a_real_parameter_name_is_still_reported():
+    with pytest.raises(ValueError, match="unknown connection parameter: bogus"):
+        HostConfig("ssh://h?bogus=1")

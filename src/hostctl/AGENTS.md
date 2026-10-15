@@ -252,7 +252,10 @@ mode and none will be added, because a password may itself contain `@` and
 `:`, so nothing can recover where an unescaped one ended, and guessing would
 be guessing what to connect to. (`@` and `:` do parse: last `@`, first `:`,
 per the URI grammar.) Use `redact_uri` when the text may not parse at all and
-the job is only keeping a secret out of a log.
+the job is only keeping a secret out of a log. The error for an unencoded
+`/`, `?` or `#` in a URI password (`HostConfig(uri)`, `Host(uri)`,
+`ConnectionString`) is a fixed message that never echoes the URI or any part
+of the password.
 
 `uri_hostname(value)` returns the bare hostname of a URI authority,
 unbracketing an IPv6 literal; it is the sibling of `uri_host`, `redact_uri`
