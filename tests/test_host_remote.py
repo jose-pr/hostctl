@@ -199,6 +199,7 @@ def test_ssh_config_uses_explicit_authentication_fields():
         "client_keys": ["keydata"],
         "known_hosts": None,
         "config": None,
+        "connect_timeout": 30.0,
     }
 
 
@@ -578,7 +579,12 @@ def test_the_default_verifies_the_host_key_on_both_legs():
     accept any host key while `run()` verified it."""
     options = SshConfig("h").connect_opts()
 
-    assert options == {"username": "root", "known_hosts": (), "config": None}
+    assert options == {
+        "username": "root",
+        "known_hosts": (),
+        "config": None,
+        "connect_timeout": 30.0,
+    }
 
     # The SFTP leg gets the same dict, and reads no ssh_config, so it
     # verifies the host key and resolves the host as the exec leg does.

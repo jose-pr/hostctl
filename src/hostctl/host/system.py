@@ -626,6 +626,12 @@ class SystemHost(Host):
         if self._connected:
             return
         connected = []
+        # A selector that offered a candidate is a connection that was meant
+        # to happen; if none of them did, saying so beats a `_connected` host
+        # that fails on its first use.
+        candidates = 0
+        declined: typing.List[str] = []
+        first_decline: typing.Optional[OperationNotStarted] = None
         try:
             for selector in (self._executor_selector, self._path_selector):
                 excluded = []
@@ -634,12 +640,18 @@ class SystemHost(Host):
                         provider = selector.select(exclude=excluded).provider
                     except OperationNotStarted:
                         break
+                    candidates += 1
                     try:
                         connect = getattr(provider, "connect", None)
                         if connect:
                             connect()
-                    except OperationNotStarted:
+                    except OperationNotStarted as exc:
                         excluded.append(provider.name)
+                        declined.append(
+                            f"{ProviderSelector.redact(provider.name)}: "
+                            f"{ProviderSelector.redact(exc)}"
+                        )
+                        first_decline = first_decline or exc
                         continue
                     target = getattr(provider, "transport", provider)
                     self._closed_targets.discard(id(target))
@@ -651,6 +663,11 @@ class SystemHost(Host):
                 if close:
                     close()
             raise
+        if candidates and not connected:
+            raise OperationNotStarted(
+                "no provider connected: " + "; ".join(declined),
+                cause=first_decline,
+            ) from first_decline
         self._connected_providers = connected
         self._run_initializer_locked(connected)
         self._connected = True

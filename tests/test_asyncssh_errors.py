@@ -164,3 +164,16 @@ def test_a_genuine_protocol_error_is_still_a_connection_error():
     result = _async.normalize_asyncssh_error(asyncssh.ProtocolError("bad packet"))
 
     assert isinstance(result, ConnectionError)
+
+
+def test_a_refused_exec_request_is_not_a_connection_error():
+    """The connection is healthy; only this command was refused."""
+    result = _async.normalize_asyncssh_error(
+        asyncssh.ChannelOpenError(
+            asyncssh.OPEN_REQUEST_SESSION_FAILED, "Session request failed"
+        )
+    )
+
+    assert isinstance(result, OSError)
+    assert not isinstance(result, ConnectionError)
+    assert "refused to start the command" in str(result)

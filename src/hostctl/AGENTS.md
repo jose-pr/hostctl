@@ -511,6 +511,13 @@ options. Neither leg reads an ssh_config: both receive `config=None`, so an
 alias, `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in
 `~/.ssh/config` is ignored; pass the host, key and known_hosts explicitly.
 Both legs therefore reach the same server and verify its key the same way.
+`SshConfig(connect_timeout=30.0)` bounds establishing the connection in
+seconds (`None` leaves asyncssh's own default; otherwise it must be > 0) and is
+the URI key `connect_timeout`, omitted from `connection_uri` at 30. `connect()`
+and `with host:` raise `OperationNotStarted("no provider connected: ...")`
+when a selector offered providers and none connected (one that connects is
+enough); a refused exec request is a plain `OSError`, not a `ConnectionError`;
+`close()` in a forked child forgets the parent's connection without closing it.
 A relative SSH path (and `host.path()`) resolves against the login directory,
 read once per connection generation with SFTP `realpath(".")` on the exec
 connection, so building one connects; `str()` of the result is the resolved

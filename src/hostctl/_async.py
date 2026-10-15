@@ -91,6 +91,14 @@ def normalize_asyncssh_error(
             output=getattr(exc, "stdout", None),
             stderr=getattr(exc, "stderr", None),
         )
+    if isinstance(exc, module.ChannelOpenError) and (
+        getattr(exc, "code", None) == module.OPEN_REQUEST_SESSION_FAILED
+    ):
+        # The server refused to start this command; the connection is fine,
+        # so it is not a `ConnectionError` and the provider stays usable.
+        return OSError(
+            f"SSH server refused to start the command: {getattr(exc, 'reason', exc)}"
+        )
     connection_errors = (
         module.ChannelOpenError,
         module.DisconnectError,

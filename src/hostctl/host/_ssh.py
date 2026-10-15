@@ -157,6 +157,9 @@ class SshConfig(HostConfig, schemes=("ssh",)):
     #: say so explicitly when it has been changed -- guessing is wrong in
     #: both directions.
     login_shell: str = "auto"
+    #: Seconds asyncssh may spend establishing the connection (TCP, key
+    #: exchange and authentication); `None` leaves asyncssh's own default.
+    connect_timeout: typing.Optional[float] = 30.0
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
@@ -172,6 +175,8 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         elif self.executable is not None:
             raise ValueError("executable cannot be combined with dialect='auto'")
         self.path_flavor = path_flavor_selection(self.path_flavor, allow_auto=False)
+        if self.connect_timeout is not None and not self.connect_timeout > 0:
+            raise ValueError("connect_timeout must be greater than 0 seconds")
         if self.login_shell not in _LOGIN_SHELLS:
             values = ", ".join(sorted(_LOGIN_SHELLS))
             raise ValueError(f"login_shell must be one of: {values}")
@@ -204,6 +209,8 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         # exec leg does. Opting out stays possible and explicit:
         # `known_hosts=None`.
         opts["known_hosts"] = self.known_hosts
+        if self.connect_timeout is not None:
+            opts["connect_timeout"] = self.connect_timeout
         return opts
 
     @property
@@ -219,6 +226,8 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             # Only when it was said: `auto` is the default and carrying it
             # would change every existing URI's text.
             query["login_shell"] = self.login_shell
+        if self.connect_timeout != 30.0:
+            query["connect_timeout"] = self.connect_timeout
         from netimps import join_host
 
         return f"ssh://{user}{join_host(self.host, self.port)}?{urlencode(query)}"
@@ -226,7 +235,8 @@ class SshConfig(HostConfig, schemes=("ssh",)):
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> SshConfig:
         query = strict_uri_query(
-            parsed, {"dialect", "path_flavor", "executable", "login_shell"}
+            parsed,
+            {"dialect", "path_flavor", "executable", "login_shell", "connect_timeout"},
         )
         if not parsed.hostname or parsed.path not in ("", "/"):
             raise ValueError("SSH URI requires a host and no path")
@@ -249,6 +259,9 @@ class SshConfig(HostConfig, schemes=("ssh",)):
                 query.get("path_flavor", "posix"), allow_auto=False
             ),
             login_shell=query.get("login_shell", "auto"),
+            connect_timeout=(
+                float(query["connect_timeout"]) if "connect_timeout" in query else 30.0
+            ),
         )
 
     def _create_host(self):
@@ -384,25 +397,35 @@ class _SshTransport:
         )
         return parse_host_info(result.stdout)
 
+    def _drop_if_forked(self) -> bool:
+        """After `fork()` the cached objects belong to the parent: forget them.
+
+        The connection is bound to the parent's loop, which does not exist in
+        the child. Dropping WITHOUT closing is the only safe move -- closing
+        would run asyncssh's teardown against a socket the parent still uses.
+        Call with `_ssh_lock` held.
+        """
+        from .. import _async
+
+        generation = _async.loop_generation()
+        if self._loop_generation is None:
+            self._loop_generation = generation
+            return False
+        if self._loop_generation == generation:
+            return False
+        self._ssh = None
+        self._sftp_backend = None
+        self._login_dir = None
+        self._loop_generation = generation
+        return True
+
     @property
     def ssh(self) -> SshConnection:
         """The lazily opened and reused asyncssh connection."""
         with self._ssh_lock:
             from .. import _async
 
-            generation = _async.loop_generation()
-            if self._loop_generation is None:
-                self._loop_generation = generation
-            elif self._loop_generation != generation:
-                # `fork()`: this connection belongs to the parent's loop,
-                # which does not exist here, and the child rebuilt its own.
-                # Dropping WITHOUT closing is the only safe move -- closing
-                # would run asyncssh's teardown against a socket the parent
-                # still uses.
-                self._ssh = None
-                self._sftp_backend = None
-                self._login_dir = None
-                self._loop_generation = generation
+            self._drop_if_forked()
             if self._ssh is None or self._ssh.is_closed():
                 log.debug(
                     "opening SSH connection to %s",
@@ -437,6 +460,8 @@ class _SshTransport:
 
     def close(self) -> None:
         with self._ssh_lock:
+            if self._drop_if_forked():
+                return
             # The SFTP invalidation runs first but must not decide whether
             # the SSH connection gets closed: a backend whose own close
             # raised left the connection open AND unreachable -- `_ssh` was

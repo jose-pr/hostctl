@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `SshConfig(connect_timeout=30.0)` bounds how long an SSH connection may take
+  to establish (`None` keeps asyncssh's default), and is the `connect_timeout`
+  URI key.
 - `hostctl.shell.wants_epilogue(capabilities)` answers whether a script for a
   provider needs the flavour's status epilogue (not when it declares
   `manages_status`). `shell_flavour_names()` (also in `hostctl`) lists the
@@ -62,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   so an alias reached the server through `run()` and failed through `path()`.
   Neither leg reads one now; pass the host, key, known_hosts file or proxy
   you took from it to `SshConfig`.
+- **Breaking, 0.4.0**: `connect()` and `with host:` raise `OperationNotStarted`
+  when providers were offered and none connected (a refused port, a DNS
+  failure, an unknown host key or a bad key), instead of returning with
+  nothing connected.
 - **Breaking, 0.4.0**: a relative `host.path()` on an SSH host names the
   login directory, as `run()`'s working directory does, instead of the
   filesystem root; `host.path()` with no segments is the login directory. The
@@ -238,6 +245,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `spawn()` over SSH escapes the command line for a `cmd` login shell, as
   `run()` does; an argument such as `a&b` ran as a second command (command
   injection).
+- A refused SSH exec request (the server declined to start the command) is an
+  `OSError` rather than a `ConnectionError`, so it no longer reads as a broken
+  connection.
+- `close()` of an SSH host in a forked child no longer closes the parent's
+  connection.
 - A relative path on an SSH host is no longer silently rooted at `/` (or
   `C:\`) while `run()` starts in the login directory.
 - A fish login shell over SSH reads structured arguments verbatim; a value
