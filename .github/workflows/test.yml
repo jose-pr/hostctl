@@ -70,6 +70,11 @@ jobs:
         # running it on all six would report the same thing six times.
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14'
         run: python -m black --check src tests
+      - name: Install zsh and fish for the shell corpus
+        # The corpus runs each flavour in its real shell and skips a shell
+        # that is not installed; the runner image has bash and dash only.
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install --yes zsh fish
       - name: Run tests
         run: python -m pytest -q -rs
 
