@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
     an object with no port.
   - netimps 0.4 refuses to import when `NETIMPS_NO_SOCKET_PATCH` is set, and
     `import hostctl` imports netimps; set `NETIMPS_SOCKET_PATCH=0` instead.
+- The sdist no longer ships the contributor `AGENTS.md` or `benchmarks/`, and
+  neither artifact ships a `CLAUDE*` file.
+- Extras ranges follow the dependency rule: `container` accepts docker 7.0
+  (was 7.1), `serial` requires pyserial 3.3 (was 3.5), `psrp` is limited to
+  pypsrp 0.9.x (was `<1`), and `qemu-libvirt` accepts libvirt-python 12 and
+  later (was `<12`).
 
 ### Added
 

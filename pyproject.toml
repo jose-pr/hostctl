@@ -52,13 +52,18 @@ ssh = ["asyncssh>=2.20,<3", "sftppath[asyncssh]>=0.1.0,<0.2"]
 winrm = ["pywinrm>=0.5.0,<0.6"]
 # PowerShell Remoting Protocol runspaces (Python 3.10+ only).  The marker
 # keeps the compatibility floor (Python 3.9) installable with pywinrm alone.
-psrp = ["pypsrp>=0.9,<1; python_version >= '3.10'"]
+# pypsrp is pre-1.0, so a minor may break: the ceiling is the next minor.
+psrp = ["pypsrp>=0.9.0,<0.10; python_version >= '3.10'"]
 # Docker Engine-compatible container execution, paths, and sessions.
-container = ["docker>=7.1,<8"]
+# docker 7.0 passes the container suite; nothing here needs a 7.1 API.
+container = ["docker>=7.0,<8"]
 # Raw native, RFC 2217, socket, and virtual serial transports.
-serial = ["pyserial>=3.5,<4"]
+# 3.3 is where `serial.Serial` gained `exclusive`, which SerialConfig passes through.
+serial = ["pyserial>=3.3,<4"]
 # Local libvirt domain lookup and arbitrary QGA commands.
-qemu-libvirt = ["libvirt-python>=9.0,<12"]
+# No ceiling: libvirt-python's major is libvirt's release year, not an API break,
+# and the calls used here (open, lookupByName, qemuAgentCommand) are long stable.
+qemu-libvirt = ["libvirt-python>=9.0"]
 # Optional pywinrm authentication providers. The base winrm extra already
 # supports basic/plaintext/ssl and NTLM.
 winrm-credssp = ["pywinrm[credssp]>=0.5.0,<0.6"]
@@ -93,11 +98,11 @@ hostctl = "hostctl.cli:main"
 # `*.local.*` as well as root dotfiles: an `AGENTS.local.md` beside the
 # shipped API header is inside the package directory, which `/.*` does not
 # reach. Publishing one is a one-way leak of machine-specific notes.
-exclude = ["/.*", "*.local.*"]
+exclude = ["/.*", "/AGENTS.md", "/benchmarks", "*.local.*", "CLAUDE*"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hostctl"]
-exclude = ["*.local.*"]
+exclude = ["*.local.*", "CLAUDE*"]
 
 [tool.hatch.build.targets.wheel.force-include]
 # Inside the package, so an installed consumer can read it through
