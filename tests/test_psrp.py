@@ -131,10 +131,78 @@ def test_runspace_structured_arguments_use_powershell_literals(monkeypatch):
     assert "'a’’b'" in result.output[0]
     assert "'$(danger)'" in result.output[0]
 
+    # A `-Name` token stays unquoted, as it does on every other leg: the
+    # binder does not read a quoted string as a parameter name.
+    from hostctl.shell import POWERSHELL
+
+    values = ("Get-ChildItem", "-LiteralPath", r"C:\Windows\win.ini")
+    result = session.invoke(*values)
+    assert result.output[0] == POWERSHELL.structured_command(values)
+    assert " -LiteralPath " in result.output[0]
+
+
+def _recording_pipeline(monkeypatch, scripts):
+    class Pipeline:
+        streams = types.SimpleNamespace(error=[])
+        state = "Completed"
+        had_errors = False
+
+        def __init__(self, pool):
+            pass
+
+        def add_script(self, script):
+            scripts.append(script)
+
+        def invoke(self):
+            return ()
+
+    fake = types.ModuleType("pypsrp")
+    fake_powershell = types.ModuleType("pypsrp.powershell")
+    fake_powershell.PowerShell = Pipeline
+    monkeypatch.setitem(__import__("sys").modules, "pypsrp", fake)
+    monkeypatch.setitem(__import__("sys").modules, "pypsrp.powershell", fake_powershell)
+
+
+def test_format_text_renders_through_out_string_inside_the_runspace(monkeypatch):
+    scripts = []
+    _recording_pipeline(monkeypatch, scripts)
+    session = RunspaceSession(pool=types.SimpleNamespace(open=lambda: None))
+
+    session.invoke("Get-Item C:\\", capture_exit=True, format_text=True)
+    session.invoke("Get-Item C:\\")
+
+    formatted, plain = scripts
+    assert formatted.startswith(". {\n$global:LASTEXITCODE=0; Get-Item C:\\\n")
+    # The status line is produced inside the block, after the payload.
+    assert formatted.rstrip().endswith("\n} | Out-String -Stream")
+    assert formatted.index("Write-Output ('__HOSTCTL") < formatted.index("} |")
+    assert "Out-String" not in plain
+
+
+def test_psrp_executor_asks_for_formatted_text_and_joins_with_crlf():
+    seen = {}
+
+    class Session:
+        def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
+            seen.update(capture_exit=capture_exit, format_text=format_text)
+            return PipelineResult(
+                ("Mode  Name", "----  ----"),
+                PipelineStreams(error=("bad", "worse")),
+                "Completed",
+                True,
+                1,
+            )
+
+    result = PsrpExecutor(lambda: Session())("dir", check=False, text=True)
+
+    assert seen == {"capture_exit": True, "format_text": True}
+    assert result.stdout == "Mode  Name\r\n----  ----\r\n"
+    assert result.stderr == "bad\r\nworse"
+
 
 def test_psrp_executor_projects_objects_and_error_streams():
     class Session:
-        def invoke(self, script, *, raw=False, capture_exit=False):
+        def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
             assert script == "Write-Output x"
             return PipelineResult(
                 ("one", "two"),
@@ -145,7 +213,7 @@ def test_psrp_executor_projects_objects_and_error_streams():
             )
 
     result = PsrpExecutor(lambda: Session())("Write-Output x", check=False, text=True)
-    assert result.stdout == "one\ntwo\n"
+    assert result.stdout == "one\r\ntwo\r\n"
     assert result.stderr == "bad"
     assert result.returncode == 1
 
@@ -160,7 +228,7 @@ def test_psrp_executor_projects_native_last_exit_code():
     """
 
     class Session:
-        def invoke(self, script, *, raw=False, capture_exit=False):
+        def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
             assert capture_exit is True
             return PipelineResult(
                 ("ok",),
@@ -171,7 +239,7 @@ def test_psrp_executor_projects_native_last_exit_code():
             )
 
     result = PsrpExecutor(lambda: Session())("cmd", check=False, text=True)
-    assert result.stdout == "ok\n"
+    assert result.stdout == "ok\r\n"
     assert result.returncode == 7
 
 
@@ -287,6 +355,48 @@ def test_the_status_expression_is_the_flavours():
     assert POWERSHELL.execution_epilogue == "\nexit " + POWERSHELL_STATUS
 
 
+@pytest.fixture
+def real_pypsrp():
+    pytest.importorskip("pypsrp")
+    return pytest.importorskip("pypsrp.powershell")
+
+
+def test_psrp_ssl_transport_is_basic_over_https(real_pypsrp):
+    """pywinrm's `ssl` is Basic over HTTPS; it mapped to certificate auth,
+    which raised at the first send because the config carries no certificate."""
+    from hostctl import WinRMConfig
+
+    config = WinRMConfig("h", "u", "p", transport="ssl", ssl=True)
+    transport = RunspaceSession(config)._make_pool().connection.transport
+
+    assert transport.auth == "basic"
+    transport._build_session()
+
+
+def test_psrp_allow_cleartext_turns_message_encryption_off(real_pypsrp, monkeypatch):
+    from hostctl import WinRMConfig
+    import pypsrp.wsman
+
+    built = []
+    real = pypsrp.wsman.WSMan
+
+    def spy(*args, **kwargs):
+        built.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(pypsrp.wsman, "WSMan", spy)
+    config = WinRMConfig(
+        "h", "u", "p", transport="basic", allow_cleartext=True, ssl=False
+    )
+    RunspaceSession(config)._make_pool()
+    assert built[0]["encryption"] == "never"
+
+    built.clear()
+    secure = WinRMConfig("h", "u", "p", transport="basic", ssl=True)
+    RunspaceSession(secure)._make_pool()
+    assert built[0]["encryption"] == "auto"
+
+
 def test_the_runspace_marker_is_per_call():
     """The fixed marker is a string any command may print, and the line after
     it was removed from the output and read as the exit status."""
@@ -355,7 +465,7 @@ def test_windows_host_dispatches_psrp_as_a_script_without_nested_powershell():
     scripts = []
 
     class Session:
-        def invoke(self, script, *, raw=False, capture_exit=False):
+        def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
             scripts.append(script)
             return PipelineResult(
                 ("9000",),
@@ -372,7 +482,7 @@ def test_windows_host_dispatches_psrp_as_a_script_without_nested_powershell():
 
     result = host.run("$x='x' * 9000; Write-Output $x.Length")
 
-    assert result.stdout == b"9000\n"
+    assert result.stdout == b"9000\r\n"
     assert scripts == ["$x='x' * 9000; Write-Output $x.Length"]
     assert "powershell.exe" not in scripts[0].casefold()
 
@@ -405,7 +515,7 @@ def test_winrm_provider_backed_host_never_double_wraps_powershell(
     dispatched = []
 
     class FakeRunspace:
-        def invoke(self, value, *, raw=False, capture_exit=False):
+        def invoke(self, value, *, raw=False, capture_exit=False, format_text=False):
             dispatched.append(value)
             return PipelineResult(("9000",), PipelineStreams(), "Completed", False, 0)
 

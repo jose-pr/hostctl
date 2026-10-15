@@ -760,3 +760,46 @@ def test_the_transports_own_run_applies_the_manages_status_rule(monkeypatch):
 
     assert scripts
     assert "exit $" not in scripts[0], scripts[0]
+
+
+@pytest.mark.parametrize("transport", ["basic", "plaintext", "ssl"])
+def test_basic_credentials_over_http_are_refused(transport):
+    """These three send `Authorization: Basic user:password` over plain HTTP
+    -- on pywinrm; pypsrp refused at construction -- so the same config sent a
+    password in clear or not depending only on which extra was installed."""
+    with pytest.raises(ValueError, match="cleartext"):
+        WinRMConfig("host", "user", "secret", transport=transport)
+    from hostctl import HostConfig
+
+    with pytest.raises(ValueError, match="cleartext"):
+        HostConfig(f"winrm://user@host?transport={transport}")
+
+
+@pytest.mark.parametrize("transport", ["basic", "plaintext", "ssl"])
+def test_basic_over_https_and_an_explicit_opt_in_build(transport):
+    from hostctl import HostConfig
+
+    assert WinRMConfig("host", "user", "secret", transport=transport, ssl=True)
+    config = WinRMConfig(
+        "host", "user", transport=transport, allow_cleartext=True, port=5985
+    )
+    assert "allow_cleartext=true" in config.connection_uri
+    assert HostConfig(str(config)) == config
+    assert "allow_cleartext" not in WinRMConfig("host", "user").connection_uri
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("1", True), ("TRUE", True), ("on", True), ("0", False), ("No", False)],
+)
+def test_allow_cleartext_query_is_a_strict_boolean(value, expected):
+    from hostctl import HostConfig
+
+    config = HostConfig(
+        f"winrm://user@host?transport=basic&allow_cleartext={value}"
+        if expected
+        else f"winrm://user@host?allow_cleartext={value}"
+    )
+    assert config.allow_cleartext is expected
+    with pytest.raises(ValueError, match="allow_cleartext"):
+        HostConfig("winrm://user@host?allow_cleartext=maybe")

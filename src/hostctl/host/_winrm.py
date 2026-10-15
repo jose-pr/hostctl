@@ -39,6 +39,7 @@ from ..provider import (
     ProviderSelector,
 )
 from ._common import (
+    _query_bool,
     _query_int,
     CaptureOutput,
     Command,
@@ -98,6 +99,8 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     operation_timeout_sec: int = 20
     read_timeout_sec: int = 30
     provider: WinRMProviderName = "auto"
+    #: Opt in to Basic credentials over plain HTTP; see `__post_init__`.
+    allow_cleartext: bool = False
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
@@ -121,6 +124,15 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             )
         if self.provider not in typing.get_args(WinRMProviderName):
             raise ValueError("provider must be 'auto', 'pywinrm', or 'psrp'")
+        if (
+            self.transport in ("basic", "plaintext", "ssl")
+            and not self.ssl
+            and not self.allow_cleartext
+        ):
+            raise ValueError(
+                f"transport={self.transport!r} over http sends the password in "
+                "cleartext; use ssl=True (winrms://) or allow_cleartext=True"
+            )
 
     @property
     def endpoint(self) -> str:
@@ -145,6 +157,8 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
         )
         if self.provider != "auto":
             query += "&" + urlencode({"provider": self.provider})
+        if self.allow_cleartext:
+            query += "&allow_cleartext=true"
         port = self.port or (5986 if self.ssl else 5985)
         return (
             f"{self.scheme}://{quote(self.username, safe='')}@"
@@ -162,6 +176,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
                 "operation_timeout_sec",
                 "read_timeout_sec",
                 "provider",
+                "allow_cleartext",
             },
         )
         if not parsed.hostname or parsed.path not in ("", "/"):
@@ -186,6 +201,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             operation_timeout_sec=_query_int(query, "operation_timeout_sec", 20),
             read_timeout_sec=_query_int(query, "read_timeout_sec", 30),
             provider=typing.cast(WinRMProviderName, query.get("provider", "auto")),
+            allow_cleartext=_query_bool(query, "allow_cleartext", False),
         )
 
     def _create_host(self):

@@ -60,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   non-terminating error followed by a successful statement as 0, where it was
   1, and a remote ACL `PermissionDenied` is a status rather than
   `PermissionError`. Only transport and authentication failures raise.
+- **PSRP `run()` text matches the other legs** (tables as a console shows
+  them, CRLF line ends), which ships in 0.4.0. It was each object's
+  `ToString()` joined with LF.
 
 ### Added
 
@@ -86,6 +89,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `run(..., stderr=subprocess.STDOUT)` on a QGA guest asks qemu-ga to
   interleave the streams (`capture-output: "merged"`) when the agent is 8.0 or
   later and the guest is not Windows.
+
+### Security
+
+- **`WinRMConfig` refuses `transport` `basic`, `plaintext` or `ssl` over plain
+  HTTP** unless `allow_cleartext=True` (URI query `allow_cleartext=true`), on
+  both the pywinrm and PSRP legs. They sent the password in cleartext on
+  pywinrm. This ships in 0.4.0.
 
 ### Fixed
 
@@ -125,6 +135,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A container path taken before `ContainerHost.close()` raises instead of
   reopening docker-py's client, and a Windows container follows relative links
   with Windows path syntax.
+- `transport="ssl"` over PSRP raised at the first send; it is now Basic over
+  HTTPS, as on pywinrm.
+- `RunspaceSession.invoke(script, *args)` rendered `-LiteralPath` as a quoted
+  string, which PowerShell's binder rejects; it uses the flavour's
+  `structured_command`.
 - Writes to a WinRM path over pywinrm work again; every write raised
   `OSError`. `run()` commands over about 3 KB no longer fail with "The command
   line is too long".

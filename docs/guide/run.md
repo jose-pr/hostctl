@@ -249,7 +249,12 @@ with WinRMConfig("windows.example.com", "admin", "secret", provider="psrp") as h
 ```
 
 Install `hostctl[psrp]` for Python 3.10+; Python 3.9 remains on the portable
-buffered `pywinrm` provider.
+buffered `pywinrm` provider. PSRP `run()` returns the text a console would show
+(tables included), joined with CRLF, rendered at the runspace's own width.
+
+`transport="basic"`, `"plaintext"` or `"ssl"` over plain HTTP sends the password
+in cleartext, so `WinRMConfig` refuses it unless you pass `ssl=True` (a
+`winrms://` URI) or `allow_cleartext=True`.
 
 A serial host has two entry points, and they take different first arguments.
 The constructor takes the **device**, the way pyserial names it --

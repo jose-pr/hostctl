@@ -1075,6 +1075,21 @@ def _query_int(query: _ty.Mapping[str, str], name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer") from exc
 
 
+_TRUE = frozenset(("1", "true", "yes", "on"))
+_FALSE = frozenset(("0", "false", "no", "off"))
+
+
+def _query_bool(query: _ty.Mapping[str, str], name: str, default: bool) -> bool:
+    if name not in query:
+        return default
+    value = str(query[name]).casefold()
+    if value in _TRUE:
+        return True
+    if value in _FALSE:
+        return False
+    raise ValueError(f"{name} must be one of 1/true/yes/on or 0/false/no/off")
+
+
 def _recursive_subclasses(
     base: _ty.Type[HostConfig],
 ) -> _ty.Iterator[_ty.Type[HostConfig]]:

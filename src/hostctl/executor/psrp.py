@@ -95,7 +95,7 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
             )
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         result = self._session().invoke(
-            command_text(command), raw=False, capture_exit=True
+            command_text(command), raw=False, capture_exit=True, format_text=True
         )
         codec = encoding or "utf-8"
         # `invoke(capture_exit=True)` already consumed the
@@ -103,12 +103,12 @@ class PsrpExecutor(Executor[subprocess.CompletedProcess]):
         # this used to re-parse the same marker out of output that no longer
         # contained it, which is two implementations of one convention.
         returncode = result.returncode
-        # Preserve PowerShell's object-pipeline line orientation when
-        # projecting objects to subprocess-compatible text.
-        out_text = "\n".join(str(item) for item in result.output)
-        err_text = "\n".join(str(item) for item in result.streams.error)
+        # Output is already console text (`format_text`), one item per line;
+        # the other legs deliver CRLF, so this one does too.
+        out_text = "\r\n".join(str(item) for item in result.output)
+        err_text = "\r\n".join(str(item) for item in result.streams.error)
         if out_text:
-            out_text += "\n"
+            out_text += "\r\n"
         as_text = wants_text(text, encoding, errors)
         out: typing.Union[str, bytes] = out_text if as_text else out_text.encode(codec)
         err: typing.Union[str, bytes] = err_text if as_text else err_text.encode(codec)

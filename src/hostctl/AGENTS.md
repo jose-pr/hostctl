@@ -527,9 +527,16 @@ and makes no shell/status claim; `encoding=` makes the console read and write
 
 `WinRMConfig(host, username, password=None, transport="ntlm", port=None,
 ssl=False, server_cert_validation="validate", message_encryption="auto",
-operation_timeout_sec=20, read_timeout_sec=30, provider="auto")`. `auto`
+operation_timeout_sec=20, read_timeout_sec=30, provider="auto",
+allow_cleartext=False)`. `transport` `basic`, `plaintext` or `ssl` over plain
+HTTP sends the password in cleartext and raises `ValueError` unless
+`allow_cleartext=True` (URI query `allow_cleartext=true`). `auto`
 selects PSRP when `hostctl[psrp]` is installed on Python 3.10+, otherwise
-pywinrm; `provider="psrp"` requires the extra.
+pywinrm; `provider="psrp"` requires the extra. PSRP `run()` text is rendered
+by `Out-String -Stream` in the runspace, so tables look as on the other legs,
+joined with CRLF at the runspace's 120 columns; `RunspaceSession.invoke()`
+returns typed objects, and `invoke(script, *args)` renders its arguments with
+the PowerShell flavour's `structured_command`.
 
 The WinRM executor provider supports PowerShell `run()` and Windows-semantic `WinRMPath`.
 The pywinrm leg runs `powershell.exe -NoProfile -NonInteractive -Command -`

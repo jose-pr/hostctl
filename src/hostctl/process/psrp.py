@@ -63,14 +63,15 @@ def _pipeline_state_name(value: object) -> str:
 #: advertises `credssp` (or `basic`) authenticated with Negotiate instead --
 #: and the same config behaved differently depending only on whether the psrp
 #: extra happened to be installed. `plaintext` is pywinrm's name for basic
-#: over http, and `ssl` is its name for certificate auth.
+#: over http, and `ssl` is its name for basic over https: certificate auth
+#: needs a client certificate, which `WinRMConfig` does not carry.
 _PSRP_AUTH = {
     "basic": "basic",
     "plaintext": "basic",
     "credssp": "credssp",
     "kerberos": "kerberos",
     "ntlm": "ntlm",
-    "ssl": "certificate",
+    "ssl": "basic",
 }
 
 
@@ -107,18 +108,24 @@ class RunspaceSession:
             raise ValueError("a WinRMConfig is required when pool is not supplied")
         ssl = bool(getattr(config, "ssl", False))
         endpoint_port = getattr(config, "port", None)
+        auth = _PSRP_AUTH.get(
+            str(getattr(config, "transport", "") or "").casefold(), "negotiate"
+        )
+        encryption = getattr(config, "message_encryption", "auto")
+        if auth == "basic" and not ssl and getattr(config, "allow_cleartext", False):
+            # pypsrp refuses basic over http unless message encryption is
+            # off; the caller opted in with `allow_cleartext`.
+            encryption = "never"
         kwargs = {
             "server": getattr(config, "host"),
             "port": endpoint_port or (5986 if ssl else 5985),
             "username": getattr(config, "username"),
             "password": getattr(config, "password", None),
             "ssl": ssl,
-            "auth": _PSRP_AUTH.get(
-                str(getattr(config, "transport", "") or "").casefold(), "negotiate"
-            ),
+            "auth": auth,
             "cert_validation": getattr(config, "server_cert_validation", "validate")
             == "validate",
-            "encryption": getattr(config, "message_encryption", "auto"),
+            "encryption": encryption,
             "connection_timeout": getattr(config, "read_timeout_sec", 30),
             "operation_timeout": getattr(config, "operation_timeout_sec", 20),
             "read_timeout": getattr(config, "read_timeout_sec", 30),
@@ -192,17 +199,22 @@ class RunspaceSession:
         *args: object,
         raw: bool = False,
         capture_exit: bool = False,
+        format_text: bool = False,
     ) -> PipelineResult:
-        """Invoke a script or executable with persistent runspace state."""
+        """Invoke a script or executable with persistent runspace state.
+
+        `format_text` renders the output through `Out-String -Stream` inside
+        the runspace, so it is the text a console would show (tables
+        included) rather than each object's `ToString()`.
+        """
         self.connect()
         from ..shell import POWERSHELL
 
         if args:
-            # PowerShell's call operator preserves executable semantics while
-            # still allowing arguments to be represented as object literals.
-            command = POWERSHELL.quote(script)
-            values = " ".join(POWERSHELL.quote(value) for value in args)
-            script_text = "& {} {}".format(command, values)
+            # The flavour's own renderer: `-Name` tokens stay unquoted, which
+            # the binder needs, and native arguments get the C-runtime
+            # escaping every other leg applies.
+            script_text = POWERSHELL.structured_command((script, *args))
         else:
             script_text = str(script)
         from ..executor.winrm import LASTEXITCODE_RESET, exit_marker, status_epilogue
@@ -224,6 +236,10 @@ class RunspaceSession:
             script_text = (
                 f"{LASTEXITCODE_RESET}; {script_text}" + "\n" + status_epilogue(marker)
             )
+        if format_text:
+            # Dot-sourced, so runspace state persists and the status epilogue
+            # still sees the payload's last statement.
+            script_text = ". {\n" + script_text + "\n} | Out-String -Stream"
         from pypsrp.powershell import PowerShell
 
         pipeline = PowerShell(self._pool)
