@@ -511,6 +511,10 @@ options. Neither leg reads an ssh_config: both receive `config=None`, so an
 alias, `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in
 `~/.ssh/config` is ignored; pass the host, key and known_hosts explicitly.
 Both legs therefore reach the same server and verify its key the same way.
+A relative SSH path (and `host.path()`) resolves against the login directory,
+read once per connection generation with SFTP `realpath(".")` on the exec
+connection, so building one connects; `str()` of the result is the resolved
+path. An absolute spelling asks nothing.
 PowerShell over SSH: `PowerShellFlavour.command(..., login_shell=, stdin_free=)`
 renders `-Command SCRIPT` for a `cmd` login shell (one-line script, escaped for
 the extra parse) and a POSIX one (always); a script with a `#` goes on the

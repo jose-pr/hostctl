@@ -34,7 +34,8 @@ class InProcessSSHServer:
 
     `events` is a list the handler may append to; the server records each
     `begin_auth` there too. `sftp_root` enables SFTP chrooted to that
-    directory; `sftp_factory` overrides how the SFTP server is built.
+    directory; `sftp_factory` overrides how the SFTP server is built, and
+    `home` makes `realpath(".")` answer that path (recorded in `events`).
     """
 
     def __init__(
@@ -43,11 +44,13 @@ class InProcessSSHServer:
         *,
         sftp_root: typing.Optional[typing.Union[str, os.PathLike]] = None,
         sftp_factory: typing.Optional[typing.Callable[..., typing.Any]] = None,
+        home: typing.Optional[str] = None,
     ) -> None:
         self.handler = handler
         self.events: list = []
         self._sftp_root = sftp_root
         self._sftp_factory = sftp_factory
+        self._home = home
         self.port = 0
         self._dir = ""
 
@@ -67,7 +70,18 @@ class InProcessSSHServer:
         sftp_factory = self._sftp_factory
         if sftp_factory is None and self._sftp_root is not None:
             root = os.fspath(self._sftp_root).encode()
-            sftp_factory = lambda chan: asyncssh.SFTPServer(chan, chroot=root)
+            events = self.events
+            home = self._home
+
+            class _Sftp(asyncssh.SFTPServer):
+                def realpath(self, path):
+                    # The login directory: what `realpath(".")` answers.
+                    if home is not None and path == b".":
+                        events.append(("realpath", path))
+                        return home.encode()
+                    return super().realpath(path)
+
+            sftp_factory = lambda chan: _Sftp(chan, chroot=root)
 
         async def start() -> None:
             try:

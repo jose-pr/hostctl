@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   so an alias reached the server through `run()` and failed through `path()`.
   Neither leg reads one now; pass the host, key, known_hosts file or proxy
   you took from it to `SshConfig`.
+- **Breaking, 0.4.0**: a relative `host.path()` on an SSH host names the
+  login directory, as `run()`'s working directory does, instead of the
+  filesystem root; `host.path()` with no segments is the login directory. The
+  directory is read once per connection, so building a relative path connects.
 - The PowerShell dialect over SSH sends `-Command` where the login shell
   allows it, a script with a `#` comment on the channel's stdin when the call
   has no input of its own, and `-EncodedCommand` only as the last resort.
@@ -234,6 +238,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `spawn()` over SSH escapes the command line for a `cmd` login shell, as
   `run()` does; an argument such as `a&b` ran as a second command (command
   injection).
+- A relative path on an SSH host is no longer silently rooted at `/` (or
+  `C:\`) while `run()` starts in the login directory.
 - A fish login shell over SSH reads structured arguments verbatim; a value
   ending in a backslash could end the quoting early and run what followed
   (command injection).

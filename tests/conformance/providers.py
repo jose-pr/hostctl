@@ -671,7 +671,14 @@ class FakeSshHost:
         )
 
         dialect = POWERSHELL if os.name == "nt" else POSIX_SHELL
-        config = SshConfig("fake", dialect=dialect, known_hosts=None)
+        # The Windows fake hands the line straight to CreateProcess and to
+        # PowerShell, so that is the login shell it stands in for.
+        config = SshConfig(
+            "fake",
+            dialect=dialect,
+            known_hosts=None,
+            login_shell="powershell" if os.name == "nt" else "auto",
+        )
         transport = _SshTransport(config)
         session = FakeSshSession("ssh", LocalExecutor())
         session.connect()

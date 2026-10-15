@@ -288,6 +288,8 @@ class _SshTransport:
             typing.Tuple[typing.Tuple[object, ...], ShellFlavour, typing.Optional[str]]
         ] = None
         self._sftp_backend: typing.Optional[object] = None
+        #: SFTP `realpath(".")`, asked once per connection generation.
+        self._login_dir: typing.Optional[str] = None
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:
@@ -399,6 +401,7 @@ class _SshTransport:
                 # still uses.
                 self._ssh = None
                 self._sftp_backend = None
+                self._login_dir = None
                 self._loop_generation = generation
             if self._ssh is None or self._ssh.is_closed():
                 log.debug(
@@ -471,6 +474,7 @@ class _SshTransport:
                     raise first_error
 
     def _invalidate_sftp(self) -> None:
+        self._login_dir = None
         backend, self._sftp_backend = self._sftp_backend, None
         if backend is None:
             return
@@ -486,17 +490,54 @@ class _SshTransport:
         client already cached is what they use. Warming it here costs the
         connection that is about to be made anyway.
         """
-        self.path()
+        self.path("/")  # absolute: asks nothing of the server
         client = getattr(self._sftp_backend, "client", None)
         if client is not None:
             client()
 
+    def _login_directory(self) -> str:
+        """The SFTP login directory, asked once per connection generation.
+
+        sftppath exposes no working directory, and a relative name must mean
+        what `run()`'s working directory means, so it is read from an SFTP
+        client started on the exec connection.
+        """
+        from .. import _async
+
+        with self._ssh_lock:
+            if self._login_dir is None:
+                connection = self.ssh  # resolved on the calling thread
+
+                async def realpath() -> str:
+                    client = await connection.start_sftp_client()
+                    try:
+                        answer = await client.realpath(".")
+                    finally:
+                        client.exit()
+                    return answer.decode() if isinstance(answer, bytes) else answer
+
+                try:
+                    self._login_dir = _async.async_to_sync(realpath())
+                except Exception as exc:
+                    normalized = _async.normalize_asyncssh_error(exc)
+                    if normalized is exc:
+                        raise
+                    raise normalized from exc
+            return self._login_dir
+
     def path(self, *segments: PathLike) -> HostPath:
         from sftppath import AsyncSSHBackend, SFTPPath
 
-        remote_path = self.config.path_flavor(*segments).as_posix()
-        if not remote_path.startswith("/"):
-            remote_path = "/" + remote_path
+        pure = self.config.path_flavor(*segments)
+        remote_path = pure.as_posix()
+        if pure.anchor:
+            if not remote_path.startswith("/"):
+                remote_path = "/" + remote_path
+        else:
+            base = self._login_directory().rstrip("/")
+            remote_path = (
+                (base + "/" + remote_path) if remote_path not in ("", ".") else base
+            ) or "/"
         with self._ssh_lock:
             if self._sftp_backend is None:
                 # The options carry `config=None` (see `connect_opts`), which

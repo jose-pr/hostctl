@@ -66,7 +66,9 @@ permission semantics.
 For SSH, `SshConfig.path_flavor` explicitly selects
 the `PosixPathname` or `WindowsPathname` constructor; it is independent of the
 command dialect. Concrete stdlib `PurePosixPath` and `PureWindowsPath`
-constructors are accepted too.
+constructors are accepted too. A relative SSH path names the login directory,
+the same place `run()` starts in, so building one asks the server for it (once
+per connection); `host.path()` with no segments is that directory.
 
 ## What a path can do
 

@@ -194,8 +194,10 @@ def test_a_uri_backed_path_reports_a_filesystem_logical_path():
 
     host = SshConfig("h", username="root").open()
 
-    assert str(host.path()) == "/"
-    assert str(host.path() / "srv" / "app.conf") == "/srv/app.conf"
+    # Absolute spellings only: a relative one asks the server for its login
+    # directory, which needs a connection this test does not have.
+    assert str(host.path("/")) == "/"
+    assert str(host.path("/") / "srv" / "app.conf") == "/srv/app.conf"
     assert str(host.path("/etc/hosts")) == "/etc/hosts"
 
 
