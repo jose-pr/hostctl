@@ -47,6 +47,7 @@ from ._common import (
     HostPath,
     Input,
     PathLike,
+    _refuse_uri,
     starts_direct_command,
     parse_host_info,
     path_flavor_name,
@@ -89,6 +90,7 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
         HostConfig.__init__(self)
         if not self.container:
             raise ValueError("container must not be empty")
+        _refuse_uri("ContainerConfig", self.container)
         if self.dialect != "auto":
             self.dialect = shell_flavour(self.dialect)
         elif self.executable is not None:

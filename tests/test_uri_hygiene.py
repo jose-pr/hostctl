@@ -9,7 +9,15 @@ from __future__ import annotations
 
 import pytest
 
-from hostctl import ConnectionString, HostConfig, redact_uri
+from hostctl import (
+    ConnectionString,
+    ContainerConfig,
+    HostConfig,
+    PosixConfig,
+    SshConfig,
+    WinRMConfig,
+    redact_uri,
+)
 
 
 @pytest.mark.parametrize("code", ("\x00", "\x1b", "\x0b", "\x7f"))
@@ -66,3 +74,37 @@ def test_an_ipv6_literal_host_survives_parsing():
 
     assert config.host == "2001:db8::1"
     assert config.port == 2222
+
+
+@pytest.mark.parametrize(
+    "uri",
+    (
+        "posix://%C2%9Bnode",
+        "posix://%1B@node",
+        "posix://%1Bnode",
+        "ssh://%C2%9Bnas",
+    ),
+)
+def test_an_encoded_c0_or_c1_control_character_is_refused(uri):
+    """`%C2%9B` is the C1 control CSI. It passed the encoded-C0 check, and a
+    system URI unquotes the whole netloc, so it reached `authority` and from
+    there `info().hostname`."""
+    with pytest.raises(ValueError, match="control character"):
+        HostConfig(uri)
+
+
+@pytest.mark.parametrize(
+    "build",
+    (
+        lambda uri: SshConfig(uri),
+        lambda uri: WinRMConfig(uri, "u"),
+        lambda uri: ContainerConfig(uri),
+        lambda uri: PosixConfig(uri),
+    ),
+    ids=("ssh", "winrm", "container", "system"),
+)
+def test_a_config_refuses_a_uri_as_its_host_without_echoing_the_password(build):
+    with pytest.raises(ValueError, match="takes a host, not a URI") as caught:
+        build("winrm://u:dummyPW@h")
+
+    assert "dummyPW" not in str(caught.value)

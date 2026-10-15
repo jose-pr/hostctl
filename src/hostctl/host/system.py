@@ -28,7 +28,9 @@ from ._common import (
     Host,
     HostConfig,
     _HostExecutor,
+    _refuse_uri,
     entry_points_in,
+    reject_control_characters,
     HostInfo,
     Input,
     PathLike,
@@ -275,14 +277,29 @@ class SystemConfig(HostConfig):
         shell: object = None,
         executor: typing.Iterable[str] = (),
         path: typing.Iterable[str] = (),
-        **options: object,
+        provider_options: typing.Optional[typing.Mapping[str, object]] = None,
+        initializer: typing.Optional[typing.Callable[..., object]] = None,
     ):
         super().__init__()
+        _refuse_uri(type(self).__name__, authority)
+        for name, value in (("executor", executor), ("path", path)):
+            if isinstance(value, (str, bytes)):
+                raise TypeError(
+                    f"{name}= takes a sequence of descriptor names, "
+                    "e.g. ('local',), not a string"
+                )
         self.authority = authority or "localhost"
         self.shell = shell
         self.executors = tuple(executor)
         self.paths = tuple(path)
-        self.options = dict(options)
+        self.options = {
+            key: value
+            for key, value in (
+                ("provider_options", provider_options),
+                ("initializer", initializer),
+            )
+            if value is not None
+        }
 
     def _build_providers(self, kind: str):
         descriptors = self.executors if kind == "executor" else self.paths
@@ -342,6 +359,9 @@ class SystemConfig(HostConfig):
         )
         executors = typing.cast(typing.Tuple[str, ...], query.get("executor", ()))
         paths = typing.cast(typing.Tuple[str, ...], query.get("path", ()))
+        # The whole netloc, userinfo included, is unquoted below, so a
+        # percent-encoded control character there would arrive decoded.
+        reject_control_characters(parsed.netloc)
         return cls(
             # Unquoted: `connection_uri` percent-encodes the authority, so
             # storing the still-encoded netloc added a layer on every
@@ -405,6 +425,16 @@ class SystemHost(Host):
         # as a read-only computed property, which only worked because
         # `SystemConfig` shadowed that property with a plain string.  Picking
         # the right config type instead keeps `scheme` derived from the URI.
+        if isinstance(config, str):
+            raise TypeError(
+                f"{type(self).__name__} takes a config, not a connection string; "
+                "use Host(uri) or HostConfig(uri).open()"
+            )
+        if config is not None and not isinstance(config, HostConfig):
+            raise TypeError(
+                f"{type(self).__name__} takes a HostConfig, "
+                f"not {type(config).__name__}"
+            )
         self.config = config if config is not None else self.config_type()
         self._executor_selector = ProviderSelector(executor_providers)
         self._path_selector = ProviderSelector(path_providers)

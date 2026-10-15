@@ -68,6 +68,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **PSRP `run()` text matches the other legs** (tables as a console shows
   them, CRLF line ends), which ships in 0.4.0. It was each object's
   `ToString()` joined with LF.
+- **`SystemConfig` (`PosixConfig`, `WindowsConfig`, `IosConfig`) takes only
+  `provider_options=` and `initializer=` beyond `shell=`, `executor=` and
+  `path=`**, which ships in 0.4.0. Any other keyword was kept in `options`
+  without complaint, so `executr=("local",)` configured nothing; it now raises
+  `TypeError`. `executor="local"` (a bare string) raises `TypeError` where it
+  became five one-letter descriptors. A `SystemHost` built from a connection
+  string or anything but a `HostConfig` raises `TypeError`.
 - **Registries refuse a duplicate name**, which ships in 0.4.0. A second
   `HostConfig` subclass claiming a scheme that another live config holds
   raises `ValueError` where the class is defined (it used to fail later as
@@ -190,6 +197,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   same for the address form). With `scheme=` or `defaults=` they parse as host
   and port. The `ConnectionString` docstring and the API header said a bare host
   parses without a scheme; they now say it needs one.
+- `SshConfig`, `WinRMConfig`, `ContainerConfig` and the system configs refuse
+  a URI given as their host with a message that redacts its password;
+  `WinRMConfig("winrm://u:pw@h", "u")` used to render the password in
+  `connection_uri` and `repr`. A percent-encoded C1 control character
+  (`%C2%9B`) in a system URI's host or userinfo is refused like the C0 ones,
+  instead of reaching `authority` and `info().hostname` decoded.
 - One broken `hostctl.configs` plugin no longer breaks every other unclaimed
   scheme: the entry point named for the scheme loads first, a plugin that fails
   to import is warned about and skipped, and only its own scheme raises

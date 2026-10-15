@@ -40,6 +40,7 @@ from ..provider import (
 )
 from ._common import (
     _query_bool,
+    _refuse_uri,
     _query_int,
     CaptureOutput,
     Command,
@@ -106,6 +107,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
         HostConfig.__init__(self)
         if not self.host:
             raise ValueError("host must not be empty")
+        _refuse_uri("WinRMConfig", self.host)
         if not self.username:
             raise ValueError("username must not be empty")
         if self.port is not None and not 1 <= self.port <= 65535:

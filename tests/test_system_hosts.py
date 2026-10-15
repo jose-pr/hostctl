@@ -824,7 +824,7 @@ def test_a_system_uri_round_trips_its_authority(authority):
     """`connection_uri` percent-encodes the authority while `_from_parsed_uri`
     stored the still-encoded netloc, so every `HostConfig(str(config))` added
     a layer: `node:22` -> `node%3A22` -> `node%253A22`."""
-    config = PosixConfig(authority, executors=("local",))
+    config = PosixConfig(authority, executor=("local",))
 
     once = HostConfig(str(config))
     twice = HostConfig(str(once))
@@ -1022,3 +1022,31 @@ def test_concurrent_hosts_from_one_config_do_not_share_a_transport(monkeypatch):
         transports.append(executor.transport)
     assert transports[0] is not transports[1]
     assert "_provider_transports" not in vars(config)
+
+
+def test_a_system_host_takes_a_config_not_a_string_or_a_number():
+    with pytest.raises(TypeError, match="Host\\(uri\\)"):
+        PosixHost("ssh://root@nas")
+    with pytest.raises(TypeError, match="int"):
+        PosixHost(config=123)
+
+
+def test_system_config_takes_a_sequence_of_descriptor_names():
+    """`executor="local"` became `('l','o','c','a','l')`."""
+    with pytest.raises(TypeError, match="sequence of descriptor names"):
+        PosixConfig("n", executor="local")
+    with pytest.raises(TypeError, match="sequence of descriptor names"):
+        PosixConfig("n", path=b"local")
+
+
+def test_system_config_refuses_an_unknown_keyword():
+    with pytest.raises(TypeError, match="executr"):
+        PosixConfig("n", executr=("local",))
+
+
+def test_system_config_keeps_only_the_two_option_keys_it_reads():
+    options = {"ssh": object()}
+    config = PosixConfig("n", provider_options=options, initializer=len)
+
+    assert config.options == {"provider_options": options, "initializer": len}
+    assert PosixConfig("n").options == {}

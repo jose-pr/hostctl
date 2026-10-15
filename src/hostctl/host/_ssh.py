@@ -34,6 +34,7 @@ from ._common import (
     HostPath,
     Input,
     PathLike,
+    _refuse_uri,
     parse_host_info,
     path_flavor_name,
     path_flavor_selection,
@@ -112,14 +113,8 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         HostConfig.__init__(self)
         if not self.host:
             raise ValueError("host must not be empty")
-        if "://" in self.host:
-            # The constructor takes a HOST; the dispatcher takes a URI.
-            # Passed one here it became the hostname, and the failure
-            # surfaced much later as an unresolvable name.
-            raise ValueError(
-                f"SshConfig takes a host, not a URI: {self.host!r}. "
-                "Use HostConfig(uri) or Host(uri) to build one from a URI."
-            )
+        # The constructor takes a HOST; the dispatcher takes a URI.
+        _refuse_uri("SshConfig", self.host)
         if not 1 <= self.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
         if self.dialect != "auto":

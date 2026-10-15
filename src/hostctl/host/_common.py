@@ -133,34 +133,35 @@ def _encode_stripped_characters(uri: str) -> str:
     return uri
 
 
-def _reject_authority_control_characters(parsed: _SplitResult) -> None:
-    """Refuse control characters in the host portion of an authority.
-
-    These arrive percent-encoded (see `_encode_stripped_characters`), so the
-    check is against the encoded spelling -- `urlsplit` leaves `%0A` in the
-    hostname verbatim. A hostname cannot legitimately contain one, and
-    allowing it would let a URI that reads as one target resolve to another.
-    """
-    host = parsed.hostname or ""
-    if not host:
-        return
-    upper = host.upper()
-    if any(encoded in upper for encoded in _URI_STRIPPED_CHARACTERS.values()):
+def _refuse_uri(kind: str, value: object) -> None:
+    """Refuse a URI where a config takes a host, without echoing its password."""
+    if isinstance(value, str) and "://" in value:
         raise ValueError(
-            "connection URI host contains a control character; only the "
-            "userinfo may carry one"
+            f"{kind} takes a host, not a URI: {redact_uri(value)!r}. "
+            "Use HostConfig(uri) or Host(uri) to build one from a URI."
         )
-    # Every other control character too, in either spelling. Only TAB, CR and
-    # LF were checked -- the three `urlsplit` deletes -- so NUL, ESC, VT and
-    # DEL travelled into `config.host` and from there into every log line and
-    # error message built from it, where an ESC sequence is terminal-escape
-    # injection into whatever reads the log.
-    if any(_unicodedata.category(char) == "Cc" for char in host):
-        raise ValueError("connection URI host contains a control character")
-    upper_encoded = host.upper()
-    for code in list(range(0x20)) + [0x7F]:
-        if f"%{code:02X}" in upper_encoded:
+
+
+def reject_control_characters(text: str) -> None:
+    """Refuse a C0, DEL or C1 control character, raw or percent-encoded.
+
+    A hostname cannot legitimately contain one, and allowing it would let a URI
+    that reads as one target resolve to another (TAB, CR and LF are deleted by
+    `urlsplit`), or put a terminal escape into every log line built from the
+    host.
+    """
+    try:
+        decoded = _unquote(text, errors="strict")
+    except UnicodeDecodeError:
+        decoded = _unquote(text, errors="replace")
+    for candidate in (text, decoded):
+        if any(_unicodedata.category(char) == "Cc" for char in candidate):
             raise ValueError("connection URI host contains a control character")
+
+
+def _reject_authority_control_characters(parsed: _SplitResult) -> None:
+    """Refuse control characters in the host portion of an authority."""
+    reject_control_characters(parsed.hostname or "")
 
 
 def uri_hostname(parsed: _SplitResult) -> str:

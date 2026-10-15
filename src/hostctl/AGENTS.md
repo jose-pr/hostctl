@@ -184,6 +184,13 @@ and dispatches it with no args, and that script is shell text, not a program.
   declare is rejected by name rather than dropped.
 - `config.connection_uri` never includes passwords or private keys;
   `config.scheme` matches its URI scheme.
+- A config constructor takes a host and refuses a URI (`ValueError` naming
+  `HostConfig(uri)`, password redacted). A URI refuses a C0, DEL or C1 control
+  character in its host or userinfo, raw or percent-encoded.
+  `SystemConfig(authority, *, shell, executor, path, provider_options,
+  initializer)` takes `executor=`/`path=` as sequences of names (a bare string
+  is a `TypeError`) and no other keywords; a `SystemHost` takes a `HostConfig`,
+  never a connection string.
 - `with config as host:` and `with config.open() as host:` connect and always
   close. Re-entering the same active config raises `RuntimeError`.
 - External config implementations declare `schemes=(...)`; registry hooks and
