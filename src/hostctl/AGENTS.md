@@ -192,9 +192,12 @@ path grammar, so `path()` raises.
 `ConnectionString(value, *, scheme=None, port=None, ...)` is the parsed form
 of a target -- host, scheme, port, user, password -- with `is_local` answered
 by `netimps` rather than guessed. It exists so a caller never reimplements
-connection-string parsing. A bare host parses (a missing scheme is not an
-error), but otherwise the value MUST be a valid URI: an unclosed IPv6 literal,
-a non-numeric port, or an unescaped `/`, `?` or `#` in a password RAISES.
+connection-string parsing. A bare host (`nas`) or `host:port` (`nas:8443`)
+needs a `scheme=` or `defaults={"scheme": ...}` and raises "no scheme"
+without one; a full URI carries its own. The value MUST otherwise be a valid
+URI: an unclosed IPv6 literal, a non-numeric port, or an unescaped `/`, `?` or
+`#` in a password RAISES. An opaque URI with no host (`local:`,
+`serial:COM3`) parses, with an empty host that `is_local` calls local.
 **Percent-encode reserved characters in a password** -- there is no lenient
 mode and none will be added, because a password may itself contain `@` and
 `:`, so nothing can recover where an unescaped one ended, and guessing would

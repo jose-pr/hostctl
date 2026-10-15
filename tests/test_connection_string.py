@@ -401,3 +401,49 @@ def test_at_and_colon_in_a_password_parse_by_the_uri_grammar():
     to parse at all; this may not guess even then."""
     assert ConnectionString("ssh://root:pa@ss@nas").password == "pa@ss"
     assert ConnectionString("ssh://root:pa:ss@nas").password == "pa:ss"
+
+
+@pytest.mark.parametrize(
+    "text", ["nas:8443", "nas.example:22", "10.1.1.1:22", "[::1]:22"]
+)
+def test_a_scheme_less_host_and_port_is_not_read_as_a_scheme(text):
+    # `urlsplit` reads `nas:8443` as the scheme `nas` (3.9 does so for
+    # `10.1.1.1:22` too), leaving the host empty and `is_local` true.
+    with pytest.raises(ValueError, match="no scheme"):
+        ConnectionString(text)
+
+
+@pytest.mark.parametrize(
+    "text, host, port",
+    [
+        ("nas:8443", "nas", 8443),
+        ("10.1.1.1:22", "10.1.1.1", 22),
+        ("[::1]:22", "::1", 22),
+    ],
+)
+def test_a_host_and_port_parse_once_a_scheme_is_supplied(text, host, port):
+    target = ConnectionString(text, scheme="ssh")
+
+    assert (target.scheme, target.host, target.port) == ("ssh", host, port)
+    assert not target.is_local or host == "::1"
+
+
+@pytest.mark.parametrize(
+    "text, scheme, path",
+    [("local:", "local", ""), ("serial:COM3", "serial", "COM3")],
+)
+def test_an_opaque_uri_keeps_its_scheme(text, scheme, path):
+    target = ConnectionString(text)
+
+    assert (target.scheme, target.host, target.path) == (scheme, "", path)
+
+
+def test_the_documented_bare_host_forms():
+    """The docstring and the API header show these; they must run."""
+    assert str(ConnectionString("nas", scheme="wss")) == "wss://nas:443"
+    assert str(ConnectionString("nas:8443", defaults={"scheme": "wss"})) == (
+        "wss://nas:8443"
+    )
+    for bare in ("nas", "nas:8443"):
+        with pytest.raises(ValueError, match="no scheme"):
+            ConnectionString(bare)

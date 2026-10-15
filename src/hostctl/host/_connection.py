@@ -12,12 +12,6 @@ from urllib.parse import (
     urlsplit as _urlsplit,
 )
 
-from netimps import (
-    get_default_port as _get_default_port,
-    is_local_address as _is_local_address,
-    try_parse as _try_parse_address,
-)
-
 from ._common import (
     _encode_stripped_characters,
     _reject_authority_control_characters,
@@ -25,11 +19,6 @@ from ._common import (
     uri_host,
     uri_hostname,
 )
-
-#: Local *names*, which cannot be decided without a lookup. Address literals
-#: never reach this set -- `netimps.is_local_address` answers those, and it
-#: knows about addresses assigned to this machine, not just loopback.
-_LOCAL_HOSTS = frozenset({"", "localhost"})
 
 #: What may be given for a port, wherever a port is accepted. An `int` is the
 #: port. A callable `scheme -> port | None` or anything indexable by scheme (a
@@ -105,10 +94,13 @@ def _resolve_port(scheme: str, value: Port) -> object:
 class ConnectionString:
     """A connection target parsed from whatever a user typed.
 
-    `ConnectionString("nas")`, `ConnectionString("nas:8443")`, and
-    `ConnectionString("wss://root:pw@nas:8443/api")` all parse. A bare host is
-    not an invalid URI -- it is a URI with the scheme left off, which is what
-    people type on a command line.
+    `ConnectionString("wss://root:pw@nas:8443/api")` parses, and so do a bare
+    host and a `host:port` once a scheme is supplied from outside the string:
+    `ConnectionString("nas", scheme="wss")` and
+    `ConnectionString("nas:8443", defaults={"scheme": "wss"})`. Without one,
+    `ConnectionString("nas")` and `ConnectionString("nas:8443")` raise
+    `ValueError`: nothing in the text says which scheme was meant. An opaque
+    URI with no host, `local:` or `serial:COM3`, parses and has an empty host.
 
     Beyond that, **the input must be a valid URI, and a malformed one
     raises** -- an unclosed IPv6 literal, a non-numeric port, or a password
@@ -285,6 +277,8 @@ class ConnectionString:
                 "pass scheme= to set one, or defaults= to supply it only when "
                 "the string omits it"
             )
+        from netimps import get_default_port
+
         scheme_text = _ty.cast(str, resolved["scheme"]).casefold()
         # Only now is the scheme settled, so a callable or table given for the
         # port can be asked. When no layer supplied anything, netimps resolves
@@ -296,7 +290,7 @@ class ConnectionString:
         if port_value is _NO_PORT:
             port_value = None
         elif port_value is None:
-            port_value = _get_default_port(scheme_text)
+            port_value = get_default_port(scheme_text)
         resolved["port"] = port_value
         # Whether the port was *given* or resolved from the scheme. A
         # resolved one must not travel: used as `defaults=`, or copied with a
@@ -379,17 +373,15 @@ class ConnectionString:
         raise on a name that does not resolve -- so it could not even be used
         defensively.
 
-        An address literal is answered by `netimps.is_local_address`, which
-        covers loopback *and* addresses actually assigned to this machine --
-        `10.0.0.5` is local when it is one of this host's own. A name is only
-        compared against the loopback spellings, since deciding anything more
-        about a name requires a lookup.
+        `netimps.is_local_host` answers: loopback and addresses assigned to
+        this machine (`10.0.0.5` is local when it is one of this host's own),
+        `localhost`, and this machine's own name. Any other name is not
+        resolved. An empty host (`local:`, `serial:COM3`) is local too, which
+        `is_local_host` would not say.
         """
-        host = self.host.strip("[]")
-        address = _try_parse_address(host)
-        if address is not None:
-            return _is_local_address(address)
-        return host.casefold() in _LOCAL_HOSTS
+        from netimps import is_local_host
+
+        return not self.host or is_local_host(self.host)
 
     def replace(self, **changes: object) -> "ConnectionString":
         """A copy with `changes` applied.
@@ -423,8 +415,10 @@ class ConnectionString:
             # A port that was resolved from the old scheme is not an answer
             # for the new one: `ConnectionString("wss://nas").replace(
             # scheme="ssh")` used to keep 443.
+            from netimps import get_default_port
+
             object.__setattr__(
-                copy, "port", _get_default_port(str(changes["scheme"]).casefold())
+                copy, "port", get_default_port(str(changes["scheme"]).casefold())
             )
         object.__setattr__(copy, "_explicit_port", explicit_port)
         return copy
@@ -455,6 +449,16 @@ def _as_defaults(
 def _has_userinfo(text: str) -> bool:
     """Whether `text` carries `user[:password]@host` ahead of any path."""
     return "@" in text.split("/", 1)[0]
+
+
+def _is_host_and_port(text: str) -> bool:
+    """Whether `text` is `host:port` -- `netimps.split_host` with a port."""
+    from netimps import split_host
+
+    try:
+        return split_host(text)[1] is not None
+    except ValueError:
+        return False
 
 
 def _redacted_target(text: str) -> str:
@@ -489,6 +493,16 @@ def _split(value: str, assumed_scheme: _ty.Optional[str]) -> _SplitResult:
     if parsed.scheme and parsed.netloc:
         return parsed
     if assumed_scheme is None:
+        if parsed.scheme and not parsed.netloc and _is_host_and_port(encoded):
+            # `nas:8443` is a host and a port, and `urlsplit` reads it as the
+            # scheme `nas` with an opaque path (3.9 does the same for
+            # `10.1.1.1:22`). Accepting that left the host empty and
+            # `is_local` true for a remote machine.
+            raise ValueError(
+                f"connection string has no scheme: {_redacted_target(value)!r}; "
+                "pass scheme= to set one, or defaults= to supply it only when "
+                "the string omits it"
+            )
         if _has_userinfo(encoded):
             # `root:hunter2@nas` looks like the scheme `root` with the opaque
             # path `hunter2@nas`. Accepting that parse left the password
