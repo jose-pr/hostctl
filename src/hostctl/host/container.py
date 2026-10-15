@@ -13,6 +13,7 @@ from pathapi import Pathname, PosixPathname, WindowsPathname
 from ..executor.container import (
     ContainerExecutor,
     ContainerLike,
+    _is_not_found,
     normalize_container_error,
 )
 from ..executor import normalize_environment
@@ -297,10 +298,7 @@ class ContainerHost(Host):
                 container = self.client.containers.get(self.config.container)
                 container.reload()
             except Exception as exc:
-                if (
-                    type(exc).__name__ == "NotFound"
-                    or getattr(exc, "status_code", None) == 404
-                ):
+                if _is_not_found(exc):
                     raise ConnectionError(
                         f"container {self.config.container!r} not found"
                     ) from exc

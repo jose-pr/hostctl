@@ -15,6 +15,7 @@ from pathlib import PurePath as _StdPurePath
 from pathapi import Path, PosixPathname, WindowsPathname
 from pathapi import FileStat
 from pathapi.providers import notimplemented
+from ..executor.container import _status_code
 from ._staged_io import copy_from, staged_open
 
 
@@ -108,18 +109,25 @@ class _ArchiveReadStream(io.RawIOBase):
 def _archive_oserror(exc: BaseException, path: str) -> typing.Optional[OSError]:
     """Map a Docker archive failure to a filesystem error, or `None`.
 
-    The status-code extraction was written out seven times and three copies
-    had drifted -- one reading only `exc.status_code`, one only the
-    response's, one swallowing everything that was neither 404 nor 403.
+    Only 404 and 403 have a filesystem meaning; any other failure is `None`
+    and propagates as the engine's own error.
     """
-    status = getattr(exc, "status_code", None)
-    if status is None:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
+    status = _status_code(exc)
     if status == 404:
         return FileNotFoundError(errno.ENOENT, "no such file or directory", path)
     if status == 403:
         return PermissionError(errno.EACCES, "permission denied", path)
     return None
+
+
+def _put_archive_error(
+    exc: BaseException, parent: str, path: str
+) -> typing.Optional[OSError]:
+    """Map a failed `put_archive`: a 404 is about the parent, a 403 the path."""
+    mapped = _archive_oserror(exc, parent)
+    if isinstance(mapped, PermissionError):
+        mapped = _archive_oserror(exc, path)
+    return mapped
 
 
 def _safe_name(name: str) -> typing.Tuple[str, ...]:
@@ -252,34 +260,6 @@ class ContainerPathBackend:
         self.container = container
         self.path_flavor = path_flavor
 
-    def _archive(
-        self, path: str
-    ) -> typing.Tuple[tarfile.TarFile, typing.List[tarfile.TarInfo]]:
-        try:
-            stream, _ = self.container.get_archive(path)
-            payload = b"".join(stream)
-        except Exception as exc:
-            # Docker SDK/API errors are optional dependency types. Avoid an
-            # import here while still exposing ordinary filesystem failures.
-            mapped = _archive_oserror(exc, path)
-            if mapped is not None:
-                raise mapped from exc
-            raise
-        archive = tarfile.open(fileobj=io.BytesIO(payload), mode="r:*")
-        members = archive.getmembers()
-        for member in members:
-            _safe_name(member.name)
-        if not members:
-            archive.close()
-            raise FileNotFoundError(path)
-        return archive, members
-
-    @staticmethod
-    def _root_member(
-        members: typing.Sequence[tarfile.TarInfo],
-    ) -> tarfile.TarInfo:
-        return min(members, key=lambda member: len(_safe_name(member.name)))
-
     def stat(self, path: str, *, follow_symlinks: bool = True) -> FileStat:
         # Docker returns a compact stat mapping alongside get_archive().  Use
         # it without consuming the potentially huge tar stream whenever it is
@@ -311,15 +291,15 @@ class ContainerPathBackend:
                     close()
                 except Exception:
                     pass
-        archive, members = self._archive(path)
+        archive, reader, member = self._root_stream(path)
         try:
-            member = self._root_member(members)
             if follow_symlinks and member.issym():
                 target = self._link_destination(path, member.linkname)
                 return self._stat_following(target, hops=8)
             return _file_stat(member)
         finally:
             archive.close()
+            reader.close()
 
     @staticmethod
     def _metadata_stat(metadata: typing.Mapping[str, object]) -> FileStat:
@@ -343,34 +323,22 @@ class ContainerPathBackend:
                 if metadata:
                     link_target = metadata.get("linkTarget")
                     if link_target:
-                        target = str(link_target)
-                        parent = posixpath.dirname(current.rstrip("/"))
-                        current = (
-                            target
-                            if target.startswith("/")
-                            else posixpath.join(parent, target)
-                        )
+                        current = self._link_destination(current, str(link_target))
                         continue
                     return self._metadata_stat(metadata)
             finally:
                 close = getattr(stream, "close", None)
                 if close is not None:
                     close()
-            archive, members = self._archive(current)
+            archive, reader, member = self._root_stream(current)
             try:
-                member = self._root_member(members)
                 if member.issym():
-                    parent = posixpath.dirname(current.rstrip("/"))
-                    target = member.linkname
-                    current = (
-                        target
-                        if target.startswith("/")
-                        else posixpath.join(parent, target)
-                    )
+                    current = self._link_destination(current, member.linkname)
                     continue
                 return _file_stat(member)
             finally:
                 archive.close()
+                reader.close()
         raise OSError("too many symbolic links")
 
     def scandir(
@@ -442,64 +410,30 @@ class ContainerPathBackend:
             return target
         return path_module.join(path_module.dirname(path.rstrip("/\\")), target)
 
-    def read_bytes(self, path: str, *, hops: int = 8) -> bytes:
-        archive: typing.Optional[tarfile.TarFile]
-        archive, members = self._archive(path)
+    def exists(self, path: str, *, follow_symlinks: bool = True) -> bool:
+        """Whether `path` exists; any failure but absence propagates."""
         try:
-            member = self._root_member(members)
-            if member.isdir():
-                raise IsADirectoryError(path)
-            if member.islnk():
-                # A hardlink whose original is not in this archive -- which
-                # is what Docker sends for a single-file request. `tarfile`
-                # answers `StreamError`, not an `OSError`, so it escaped the
-                # filesystem error vocabulary entirely.
-                original = next(
-                    (
-                        candidate
-                        for candidate in members
-                        if candidate.name == member.linkname and candidate.isreg()
-                    ),
-                    None,
-                )
-                if original is None:
-                    raise OSError(
-                        errno.ENOENT,
-                        "hardlink target is outside this archive",
-                        path,
-                    )
-                member = original
-            if member.issym():
-                # get_archive() returns the *link* member, never the target's
-                # bytes, so a read has to follow the link itself. The hop
-                # budget bounds symlink loops the same way stat() does.
-                if hops <= 0:
-                    raise OSError("too many symbolic links")
-                resolved = self._link_destination(path, member.linkname)
-                archive.close()
-                archive = None
-                return self.read_bytes(resolved, hops=hops - 1)
-            if not member.isfile() and not member.islnk():
-                raise OSError(f"archive member is not a regular file: {path}")
-            stream = archive.extractfile(member)
-            if stream is None:
-                raise OSError(f"archive member has no content: {path}")
-            return stream.read()
-        finally:
-            if archive is not None:
-                archive.close()
+            self.stat(path, follow_symlinks=follow_symlinks)
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+        return True
 
-    def open_read(self, path: str, *, hops: int = 8) -> io.BufferedReader:
-        """Open a Docker archive member as a bounded streaming reader.
+    def _root_stream(
+        self, path: str
+    ) -> typing.Tuple[tarfile.TarFile, _ChunkReader, tarfile.TarInfo]:
+        """Start the archive for `path` and read only its root member header.
 
-        Symlinks are followed lazily -- the link is recognised from its
-        already-streamed member header, so a regular file still costs one
-        archive pull and the stream is never drained up front.
+        The caller closes the returned archive and reader. Nothing past the
+        first header is pulled from the engine.
         """
         try:
             stream, _ = self.container.get_archive(path)
             reader = _ChunkReader(stream)
-            archive = tarfile.open(fileobj=reader, mode="r|*")
+            try:
+                archive = tarfile.open(fileobj=reader, mode="r|*")
+            except BaseException:
+                reader.close()
+                raise
         except Exception as exc:
             mapped = _archive_oserror(exc, path)
             if mapped is not None:
@@ -510,6 +444,25 @@ class ContainerPathBackend:
             if member is None:
                 raise FileNotFoundError(path)
             _safe_name(member.name)
+        except BaseException:
+            archive.close()
+            reader.close()
+            raise
+        return archive, reader, member
+
+    def read_bytes(self, path: str, *, hops: int = 8) -> bytes:
+        with self.open_read(path, hops=hops) as stream:
+            return stream.read()
+
+    def open_read(self, path: str, *, hops: int = 8) -> io.BufferedReader:
+        """Open a Docker archive member as a bounded streaming reader.
+
+        Symlinks are followed lazily -- the link is recognised from its
+        already-streamed member header, so a regular file still costs one
+        archive pull and the stream is never drained up front.
+        """
+        archive, reader, member = self._root_stream(path)
+        try:
             if member.isdir():
                 raise IsADirectoryError(path)
             if member.issym():
@@ -519,6 +472,15 @@ class ContainerPathBackend:
                 archive.close()
                 reader.close()
                 return self.open_read(resolved, hops=hops - 1)
+            if member.islnk():
+                # A single-file request answers with the link member alone;
+                # its original is not in the archive, and `tarfile` raises
+                # `StreamError`, outside the filesystem error vocabulary.
+                raise OSError(
+                    errno.ENOENT,
+                    "hardlink target is outside this archive",
+                    path,
+                )
             extracted = archive.extractfile(member)
             if extracted is None:
                 raise OSError(f"archive member has no content: {path}")
@@ -552,14 +514,14 @@ class ContainerPathBackend:
                     close()
                 except Exception:
                     pass
-        archive, members = self._archive(path)
+        archive, reader, member = self._root_stream(path)
         try:
-            member = self._root_member(members)
             if not member.issym():
                 raise OSError(f"not a symbolic link: {path}")
             return member.linkname
         finally:
             archive.close()
+            reader.close()
 
     def symlink(self, path: str, target: str) -> None:
         """Create ``path`` as a symlink to ``target`` via a tar member.
@@ -588,12 +550,7 @@ class ContainerPathBackend:
         try:
             accepted = self.container.put_archive(parent, payload.getvalue())
         except Exception as exc:
-            # The parent is what a 404 is about here; the path is what a
-            # permission failure is about. The seventh copy of this idiom,
-            # and the only one that distinguished them.
-            mapped = _archive_oserror(exc, parent)
-            if isinstance(mapped, PermissionError):
-                mapped = _archive_oserror(exc, path)
+            mapped = _put_archive_error(exc, parent, path)
             if mapped is not None:
                 raise mapped from exc
             raise
@@ -610,6 +567,11 @@ class ContainerPathBackend:
         return parent or ".", name
 
     def write_bytes(self, path: str, value: bytes, *, exclusive: bool = False) -> None:
+        parent, name = self._split(path)
+        member = tarfile.TarInfo(name)
+        # A new file is root-owned 0644, as `docker cp` creates one (0666
+        # would declare it world-writable).
+        member.mode = 0o644
         if exclusive:
             try:
                 self.stat(path, follow_symlinks=False)
@@ -617,45 +579,49 @@ class ContainerPathBackend:
                 pass
             else:
                 raise FileExistsError(path)
-        parent, name = self._split(path)
+        else:
+            self._inherit_owner(member, path)
+        member.size = len(value)
+        member.mtime = int(datetime.datetime.now().timestamp())
         payload = io.BytesIO()
         with tarfile.open(fileobj=payload, mode="w") as archive:
-            member = tarfile.TarInfo(name)
-            member.size = len(value)
-            try:
-                prior = self.stat(path, follow_symlinks=False)
-            except FileNotFoundError:
-                # 0644, as a local `open(path, "w")` yields under a default
-                # umask. 0666 declared every new container file
-                # world-writable.
-                member.mode = 0o644
-            else:
-                if _stat.S_ISDIR(prior.st_mode):
-                    # docker-py's put_archive omits noOverwriteDirNonDir, so
-                    # moby's untar would replace the directory with this
-                    # file rather than refuse.
-                    raise IsADirectoryError(path)
-                if _stat.S_ISLNK(prior.st_mode):
-                    # A symlink's own mode is 0o777 and means nothing; taking
-                    # it made the replacement file world-writable too.
-                    member.mode = 0o644
-                else:
-                    member.mode = _stat.S_IMODE(prior.st_mode)
-            member.mtime = int(datetime.datetime.now().timestamp())
             archive.addfile(member, io.BytesIO(value))
         try:
             accepted = self.container.put_archive(parent, payload.getvalue())
         except Exception as exc:
-            status = getattr(exc, "status_code", None)
-            response = getattr(exc, "response", None)
-            status = status or getattr(response, "status_code", None)
-            if status == 404:
-                raise FileNotFoundError(parent) from exc
-            if status == 403:
-                raise PermissionError(path) from exc
+            mapped = _put_archive_error(exc, parent, path)
+            if mapped is not None:
+                raise mapped from exc
             raise
         if not accepted:
             raise OSError(f"container rejected archive for {path}")
+
+    def _inherit_owner(self, member: tarfile.TarInfo, path: str) -> None:
+        """Give `member` the mode and owner of the file it replaces.
+
+        The archive API takes ownership from the tar header alone, so a fresh
+        header would hand an app-owned file to root. Only the first header is
+        read; a missing path and a symlink (whose own mode means nothing)
+        leave the defaults.
+        """
+        try:
+            archive, reader, prior = self._root_stream(path)
+        except FileNotFoundError:
+            return
+        try:
+            if prior.isdir():
+                # docker-py's put_archive omits noOverwriteDirNonDir, so
+                # moby's untar would replace the directory with this file
+                # rather than refuse.
+                raise IsADirectoryError(path)
+            if prior.issym():
+                return
+            member.mode = prior.mode & 0o7777
+            member.uid, member.gid = prior.uid, prior.gid
+            member.uname, member.gname = prior.uname, prior.gname
+        finally:
+            archive.close()
+            reader.close()
 
 
 class _ContainerPathMixin:

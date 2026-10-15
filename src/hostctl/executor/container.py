@@ -147,10 +147,7 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
 def normalize_container_error(exc: Exception) -> Exception:
     """Map Docker SDK and HTTP failures without importing the optional SDK."""
     name = type(exc).__name__
-    status_code = getattr(exc, "status_code", None)
-    if status_code is None:
-        response = getattr(exc, "response", None)
-        status_code = getattr(response, "status_code", None)
+    status_code = _status_code(exc)
     if status_code == 404 or name in ("NotFound",):
         return FileNotFoundError(str(exc))
     if status_code in (401, 403) or name in ("AuthenticationError",):
@@ -167,8 +164,13 @@ def normalize_container_error(exc: Exception) -> Exception:
     return exc
 
 
-def _is_not_found(exc: Exception) -> bool:
-    status_code = getattr(exc, "status_code", None)
-    if status_code is None:
-        status_code = getattr(getattr(exc, "response", None), "status_code", None)
-    return status_code == 404 or type(exc).__name__ == "NotFound"
+def _status_code(exc: BaseException) -> typing.Optional[int]:
+    """The HTTP status a Docker SDK or HTTP error carries, wherever it keeps it."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status
+
+
+def _is_not_found(exc: BaseException) -> bool:
+    return _status_code(exc) == 404 or type(exc).__name__ == "NotFound"

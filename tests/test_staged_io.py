@@ -343,3 +343,35 @@ def test_copy_from_still_honours_an_explicit_no_overwrite(tmp_path):
 
     with pytest.raises(FileExistsError):
         copy_from(target, source, overwrite=False)
+
+
+class _ProbeBackend:
+    """No `exists()`: `staged_open` has to decide from `read_bytes`."""
+
+    def __init__(self, error):
+        self.error = error
+
+    def read_bytes(self, path):
+        raise self.error
+
+    def write_bytes(self, path, value, *, exclusive=False):
+        raise AssertionError("nothing may be written")
+
+
+def test_exclusive_open_does_not_call_a_server_error_exists():
+    class Boom(OSError):
+        pass
+
+    with pytest.raises(Boom):
+        staged_open(_ProbeBackend(Boom("500")), "/x", "x")
+
+
+def test_exclusive_open_of_a_missing_path_proceeds():
+    stream = staged_open(_ProbeBackend(FileNotFoundError("/x")), "/x", "x")
+
+    stream.discard()
+
+
+def test_exclusive_open_of_a_directory_is_file_exists():
+    with pytest.raises(FileExistsError):
+        staged_open(_ProbeBackend(IsADirectoryError("/x")), "/x", "x")

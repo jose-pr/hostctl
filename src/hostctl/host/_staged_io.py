@@ -212,11 +212,14 @@ def staged_open(backend: object, path: str, mode: str) -> io.IOBase:
             except NotImplementedError:
                 present = None
         if present is None:
+            # Only absence means "free". Any other failure (a server error,
+            # a permission refusal) says nothing about the path, so it
+            # propagates instead of being reported as "exists".
             try:
                 typing.cast(typing.Any, backend).read_bytes(path)
             except FileNotFoundError:
                 present = False
-            except OSError:
+            except IsADirectoryError:
                 present = True
             else:
                 present = True

@@ -367,22 +367,19 @@ def test_a_new_file_is_not_world_writable():
     """0666 declared every new container file world-writable; a local
     `open(path, "w")` yields 0644 under a default umask."""
     container = _Container()
-    container.get_archive = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
 
     ContainerPathBackend(container).write_bytes("/srv/new.txt", b"data")
 
     member = _sent_member(container)
     assert member.mode == 0o644
+    assert (member.uid, member.gid, member.uname, member.gname) == (0, 0, "", "")
 
 
 def test_writing_over_a_directory_raises_instead_of_replacing_it():
     """docker-py's put_archive omits noOverwriteDirNonDir, so moby's untar
     would replace the directory with a regular file."""
     container = _Container()
-    container.get_archive = lambda path: (
-        io.BytesIO(),
-        {"name": "srv", "size": 0, "mode": (1 << 31) | 0o755, "mtime": "0"},
-    )
+    container.archives["/srv"] = _tar((("srv", None),))
 
     with pytest.raises(IsADirectoryError):
         ContainerPathBackend(container).write_bytes("/srv", b"data")
@@ -393,15 +390,8 @@ def test_writing_over_a_directory_raises_instead_of_replacing_it():
 def test_writing_over_a_symlink_does_not_inherit_its_mode():
     """A symlink's own mode is 0o777 and means nothing."""
     container = _Container()
-    container.get_archive = lambda path: (
-        io.BytesIO(),
-        {
-            "name": "link",
-            "size": 0,
-            "mode": (1 << 27) | 0o777,
-            "mtime": "0",
-            "linkTarget": "/elsewhere",
-        },
+    container.archives["/srv/link"] = _tar_entries(
+        [("link", tarfile.SYMTYPE, None, "/elsewhere")]
     )
 
     ContainerPathBackend(container).write_bytes("/srv/link", b"data")
@@ -584,3 +574,171 @@ def test_supports_says_what_the_archive_api_cannot_do():
             assert supports(cls, protocol), (cls, protocol)
         for protocol in (Create, Chmod, Remove, Move):
             assert not supports(cls, protocol), (cls, protocol)
+
+
+# -- ownership, existence and bounded reads --------------------------------
+
+
+class _EngineError(OSError):
+    """docker.errors.APIError is an OSError and carries the HTTP status."""
+
+    def __init__(self, status_code):
+        super().__init__(f"{status_code} Server Error")
+        self.status_code = status_code
+
+
+class _Counting(_Container):
+    """An engine that streams a tar lazily and counts the bytes asked for."""
+
+    def __init__(self):
+        super().__init__()
+        self.pulled = 0
+
+    def serve(self, path, payload, chunk=64 * 1024):
+        def chunks():
+            for offset in range(0, len(payload), chunk):
+                self.pulled += len(payload[offset : offset + chunk])
+                yield payload[offset : offset + chunk]
+
+        self.archives[path] = payload
+        self._lazy = getattr(self, "_lazy", {})
+        self._lazy[path] = chunks
+
+    def get_archive(self, path):
+        lazy = getattr(self, "_lazy", {})
+        if path in lazy:
+            return lazy[path](), {}
+        return super().get_archive(path)
+
+
+def _owned_tar(name, value, *, mode, uid, gid, uname, gname):
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w") as archive:
+        member = tarfile.TarInfo(name)
+        member.size = len(value)
+        member.mode, member.uid, member.gid = mode, uid, gid
+        member.uname, member.gname = uname, gname
+        archive.addfile(member, io.BytesIO(value))
+    return payload.getvalue()
+
+
+def test_an_overwrite_keeps_the_owner_and_mode_of_the_file_it_replaces():
+    container = _Container()
+    container.archives["/data/app.conf"] = _owned_tar(
+        "app.conf", b"old", mode=0o4640, uid=1000, gid=1001, uname="app", gname="web"
+    )
+
+    ContainerPathBackend(container).write_bytes("/data/app.conf", b"new")
+
+    member = _sent_member(container)
+    assert (member.uid, member.gid, member.uname, member.gname) == (
+        1000,
+        1001,
+        "app",
+        "web",
+    )
+    assert member.mode == 0o4640
+
+
+def test_a_new_file_is_root_owned_like_docker_cp_creates_it():
+    container = _Container()
+
+    ContainerPathBackend(container).write_bytes("/data/new", b"x")
+
+    member = _sent_member(container)
+    assert (member.uid, member.gid, member.uname, member.gname) == (0, 0, "", "")
+    assert member.mode == 0o644
+
+
+def test_exclusive_open_of_an_existing_large_file_pulls_one_header():
+    container = _Counting()
+    container.serve(
+        "/data/big.bin",
+        _owned_tar(
+            "big.bin",
+            b"\0" * (10 * 1024 * 1024),
+            mode=0o644,
+            uid=0,
+            gid=0,
+            uname="",
+            gname="",
+        ),
+    )
+    path = PosixContainerPath("/data/big.bin", backend=ContainerPathBackend(container))
+
+    with pytest.raises(FileExistsError):
+        path.open("xb")
+
+    assert container.pulled < 1024 * 1024
+
+
+def test_an_engine_error_during_exclusive_open_is_not_reported_as_exists():
+    container = _Container()
+
+    def broken(path):
+        raise _EngineError(500)
+
+    container.get_archive = broken
+    path = PosixContainerPath("/data/new", backend=ContainerPathBackend(container))
+
+    with pytest.raises(_EngineError):
+        path.open("xb")
+
+
+@pytest.mark.parametrize("mode", ("ab", "r+b"))
+def test_staging_a_symlink_to_a_directory_stops_after_the_headers(mode):
+    container = _Counting()
+    container.archives["/link"] = _tar_entries([("link", tarfile.SYMTYPE, None, "/")])
+    entries = (("d", None),) + tuple((f"d/f{n}", b"\0" * 65536) for n in range(512))
+    container.serve("/", _tar(entries))
+    path = PosixContainerPath("/link", backend=ContainerPathBackend(container))
+
+    with pytest.raises(IsADirectoryError):
+        path.open(mode)
+
+    assert container.pulled < 1024 * 1024
+
+
+def test_exists_is_a_boolean_and_only_absence_is_false():
+    container = _Container()
+    container.archives["/here"] = _tar((("here", b"x"),))
+    backend = ContainerPathBackend(container)
+
+    assert backend.exists("/here") is True
+    assert backend.exists("/gone") is False
+
+    def broken(path):
+        raise _EngineError(500)
+
+    container.get_archive = broken
+    with pytest.raises(_EngineError):
+        backend.exists("/here")
+
+
+def test_a_refused_write_carries_errno_and_filename():
+    container = _Container()
+
+    def refuse(path, data):
+        raise _EngineError(403)
+
+    container.put_archive = refuse
+
+    with pytest.raises(PermissionError) as raised:
+        ContainerPathBackend(container).write_bytes("/ro/f", b"x")
+
+    assert raised.value.errno == 13
+    assert raised.value.filename == "/ro/f"
+
+
+def test_a_missing_parent_names_the_parent():
+    container = _Container()
+
+    def missing(path, data):
+        raise _EngineError(404)
+
+    container.put_archive = missing
+
+    with pytest.raises(FileNotFoundError) as raised:
+        ContainerPathBackend(container).write_bytes("/nodir/f", b"x")
+
+    assert raised.value.filename == "/nodir"
