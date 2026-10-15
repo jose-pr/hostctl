@@ -742,3 +742,54 @@ def test_a_missing_parent_names_the_parent():
         ContainerPathBackend(container).write_bytes("/nodir/f", b"x")
 
     assert raised.value.filename == "/nodir"
+
+
+def test_a_windows_backend_follows_links_with_windows_syntax():
+    container = _Container()
+    calls = []
+    answers = {
+        "C:\\app\\current": {"linkTarget": "releases\\v2"},
+        "C:\\app\\releases\\v2": {"linkTarget": "..\\shared\\v2"},
+        "C:\\app\\releases\\..\\shared\\v2": {
+            "name": "v2",
+            "size": 3,
+            "mode": 0o644,
+            "mtime": "0",
+        },
+    }
+
+    def get_archive(path):
+        calls.append(path)
+        return iter(()), answers[path]
+
+    container.get_archive = get_archive
+
+    result = ContainerPathBackend(container, path_flavor="windows").stat(
+        "C:\\app\\current"
+    )
+
+    assert result.st_size == 3
+    assert calls == list(answers)
+
+
+def test_a_path_obtained_before_close_refuses_and_makes_no_request():
+    container = _Container()
+    container.archives["/etc/hostname"] = _tar((("hostname", b"vm\n"),))
+    backend = ContainerPathBackend(container)
+    path = PosixContainerPath("/etc/hostname", backend=backend)
+    assert path.read_bytes() == b"vm\n"
+    requests = []
+    original = container.get_archive
+    container.get_archive = lambda p: requests.append(p) or original(p)
+
+    backend.invalidate()
+
+    for operation in (
+        path.read_bytes,
+        path.stat,
+        lambda: backend.write_bytes("/etc/hostname", b"x"),
+    ):
+        with pytest.raises(ValueError, match="closed"):
+            operation()
+    assert requests == []
+    assert container.puts == []

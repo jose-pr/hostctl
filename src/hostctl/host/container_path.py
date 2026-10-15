@@ -259,6 +259,16 @@ class ContainerPathBackend:
     ) -> None:
         self.container = container
         self.path_flavor = path_flavor
+        self._closed = False
+
+    def invalidate(self) -> None:
+        """Refuse further work: the host that owned this backend is closed."""
+        self._closed = True
+
+    def _engine(self) -> ContainerArchiveClient:
+        if self._closed:
+            raise ValueError("the container host that owns this path is closed")
+        return self.container
 
     def stat(self, path: str, *, follow_symlinks: bool = True) -> FileStat:
         # Docker returns a compact stat mapping alongside get_archive().  Use
@@ -266,7 +276,7 @@ class ContainerPathBackend:
         # available; this is also the only portable way to follow symlinks.
         stream = None
         try:
-            stream, metadata = self.container.get_archive(path)
+            stream, metadata = self._engine().get_archive(path)
             if metadata:
                 value = self._metadata_stat(metadata)
                 link_target = metadata.get("linkTarget")
@@ -318,7 +328,7 @@ class ContainerPathBackend:
         # symlink loops while retaining Docker's relative-link semantics.
         current = path
         for _ in range(hops):
-            stream, metadata = self.container.get_archive(current)
+            stream, metadata = self._engine().get_archive(current)
             try:
                 if metadata:
                     link_target = metadata.get("linkTarget")
@@ -345,7 +355,7 @@ class ContainerPathBackend:
         self, path: str, *, hops: int = 8
     ) -> typing.List[typing.Tuple[str, FileStat]]:
         try:
-            stream, _ = self.container.get_archive(path)
+            stream, _ = self._engine().get_archive(path)
             reader = _ChunkReader(stream)
             archive = tarfile.open(fileobj=reader, mode="r|*")
         except Exception as exc:
@@ -427,7 +437,7 @@ class ContainerPathBackend:
         first header is pulled from the engine.
         """
         try:
-            stream, _ = self.container.get_archive(path)
+            stream, _ = self._engine().get_archive(path)
             reader = _ChunkReader(stream)
             try:
                 archive = tarfile.open(fileobj=reader, mode="r|*")
@@ -494,7 +504,7 @@ class ContainerPathBackend:
         """Return the raw stored target of a symlink member."""
         stream = None
         try:
-            stream, metadata = self.container.get_archive(path)
+            stream, metadata = self._engine().get_archive(path)
             if metadata:
                 link_target = metadata.get("linkTarget")
                 if link_target:
@@ -548,7 +558,7 @@ class ContainerPathBackend:
             member.mtime = int(datetime.datetime.now().timestamp())
             archive.addfile(member)
         try:
-            accepted = self.container.put_archive(parent, payload.getvalue())
+            accepted = self._engine().put_archive(parent, payload.getvalue())
         except Exception as exc:
             mapped = _put_archive_error(exc, parent, path)
             if mapped is not None:
@@ -587,7 +597,7 @@ class ContainerPathBackend:
         with tarfile.open(fileobj=payload, mode="w") as archive:
             archive.addfile(member, io.BytesIO(value))
         try:
-            accepted = self.container.put_archive(parent, payload.getvalue())
+            accepted = self._engine().put_archive(parent, payload.getvalue())
         except Exception as exc:
             mapped = _put_archive_error(exc, parent, path)
             if mapped is not None:

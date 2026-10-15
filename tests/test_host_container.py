@@ -288,3 +288,34 @@ def test_spawn_dispatches_through_the_provider_like_run_does():
     host.spawn("echo hi")
 
     assert connects == [True]
+
+
+def test_a_path_taken_before_host_close_refuses_and_never_touches_the_client():
+    import tarfile
+
+    requests = []
+
+    class Engine(_Container):
+        def get_archive(self, path):
+            requests.append(path)
+            payload = io.BytesIO()
+            with tarfile.open(fileobj=payload, mode="w") as archive:
+                member = tarfile.TarInfo("hostname")
+                member.size = 3
+                archive.addfile(member, io.BytesIO(b"vm\n"))
+            return iter([payload.getvalue()]), {}
+
+    container = Engine()
+    client = _Client(container)
+    host = ContainerHost(ContainerConfig("web", client_factory=lambda **_: client))
+    path = host.path("/etc/hostname")
+    assert path.read_bytes() == b"vm\n"
+    # One backend serves every path, so close() reaches all of them.
+    assert host.path("/etc/other").backend is path.backend
+
+    host.close()
+    before = len(requests)
+
+    with pytest.raises(ValueError, match="closed"):
+        path.read_bytes()
+    assert len(requests) == before

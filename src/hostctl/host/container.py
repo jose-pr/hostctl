@@ -221,6 +221,9 @@ class ContainerHost(Host):
         self.config = config
         self._client: typing.Optional[object] = None
         self._container: typing.Optional[ContainerLike] = None
+        #: The one archive backend handed to every path, so `close()` can
+        #: refuse the paths already out.
+        self._path_backend: typing.Optional[ContainerPathBackend] = None
         self._attrs: typing.Optional[typing.Mapping[str, object]] = None
         self._executor = ContainerExecutor(
             lambda: self.container,
@@ -341,6 +344,11 @@ class ContainerHost(Host):
         _ = self.container
 
     def _close_client(self) -> None:
+        backend, self._path_backend = self._path_backend, None
+        if backend is not None:
+            # docker-py reopens a closed client on the next request, so a path
+            # obtained earlier would otherwise quietly leak a new connection.
+            backend.invalidate()
         self._container = None
         self._attrs = None
         if self._client is not None:
@@ -414,10 +422,17 @@ class ContainerHost(Host):
                 typing.cast(PathnameConstructor, selection), PureWindowsPath
             )
         )
-        path_backend = ContainerPathBackend(
-            self.container,
-            path_flavor=("windows" if windows else "posix"),
-        )
+        container = self.container
+        flavour = "windows" if windows else "posix"
+        path_backend = self._path_backend
+        if (
+            path_backend is None
+            or path_backend.container is not container
+            or path_backend.path_flavor != flavour
+        ):
+            path_backend = self._path_backend = ContainerPathBackend(
+                container, path_flavor=flavour
+            )
         if windows:
             values = segments or ("C:\\",)
             return WindowsContainerPath(*values, backend=path_backend)
