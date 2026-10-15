@@ -33,8 +33,14 @@ from ..process import Process, TerminalRequest
 _Result = typing.TypeVar("_Result", covariant=True)
 _ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-if typing.TYPE_CHECKING:
-    from ..host._common import Host
+
+class _CommandHost(typing.Protocol):
+    """What `Shell` needs of a host: something it can hand commands to.
+
+    Structural, because `shell` must not import `host` at runtime.
+    """
+
+    def run(self, *cmds: typing.Any, **options: typing.Any) -> typing.Any: ...
 
 
 class ShellTarget(str, enum.Enum):
@@ -513,7 +519,7 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
     def __init__(
         self,
         flavour: ShellFlavour,
-        executor: typing.Union[Executor[_Result], Host],
+        executor: typing.Union[Executor[_Result], _CommandHost],
         *,
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,

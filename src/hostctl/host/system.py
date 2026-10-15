@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import subprocess
 import threading
 import typing
 from urllib.parse import unquote, quote, urlencode
@@ -20,9 +21,13 @@ from ..provider import (
 )
 from ..shell import POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ._common import (
+    CaptureOutput,
+    Environment,
+    FileHandle,
     Host,
     HostConfig,
     HostInfo,
+    Input,
     PathLike,
     Command,
     starts_direct_command,
@@ -35,7 +40,9 @@ log = logging.getLogger("hostctl.host.system")
 _SYSTEM_PROVIDER_RESOLVERS = {}
 
 
-def register_system_provider(name: str, resolver) -> None:
+def register_system_provider(
+    name: str, resolver: typing.Callable[..., typing.Any]
+) -> None:
     """Register a provider descriptor resolver for :class:`SystemConfig`."""
     key = str(name).casefold().strip()
     if not key or not callable(resolver):
@@ -807,21 +814,21 @@ class SystemHost(Host):
     def run(
         self,
         *cmds: Command,
-        bufsize=-1,
-        executable=None,
-        stdin=None,
-        stdout=None,
-        stderr=None,
-        cwd=None,
-        env=None,
-        capture_output=True,
-        check=True,
-        encoding=None,
-        errors=None,
-        input=None,
-        timeout=None,
-        text=None,
-    ):
+        bufsize: int = -1,
+        executable: typing.Optional[str] = None,
+        stdin: typing.Optional[FileHandle] = None,
+        stdout: typing.Optional[FileHandle] = None,
+        stderr: typing.Optional[FileHandle] = None,
+        cwd: typing.Optional[PathLike] = None,
+        env: typing.Optional[Environment] = None,
+        capture_output: CaptureOutput = True,
+        check: bool = True,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
+        input: Input = None,
+        timeout: typing.Optional[float] = None,
+        text: typing.Optional[bool] = None,
+    ) -> subprocess.CompletedProcess:
         if not self._executor_selector.providers:
             raise NotImplementedError(
                 f"{type(self).__name__} does not provide the 'run' capability"
@@ -1097,7 +1104,7 @@ class PosixHost(SystemHost):
     default_shell = POSIX_SHELL
 
     @classmethod
-    def from_ssh(cls, config):
+    def from_ssh(cls, config: HostConfig) -> PosixHost:
         """Compose POSIX semantics over an existing :class:`SshConfig`."""
         host = config._create_host()
         if not isinstance(host, cls):
@@ -1118,7 +1125,7 @@ class WindowsHost(SystemHost):
     default_shell = POWERSHELL
 
     @classmethod
-    def from_winrm(cls, config):
+    def from_winrm(cls, config: HostConfig) -> WindowsHost:
         """Compose Windows semantics over an existing :class:`WinRMConfig`."""
         host = config._create_host()
         if not isinstance(host, cls):

@@ -65,6 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   use `HOSTCTL_PASSWORD`.
 - `hostctl --version`, and `-v`/`-q`/`--loglevel` on every subcommand.
 
+### Fixed
+
+- `typing.get_type_hints()` works on every public function and method on
+  Python 3.9 (18 raised there, 7 on 3.14), and `SystemHost.run` carries the
+  same annotations as `Host.run`.
+
 ## [0.3.2] - 2026-09-23
 
 ### Fixed

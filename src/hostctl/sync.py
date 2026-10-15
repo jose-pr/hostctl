@@ -10,9 +10,7 @@ import typing
 
 from pathapi.sync import PathAndStat
 
-if typing.TYPE_CHECKING:
-    from .host import Host
-
+from .host import Host
 
 _REMOTE_ALGORITHMS = frozenset(("md5", "sha1", "sha256", "sha384", "sha512"))
 _HEX_DIGEST = re.compile(r"^[0-9a-fA-F]+$")

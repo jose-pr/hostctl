@@ -32,10 +32,12 @@ from ..executor import (
     reject_stdin_conflict as reject_stdin_conflict,
 )
 
-if _ty.TYPE_CHECKING:
-    from ..executor import Executor
-    from ..process import Process, TerminalRequest
-    from ..shell import Shell, ShellFlavour
+# Runtime imports: `typing.get_type_hints` resolves the public annotations
+# against this module's globals. `executor`, `process` and `shell` never
+# import `host`, so there is no cycle.
+from ..executor import Executor
+from ..process import Process, TerminalRequest
+from ..shell import Shell, ShellFlavour
 
 from ..shell._grammar import (  # noqa: F401  (re-exported below)
     Command as Command,

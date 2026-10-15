@@ -41,7 +41,7 @@ class OperationNotStarted(RuntimeError):
         self,
         reason: str = "operation was not started",
         *,
-        cause: Exception | None = None,
+        cause: typing.Optional[Exception] = None,
     ):
         super().__init__(reason)
         self.reason = reason
@@ -85,7 +85,7 @@ class SessionInitializer:
     """Optional post-connect bootstrap hook receiving the connected system host."""
 
     initialize: typing.Callable[..., object]
-    timeout: float | None = None
+    timeout: typing.Optional[float] = None
 
     def __call__(self, host, **options):
         """Run the hook, passing `timeout` only to a hook that accepts it.
@@ -453,7 +453,7 @@ class ProviderSelector:
     def select(
         self,
         *,
-        capability: str | None = None,
+        capability: typing.Optional[str] = None,
         exclude: typing.Iterable[str] = (),
         policy: str = "ordered",
         pin: bool = False,

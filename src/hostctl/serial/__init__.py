@@ -25,14 +25,16 @@ class SerialConsoleProtocol(typing.Protocol):
 
     def negotiate(self, process: SerialProcess) -> None: ...
 
-    def send(self, process: SerialProcess, command: str | bytes) -> None: ...
+    def send(
+        self, process: SerialProcess, command: typing.Union[str, bytes]
+    ) -> None: ...
 
     def run(
         self,
         process: SerialProcess,
-        command: str | bytes,
+        command: typing.Union[str, bytes],
         *,
-        timeout: float | None = None,
+        timeout: typing.Optional[float] = None,
     ) -> tuple[bytes, int]: ...
 
 
@@ -44,8 +46,8 @@ class ConsoleProtocolError(ConnectionError):
 class LoginStep:
     """One bounded expect/send step used by :class:`PromptConsoleProfile`."""
 
-    expect: bytes | str
-    send: bytes | str
+    expect: typing.Union[bytes, str]
+    send: typing.Union[bytes, str]
     secret: bool = False
 
     def __post_init__(self) -> None:
@@ -74,7 +76,7 @@ class RawConsoleProfile:
     def negotiate(self, process: SerialProcess) -> None:
         return None
 
-    def send(self, process: SerialProcess, command: str | bytes) -> None:
+    def send(self, process: SerialProcess, command: typing.Union[str, bytes]) -> None:
         data = (
             command.encode(self.encoding)
             if isinstance(command, str)
@@ -82,7 +84,9 @@ class RawConsoleProfile:
         )
         process.write(data + self.line_terminator)
 
-    def run(self, process: SerialProcess, command: str | bytes, *, timeout=None):
+    def run(
+        self, process: SerialProcess, command: typing.Union[str, bytes], *, timeout=None
+    ):
         raise NotImplementedError("raw serial consoles do not provide framed run()")
 
 
@@ -96,23 +100,30 @@ class PromptConsoleProfile:
 
     def __init__(
         self,
-        prompt: bytes | str,
+        prompt: typing.Union[bytes, str],
         *,
-        login: typing.Iterable[LoginStep | tuple[bytes | str, bytes | str]] = (),
-        line_terminator: bytes | str = b"\r\n",
-        error_patterns: typing.Iterable[bytes | str] = (),
-        status_marker: bytes | str | None = None,
+        login: typing.Iterable[
+            typing.Union[
+                LoginStep,
+                typing.Tuple[typing.Union[bytes, str], typing.Union[bytes, str]],
+            ]
+        ] = (),
+        line_terminator: typing.Union[bytes, str] = b"\r\n",
+        error_patterns: typing.Iterable[typing.Union[bytes, str]] = (),
+        status_marker: typing.Optional[typing.Union[bytes, str]] = None,
         reliable_status: bool = False,
         max_buffer: int = 64 * 1024,
         read_size: int = 4096,
         wakeup: bytes = b"\r",
         echo: bool = True,
-        paging_prompt: bytes | str | None = None,
-        paging_continue: bytes | str = b" ",
-        paging_disable: bytes | str | None = None,
+        paging_prompt: typing.Optional[typing.Union[bytes, str]] = None,
+        paging_continue: typing.Union[bytes, str] = b" ",
+        paging_disable: typing.Optional[typing.Union[bytes, str]] = None,
         max_paging_pages: int = 32,
-        terminal_setup: typing.Callable[[SerialProcess, int, int], None] | None = None,
-        status_parser: typing.Callable[[re.Match[bytes]], int] | None = None,
+        terminal_setup: typing.Optional[
+            typing.Callable[[SerialProcess, int, int], None]
+        ] = None,
+        status_parser: typing.Optional[typing.Callable[[re.Match[bytes]], int]] = None,
     ) -> None:
         self._prompt = self._compile(prompt)
         self.login = tuple(
@@ -334,7 +345,7 @@ class PromptConsoleProfile:
             raise ValueError("terminal columns and rows must be positive")
         self.terminal_setup(process, columns, rows)
 
-    def send(self, process: SerialProcess, command: str | bytes) -> None:
+    def send(self, process: SerialProcess, command: typing.Union[str, bytes]) -> None:
         data = (
             command.encode(self.encoding)
             if isinstance(command, str)
@@ -342,7 +353,9 @@ class PromptConsoleProfile:
         )
         process.write(data + self.line_terminator)
 
-    def run(self, process: SerialProcess, command: str | bytes, *, timeout=None):
+    def run(
+        self, process: SerialProcess, command: typing.Union[str, bytes], *, timeout=None
+    ):
         """One framed exchange, in its own window.
 
         The window starts after this command is echoed back and ends at the

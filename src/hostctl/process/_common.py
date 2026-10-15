@@ -22,9 +22,6 @@ class IncrementalTextDecoder:
         return self._decoder.decode(data, final=final)
 
 
-TerminalRequest = typing.Optional[typing.Union[bool, "TerminalOptions"]]
-
-
 @dataclasses.dataclass(frozen=True)
 class TerminalOptions:
     """Requested pseudo-terminal type and initial dimensions."""
@@ -51,6 +48,9 @@ class TerminalOptions:
             self.pixel_width,
             self.pixel_height,
         )
+
+
+TerminalRequest = typing.Optional[typing.Union[bool, TerminalOptions]]
 
 
 def terminal_options(value: TerminalRequest) -> typing.Optional[TerminalOptions]:
