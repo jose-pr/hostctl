@@ -15,10 +15,14 @@ from ._common import (
     ShellOperator,
     ShellTarget,
     ShellToken,
+    login_join,
     program_target,
 )
 from ._grammar import Cmdlet, PSParam
-from .cmd import _batch_token
+from .cmd import _batch_token, _echo_argument
+
+#: Keeps progress records off stderr; a script that sets it itself still wins.
+_PRELUDE = "$ProgressPreference='SilentlyContinue'"
 
 
 def _literal(value: object) -> str:
@@ -293,6 +297,8 @@ class PowerShellFlavour(ShellFlavour):
             f"Set-Location -LiteralPath {_literal(self._text(cwd))} -ErrorAction Stop"
         )
 
+    accepts_script_stdin = True
+
     def command(
         self,
         cmds: typing.Iterable[ShellToken],
@@ -301,25 +307,43 @@ class PowerShellFlavour(ShellFlavour):
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
         login_shell: typing.Optional[str] = None,
+        stdin_free: bool = False,
     ) -> ShellCommand:
-        script = self.script(cmds, cwd=cwd, env=env)
-        # `-EncodedCommand`, not `-Command`: this string is submitted to an
-        # SSH exec channel, where the REMOTE login shell parses it first --
-        # and Windows OpenSSH's default shell is cmd.exe. The previous
-        # spelling escaped with `subprocess.list2cmdline`, which implements
-        # the CreateProcess rule and escapes nothing for a shell: measured
-        # against a real outer cmd.exe, all 7 adversarial values failed, one
-        # of them by running injected text. Base64 of UTF-16LE is inert under
-        # cmd.exe, PowerShell and a POSIX login shell alike, which is the
-        # same reason `NativeWinRMSession._wrapper()` uses it.
+        program = executable or self.default_executable
+        options = (program, "-NoProfile", "-NonInteractive")
+        body = self.script(cmds, cwd=cwd, env=env, epilogue=False)
+        # The epilogue starts with a newline so a trailing `#` comment cannot
+        # swallow it; joined with `;` it is only safe on a body that has none.
+        epilogue = self.execution_epilogue
+        script = _PRELUDE + (";" + body if body else "") + epilogue
+        one_line = not (set(body) & {"\r", "\n", "#"})
+        if login_shell == "posix":
+            # The portable join keeps the newline: nothing here crosses cmd.
+            return ShellCommand(login_join((*options, "-Command", script)), None)
+        if login_shell == "cmd" and one_line:
+            # `-Command` is plain-text stderr and, unlike a long
+            # `-EncodedCommand`, is not refused by endpoint protection. A
+            # newline cannot cross `cmd.exe /c`, hence the one-line rule.
+            joined = _PRELUDE + (";" + body if body else "") + ";"
+            joined += epilogue.lstrip("\n")
+            line = subprocess.list2cmdline((*options, "-Command", joined))
+            return ShellCommand(_echo_argument(line), None)
+        no_newline_body = not (set(body) & {"\r", "\n"})
+        if stdin_free and no_newline_body:
+            # The script rides on standard input: nothing in the command line
+            # for a login shell to parse or endpoint protection to flag. A
+            # multi-line construct is not safe here -- measured, PowerShell
+            # reads stdin line by line and drops a block that is not followed
+            # by a blank line -- so only a one-line body takes this route.
+            line = subprocess.list2cmdline((*options, "-Command", "-"))
+            if login_shell == "cmd":
+                line = _echo_argument(line)
+            return ShellCommand(line, None, stdin=script + "\n")
+        # Last resort: `-EncodedCommand` is inert under cmd.exe, PowerShell
+        # and a POSIX login shell alike, but it writes CLIXML to stderr and
+        # endpoint protection flags it.
         payload = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
-        command = (
-            executable or self.default_executable,
-            "-NoProfile",
-            "-NonInteractive",
-            "-EncodedCommand",
-            payload,
-        )
+        command = (*options, "-EncodedCommand", payload)
         return ShellCommand(subprocess.list2cmdline(command), None)
 
     def invocation(

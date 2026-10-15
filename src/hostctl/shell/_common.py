@@ -195,6 +195,9 @@ class ShellCommand:
 
     command: str
     environment: typing.Optional[Environment]
+    #: Text the transport must send on the command's standard input, for a
+    #: flavour that delivers its script that way (`accepts_script_stdin`).
+    stdin: typing.Optional[str] = None
 
 
 class ShellSession(Process):
@@ -336,6 +339,9 @@ class ShellFlavour(abc.ABC):
     #: a flavour that says False must render with `command()` and submit the
     #: result as a command line (`executor.CommandLine`).
     argv_invocation: typing.ClassVar[bool] = True
+    #: Whether `command()` accepts `stdin_free=True` and may then return a
+    #: `ShellCommand` whose script travels on standard input.
+    accepts_script_stdin: typing.ClassVar[bool] = False
 
     @staticmethod
     def _text(value: object) -> str:
@@ -606,9 +612,10 @@ class ShellFlavour(abc.ABC):
         * POSIX and fish join the invocation with `login_join`, which sh,
           bash, zsh, dash, ash and fish read back identically; `cwd` is part
           of the script. csh and tcsh are not supported.
-        * PowerShell renders `-EncodedCommand <base64 utf-16le>`, which is
-          inert under cmd.exe (Windows OpenSSH's default shell), PowerShell
-          and a POSIX shell alike.
+        * PowerShell renders `-Command` for a `cmd` or POSIX login shell,
+          the script on standard input (`ShellCommand.stdin`) when it
+          cannot cross cmd.exe as an argument and the call leaves stdin
+          free, and `-EncodedCommand <base64 utf-16le>` as the last resort.
         * `cmd` escapes exactly one cmd layer and, for `login_shell="cmd"`,
           one more for the login shell's own parse -- see the divergence
           ledger in `docs/guide/contracts.md`.

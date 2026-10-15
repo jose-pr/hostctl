@@ -16,19 +16,23 @@ def render_command(
     cwd: typing.Optional[PathLike] = None,
     env: typing.Optional[Environment] = None,
     login_shell: typing.Optional[str] = None,
+    stdin_free: bool = False,
 ) -> ShellCommand:
     """`flavour.command()` for a line a login shell parses before it runs.
 
     A transport that delivers a command string to a login shell (SSH does;
     `CreateProcess` does not) passes `login_shell`, the name of what parses
     it on arrival. The keyword is left off when there is none, so a flavour
-    written before it existed keeps working for local use.
+    written before it existed keeps working for local use. `stdin_free` says
+    the call sends no input of its own, so a flavour that can deliver its
+    script on standard input may (see `ShellCommand.stdin`).
     """
-    if login_shell is None:
-        return flavour.command(cmds, executable=executable, cwd=cwd, env=env)
-    return flavour.command(
-        cmds, executable=executable, cwd=cwd, env=env, login_shell=login_shell
-    )
+    options: typing.Dict[str, object] = {}
+    if login_shell is not None:
+        options["login_shell"] = login_shell
+    if stdin_free and flavour.accepts_script_stdin:
+        options["stdin_free"] = True
+    return flavour.command(cmds, executable=executable, cwd=cwd, env=env, **options)
 
 
 def shell_invocation(

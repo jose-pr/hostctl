@@ -6,8 +6,10 @@ import asyncio
 import io
 import inspect
 import os
+import re
 import subprocess
 import typing
+import xml.etree.ElementTree as ElementTree
 
 from ._common import (
     CaptureOutput,
@@ -96,6 +98,36 @@ async def _closed_within(process: object, seconds: float) -> bool:
     except Exception:
         return False
     return True
+
+
+_CLIXML_ESCAPE = re.compile(r"_x([0-9A-Fa-f]{4})_")
+
+
+def _clixml_text(
+    value: typing.Optional[typing.Union[str, bytes]],
+) -> typing.Optional[typing.Union[str, bytes]]:
+    """Decode the error text of a PowerShell CLIXML stderr; else return it as is.
+
+    `powershell -EncodedCommand` writes `#< CLIXML` plus XML records to
+    stderr; the `S="Error"` strings are the message, with line breaks escaped
+    as `_x000D__x000A_`. Anything that does not parse is left alone.
+    """
+    if not value:
+        return value
+    text = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+    if not text.startswith("#< CLIXML"):
+        return value
+    try:
+        root = ElementTree.fromstring(text.split("\n", 1)[1])
+        pieces = [
+            element.text or ""
+            for element in root.iter()
+            if element.tag.rpartition("}")[2] == "S" and element.get("S") == "Error"
+        ]
+    except (ElementTree.ParseError, IndexError):
+        return value
+    decoded = _CLIXML_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), "".join(pieces))
+    return decoded.encode("utf-8") if isinstance(value, bytes) else decoded
 
 
 class SshExecutor(Executor[subprocess.CompletedProcess]):
@@ -247,7 +279,9 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             raise normalized from exc
 
         result_stdout = result.stdout
-        result_stderr = None if stderr_target == subprocess.STDOUT else result.stderr
+        result_stderr = (
+            None if stderr_target == subprocess.STDOUT else _clixml_text(result.stderr)
+        )
         result_stdout, result_stderr = dispatch_output(
             stdout_target,
             stderr_target,

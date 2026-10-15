@@ -998,19 +998,24 @@ class SystemHost(Host):
         an out-of-band environment for providers that cannot embed one, and
         it is the only path that needs the login-shell layer.
         """
+        login_shell = getattr(provider, "login_shell", None)
         rendered = render_command(
             flavour,
             cmds,
             executable=executable,
             cwd=context.cwd,
             env=context.env,
-            login_shell=getattr(provider, "login_shell", None),
+            login_shell=login_shell,
+            # Only a transport that parses with a login shell reads a script
+            # from standard input, and only when the call sends none itself.
+            stdin_free=login_shell is not None
+            and options.get("input") is None
+            and options.get("stdin") is None,
         )
-        return (
-            rendered.command,
-            (),
-            self._out_of_band_env(provider, rendered, options),
-        )
+        options = self._out_of_band_env(provider, rendered, options)
+        if rendered.stdin is not None:
+            options["input"] = rendered.stdin
+        return rendered.command, (), options
 
     def _run_with_provider(self, provider, cmds, **kwargs):
         self._ensure_provider_connected(provider)

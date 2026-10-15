@@ -511,6 +511,14 @@ options. Neither leg reads an ssh_config: both receive `config=None`, so an
 alias, `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in
 `~/.ssh/config` is ignored; pass the host, key and known_hosts explicitly.
 Both legs therefore reach the same server and verify its key the same way.
+PowerShell over SSH: `PowerShellFlavour.command(..., login_shell=, stdin_free=)`
+renders `-Command SCRIPT` for a `cmd` login shell (one-line script, escaped for
+the extra parse) and a POSIX one (always); a script with a `#` goes on the
+channel's stdin (`-Command -`, `ShellCommand.stdin`) when `stdin_free`, which
+`SystemHost` sets only for a login-shell provider whose call has no `input=`/
+`stdin=`; a multi-line script or taken stdin falls back to `-EncodedCommand`
+(CLIXML stderr, decoded by `SshExecutor` for `run()`; endpoint protection flags
+it). Every form starts with `$ProgressPreference='SilentlyContinue'`.
 A timed-out `SshProcess.wait()` keeps the output it drained for `read()`;
 the exception carries a copy.
 `host` and `username` are refused where OpenSSH would refuse them (a leading

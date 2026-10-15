@@ -323,8 +323,18 @@ quote are written outside the quotes.
 `auto` reads the dialect: a Windows path flavour means the stock `cmd.exe`.
 The server's shell is configurable (`HKLM\SOFTWARE\OpenSSH\DefaultShell`),
 so name it explicitly when it has been changed -- guessing is wrong in both
-directions. The PowerShell dialect needs nothing either way: its
-`-EncodedCommand` is inert under any login shell.
+directions.
+
+The PowerShell dialect picks how its script travels by what parses it. Under a
+`cmd` login shell a one-line script goes as `-Command SCRIPT`, escaped for that
+parse; under a POSIX login shell `-Command` always. A script that cannot cross
+`cmd.exe /c` as an argument (it carries a `#` comment, which the status
+epilogue must not follow on the same line) is sent on the channel's standard
+input (`-Command -`) when the call passes no `input=`/`stdin=` of its own. Only
+a multi-line script, or one whose stdin is taken, falls back to
+`-EncodedCommand`: it is inert under any parser, but it writes CLIXML to
+stderr, endpoint protection flags it, and `run()` decodes that stderr back to
+text (a spawned process's stderr stays CLIXML).
 
 ## What a rendered command may contain
 

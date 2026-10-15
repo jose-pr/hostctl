@@ -510,6 +510,9 @@ def _decoded_powershell(command):
     text = str(command)
     marker = "-EncodedCommand "
     if marker not in text:
+        if " -Command " in text:
+            # Delivered to a POSIX login shell: the script is the last word.
+            return shlex.split(text)[-1]
         return text
     payload = text.split(marker, 1)[1].split()[0]
     return base64.b64decode(payload).decode("utf-16-le")

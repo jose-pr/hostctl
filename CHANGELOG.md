@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   so an alias reached the server through `run()` and failed through `path()`.
   Neither leg reads one now; pass the host, key, known_hosts file or proxy
   you took from it to `SshConfig`.
+- The PowerShell dialect over SSH sends `-Command` where the login shell
+  allows it, a script with a `#` comment on the channel's stdin when the call
+  has no input of its own, and `-EncodedCommand` only as the last resort.
+  `ShellCommand` gains an optional `stdin`.
 - **Breaking, 0.4.0**: `ShellFlavour.command()` takes `login_shell=None`; a
   custom flavour must accept it to be used over SSH. The POSIX `command()`
   puts `cwd` inside the script instead of a leading `cd ... &&`, and joins
@@ -220,6 +224,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `<redacted>`; the value still reaches the remote command line. fish
   `set -gx` and quoted values containing `'` are also redacted in raw
   command text.
+- PowerShell-dialect stderr over SSH is text, not CLIXML, and a long
+  PowerShell script is no longer refused by endpoint protection that flags
+  `-EncodedCommand`.
 - `SshProcess.wait(timeout=)` no longer loses output that arrived before the
   timeout; `read()` returns it afterwards.
 - An SSH host or username that OpenSSH would refuse now raises `ValueError`
