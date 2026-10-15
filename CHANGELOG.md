@@ -159,6 +159,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `ConnectionError` instead of returning its status, so `check=False` could
   not inspect it; a command printing about 20,000 lines hit the deadline
   because the relay was quadratic.
+- `host.executor(program, *args)` on a composed or local host raised
+  `NameError`; both executor wrappers are now one class.
 
 ## [0.3.2] - 2026-09-23
 

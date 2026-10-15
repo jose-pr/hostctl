@@ -26,6 +26,7 @@ from ._common import (
     FileHandle,
     Host,
     HostConfig,
+    _HostExecutor,
     HostInfo,
     Input,
     PathLike,
@@ -498,21 +499,7 @@ class SystemHost(Host):
         """
         selected = self._executor_selector.select()
         provider = selected.provider
-        host = self
-
-        class _ProviderExecutor:
-            executor_capabilities = frozenset(provider.capabilities)
-            name = provider.name
-
-            def __call__(self, command, *args, **options):
-                if args:
-                    return host.run(Exec(command, *args), **options)
-                return host.run(command, **options)
-
-            def __getattr__(self, attribute):
-                return getattr(provider, attribute)
-
-        return _ProviderExecutor()
+        return _HostExecutor(self, frozenset(provider.capabilities), provider)
 
     def connect(self):
         with self._lifecycle_lock:

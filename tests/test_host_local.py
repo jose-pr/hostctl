@@ -255,3 +255,9 @@ def test_an_unsupported_local_os_still_builds_a_host(monkeypatch):
     assert host.info().os_family is not None or True
     with pytest.raises(NotImplementedError, match="unsupported local OS"):
         host.shell_flavour
+
+
+def test_the_local_hosts_executor_runs_a_program_with_argv():
+    result = LocalHost().executor(sys.executable, "-c", "print(1)")
+
+    assert result.returncode == 0

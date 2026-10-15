@@ -103,3 +103,65 @@ def test_the_command_grammar_does_not_depend_on_host_orchestration():
             runtime.append((module.name, node.module, node.lineno))
 
     assert runtime == [], runtime
+
+
+#: Compiler-generated names (3.14 annotation scopes) no source line spells.
+_COMPILER_NAMES = {"__conditional_annotations__"}
+_MODULE_DUNDERS = {
+    "__file__",
+    "__name__",
+    "__doc__",
+    "__spec__",
+    "__path__",
+    "__builtins__",
+    "__loader__",
+    "__package__",
+    "__annotations__",
+    "__class__",
+}
+
+
+@pytest.mark.parametrize("module", MODULES, ids=lambda p: p.name)
+def test_no_module_references_an_undefined_global(module):
+    """A name used in a function body but bound nowhere is a `NameError` that
+    fires only when that line runs; one such line broke every argv call through
+    a composed host's executor."""
+    import builtins
+    import symtable
+
+    top = symtable.symtable(module.read_text(encoding="utf-8"), str(module), "exec")
+    defined = {
+        s.get_name()
+        for s in top.get_symbols()
+        if s.is_assigned() or s.is_imported() or s.is_namespace()
+    }
+
+    def collect(table):
+        for symbol in table.get_symbols():
+            if symbol.is_declared_global() and symbol.is_assigned():
+                defined.add(symbol.get_name())
+        for child in table.get_children():
+            collect(child)
+
+    collect(top)
+    allowed = set(dir(builtins)) | _MODULE_DUNDERS | _COMPILER_NAMES
+    missing = set()
+
+    def scan(table):
+        for symbol in table.get_symbols():
+            if symbol.is_referenced() and (
+                symbol.is_global()
+                or (
+                    table is top
+                    and not symbol.is_assigned()
+                    and not symbol.is_imported()
+                )
+            ):
+                name = symbol.get_name()
+                if name not in defined and name not in allowed:
+                    missing.add(name)
+        for child in table.get_children():
+            scan(child)
+
+    scan(top)
+    assert missing == set(), f"{module.name}: {sorted(missing)}"

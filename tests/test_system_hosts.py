@@ -954,3 +954,26 @@ def test_info_stops_dialling_once_it_knows_everything():
 
     assert host.info().os_name == "Linux"
     assert connected == ["primary"]
+
+
+def test_a_composed_hosts_executor_passes_argv_as_one_exec():
+    """`executor("echo", "a")` is one program plus argv, not two commands."""
+    calls = []
+
+    def fake(command, *args, **options):
+        calls.append((command, args))
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    host = PosixHost(
+        executor_providers=(ExecutorProvider("fake", fake, capabilities=("args",)),)
+    )
+    executor = host.executor
+
+    result = executor("echo", "a")
+
+    assert result.returncode == 0
+    assert calls == [("echo", ("a",))]
+    assert executor.name == "fake"
+    assert executor.executor_capabilities == frozenset({"args"})
+    with pytest.raises(AttributeError):
+        executor.no_such_attribute

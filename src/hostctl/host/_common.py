@@ -774,6 +774,39 @@ class _ConfigurableShell:
         return type(self._shell)
 
 
+class _HostExecutor:
+    """A host presented as an `Executor`: calls go through `host.run()`, so the
+    host's own rendering and failover apply.
+
+    A bare `ExecutorProvider` declares its capabilities but has no
+    `executor_capabilities`, so a `Shell` built on one would infer CWD/ENV
+    support from the callable's signature -- and infer it wrongly. This carries
+    the declared set, and the provider's name and attributes when one is given.
+    """
+
+    def __init__(self, host, capabilities, provider=None):
+        self._host = host
+        self._provider = provider
+        self.executor_capabilities = capabilities
+        if provider is not None:
+            self.name = provider.name
+
+    def __call__(self, command, *args, **options):
+        # `Executor.__call__(command, *args)` is one program plus argv.
+        # Forwarding the argv as further positionals made `host.run()` read
+        # them as SEPARATE top-level commands, so `executor("grep", "-r",
+        # "needle")` ran `grep; -r; needle`.
+        if args:
+            return self._host.run(Exec(command, *args), **options)
+        return self._host.run(command, **options)
+
+    def __getattr__(self, attribute):
+        provider = self.__dict__.get("_provider")
+        if provider is None:
+            raise AttributeError(attribute)
+        return getattr(provider, attribute)
+
+
 class Host(_abc.ABC, metaclass=_HostMeta):
     """Protocol-independent operational interface to a machine."""
 
@@ -797,21 +830,7 @@ class Host(_abc.ABC, metaclass=_HostMeta):
     @property
     def executor(self) -> Executor[_subprocess.CompletedProcess]:
         """The command executor used when binding this host's shell."""
-        host = self
-
-        class _HostExecutor:
-            executor_capabilities = host.executor_capabilities
-
-            def __call__(self, command, *args, **options):
-                # `Executor.__call__(command, *args)` is one program plus
-                # argv. Forwarding the argv as further positionals made
-                # `host.run()` read them as SEPARATE top-level commands, so
-                # `executor("grep", "-r", "needle")` ran `grep; -r; needle`.
-                if args:
-                    return host.run(Exec(command, *args), **options)
-                return host.run(command, **options)
-
-        return _HostExecutor()
+        return _HostExecutor(self, self.executor_capabilities)
 
     @property
     def executor_capabilities(self) -> _ty.FrozenSet[str]:
