@@ -8,7 +8,7 @@ current contents in memory, let the caller work on them, and upload once on
 
 One implementation for all three, because `close()` is what uploads: every
 copy must keep a failed `with` block and the garbage collector from closing
-it into a transfer, and pathapi's `DiscardOnError` is that guard.
+it into a transfer, and pathapi's `CommitOnClose` is that guard.
 """
 
 from __future__ import annotations
@@ -17,9 +17,7 @@ import io
 import stat
 import typing
 
-from pathapi.providers import DiscardOnError, is_safe_child_name, is_windows_flavoured
-
-Commit = typing.Callable[[bytes], None]
+from pathapi.providers import CommitOnClose, is_safe_child_name, is_windows_flavoured
 
 
 def copy_from(
@@ -93,72 +91,7 @@ def copy_from(
     return destination
 
 
-class StagedWriteStream(DiscardOnError, io.BytesIO):
-    """An in-memory file whose contents are uploaded once, on `close()`.
-
-    `DiscardOnError` keeps a failed `with` block, and a stream collected
-    unclosed, from uploading; pathapi's `open()` gives a text mode the same
-    guard because the stream has `discard()`.
-    """
-
-    def __init__(
-        self,
-        value: bytes,
-        commit: typing.Optional[Commit],
-        *,
-        truncated: bool = False,
-    ) -> None:
-        super().__init__(value)
-        self._commit = commit
-        # A mode that already replaced the file (`w`, `x`) is dirty from the
-        # start; `r+`/`a` are not until something writes.
-        self._dirty = truncated
-
-    def write(self, data) -> int:  # type: ignore[override]
-        self._dirty = True
-        return super().write(data)
-
-    def writelines(self, lines) -> None:  # type: ignore[override]
-        self._dirty = True
-        super().writelines(lines)
-
-    def truncate(self, size=None) -> int:  # type: ignore[override]
-        self._dirty = True
-        return super().truncate(size)
-
-    def close(self) -> None:
-        if not self.closed and self._commit is not None:
-            if not self._dirty:
-                # Nothing was written. `open("r+")` or `open("a")` used to
-                # re-upload the whole file on close -- a full transfer, a new
-                # mtime, and a clobber of whatever changed remotely in the
-                # meantime -- for a caller that only read a header.
-                self._commit = None
-                super().close()
-                return
-            value = self.getvalue()
-            commit = self._commit
-            try:
-                commit(value)
-            except BaseException:
-                # Keep the buffer AND the callback: the staged bytes are the
-                # only copy, and closing here made them unrecoverable while a
-                # retried close() returned silently having written nothing.
-                raise
-            self._commit = None
-            super().close()
-        else:
-            super().close()
-
-    def discard(self) -> None:
-        """Drop the pending upload; a later `close()` writes nothing."""
-        self._commit = None
-
-    def _holds_uncommitted(self) -> bool:
-        return self._commit is not None and self._dirty
-
-
-class StagedAppendStream(StagedWriteStream):
+class StagedAppendStream(CommitOnClose):
     """A staged stream whose writes always land at the end, as `O_APPEND` does.
 
     Seeking to the end once at open is not enough: the stream is a seekable
@@ -203,64 +136,44 @@ def staged_open(backend: object, path: str, mode: str) -> io.IOBase:
 
     A read-only mode is delegated to the backend's own `open_read()` when it
     has one, so a backend that streams ranges is not forced through a full
-    staged read.
+    staged read. A writable mode returns pathapi's `CommitOnClose`: the
+    backend's `write_bytes` runs once, on `close()`, and not at all after a
+    failed `with` block or an unwritten `r+`/`a`.
     """
     readable, writable = validate_open_mode(mode)
-    open_read = getattr(backend, "open_read", None)
-    if "r" in mode and not writable and open_read is not None:
-        return open_read(path)
+    target = typing.cast(typing.Any, backend)
+    if "r" in mode and not writable:
+        open_read = getattr(backend, "open_read", None)
+        if open_read is not None:
+            return open_read(path)
+        return io.BufferedReader(io.BytesIO(target.read_bytes(path)))
     if "x" in mode:
         # Exclusive create, checked NOW. Deferring it to the commit let the
         # caller do all its work against a stream that was never going to be
-        # written.
+        # written. Only the backend's own answer counts: a server error says
+        # nothing about the path and propagates.
         exists = getattr(backend, "exists", None)
-        present = None
-        if callable(exists):
-            try:
-                present = bool(exists(path))
-            except NotImplementedError:
-                present = None
-        if present is None:
-            # Only absence means "free". Any other failure (a server error,
-            # a permission refusal) says nothing about the path, so it
-            # propagates instead of being reported as "exists".
-            try:
-                typing.cast(typing.Any, backend).read_bytes(path)
-            except FileNotFoundError:
-                present = False
-            except IsADirectoryError:
-                present = True
-            else:
-                present = True
-        if present:
+        if not callable(exists):
+            raise NotImplementedError("exclusive open needs the backend's exists()")
+        if exists(path):
             raise FileExistsError(path)
-    if "r" in mode or "a" in mode:
-        try:
-            value = typing.cast(typing.Any, backend).read_bytes(path)
-        except FileNotFoundError:
-            # `a` creates what is missing; `r`/`r+` must still fail.
-            if "a" not in mode:
-                raise
-            value = b""
-    else:
+    exclusive = "x" in mode
+
+    def commit(buffer: io.BytesIO) -> None:
+        target.write_bytes(path, buffer.getvalue(), exclusive=exclusive)
+
+    if "w" in mode or "x" in mode:
+        # The file is replaced by opening it, so an empty write is a change.
+        return CommitOnClose(commit)
+    try:
+        value = target.read_bytes(path)
+    except FileNotFoundError:
+        # `a` creates what is missing; `r+` must still fail.
+        if "a" not in mode:
+            raise
         value = b""
-    stream_type = StagedAppendStream if "a" in mode else StagedWriteStream
-    stream = stream_type(
-        value,
-        (
-            (
-                lambda data: typing.cast(typing.Any, backend).write_bytes(
-                    path, data, exclusive="x" in mode
-                )
-            )
-            if writable
-            else None
-        ),
-        # `w` and `x` have already replaced the file's contents by opening it,
-        # so an empty write is a real change; `r+` and `a` are not dirty until
-        # the caller writes something.
-        truncated="w" in mode or "x" in mode,
-    )
     if "a" in mode:
+        stream = StagedAppendStream(commit, value)
         stream.seek(0, io.SEEK_END)
-    return stream
+        return stream
+    return CommitOnClose(commit, value)

@@ -19,7 +19,9 @@ import sys
 
 import pytest
 
-from hostctl.host._staged_io import StagedWriteStream, staged_open, validate_open_mode
+from pathapi.providers import CommitOnClose
+
+from hostctl.host._staged_io import staged_open, validate_open_mode
 from hostctl.host._winrm import WinRMPath
 from hostctl.host.container_path import PosixContainerPath
 from hostctl.host.qemu import PosixQemuPath
@@ -36,6 +38,9 @@ class _RecordingBackend:
         if self.contents is None:
             raise FileNotFoundError(path)
         return self.contents
+
+    def exists(self, path):
+        return self.contents is not None
 
     def write_bytes(self, path, value, *, exclusive=False):
         self.writes.append((path, value, exclusive))
@@ -109,7 +114,7 @@ def test_read_only_open_delegates_to_a_backend_that_streams():
 
     backend = _Streaming()
     stream = staged_open(backend, "/x", "r")
-    assert not isinstance(stream, StagedWriteStream)
+    assert not isinstance(stream, CommitOnClose)
     assert stream.read() == b"streamed"
 
     # A backend without `open_read` still gets a staged read rather than an
@@ -278,18 +283,16 @@ def test_a_read_only_use_of_r_plus_uploads_nothing():
     assert backend.writes == []
 
 
-def test_a_failed_commit_keeps_the_staged_bytes_for_a_retry():
-    """The buffer was closed in a `finally`, so after a transient transport
-    error the staged bytes were unrecoverable -- and a retried `close()`
-    returned silently having written nothing."""
+def test_a_failed_commit_closes_the_stream_and_is_not_retried():
+    """A stream left open after a failed upload was collected later and
+    uploaded again over whatever had changed remotely; the caller writes
+    again to retry."""
     attempts = []
 
     class _Flaky(_RecordingBackend):
         def write_bytes(self, path, value, *, exclusive=False):
             attempts.append(value)
-            if len(attempts) == 1:
-                raise ConnectionResetError("dropped")
-            super().write_bytes(path, value, exclusive=exclusive)
+            raise ConnectionResetError("dropped")
 
     backend = _Flaky(contents=b"")
     stream = staged_open(backend, "/x", "w")
@@ -298,9 +301,53 @@ def test_a_failed_commit_keeps_the_staged_bytes_for_a_retry():
     with pytest.raises(ConnectionResetError):
         stream.close()
 
-    assert stream.getvalue() == b"payload"
+    assert stream.closed is True
     stream.close()
-    assert backend.writes == [("/x", b"payload", False)]
+    assert attempts == [b"payload"]
+
+
+def test_w_with_no_writes_still_creates_an_empty_file():
+    backend = _RecordingBackend(contents=b"old")
+    staged_open(backend, "/x", "w").close()
+    assert backend.writes == [("/x", b"", False)]
+
+
+def test_r_plus_with_no_writes_uploads_nothing():
+    backend = _RecordingBackend(contents=b"old")
+    with staged_open(backend, "/x", "r+") as stream:
+        assert stream.read(2) == b"ol"
+    assert backend.writes == []
+
+
+def test_append_writes_land_at_the_end_after_a_seek():
+    backend = _RecordingBackend(contents=b"old")
+    with staged_open(backend, "/x", "a") as stream:
+        stream.seek(0)
+        stream.write(b"+new")
+    assert backend.writes == [("/x", b"old+new", False)]
+
+
+@pytest.mark.parametrize("mode", ["w", "r+", "a"])
+def test_a_block_that_raises_uploads_nothing(mode):
+    backend = _RecordingBackend(contents=b"old")
+    with pytest.raises(RuntimeError):
+        with staged_open(backend, "/x", mode) as stream:
+            stream.write(b"never sent")
+            raise RuntimeError("boom")
+    assert backend.writes == []
+
+
+def test_text_mode_over_a_staged_stream_commits_once():
+    path = WinRMPath(r"C:\data.txt", backend=(backend := _RecordingBackend(b"")))
+    with path.open("w") as stream:
+        stream.write("text")
+    assert backend.writes == [(r"C:\data.txt", b"text", False)]
+
+    with pytest.raises(RuntimeError):
+        with path.open("w") as stream:
+            stream.write("lost")
+            raise RuntimeError("boom")
+    assert len(backend.writes) == 1
 
 
 def test_copy_from_follows_the_stdlib_contract(tmp_path):
@@ -346,14 +393,14 @@ def test_copy_from_still_honours_an_explicit_no_overwrite(tmp_path):
         copy_from(target, source, overwrite=False)
 
 
-class _ProbeBackend:
-    """No `exists()`: `staged_open` has to decide from `read_bytes`."""
+class _ExistsBackend:
+    def __init__(self, answer):
+        self.answer = answer
 
-    def __init__(self, error):
-        self.error = error
-
-    def read_bytes(self, path):
-        raise self.error
+    def exists(self, path):
+        if isinstance(self.answer, BaseException):
+            raise self.answer
+        return self.answer
 
     def write_bytes(self, path, value, *, exclusive=False):
         raise AssertionError("nothing may be written")
@@ -364,18 +411,27 @@ def test_exclusive_open_does_not_call_a_server_error_exists():
         pass
 
     with pytest.raises(Boom):
-        staged_open(_ProbeBackend(Boom("500")), "/x", "x")
+        staged_open(_ExistsBackend(Boom("500")), "/x", "x")
 
 
 def test_exclusive_open_of_a_missing_path_proceeds():
-    stream = staged_open(_ProbeBackend(FileNotFoundError("/x")), "/x", "x")
+    stream = staged_open(_ExistsBackend(False), "/x", "x")
 
     stream.discard()
 
 
-def test_exclusive_open_of_a_directory_is_file_exists():
+def test_exclusive_open_of_an_existing_path_is_file_exists():
     with pytest.raises(FileExistsError):
-        staged_open(_ProbeBackend(IsADirectoryError("/x")), "/x", "x")
+        staged_open(_ExistsBackend(True), "/x", "x")
+
+
+def test_exclusive_open_needs_the_backends_exists():
+    class _NoExists:
+        def write_bytes(self, path, value, *, exclusive=False):
+            raise AssertionError("nothing may be written")
+
+    with pytest.raises(NotImplementedError, match="exists"):
+        staged_open(_NoExists(), "/x", "x")
 
 
 class _Child:
