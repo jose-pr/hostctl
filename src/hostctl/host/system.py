@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections.abc
 import dataclasses
 import logging
 import subprocess
@@ -12,7 +13,12 @@ from urllib.parse import unquote, quote, urlencode
 
 from pathapi import Path
 
-from ..executor._common import command_text, validate_environment_names
+from ..executor._common import (
+    command_text,
+    masked_environment,
+    run_displayed,
+    validate_environment_names,
+)
 from ..provider import OperationNotStarted, ProviderSelector
 from ..shell import POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ..shell._invocation import for_login_shell, shell_invocation
@@ -975,7 +981,7 @@ class SystemHost(Host):
     def _execute_command_line(
         self, provider, flavour, cmds, *, executable, context, options
     ):
-        """Render one finalized command line and submit it.
+        """Render one finalized command line as `(command, args, options)`.
 
         The one place a `ShellCommand` is turned into a dispatch: it carries
         an out-of-band environment for providers that cannot embed one, and
@@ -987,13 +993,35 @@ class SystemHost(Host):
             cwd=context.cwd,
             env=context.env,
         )
-        return provider.execute(
+        return (
             _for_login_shell(flavour, rendered.command, provider),
-            **self._out_of_band_env(provider, rendered, options),
+            (),
+            self._out_of_band_env(provider, rendered, options),
         )
 
     def _run_with_provider(self, provider, cmds, **kwargs):
         self._ensure_provider_connected(provider)
+        command, args, options = self._render_dispatch(provider, cmds, kwargs)
+        env = kwargs.get("env")
+        if env and isinstance(env, collections.abc.Mapping):
+            # A value embedded in the command text would otherwise reach the
+            # log and any exception that carries the command; render again with
+            # each value masked and show that instead.
+            masked = {**kwargs, "env": masked_environment(env)}
+            shown = self._render_dispatch(provider, cmds, masked)
+            if shown[:2] != (command, args):
+                return run_displayed(
+                    (shown[0], *shown[1]),
+                    lambda: provider.execute(command, *args, **options),
+                )
+        return provider.execute(command, *args, **options)
+
+    def _render_dispatch(self, provider, cmds, kwargs):
+        """The `(command, args, options)` this call sends to `provider`.
+
+        Pure: it connects nothing and sends nothing, so it can be run again
+        with a masked environment.
+        """
         cwd = kwargs.get("cwd")
         env = kwargs.get("env")
         options = dict(kwargs)
@@ -1020,7 +1048,7 @@ class SystemHost(Host):
             native_cwd = cwd is None or "cwd" in provider.capabilities
             native_env = env is None or "env" in provider.capabilities
             if "args" in provider.capabilities and native_cwd and native_env:
-                return provider.execute(command, *args, **options)
+                return command, args, options
             if self._shell is None and self._shell_resolver is None:
                 if args:
                     raise NotImplementedError(
@@ -1031,7 +1059,7 @@ class SystemHost(Host):
                         f"executor provider {provider.name!r} cannot apply cwd or env "
                         "and no shell is configured to embed them"
                     )
-                return provider.execute(command_text(command), **options)
+                return command_text(command), (), options
             flavour = self.shell_flavour
             shell_executable = getattr(provider, "shell_executable", None)
             context = self._shell_context(provider, cwd, env)
@@ -1042,7 +1070,7 @@ class SystemHost(Host):
                     env=context.env,
                     epilogue=context.epilogue,
                 )
-                return provider.execute(script, **options)
+                return script, (), options
             if "args" in provider.capabilities:
                 leading = _shell_invocation(
                     flavour,
@@ -1053,7 +1081,7 @@ class SystemHost(Host):
                     executable=shell_executable,
                     provider=provider,
                 )
-                return provider.execute(leading[0], *leading[1:], **options)
+                return leading[0], tuple(leading[1:]), options
             if not args and native_cwd and native_env:
                 # Nothing to embed. Send the program itself when it needs no
                 # quoting -- a provider that is not a shell (a bare callable,
@@ -1064,7 +1092,7 @@ class SystemHost(Host):
                 # remote login shell, which word-split a spaced path.
                 text = command_text(command)
                 if flavour.quote(text) == text:
-                    return provider.execute(text, **options)
+                    return text, (), options
             return self._execute_command_line(
                 provider,
                 flavour,
@@ -1093,7 +1121,7 @@ class SystemHost(Host):
                 env=context.env,
                 epilogue=context.epilogue,
             )
-            return provider.execute(script, **options)
+            return script, (), options
         shell_executable = executable or getattr(provider, "shell_executable", None)
         if "args" not in provider.capabilities:
             return self._execute_command_line(
@@ -1120,7 +1148,7 @@ class SystemHost(Host):
             executable=shell_executable,
             provider=provider,
         )
-        return provider.execute(leading[0], *leading[1:], **options)
+        return leading[0], tuple(leading[1:]), options
 
     def _note_provider_in_use(self, provider) -> None:
         """Mark a provider's transport as live again, without connecting it.

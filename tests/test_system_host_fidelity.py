@@ -367,3 +367,22 @@ def test_advertised_system_uris_round_trip_through_hostconfig():
     for config_type in (PosixConfig, WindowsConfig, IosConfig):
         uri = config_type("node").connection_uri
         assert HostConfig(uri).connection_uri == uri
+
+
+def test_an_embedded_env_value_is_masked_in_an_executor_error_but_still_sent():
+    sent = []
+
+    def fail(command, *args, **options):
+        sent.extend((command, *args))
+        raise subprocess.CalledProcessError(3, command)
+
+    host = PosixHost(
+        executor_providers=(ExecutorProvider("fake", fail, capabilities=("args",)),)
+    )
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        host.run("true", env={"API_TOKEN": "dummy-not-a-secret"})
+
+    assert "dummy-not-a-secret" in " ".join(map(str, sent))
+    shown = str(caught.value) + repr(caught.value) + str(caught.value.cmd)
+    assert "dummy-not-a-secret" not in shown
+    assert "<redacted>" in shown

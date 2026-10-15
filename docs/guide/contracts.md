@@ -23,7 +23,8 @@ target) is `None`, exactly as `subprocess` reports one it did not capture.
 - Multiple top-level commands are joined with the shell's sequence separator.
 - `env` is additive to the provider's environment, on every transport
   including the local one. `cwd` is the process working
-  directory. **`check` defaults to `True`**, the opposite of
+  directory. Where `env` is embedded in the command text, exception text,
+  `repr()` and `CompletedProcess.args` show each value as `<redacted>`. **`check` defaults to `True`**, the opposite of
   `subprocess.run`: a non-zero status raises `CalledProcessError` unless the
   caller passes `check=False`. A provider which cannot obtain a status must
   use `-1`, never `None`.
@@ -101,6 +102,7 @@ they advertise.
 | PowerShell native argument `--%` | raises `ValueError` | PowerShell 5.1 and 7 read a native argument whose value is `--%` as the stop-parsing token however it is spelled (`'--%'`, `"--%"`, `$('--%')` all do), so the rest of the line is passed unparsed. No spelling sends the value; a cmdlet argument is not affected (`Cmdlet`). |
 | Windows PowerShell 5 `PIPE`/`REDIRECT`/`APPEND` between native programs | bytes are re-encoded: a pipe goes through the console code page, `>`/`>>` write UTF-16LE with a byte-order mark | A property of the engine: measured, `41e980ff0a` through a pipe arrived as `413f3f3f0d0a`. PowerShell 7 and cmd are byte-exact. A pipe between cmdlets is PowerShell's normal use and is correct, so the operator is not refused. |
 | Embedded `env` value `""` under Windows PowerShell 5 and cmd | the variable is unset | `$env:K=''` and `set K=` delete the variable on those engines and neither has a spelling for an empty one; pwsh and POSIX set it empty, and a provider that carries `env` natively (local) keeps it empty. Refusing `""` would make a value that works natively fail when embedded. |
+| Embedded `env=` (SSH, WinRM, PSRP, QGA, serial, any provider without native `env`) | the value travels in the command the remote side runs, and is visible in its process table | The transport has no confidential environment channel: sshd drops environment requests unless `AcceptEnv` names them, and QGA's `env` replaces the environment. hostctl masks the value in exception text, `repr()`, `CompletedProcess.args` and the DEBUG dispatch log; it cannot hide it from the remote host. |
 | Local `timeout=` from a terminal | a timed-out command started from a process that has a controlling terminal may leave grandchildren running | A new session (needed so one signal reaches the whole tree) drops the terminal, so a child opening `/dev/tty` failed. A new process group would keep it but run the child in the background, where reading the terminal stops it. Without a terminal the child still gets its own session and the whole tree is killed. |
 | `cmd` structured `call` | raises `ValueError` | `call` re-expands `%` and doubles `^` in its arguments (measured: `%USERNAME%` became the user name, `c^d` became `c^^d`), so no single quoting survives it. Run the program directly; a `.bat`/`.cmd` already gets the batch rule without `call`. |
 | `cmd` structured `start` | always renders an empty title, `start "" ...`; the tail is program and arguments | `start` reads its first quoted word as the window title, so a quoted program path ran as a title and nothing started. A structured `start` therefore never takes a title of its own; raw text still can. |

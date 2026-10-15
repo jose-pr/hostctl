@@ -415,7 +415,12 @@ hostctl applies to whatever you return.
   Composite paths call a path provider's `connect()` before **every**
   dispatch, so it must be idempotent and cheap once connected.
   `ProviderSelector.redact(value)` is the one redaction used in traces --
-  rendered commands routinely carry credentials, so log through it.
+  rendered commands routinely carry credentials, so log through it. It also
+  masks fish `set -gx NAME value` and quoted values holding `'`. An `env=`
+  value embedded in the command text is masked before rendering: the dispatch
+  log, `CompletedProcess.args` and the `cmd` of `CalledProcessError`/
+  `TimeoutExpired` carry `<redacted>` in its place (the sent command is
+  unchanged).
 - `SessionInitializer` is the hook a provider may accept to prepare a session
   (a login, a `cd`, an environment) once per connection rather than per call.
 - `CompositePosixPath` / `CompositeWindowsPath` are the path types a composed

@@ -95,6 +95,32 @@ def test_text_env_and_nonzero_check(provider):
 
 
 @pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
+def test_env_values_never_reach_exception_text(provider):
+    """An environment value embedded in the command is masked in what is shown."""
+    if "run" not in provider.capabilities:
+        pytest.skip(f"{provider.name} has no run capability")
+    if "env" not in provider.capabilities:
+        pytest.skip(f"{provider.name} does not support environment overrides")
+    secret = "dummy-not-a-secret-7f3a"
+    environment = {"API_TOKEN": secret}
+    if os.name == "nt":
+        environment["SystemRoot"] = os.environ["SystemRoot"]
+    program = Exec(sys.executable, "-c", "raise SystemExit(3)")
+    with provider_context(provider) as host:
+        with pytest.raises(subprocess.CalledProcessError) as caught:
+            host.run(program, env=environment)
+        for text in (str(caught.value), repr(caught.value), str(caught.value.cmd)):
+            assert secret not in text
+        result = host.run(program, env=environment, check=False)
+        assert secret not in str(result.args)
+        if "timeout" in provider.capabilities:
+            sleeper = Exec(sys.executable, "-c", "import time; time.sleep(30)")
+            with pytest.raises(subprocess.TimeoutExpired) as expired:
+                host.run(sleeper, env=environment, timeout=0.5)
+            assert secret not in str(expired.value) + repr(expired.value)
+
+
+@pytest.mark.parametrize("provider", fake_providers(), ids=lambda p: p.name)
 def test_errors_alone_selects_text_mode(provider):
     """`subprocess.run`'s rule: any of text/encoding/errors means `str`.
 

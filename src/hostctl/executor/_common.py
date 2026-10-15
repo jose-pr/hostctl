@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import enum
 import os
 import re
@@ -281,6 +282,66 @@ def normalize_environment(
         )
         for key, value in env.items()
     }
+
+
+#: What a credential is replaced with in text meant for a log or an exception.
+MASK = "<redacted>"
+
+#: The command a dispatch shows to a log or an exception, when it differs from
+#: the one sent: the same rendering with each embedded environment value masked.
+_DISPATCH_DISPLAY: contextvars.ContextVar[typing.Optional[typing.Tuple[str, ...]]] = (
+    contextvars.ContextVar("hostctl_dispatch_display", default=None)
+)
+
+
+def masked_environment(env: Environment) -> typing.Dict[typing.Union[str, bytes], str]:
+    """`env` with every value replaced by `MASK`; the names stay visible."""
+    return {key: MASK for key in env}
+
+
+def dispatch_display() -> typing.Optional[typing.Tuple[str, ...]]:
+    """The masked command of the dispatch in progress, or `None`."""
+    return _DISPATCH_DISPLAY.get()
+
+
+def _show(error: typing.Optional[BaseException], shown: object, seen: set) -> None:
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(
+            error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)
+        ):
+            old = error.cmd
+            error.cmd = shown
+            error.args = tuple(shown if item is old else item for item in error.args)
+        _show(error.__cause__, shown, seen)
+        error = error.__context__
+
+
+def run_displayed(
+    display: typing.Optional[typing.Tuple[str, ...]],
+    call: typing.Callable[[], typing.Any],
+) -> typing.Any:
+    """Run `call`, showing `display` wherever the command it sent would appear.
+
+    The log line, `CompletedProcess.args` and the `cmd` of a raised
+    `CalledProcessError`/`TimeoutExpired` (and of the errors chained to it)
+    carry the masked command, so an environment value embedded in the command
+    text stays out of a traceback. The same exception object is re-raised.
+    """
+    if display is None:
+        return call()
+    shown: typing.Any = display[0] if len(display) == 1 else list(display)
+    token = _DISPATCH_DISPLAY.set(display)
+    try:
+        result = call()
+    except BaseException as exc:
+        _show(exc, shown, set())
+        raise
+    finally:
+        _DISPATCH_DISPLAY.reset(token)
+    if isinstance(result, subprocess.CompletedProcess):
+        result.args = shown
+    return result
 
 
 def write_output(

@@ -15,7 +15,7 @@ import types
 from pathlib import Path, PurePath, PurePosixPath
 
 from ..executor import ExecutorCapability, validate_environment_names
-from ..executor._common import command_text
+from ..executor._common import command_text, masked_environment, run_displayed
 from ..executor import (
     CaptureOutput,
     Environment,
@@ -790,21 +790,33 @@ class Shell(typing.Generic[_Result]):
         embed_cwd = None if self._executor_accepts_cwd else cwd
         embed_env = None if self._executor_accepts_env else env
         epilogue = wants_epilogue(self.executor_capabilities)
-        if ExecutorCapability.ARGS in self.executor_capabilities:
-            from ._invocation import shell_invocation
 
-            leading = shell_invocation(
-                self._flavour,
-                cmds,
-                cwd=embed_cwd,
-                env=embed_env,
-                epilogue=epilogue,
+        def render(environment):
+            if ExecutorCapability.ARGS in self.executor_capabilities:
+                from ._invocation import shell_invocation
+
+                leading = shell_invocation(
+                    self._flavour,
+                    cmds,
+                    cwd=embed_cwd,
+                    env=environment,
+                    epilogue=epilogue,
+                )
+                return (leading[0], *leading[1:])
+            return (
+                self._flavour.script(
+                    cmds, cwd=embed_cwd, env=environment, epilogue=epilogue
+                ),
             )
-            return self._execute(leading[0], *leading[1:], **options)
-        script = self._flavour.script(
-            cmds, cwd=embed_cwd, env=embed_env, epilogue=epilogue
-        )
-        return self._execute(script, **options)
+
+        sent = render(embed_env)
+        if embed_env:
+            # Embedded values would otherwise reach any exception or log line
+            # that carries the command; show a rendering with them masked.
+            shown = render(masked_environment(embed_env))
+            if shown != sent:
+                return run_displayed(shown, lambda: self._execute(*sent, **options))
+        return self._execute(*sent, **options)
 
     def session(
         self,

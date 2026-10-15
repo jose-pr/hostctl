@@ -187,6 +187,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Values passed in `env=` no longer appear in `CalledProcessError` or
+  `TimeoutExpired` text, `repr()`, `CompletedProcess.args` or the DEBUG
+  dispatch log on transports that embed them in the command. Each shows as
+  `<redacted>`; the value still reaches the remote command line. fish
+  `set -gx` and quoted values containing `'` are also redacted in raw
+  command text.
 - **Output stays in order around a dispatched command.** The binary fallback
   of `dispatch_output` wrote past text still pending in `sys.stdout`, so a
   command's output could print before the line written before it.

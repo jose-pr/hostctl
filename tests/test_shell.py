@@ -1123,3 +1123,18 @@ def test_a_shell_over_an_executor_embeds_what_the_executor_cannot_carry():
     result = shell.run(command, cwd=os.getcwd(), encoding="utf-8")
 
     assert os.path.realpath(result.stdout.strip()) == os.path.realpath(os.getcwd())
+
+
+def test_a_shell_without_native_env_masks_the_embedded_value_in_errors():
+    sent = []
+
+    def fail(command):
+        sent.append(command)
+        raise subprocess.CalledProcessError(3, command)
+
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        Shell(POSIX_SHELL, fail).run("true", env={"API_TOKEN": "dummy-not-a-secret"})
+
+    assert "dummy-not-a-secret" in sent[0]
+    shown = str(caught.value) + repr(caught.value) + str(caught.value.cmd)
+    assert "dummy-not-a-secret" not in shown

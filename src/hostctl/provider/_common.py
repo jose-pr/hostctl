@@ -16,6 +16,8 @@ import typing
 
 from pathapi import Path
 
+from ..executor._common import MASK, dispatch_display
+
 #: Selection, probe, and decline diagnostics.  Library convention: this module
 #: never configures a handler and never calls ``basicConfig``; an application
 #: opts in with ``logging.getLogger("hostctl").setLevel(logging.DEBUG)``.
@@ -201,10 +203,17 @@ class ExecutorProvider(_Provider):
         # The rendered command routinely carries credentials, so it is redacted
         # on the way to the record and never interpolated eagerly: with no
         # handler listening, `%`-style args mean the redaction never runs.
+        # A dispatch whose environment is embedded in the command text carries
+        # its masked rendering, which is what is logged.
+        display = dispatch_display()
         log.debug(
             "provider %s dispatching: %s",
             _LazyName(self.name),
-            _LazyRedaction(command, args),
+            (
+                _LazyRedaction(command, args)
+                if display is None
+                else _LazyRedaction(display[0], display[1:])
+            ),
         )
         return self.executor(command, *args, **options)
 
@@ -379,12 +388,21 @@ class ProviderSelector:
     #: verbatim while the bare `PASSWORD=` form was redacted.
     #: A prefix must end at a separator, so `monkey=banana` is not a secret
     #: while `DB_PASSWORD=` and `$env:API_KEY=` are.
+    #: A value is one or more adjacent quoted runs (a shell splits a value that
+    #: holds `'` into `'a'"'"'b'`) or an unquoted run.  An unquoted run stops at
+    #: `&`, `;`, `,` and whitespace, so a value holding them after cmd's
+    #: unquoted `set NAME=value` is only partly masked: best effort.
+    _SECRET_KEYWORD = r"(?:password|passwd|pwd|secret|token|api[_-]?key|key|credential)"
     _SECRET_ASSIGNMENT = re.compile(
         r"(?i)(?<![A-Za-z0-9])"
-        r"((?:[A-Za-z0-9_.$:\-]*[_.$:\-])?"
-        r"(?:password|passwd|pwd|secret|token|api[_-]?key|key|credential)"
-        r"[A-Za-z0-9_.\-]*)"
-        r"\s*[=:]\s*(\"[^\"]*\"|'[^']*'|[^&\s,;]+)"
+        r"((?:[A-Za-z0-9_.$:\-]*[_.$:\-])?" + _SECRET_KEYWORD + r"[A-Za-z0-9_.\-]*)"
+        r"\s*[=:]\s*((?:\"[^\"]*\"|'[^']*')+|[^&\s,;]+)"
+    )
+    #: fish exports with `set -gx NAME value`, no `=`.
+    _SECRET_FISH_SET = re.compile(
+        r"(?i)(?<![A-Za-z0-9])(set(?:\s+-[A-Za-z]+)*\s+)"
+        r"((?:[A-Za-z0-9_]*[_])?" + _SECRET_KEYWORD + r"[A-Za-z0-9_]*)"
+        r"\s+((?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*')+|[^&\s,;]+)"
     )
     #: ``scheme://user:password@host`` URI userinfo.
     _SECRET_USERINFO = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^/\s:@]+):[^/\s@]+@")
@@ -400,7 +418,8 @@ class ProviderSelector:
         that is only a token) carries no marker and cannot be detected by
         inspection.  Treat debug output as sensitive.
         """
-        text = cls._SECRET_ASSIGNMENT.sub(r"\1=<redacted>", str(value))
+        text = cls._SECRET_ASSIGNMENT.sub(rf"\1={MASK}", str(value))
+        text = cls._SECRET_FISH_SET.sub(rf"\1\2 {MASK}", text)
         return cls._SECRET_USERINFO.sub(r"\1:<redacted>@", text)
 
     def probe(self, provider) -> ProviderProbe:

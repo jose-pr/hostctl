@@ -25,6 +25,7 @@ from hostctl import (
     PosixHost,
     ProviderProbe,
     ProviderSelector,
+    WindowsHost,
 )
 
 
@@ -465,3 +466,50 @@ def test_building_a_path_does_not_redact_with_debug_logging_off(monkeypatch):
         path.exists()
 
     assert "path" not in calls
+
+
+@pytest.mark.parametrize(
+    "rendered",
+    (
+        "set -gx DB_PASSWORD hunter2",
+        "set -gx DB_PASSWORD 'hunter2 x'",
+        "set -gx DB_PASSWORD 'a\\'hunter2'",
+        "export DB_PASSWORD='dum'\"'\"'hunter2'",
+        "$env:DB_PASSWORD='dum'\"'\"'hunter2'",
+    ),
+)
+def test_a_dialect_specific_value_is_redacted(rendered):
+    redacted = ProviderSelector.redact(rendered)
+    assert "hunter2" not in redacted
+    assert "dum" not in redacted
+
+
+@pytest.mark.parametrize(
+    "family, shell",
+    (
+        (PosixHost, "posix"),
+        (PosixHost, "bash"),
+        (PosixHost, "zsh"),
+        (PosixHost, "fish"),
+        (WindowsHost, "powershell"),
+        (WindowsHost, "pwsh"),
+        (WindowsHost, "cmd"),
+    ),
+)
+def test_an_embedded_env_value_never_reaches_the_dispatch_log(caplog, family, shell):
+    """Every flavour: values with a space, quote, `;` or `&` stay out of the log."""
+    host = family(
+        executor_providers=(_executor("ssh", capabilities=("script",)),), shell=shell
+    )
+    values = {"DB_PASSWORD": "dummy PWx1", "OTHER": "a'bPWx2", "T": "a;bPWx3&c"}
+    with caplog.at_level(logging.DEBUG, logger="hostctl"):
+        host.run("true", env=values, check=False)
+    dispatching = [
+        record.getMessage()
+        for record in caplog.records
+        if "dispatching" in record.getMessage()
+    ]
+    assert dispatching
+    for message in dispatching:
+        for fragment in ("PWx1", "PWx2", "PWx3", "dummy", "a'b", "a;b"):
+            assert fragment not in message
