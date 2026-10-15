@@ -420,18 +420,15 @@ def settle(flavour: str, slot: str, outcome: Outcome) -> None:
 def tools(tmp_path_factory):
     root = tmp_path_factory.mktemp("tools")
     dump = root / "dump.py"
-    dump.write_text(
-        "import json, sys\nsys.stdout.write(json.dumps(sys.argv[1:]) + '\\n')\n",
-        encoding="utf-8",
-        newline="\n",
+    # Bytes, not write_text(newline=), which is 3.10+.
+    dump.write_bytes(
+        b"import json, sys\nsys.stdout.write(json.dumps(sys.argv[1:]) + '\\n')\n"
     )
     dumpenv = root / "dumpenv.py"
-    dumpenv.write_text(
-        "import json, os, sys\n"
-        "sys.stdout.write(json.dumps([os.environ.get(n, '\\x00unset')"
-        " for n in sys.argv[1:]]) + '\\n')\n",
-        encoding="utf-8",
-        newline="\n",
+    dumpenv.write_bytes(
+        b"import json, os, sys\n"
+        b"sys.stdout.write(json.dumps([os.environ.get(n, '\\x00unset')"
+        b" for n in sys.argv[1:]]) + '\\n')\n"
     )
     shim_body = ('@"%s" "%s" %%*\r\n' % (PY, dump)).encode("utf-8")
     spaced = root / "hc shim dir"
@@ -540,7 +537,7 @@ def _program_cases(runner: Runner, tmp_path: Path) -> typing.List[Case]:
             cases.append(Case(name, ("cmd", directory / "hc.cmd", token)))
         else:
             script = directory / "hc"
-            script.write_text("#!/bin/sh\necho %s\n" % token, newline="\n")
+            script.write_bytes(("#!/bin/sh\necho %s\n" % token).encode())
             script.chmod(0o755)
             cases.append(Case(name, ("sh", script, token)))
     return cases
