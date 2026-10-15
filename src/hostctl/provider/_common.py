@@ -357,9 +357,9 @@ class ProviderSelector:
         Maps provider name to the redacted refusal reason.  A copy: mutating
         the result does not change selector state.
         """
-        return {
-            name: self._safe_name(reason) for name, reason in self._declined.items()
-        }
+        with self._lock:
+            declined = dict(self._declined)
+        return {name: self._safe_name(reason) for name, reason in declined.items()}
 
     def decline(
         self,
@@ -375,9 +375,10 @@ class ProviderSelector:
         rather than re-attempting it on every later operation.  The record is
         cleared by :meth:`invalidate` along with the probe cache.
         """
-        self._declined[str(name)] = str(reason)
-        if cause is not None:
-            self._decline_causes[str(name)] = cause
+        with self._lock:
+            self._declined[str(name)] = str(reason)
+            if cause is not None:
+                self._decline_causes[str(name)] = cause
         log.debug(
             "provider %s declined before dispatch (generation %d): %s",
             _redacted_name(name),
@@ -438,8 +439,11 @@ class ProviderSelector:
         declined = self._declined.get(name)
         if declined is not None:
             return ProviderProbe("unavailable", self._safe_name(declined))
-        if name in self._probe_cache:
-            return self._probe_cache[name]
+        with self._lock:
+            cached = self._probe_cache.get(name)
+        if cached is not None:
+            return cached
+        # Not under the lock: a probe may be a network round trip.
         try:
             result = provider.probe()
         except Exception as exc:
@@ -449,7 +453,8 @@ class ProviderSelector:
                 _redacted_name(name),
                 type(exc).__name__,
             )
-        self._probe_cache[name] = result
+        with self._lock:
+            self._probe_cache[name] = result
         return result
 
     def select(
@@ -471,6 +476,7 @@ class ProviderSelector:
         if not excluded:
             self._attempt_trace = {}
         for provider in self.providers:
+            # A single dict lookup is atomic, so the loop reads without the lock.
             declined = self._declined.get(provider.name)
             if declined is not None:
                 # Recorded even when the caller also excluded this provider:
@@ -561,13 +567,13 @@ class ProviderSelector:
         # Name why. This used to surface as a bare "no provider is available"
         # with no `__cause__` and no `.cause`, so the real refusal -- a
         # rejected host key, a refused connection -- was visible only at DEBUG.
+        with self._lock:
+            causes = dict(self._decline_causes)
+            declined_names = list(self._declined)
         detail = "; ".join(
             f"{name}: {reason}" for name, reason in self.declines.items()
         )
-        cause = next(
-            (self._decline_causes.get(name) for name in reversed(self._declined)),
-            None,
-        )
+        cause = next((causes.get(name) for name in reversed(declined_names)), None)
         raise OperationNotStarted(
             "no provider is available" + (f" ({detail})" if detail else ""),
             cause=cause,

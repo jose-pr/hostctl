@@ -959,7 +959,10 @@ def test_two_threads_selecting_do_not_share_a_trace():
             except Exception as exc:  # pragma: no cover - the regression
                 errors.append(exc)
                 return
-            if not seen <= {p.name for p in providers}:
+            # The first select() traces p0 (the only one it tries); the second
+            # adds this worker's own provider. Anything else is another
+            # thread's entry.
+            if not seen <= {"p0", name}:
                 mixed.append(seen)
 
     previous = sys.getswitchinterval()
@@ -975,3 +978,63 @@ def test_two_threads_selecting_do_not_share_a_trace():
 
     assert not errors, errors[:3]
     assert not mixed
+
+
+def test_decline_and_invalidate_racing_select_raise_only_operation_not_started():
+    """`decline()` and `probe()` wrote the selector's maps without the lock
+    that `select()`'s failure branch iterated them under, so a concurrent
+    decline escaped as `RuntimeError: dictionary changed size during
+    iteration` -- a lost failover that looked like a crash."""
+    import sys
+    import threading
+
+    from hostctl import OperationNotStarted
+    from hostctl.provider import ProviderSelector
+
+    providers = tuple(
+        ExecutorProvider(f"p{index}", lambda *a, **k: None) for index in range(50)
+    )
+    selector = ProviderSelector(providers)
+    for provider in providers:
+        selector.decline(provider.name, "down")
+    errors = []
+    stop = threading.Event()
+
+    def selecting():
+        while not stop.is_set():
+            try:
+                selector.select()
+            except OperationNotStarted:
+                pass
+            except Exception as exc:  # pragma: no cover - the regression
+                errors.append(exc)
+                return
+
+    def declining():
+        index = 0
+        while not stop.is_set():
+            name = f"x{index % 40}"
+            selector.decline(name, "down")
+            selector.probe(ExecutorProvider(name, lambda *a, **k: None))
+            if index % 7 == 0:
+                selector.invalidate()
+                for provider in providers:
+                    selector.decline(provider.name, "down")
+            index += 1
+
+    previous = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    threads = [threading.Thread(target=selecting) for _ in range(3)] + [
+        threading.Thread(target=declining) for _ in range(2)
+    ]
+    try:
+        for thread in threads:
+            thread.start()
+        stop.wait(2)
+    finally:
+        stop.set()
+        for thread in threads:
+            thread.join(30)
+        sys.setswitchinterval(previous)
+
+    assert not errors, errors[:3]
