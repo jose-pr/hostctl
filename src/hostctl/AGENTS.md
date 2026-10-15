@@ -498,7 +498,9 @@ there is no `root` default. `ssh_config` is the one way to read an ssh_config,
 and both legs read it; `connect_options` are extra `asyncssh.connect` keywords
 for both legs (a key hostctl owns -- `host`, `port`, `username`, `password`,
 `client_keys`, `known_hosts`, `config`, `connect_timeout` -- raises and names the
-field to use), kept out of the URI and `repr()`.
+field to use), kept out of the URI and `repr()`. `ssh_config` is kept out of
+the URI too, and an `ssh://` URI naming it raises: a `ProxyCommand` starts a
+local process, which a URI's author (an MCP tool caller, say) must not choose.
 
 Authentication fields are explicit and excluded from repr. `dialect` selects
 POSIX or PowerShell command construction independently of the POSIX/Windows
@@ -517,9 +519,10 @@ retained as `__cause__`.
 The SFTP path provider reuses one `sftppath.AsyncSSHBackend` per host and
 closes its connections during `close()`; each path call does not create
 another SFTP connection. The path leg is given the exec leg's connect
-options. Neither leg reads an ssh_config: both receive `config=None`, so an
-alias, `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in
-`~/.ssh/config` is ignored; pass the host, key and known_hosts explicitly.
+options. Without `ssh_config` neither leg reads one: both receive
+`config=None`, so an alias, `IdentityFile`, `UserKnownHostsFile` or
+`ProxyCommand` in `~/.ssh/config` is ignored; pass the host, key and
+known_hosts explicitly.
 Both legs therefore reach the same server and verify its key the same way.
 `SftpPathProvider.probe()` reports `unavailable` (naming `hostctl[ssh]`) when
 sftppath is missing, so selection routes around it; `dialect="auto"` accepts

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - `SshConfig(ssh_config=)` reads one ssh_config on both legs (neither reads one
-  by default), `SshConfig(connect_options=)` passes extra keywords to
+  by default; it is a keyword only, never a URI key), `SshConfig(connect_options=)` passes extra keywords to
   `asyncssh.connect` on both legs, and `SshConfig(path_flavor="auto")` asks the
   server's login directory while the host is created.
 - `SshConfig(connect_timeout=30.0)` bounds how long an SSH connection may take

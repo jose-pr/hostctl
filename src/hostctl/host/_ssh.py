@@ -172,7 +172,8 @@ class SshConfig(HostConfig, schemes=("ssh",)):
     connect_timeout: typing.Optional[float] = 30.0
     #: An ssh_config to read on BOTH legs (`Host`, `HostName`, `IdentityFile`,
     #: `ProxyJump` ...). `None`, the default, reads none. One path: OpenSSH's
-    #: `Include` covers the rest.
+    #: `Include` covers the rest. Never part of the URI: a `ProxyCommand`
+    #: starts a local process, which whoever wrote the URI must not choose.
     ssh_config: typing.Optional[typing.Union[str, "os.PathLike[str]"]] = None
     #: Extra keywords for `asyncssh.connect`, given to both legs. Never part
     #: of the URI or `repr()`, since it may hold a passphrase.
@@ -268,8 +269,6 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             query["login_shell"] = self.login_shell
         if self.connect_timeout != 30.0:
             query["connect_timeout"] = self.connect_timeout
-        if self.ssh_config is not None:
-            query["ssh_config"] = os.fspath(self.ssh_config)
         from netimps import join_host
 
         return f"ssh://{user}{join_host(self.host, self.port)}?{urlencode(query)}"
@@ -284,7 +283,6 @@ class SshConfig(HostConfig, schemes=("ssh",)):
                 "executable",
                 "login_shell",
                 "connect_timeout",
-                "ssh_config",
             },
         )
         if not parsed.hostname or parsed.path not in ("", "/"):
@@ -311,7 +309,6 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             connect_timeout=(
                 float(query["connect_timeout"]) if "connect_timeout" in query else 30.0
             ),
-            ssh_config=query.get("ssh_config") or None,
         )
 
     def _create_host(self):
@@ -673,8 +670,8 @@ class _SshTransport:
 
         with self._ssh_lock:
             if self._sftp_backend is None:
-                # The options carry `config=None` (see `connect_opts`), which
-                # sftppath keeps, so this leg reads no ssh_config either.
+                # The options carry `config` (see `connect_opts`), which
+                # sftppath keeps, so this leg reads the exec leg's ssh_config.
                 self._sftp_backend = _async.sftppath().AsyncSSHBackend(
                     self.config.host,
                     self.config.port,

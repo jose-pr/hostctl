@@ -72,7 +72,13 @@ def test_ssh_config_is_an_opt_in_on_both_legs(tmp_path, monkeypatch):
 
     begun = [event for event in server.events if event[0] == "begin_auth"]
     assert len(begun) == 2  # one authentication per leg
-    assert HostConfig(config.connection_uri).ssh_config == str(path)
+    assert "ssh_config" not in config.connection_uri
+
+
+def test_a_uri_cannot_name_an_ssh_config():
+    # A config's ProxyCommand would run a process the URI's author chose.
+    with pytest.raises(ValueError, match="ssh_config"):
+        HostConfig("ssh://h?ssh_config=/tmp/x")
 
 
 @pytest.mark.parametrize(
