@@ -17,7 +17,14 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 #: Directories walked in full, and single files at the repository root.
 _TREES = ("src", "tests", "docs", "examples", "benchmarks", ".github")
-_FILES = ("README.md", "AGENTS.md", "pyproject.toml", "mkdocs.yml", ".gitignore")
+_FILES = (
+    "README.md",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "pyproject.toml",
+    "mkdocs.yml",
+    ".gitignore",
+)
 
 #: Records of the past, and this file, which spells the patterns.
 _EXCLUDED = {"CHANGELOG.md", "docs/changelog.md", "tests/test_comment_hygiene.py"}

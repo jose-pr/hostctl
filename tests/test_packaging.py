@@ -175,11 +175,13 @@ def test_the_sdist_never_ships_private_or_unshared_files(sdist):
 
 
 def test_the_sdist_leaves_out_contributor_files(sdist):
-    """The root `AGENTS.md` orients a contributor to a checkout and
-    `benchmarks/` is run on demand; neither is part of a source build."""
+    """The root `AGENTS.md` and `CONTRIBUTING.md` orient a contributor to a
+    checkout and `benchmarks/` is run on demand; none is part of a source
+    build."""
     names = _sdist_names(sdist)
 
     assert "AGENTS.md" not in names
+    assert "CONTRIBUTING.md" not in names
     assert [name for name in names if name.split("/")[0] == "benchmarks"] == []
     assert "src/hostctl/AGENTS.md" in names
 

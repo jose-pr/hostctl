@@ -97,7 +97,14 @@ hostctl = "hostctl.cli:main"
 # `*.local.*` as well as root dotfiles: an `AGENTS.local.md` beside the
 # shipped API header is inside the package directory, which `/.*` does not
 # reach. Publishing one is a one-way leak of machine-specific notes.
-exclude = ["/.*", "/AGENTS.md", "/benchmarks", "*.local.*", "CLAUDE*"]
+exclude = [
+    "/.*",
+    "/AGENTS.md",
+    "/CONTRIBUTING.md",
+    "/benchmarks",
+    "*.local.*",
+    "CLAUDE*",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hostctl"]
