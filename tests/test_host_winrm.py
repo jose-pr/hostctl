@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import shutil
 import subprocess
 import sys
 import io
@@ -438,7 +439,8 @@ def test_the_exit_marker_is_per_call_so_output_cannot_forge_it():
 
 
 @pytest.mark.skipif(
-    os.name != "nt", reason="the wrapper is a Windows PowerShell program"
+    shutil.which("powershell.exe") is None,
+    reason="the wrapper is a Windows PowerShell program",
 )
 @pytest.mark.parametrize("compose", (False, True))
 def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it(compose):
@@ -502,7 +504,8 @@ def _in_a_job(wrapper):
 
 
 _WINDOWS_ONLY = pytest.mark.skipif(
-    os.name != "nt", reason="the wrapper is a Windows PowerShell program"
+    shutil.which("powershell.exe") is None,
+    reason="the wrapper is a Windows PowerShell program",
 )
 
 

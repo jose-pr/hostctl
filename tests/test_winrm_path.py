@@ -1,6 +1,7 @@
 """Windows path semantics and pathlib operations over a fake WinRM backend."""
 
 import os
+import shutil
 import stat
 import base64
 import subprocess
@@ -259,7 +260,10 @@ def test_winrm_open_read_uses_lazy_range_requests():
     assert "Seek(0" in scripts[0]
 
 
-@pytest.mark.skipif(os.name != "nt", reason="runs the generated script in PowerShell")
+@pytest.mark.skipif(
+    shutil.which("powershell.exe") is None,
+    reason="runs the generated script in PowerShell",
+)
 def test_the_overwrite_commit_actually_replaces_a_file(tmp_path):
     """`[IO.File]::Replace($p,$t,$null)` throws on every PowerShell version.
 
@@ -293,7 +297,10 @@ def test_the_overwrite_commit_actually_replaces_a_file(tmp_path):
     assert not staged.exists()
 
 
-@pytest.mark.skipif(os.name != "nt", reason="runs the generated script in PowerShell")
+@pytest.mark.skipif(
+    shutil.which("powershell.exe") is None,
+    reason="runs the generated script in PowerShell",
+)
 def test_the_old_null_backup_form_is_the_one_that_failed(tmp_path):
     """The positive control for the fix above."""
     import subprocess

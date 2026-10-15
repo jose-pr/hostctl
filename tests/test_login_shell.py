@@ -61,7 +61,7 @@ def test_only_a_flavour_with_an_outer_rule_claims_one():
             flavour.escape_for_one_parse("echo ok")
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="requires a real cmd.exe")
+@pytest.mark.skipif(shutil.which("cmd.exe") is None, reason="requires cmd.exe")
 @pytest.mark.parametrize("value", ADVERSARIAL)
 def test_a_cmd_line_survives_a_second_cmd_parse(value):
     """What a stock Windows OpenSSH server does to the string it receives."""
@@ -80,7 +80,7 @@ def test_a_cmd_line_survives_a_second_cmd_parse(value):
     assert completed.stdout.strip() == ascii(value)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="requires a real cmd.exe")
+@pytest.mark.skipif(shutil.which("cmd.exe") is None, reason="requires cmd.exe")
 @pytest.mark.parametrize("value", ("a&b", "x|y", "%OS%", "c^d"))
 def test_the_unescaped_line_is_what_this_protects_against(value):
     """The control, kept in the suite: these four fail without the layer.

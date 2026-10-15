@@ -1,6 +1,7 @@
 """Transport-independent shell construction and executor binding."""
 
 import os
+import shutil
 import subprocess
 import sys
 import typing
@@ -402,7 +403,7 @@ def test_cmd_shell_renders_environment_cwd_args_and_operators():
     )
 
 
-@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.skipif(shutil.which("cmd.exe") is None, reason="requires cmd.exe")
 def test_cmd_shell_operators_execute_on_windows():
     command = CMD.command(
         (
@@ -423,7 +424,7 @@ def test_cmd_shell_operators_execute_on_windows():
     assert result.stdout.splitlines() == ["A", "B"]
 
 
-@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.skipif(shutil.which("cmd.exe") is None, reason="requires cmd.exe")
 @pytest.mark.parametrize(
     "value",
     ("a b", "%PATH%", "a & b", 'quote"value', "bang!", "snowman \N{SNOWMAN}"),
@@ -443,7 +444,7 @@ def test_cmd_external_structured_arguments_round_trip_on_windows(value):
     assert result.stdout.strip() == ascii(value)
 
 
-@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.skipif(shutil.which("cmd.exe") is None, reason="requires cmd.exe")
 def test_cmd_builtin_arguments_do_not_leak_escaping():
     command = CMD.command((("echo", "%PATH% & bang!"),))
 
@@ -458,7 +459,10 @@ def test_cmd_builtin_arguments_do_not_leak_escaping():
     assert result.stdout.strip() == "%PATH% & bang!"
 
 
-@pytest.mark.skipif(os.name != "nt", reason="needs a real PowerShell and cmd.exe")
+@pytest.mark.skipif(
+    shutil.which("powershell.exe") is None or shutil.which("cmd.exe") is None,
+    reason="needs Windows PowerShell and cmd.exe",
+)
 @pytest.mark.parametrize(
     "value",
     ("plain", "a b", "%OS%", "100%", "c^d", "(x)"),
@@ -508,7 +512,7 @@ def test_cmd_declines_argv_invocation_rather_than_corrupting_it():
     assert POWERSHELL.argv_invocation is True
 
 
-@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.skipif(shutil.which("cmd.exe") is None, reason="requires cmd.exe")
 @pytest.mark.parametrize(
     "value",
     ("plain", "a b", "%OS%", "a&b", 'say "hi"', "c^d", "(x)", "100%"),
@@ -917,7 +921,7 @@ def test_shell_capability_vocabulary_is_strings_and_keeps_provider_tokens():
     assert enum_shell._executor_accepts_env is False
 
 
-@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.skipif(shutil.which("cmd.exe") is None, reason="requires cmd.exe")
 @pytest.mark.parametrize(
     "value",
     ("100%", "a b", 'say "hi"', "c^d", "%OS%", "a!b", "x&y", "a|b", "(x)", "a>b"),
@@ -937,7 +941,7 @@ def test_cmd_environment_values_round_trip_on_windows(value):
     assert result.stdout.strip() == ascii(value)
 
 
-@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.skipif(shutil.which("cmd.exe") is None, reason="requires cmd.exe")
 @pytest.mark.parametrize(
     "name", ("a b.txt", "a,b.txt", "a=b.txt", "a%OS%b.txt", "a;b.txt")
 )
@@ -959,7 +963,7 @@ def test_cmd_builtin_operands_are_not_split_on_windows(tmp_path, name):
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a", "b.txt"]
 
 
-@pytest.mark.skipif(os.name != "nt", reason="requires cmd.exe")
+@pytest.mark.skipif(shutil.which("cmd.exe") is None, reason="requires cmd.exe")
 def test_cmd_echo_still_prints_its_argument_verbatim():
     """`echo` is the builtin that prints quotes instead of consuming them."""
     command = CMD.command((("echo", "a b"),))
@@ -969,7 +973,9 @@ def test_cmd_echo_still_prints_its_argument_verbatim():
     assert result.stdout.strip() == "a b"
 
 
-@pytest.mark.skipif(os.name != "nt", reason="requires Windows PowerShell")
+@pytest.mark.skipif(
+    shutil.which("powershell.exe") is None, reason="requires Windows PowerShell"
+)
 @pytest.mark.parametrize(
     "value",
     (

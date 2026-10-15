@@ -5,7 +5,6 @@ from __future__ import annotations
 import shlex
 import shutil
 import subprocess
-import sys
 
 import pytest
 from pathapi import WindowsPathname
@@ -138,7 +137,7 @@ def test_clixml_error_text_is_decoded():
 
 
 @pytest.mark.skipif(
-    sys.platform != "win32" or shutil.which("powershell.exe") is None,
+    shutil.which("powershell.exe") is None or shutil.which("cmd.exe") is None,
     reason="needs Windows PowerShell and cmd.exe",
 )
 @pytest.mark.parametrize(
@@ -157,7 +156,7 @@ def test_a_command_argument_survives_a_cmd_login_shell(value):
 
 
 @pytest.mark.skipif(
-    sys.platform != "win32" or shutil.which("powershell.exe") is None,
+    shutil.which("powershell.exe") is None or shutil.which("cmd.exe") is None,
     reason="needs Windows PowerShell and cmd.exe",
 )
 @pytest.mark.parametrize(

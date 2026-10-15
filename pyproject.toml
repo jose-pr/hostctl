@@ -118,6 +118,8 @@ testpaths = ["tests"]
 # reason rather than softening the default.
 addopts = "-ra --strict-markers --strict-config"
 filterwarnings = ["error"]
+# An expected failure that starts passing fails the run, so it is noticed.
+xfail_strict = true
 
 [tool.black]
 target-version = ["py39"]

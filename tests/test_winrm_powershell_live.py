@@ -14,6 +14,7 @@ directory. That is the half a fake cannot prove.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -24,7 +25,8 @@ from hostctl.executor.winrm import _PywinrmStdinSession
 from hostctl.host._winrm import _SCRIPT_BUDGET, _WinRMTransport
 
 pytestmark = pytest.mark.skipif(
-    os.name != "nt", reason="the generated scripts are Windows PowerShell"
+    shutil.which("powershell.exe") is None or shutil.which("cmd.exe") is None,
+    reason="the generated scripts are Windows PowerShell; cmd.exe makes junctions",
 )
 
 

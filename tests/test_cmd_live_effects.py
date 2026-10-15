@@ -18,7 +18,9 @@ import pytest
 
 from hostctl.shell import CMD, ShellOperator
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="requires a real cmd.exe")
+pytestmark = pytest.mark.skipif(
+    shutil.which("cmd.exe") is None, reason="requires cmd.exe"
+)
 
 
 def _run(command, cwd=None):

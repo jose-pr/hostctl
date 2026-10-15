@@ -18,7 +18,7 @@ import pytest
 from hostctl.shell import POWERSHELL, PWSH
 
 pytestmark = pytest.mark.skipif(
-    os.name != "nt", reason="Windows PowerShell is the subject"
+    shutil.which("powershell.exe") is None, reason="Windows PowerShell is the subject"
 )
 
 _MISSING = r"C:\hostctl-definitely-missing"

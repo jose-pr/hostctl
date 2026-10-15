@@ -133,7 +133,7 @@ def test_normalize_input_covers_the_buffer_protocol(value):
     assert isinstance(normalize_input(value, text_mode=False), bytes)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="requires a real cmd.exe")
+@pytest.mark.skipif(shutil.which("cmd.exe") is None, reason="requires cmd.exe")
 def test_a_cmd_executable_with_a_space_is_launchable(tmp_path):
     """The program slot is read by CreateProcess, not by cmd.
 
@@ -205,7 +205,9 @@ def test_raw_shell_source_may_span_lines():
         POSIX_SHELL.quote("a\nb")
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="requires a real powershell.exe")
+@pytest.mark.skipif(
+    shutil.which("powershell.exe") is None, reason="requires powershell.exe"
+)
 @pytest.mark.parametrize(
     "value",
     ("", 'q"x', 'a b" c d', "trail sp\\", "a & b", "$env:PATH", "'quoted'"),

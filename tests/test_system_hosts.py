@@ -1,5 +1,6 @@
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import PurePosixPath
 
@@ -153,8 +154,8 @@ def test_provider_selector_rejects_unavailable_without_replay():
 
 
 @pytest.mark.skipif(
-    os.name != "nt",
-    reason="WindowsHost renders PowerShell, whose executable exists only on Windows",
+    shutil.which("powershell.exe") is None,
+    reason="WindowsHost renders Windows PowerShell",
 )
 def test_windows_system_host_runs_with_local_executor_and_path():
     host = WindowsHost(
@@ -544,7 +545,9 @@ def test_an_args_provider_is_given_one_shell_layer_not_two():
     assert "-c" not in argv[2]
 
 
-@pytest.mark.skipif(os.name != "nt", reason="needs a real Windows PowerShell")
+@pytest.mark.skipif(
+    shutil.which("powershell.exe") is None, reason="needs Windows PowerShell"
+)
 def test_windows_exit_status_survives_the_local_executor():
     """The double wrap lost every status, so check=True passed for a failure."""
     host = HostConfig("windows://node?executor=local")._create_host()
@@ -554,7 +557,9 @@ def test_windows_exit_status_survives_the_local_executor():
         host.run("cmd /c exit 3", check=True)
 
 
-@pytest.mark.skipif(os.name != "nt", reason="needs a real Windows PowerShell")
+@pytest.mark.skipif(
+    shutil.which("powershell.exe") is None, reason="needs Windows PowerShell"
+)
 def test_windows_quoting_and_variables_survive_the_local_executor():
     host = HostConfig("windows://node?executor=local")._create_host()
 
