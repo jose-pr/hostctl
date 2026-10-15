@@ -117,6 +117,7 @@ from .shell import (
     ShellSession as ShellSession,
     register_shell_flavour as register_shell_flavour,
     shell_flavour as shell_flavour,
+    shell_flavour_names as shell_flavour_names,
 )
 
 __all__ = [
@@ -176,6 +177,7 @@ __all__ = [
     "ShellSession",
     "register_shell_flavour",
     "shell_flavour",
+    "shell_flavour_names",
     "BASH",
     "CMD",
     "FISH",

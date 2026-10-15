@@ -764,83 +764,6 @@ class _HostMeta(_abc.ABCMeta):
         return super().__call__(*args, **options)
 
 
-class _ShellAccessor:
-    """Expose `host.shell` as both the shell itself and a configuring call.
-
-    `host.shell` must keep working as the bound `Shell` -- `host.shell.run()`,
-    `host.shell.session()`, `with host.shell as session:` all predate this.
-    `host.shell(cwd=...)` must additionally return a shell carrying defaults.
-
-    A plain property cannot do both, and overloading `Shell.__call__` is not an
-    option: that is the `Executor` protocol's execute entry point, so making it
-    mean "configure" when called without a command would make every executor
-    call site ambiguous. This descriptor instead returns the built shell for
-    attribute access and, because a `Shell` is itself callable, routes a
-    keyword-only call through `Shell.configure`.
-    """
-
-    def __init__(self, build):
-        self._build = build
-        self.__doc__ = build.__doc__
-
-    def __get__(self, instance, owner=None):
-        if instance is None:
-            return self
-        return _ConfigurableShell(self._build(instance))
-
-
-class _ConfigurableShell:
-    """A `Shell` proxy whose keyword-only call returns a configured shell."""
-
-    __slots__ = ("_shell",)
-
-    def __init__(self, shell):
-        object.__setattr__(self, "_shell", shell)
-
-    def __call__(self, *args, **options):
-        if args:
-            # A positional argument means the caller is using the `Executor`
-            # protocol (`shell(command, ...)`); defer to the real shell.
-            return self._shell(*args, **options)
-        return self._shell.configure(**options)
-
-    def __getattr__(self, name):
-        return getattr(self._shell, name)
-
-    def __setattr__(self, name, value):
-        # `host.shell` builds a NEW `Shell` on every attribute access, so an
-        # assignment here reached an object discarded at the end of the
-        # expression: `host.shell.env = {"TZ": "UTC"}` appeared to work and
-        # changed nothing. Say so instead, and name the spelling that does
-        # work -- `Shell.cwd`/`env`/`encoding`/`errors` are ordinary public
-        # attributes, so trying to set them is a reasonable thing to do.
-        if name in ("cwd", "env", "encoding", "errors"):
-            raise AttributeError(
-                f"host.shell is rebuilt on every access, so setting {name!r} "
-                f"here would be discarded; use host.shell({name}=...) to get "
-                "a configured shell"
-            )
-        setattr(self._shell, name, value)
-
-    def __enter__(self):
-        return self._shell.__enter__()
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        return self._shell.__exit__(exc_type, exc_value, traceback)
-
-    def __repr__(self):
-        return repr(self._shell)
-
-    @property
-    def __class__(self):
-        # `Host.shell` is annotated `-> Shell` and this proxy forwards every
-        # attribute to one, but `isinstance(host.shell, Shell)` was False,
-        # which is the one question a caller asks about a documented return
-        # type. Answering with the wrapped shell's type keeps the annotation
-        # honest without turning the proxy into a subclass.
-        return type(self._shell)
-
-
 class _HostExecutor:
     """A host presented as an `Executor`: calls go through `host.run()`, so the
     host's own rendering and failover apply.
@@ -914,17 +837,16 @@ class Host(_abc.ABC, metaclass=_HostMeta):
             return frozenset()
         return frozenset(getattr(self.executor, "executor_capabilities", ()))
 
-    @_ShellAccessor
+    @property
     def shell(self) -> Shell[_subprocess.CompletedProcess]:
-        """A shell bound to this host's executor.
+        """A shell bound to this host: `host.shell.run(...)` is `host.run(...)`.
 
-        Used directly -- `host.shell.run(...)`, `host.shell.session(...)`, or
-        `with host.shell as session:` -- it carries no defaults.
-
-        Called with keywords -- `host.shell(cwd="/srv/app", env={"TZ": "UTC"})`
-        -- it returns a shell carrying those defaults, applied to every later
-        `run`, `execute`, and `session` that does not pass its own value.
-        `env` merges per key; `cwd`, `encoding`, and `errors` override.
+        `host.shell.session(...)` and `with host.shell as session:` open a
+        persistent session. Called with keywords --
+        `host.shell(cwd="/srv/app", env={"TZ": "UTC"})` -- it returns a shell
+        carrying those defaults, applied to every later `run` and `session`
+        that does not pass its own value. `env` merges per key; `cwd`,
+        `encoding`, and `errors` override. A shell's attributes are read-only.
         """
         from ..shell import Shell
 

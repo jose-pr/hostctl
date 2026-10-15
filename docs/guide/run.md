@@ -228,9 +228,12 @@ and `session(env=None)` opens a session without one.
 Requesting a genuinely empty environment is a separate capability that does not
 exist yet.
 
-Defaults apply wherever the shell builds a script. `Shell.execute()` used
-directly against an executor with no native `cwd`/`env` support dispatches one
-opaque command and does not receive them.
+Defaults apply wherever the shell builds a script. A `Shell` over a host is
+that host's `run`: `host.shell.run(x)` hands the provider exactly what
+`host.run(x)` does. A `Shell(flavour, executor)` over a bare executor renders
+the script itself and embeds `cwd`/`env` unless the executor carries them.
+A `Shell` is not an `Executor`: calling it configures it, and running a program
+with argv is `host.executor(command, *args)` or `host.run(Exec(...))`.
 
 `session.send(*cmds, cwd=..., env=...)` accepts the same raw strings, structured
 argument lists, multiple commands, paths, and `ShellOperator` values as `run()`.

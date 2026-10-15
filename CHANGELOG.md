@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **`host.shell.run()` reports the native-WinRM status.** It rendered the
+  PowerShell exit epilogue itself, which ended the remote runspace before the
+  status marker; it now hands the provider what `host.run()` does. A `Shell`
+  over `LocalExecutor` (or any executor declaring `args`) runs, where it
+  raised `FileNotFoundError`, and `host.shell(env=...)` reaches the command.
+  `SystemHost.executor(command, *args)` raised `NameError`; it runs.
 - **PowerShell keeps deferred object output.** The status epilogue ended with
   `exit`, which discards objects still waiting to be formatted:
   `host.run("[pscustomobject]@{a=1}")` returned an empty line with status 0 on
@@ -178,11 +184,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   which now also answers `*.localhost`, short IPv4 spellings and this machine's
   own name. `import hostctl` still does not import netimps.
 
+### Added
+
+- `hostctl.shell.wants_epilogue(capabilities)` answers whether a script for a
+  provider needs the flavour's status epilogue (not when it declares
+  `manages_status`). `shell_flavour_names()` (also in `hostctl`) lists the
+  names `shell_flavour()` accepts, plugin flavours included.
+- `run(timeout=)` on the native WinRM leg; it overrides `read_timeout_sec` as
+  the total deadline for that call.
+- `pathapi.protocols.supports(path, Protocol)` answers for a host path. A
+  composed host's path answers from the operations its providers declare
+  (only the pinned provider after `.via()`), without probing; a container path
+  has no `Create`, `Chmod`, `Remove` or `Move`, and a QGA path has no
+  `Readlink` or `Symlink` and answers its metadata and namespace protocols
+  from the guest helper.
+- `HOSTCTL_MCP=stdio` serves every `hostctl` subcommand as an MCP tool over
+  stdio. `--ask-password` is refused there, since a tool call cannot prompt;
+  use `HOSTCTL_PASSWORD`.
+- `hostctl --version`, and `-v`/`-q`/`--loglevel` on every subcommand.
+- `PromptConsoleProfile(login_timeout=10.0)` sets how long each login step and
+  the first prompt may take; the default is the previous fixed 10 seconds. It
+  is a profile argument only, not part of the `serial:///` URI.
+- `QemuHost.open_serial(encoding=, errors=)` (and `QemuSerialConsole.open`)
+  return a console that reads and writes `str`.
+- `ContainerConfig(path_flavor="posix")`, `"windows"` and `SshConfig(path_flavor=
+  "windows")` take the strings `QemuConfig` already accepted; `SshConfig` has
+  no `"auto"`.
+- `run(..., stderr=subprocess.STDOUT)` on a QGA guest asks qemu-ga to
+  interleave the streams (`capture-output: "merged"`) when the agent is 8.0 or
+  later and the guest is not Windows.
+- `host_schemes()` and `system_provider_names()` list what the URI-scheme and
+  system-provider registries hold, sorted, with entry-point names included and
+  not imported. Unknown system-provider descriptors load the
+  `hostctl.system_providers` entry point of that name.
+- `SystemHost.executor_providers` and `path_providers` (read-only tuples, until
+  now only on `LocalHost`) and `SystemHost.replace_providers(*, executor=None,
+  path=None)`, which swaps either set, closes each replaced transport once
+  unless a kept provider shares it, and starts a new connection generation.
+  The provider teardown rule is documented in the providers guide.
+- `local_providers()` returns the local `(executor_provider, path_provider)`
+  pair, beside `ssh_providers()` and `winrm_providers()`, for a host you
+  assemble yourself. `posix://...?executor=local` now builds the same
+  providers.
+
 ### Changed
 
 - The config extension hooks `_from_parsed_uri` and `_create_host` are documented
   as the override points for a `HostConfig` subclass, with a worked example in
   the extending guide. Their names are unchanged and no `from_uri` is added.
+- **Breaking, 0.4.0: `Shell` is not an `Executor`.** `Shell.execute()` and
+  `shell(command, *args)` are removed; calling a `Shell` configures it
+  (`host.shell(cwd=..., env=...)`) and a positional argument raises
+  `TypeError`. Run a program with argv through `host.executor(command, *args)`
+  or `host.run(Exec(command, *args))`. A shell's `flavour`, `cwd`, `env`,
+  `encoding` and `errors` are read-only, and the `host.shell` proxy is gone.
+  A `Shell` over a host is that host's `run`; one over a bare executor sends
+  the flavour's invocation as argv when the executor declares `args`.
+- **Breaking, 0.4.0: `ShellFlavour.script(for_session=)` is
+  `script(epilogue=)`**, with the sense inverted (`for_session=True` is
+  `epilogue=False`). `terminate_submission` is unchanged here.
 - **Breaking, 0.4.0: a structured `cmd` `call` raises `ValueError`.** `call`
   re-expands `%` and doubles `^` in its arguments, so no quoting survives it;
   run the program directly. `call` and `start` are no longer treated as
@@ -280,45 +340,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   "ambiguous host URI"); `register_system_provider(name, resolver)` raises for
   a name already registered. Pass `replace=True` to take the name over on
   purpose. Redefining the same class (a module reload) is not a duplicate.
-
-### Added
-
-- `run(timeout=)` on the native WinRM leg; it overrides `read_timeout_sec` as
-  the total deadline for that call.
-- `pathapi.protocols.supports(path, Protocol)` answers for a host path. A
-  composed host's path answers from the operations its providers declare
-  (only the pinned provider after `.via()`), without probing; a container path
-  has no `Create`, `Chmod`, `Remove` or `Move`, and a QGA path has no
-  `Readlink` or `Symlink` and answers its metadata and namespace protocols
-  from the guest helper.
-- `HOSTCTL_MCP=stdio` serves every `hostctl` subcommand as an MCP tool over
-  stdio. `--ask-password` is refused there, since a tool call cannot prompt;
-  use `HOSTCTL_PASSWORD`.
-- `hostctl --version`, and `-v`/`-q`/`--loglevel` on every subcommand.
-- `PromptConsoleProfile(login_timeout=10.0)` sets how long each login step and
-  the first prompt may take; the default is the previous fixed 10 seconds. It
-  is a profile argument only, not part of the `serial:///` URI.
-- `QemuHost.open_serial(encoding=, errors=)` (and `QemuSerialConsole.open`)
-  return a console that reads and writes `str`.
-- `ContainerConfig(path_flavor="posix")`, `"windows"` and `SshConfig(path_flavor=
-  "windows")` take the strings `QemuConfig` already accepted; `SshConfig` has
-  no `"auto"`.
-- `run(..., stderr=subprocess.STDOUT)` on a QGA guest asks qemu-ga to
-  interleave the streams (`capture-output: "merged"`) when the agent is 8.0 or
-  later and the guest is not Windows.
-- `host_schemes()` and `system_provider_names()` list what the URI-scheme and
-  system-provider registries hold, sorted, with entry-point names included and
-  not imported. Unknown system-provider descriptors load the
-  `hostctl.system_providers` entry point of that name.
-- `SystemHost.executor_providers` and `path_providers` (read-only tuples, until
-  now only on `LocalHost`) and `SystemHost.replace_providers(*, executor=None,
-  path=None)`, which swaps either set, closes each replaced transport once
-  unless a kept provider shares it, and starts a new connection generation.
-  The provider teardown rule is documented in the providers guide.
-- `local_providers()` returns the local `(executor_provider, path_provider)`
-  pair, beside `ssh_providers()` and `winrm_providers()`, for a host you
-  assemble yourself. `posix://...?executor=local` now builds the same
-  providers.
 
 ### Removed
 

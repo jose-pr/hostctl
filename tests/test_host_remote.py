@@ -142,18 +142,16 @@ def test_ssh_text_mode_selects_an_encoding_for_executor():
     assert stub.calls[0][1]["encoding"] == "utf-8"
 
 
-def test_ssh_shell_execute_path_quotes_it_as_a_direct_command():
+def test_ssh_shell_run_quotes_a_path_command():
     host, stub = _host()
-    Shell(host.shell_flavour, host.executor).execute(PurePosixPath("/opt/my command"))
-    assert stub.calls[0][0] == "/opt/my command"
+    Shell(host.shell_flavour, host).run(PurePosixPath("/opt/my command"))
+    assert "'/opt/my command'" in stub.calls[0][0]
 
 
-def test_ssh_shell_execute_path_with_args_renders_safe_script():
+def test_ssh_shell_run_with_args_renders_safe_script():
     host, stub = _host()
-    Shell(host.shell_flavour, host.executor).execute(
-        PurePosixPath("/opt/my command"),
-        "--name",
-        "value with spaces",
+    Shell(host.shell_flavour, host).run(
+        (PurePosixPath("/opt/my command"), "--name", "value with spaces")
     )
     assert "/opt/my command" in stub.calls[0][0]
     assert "value with spaces" in stub.calls[0][0]

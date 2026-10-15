@@ -63,6 +63,22 @@ def register_shell_flavour(
     return flavour
 
 
+def shell_flavour_names() -> typing.Tuple[str, ...]:
+    """Sorted names `shell_flavour()` accepts: registered and plugin flavours."""
+    names = set(_SHELLS)
+    try:
+        entries = _metadata.entry_points()
+        selected = (
+            entries.select(group="hostctl.shell_flavours")
+            if hasattr(entries, "select")
+            else entries.get("hostctl.shell_flavours", ())
+        )
+        names.update(item.name for item in selected)
+    except Exception:  # a broken plugin index must not hide the built-ins
+        pass
+    return tuple(sorted(names))
+
+
 def shell_flavour(value: ShellFlavourSelection) -> ShellFlavour:
     """Normalize a public shell selection without inferring from the transport."""
     if isinstance(value, type):
@@ -127,4 +143,5 @@ __all__ = [
     "register_shell_flavour",
     "wants_epilogue",
     "shell_flavour",
+    "shell_flavour_names",
 ]

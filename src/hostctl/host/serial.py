@@ -505,11 +505,5 @@ class _SerialShell:
     def configure(self, **options):
         return self(**options)
 
-    def execute(self, command, *args, **options):
-        raise NotImplementedError(
-            "a serial console has no shell flavour to quote an argv with; "
-            "send the command text through run() or a session"
-        )
-
 
 __all__ = ["SerialConfig", "SerialHost"]

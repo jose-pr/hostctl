@@ -58,7 +58,7 @@ def test_shell_callable_executor_receives_one_script():
 
 def test_executor_contracts_are_direct_hostctl_api():
     assert Executor is ModuleExecutor
-    assert Executor in Shell.__mro__
+    assert Executor not in Shell.__mro__
     assert Executor in SshExecutor.__mro__
     assert Executor in WinRMExecutor.__mro__
 
@@ -83,27 +83,45 @@ def test_executor_contract_declares_subprocess_basics():
 
 def test_shell_accepts_host_shaped_executor():
     class _Host:
-        def __init__(self):
-            self.commands = []
+        shell_flavour = POSIX_SHELL
 
-        def run(self, command):
-            self.commands.append(command)
+        def __init__(self):
+            self.calls = []
+
+        def run(self, *cmds, **options):
+            self.calls.append((cmds, options))
             return 7
 
     host = _Host()
     shell = Shell(POSIX_SHELL, host)
 
+    # A shell over a host IS that host's run: the host renders its own layer.
     assert shell.run("echo hello", env={"NAME": "a b"}) == 7
-    assert host.commands == ["export NAME='a b';echo hello"]
+    assert host.calls == [(("echo hello",), {"env": {"NAME": "a b"}})]
 
 
-def test_shell_execute_preserves_path_for_executor():
-    commands = []
-    shell = Shell(POSIX_SHELL, commands.append)
+def test_shell_over_a_host_refuses_a_flavour_the_host_does_not_use():
+    class _Host:
+        shell_flavour = POSIX_SHELL
 
-    shell.execute(PurePosixPath("/usr/local/bin/tool"))
+        def run(self, *cmds, **options):
+            raise AssertionError("not reached")
 
-    assert commands == [PurePosixPath("/usr/local/bin/tool")]
+    with pytest.raises(ValueError, match="powershell"):
+        Shell(POWERSHELL, _Host())
+
+
+def test_shell_is_not_an_executor_and_calling_it_configures():
+    shell = Shell(POSIX_SHELL, lambda command: command)
+
+    assert not hasattr(shell, "execute")
+    configured = shell(cwd="/srv", env={"A": "1"})
+    assert isinstance(configured, Shell)
+    assert (configured.cwd, configured.env) == ("/srv", {"A": "1"})
+    with pytest.raises(TypeError, match=r"host\.executor"):
+        shell("prog", "arg")
+    with pytest.raises(AttributeError):
+        shell.env = {}
 
 
 def test_shell_passes_context_separately_when_executor_accepts_it():
@@ -130,15 +148,18 @@ def test_shell_passes_context_separately_when_executor_accepts_it():
     ]
 
 
-def test_shell_execute_rejects_context_the_executor_cannot_accept():
+def test_shell_run_rejects_options_the_executor_cannot_accept():
     shell = Shell(POSIX_SHELL, lambda command: command)
 
-    try:
-        shell.execute("echo hello", cwd="/tmp")
-    except TypeError as exc:
-        assert str(exc) == "executor does not accept cwd"
-    else:
-        raise AssertionError("unsupported execution context was silently ignored")
+    with pytest.raises(TypeError, match="executor does not accept timeout"):
+        shell.run("echo hello", timeout=3)
+
+
+def test_shell_embeds_cwd_the_executor_cannot_carry():
+    scripts = []
+    Shell(POSIX_SHELL, scripts.append).run("echo hello", cwd="/tmp")
+
+    assert scripts == ["cd -- /tmp&&{ echo hello; }"]
 
 
 def test_shell_forwards_executor_io_and_text_options_unchanged():
@@ -176,12 +197,12 @@ def test_executor_can_distinguish_command_from_script_by_value_type():
         calls.append(command)
 
     shell = Shell(POSIX_SHELL, executor)
-    shell.execute(PurePosixPath("/usr/bin/true"))
-    shell.execute("printf direct-shell-text")
+    shell.run(PurePosixPath("/usr/bin/true"))
+    shell.run("printf direct-shell-text")
     shell.run(("printf", "%s", "hello"))
 
     assert calls == [
-        PurePosixPath("/usr/bin/true"),
+        "/usr/bin/true",
         "printf direct-shell-text",
         "printf %s hello",
     ]
@@ -198,26 +219,18 @@ def test_shell_passes_native_args_only_when_executor_supports_them():
             self.calls.append((command, args))
 
     executor = _NativeExecutor()
-    Shell(POSIX_SHELL, executor).execute(
-        PurePosixPath("/usr/bin/tool"),
-        "--name",
-        "value with spaces",
-    )
+    Shell(POSIX_SHELL, executor).run(("/usr/bin/tool", "--name", "value with spaces"))
 
+    # An argv executor gets the shell's own invocation: one script argument.
     assert executor.calls == [
-        (
-            PurePosixPath("/usr/bin/tool"),
-            ("--name", "value with spaces"),
-        )
+        ("/bin/sh", ("-c", "/usr/bin/tool --name 'value with spaces'"))
     ]
 
 
 def test_shell_renders_args_when_executor_has_no_native_args():
     calls = []
-    Shell(POSIX_SHELL, calls.append).execute(
-        PurePosixPath("/usr/bin/tool"),
-        "--name",
-        "value with spaces",
+    Shell(POSIX_SHELL, calls.append).run(
+        ("/usr/bin/tool", "--name", "value with spaces")
     )
 
     assert calls == ["/usr/bin/tool --name 'value with spaces'"]
@@ -554,6 +567,7 @@ def test_shell_session_uses_flavour_wrapper_and_provider_spawn():
 
     class _Provider:
         executor_capabilities = frozenset()
+        shell_flavour = POWERSHELL
 
         def __init__(self):
             self.calls = []
@@ -686,7 +700,7 @@ def _recording_shell(**defaults):
     """A shell over a capability-less executor recording rendered scripts."""
     scripts = []
 
-    def execute(command, *args, **options):
+    def execute(command, **options):
         scripts.append(command)
         return subprocess.CompletedProcess(command, 0, b"", b"")
 
@@ -1045,16 +1059,78 @@ def test_binary_output_reaches_a_text_stream_untouched():
 
 
 def test_setting_a_default_on_host_shell_is_refused_not_discarded():
-    """`host.shell` builds a fresh `Shell` on every attribute access, so
-    `host.shell.env = {...}` reached an object discarded at the end of the
-    expression: it appeared to work and changed nothing. `cwd`, `env`,
-    `encoding` and `errors` are ordinary public attributes on `Shell`, so
-    assigning to them is a natural thing to try."""
+    """`host.shell` is a fresh `Shell` on every access, so `host.shell.env =
+    {...}` reached an object discarded at the end of the expression. A shell's
+    attributes are read-only; `host.shell(env=...)` is the configuring spelling."""
     host = LocalConfig()._create_host()
 
-    with pytest.raises(AttributeError, match=r"host.shell\(env=...\)"):
+    with pytest.raises(AttributeError):
         host.shell.env = {"TZ": "UTC"}
 
     configured = host.shell(env={"TZ": "UTC"})
     assert configured.env == {"TZ": "UTC"}
     assert host.shell.env is None
+    assert isinstance(host.shell, Shell)
+
+
+def test_host_shell_run_hands_the_provider_what_host_run_does():
+    """`Shell.run` rendered the epilogue on its own, so a status-managing
+    provider got `exit ...` that ended its runspace before the status marker."""
+    from hostctl import ExecutorProvider, WindowsHost
+
+    scripts = []
+
+    def execute(script, **options):
+        scripts.append(script)
+        return subprocess.CompletedProcess(script, 0, b"", b"")
+
+    host = WindowsHost(
+        executor_providers=(
+            ExecutorProvider(
+                "fake", execute, capabilities=("script", "manages_status")
+            ),
+        )
+    )
+
+    host.run("cmd /c exit 3")
+    host.shell.run("cmd /c exit 3")
+
+    assert scripts == ["cmd /c exit 3", "cmd /c exit 3"]
+
+
+def test_host_shell_configured_env_reaches_the_command():
+    code = "import os; print(os.environ['HC_A'])"
+    result = (
+        LocalConfig()
+        ._create_host()
+        .shell(env={"HC_A": "x"})
+        .run((sys.executable, "-c", code), text=True)
+    )
+
+    assert result.stdout.strip() == "x"
+
+
+def test_a_shell_over_an_executor_runs_through_the_executors_argv():
+    from hostctl.executor import LocalExecutor
+
+    if os.name == "nt":
+        shell, text = Shell(POWERSHELL, LocalExecutor()), "Write-Output hi"
+    else:
+        shell, text = Shell(POSIX_SHELL, LocalExecutor()), "echo hi"
+
+    assert shell.run(text, encoding="utf-8").stdout.strip() == "hi"
+
+
+def test_a_shell_over_an_executor_embeds_what_the_executor_cannot_carry():
+    from hostctl.executor import LocalExecutor
+
+    if os.name == "nt":
+        shell = Shell(POWERSHELL, LocalExecutor())
+        command = "(Get-Location).ProviderPath"
+    else:
+        shell = Shell(POSIX_SHELL, LocalExecutor())
+        command = "pwd"
+
+    result = shell.run(command, cwd=os.getcwd(), encoding="utf-8")
+
+    assert os.path.realpath(result.stdout.strip()) == os.path.realpath(os.getcwd())

@@ -135,12 +135,11 @@ executor-specific extensions remain keyword options.
 `ExecutorCommand` is `str | pathlib.PurePath | pathapi.Pathname`; paths
 remain path objects until the concrete executor converts them for transport.
 `ExecutorCapability.ARGS`, `.CWD`, and `.ENV` declare native executor support.
-`Shell.execute(path, *args)` preserves path/args for an `ARGS` executor;
-otherwise the flavour safely renders them into one script. `cwd` and `env`
-follow the same native-or-embed rule.
-`Shell`, `SshExecutor`, and `WinRMExecutor` inherit the `Executor` protocol so
-shared protocol implementations can be added once; `Shell.__call__` delegates
-to `Shell.execute()`.
+`SshExecutor` and `WinRMExecutor` inherit the `Executor` protocol so shared
+protocol implementations can be added once. `Shell` is NOT an `Executor`:
+calling a `Shell` configures it (`shell(cwd=..., env=...)`), and a positional
+argument raises `TypeError` -- run a program with argv through
+`host.executor(command, *args)` or `host.run(Exec(command, *args))`.
 `Host` itself supplies the multi-command `run()` provider contract; there is no
 duplicate host-executor protocol or unused host-options wrapper.
 `Exec(program, *args)` is the direct-execution marker for `Host.run()`: one
@@ -166,10 +165,6 @@ non-iterable as `Exec`. After `REDIRECT`/`APPEND` the operand is a file name
 tuple is quoted for the shell itself. A path given as a whole command renders
 as the one-element command `(path,)`. Under `cmd`, a structured `start` always
 renders `start ""` and a structured `call` raises `ValueError`.
-`Shell.execute(command, *args)` keeps its own program-plus-argv signature and
-wraps into an `Exec` only when dispatching to a host `run(*cmds)` and only when
-argv values are present -- `Shell.run` renders every command into one script
-and dispatches it with no args, and that script is shell text, not a program.
 
 ## Configuration and lifecycle
 
@@ -263,16 +258,23 @@ and `parse_credentials`.
 
 ## Shell contract
 
-- `Shell(flavour, executor)` binds a `ShellFlavour` to either a command
-  callable or an object exposing `run(command, **options)`. The command is
-  always one string. If its inspected signature accepts `cwd` and/or `env`,
-  `Shell.run()` forwards those separately; otherwise the flavour embeds that
-  context into the script. Shell-agnostic subprocess options (`stdin`,
-  `stdout`, `stderr`, `capture_output`, `check`, `encoding`, `errors`, `input`,
-  `timeout`, `text`) pass through only to the executor. `Shell.execute(command)`
-  passes strings unchanged and converts path-like commands with `str(path)`.
-- `ShellFlavour.script(cmds, *, cwd=None, env=None) -> str` constructs a script
-  in one target shell language.
+- `Shell(flavour, executor)` binds a `ShellFlavour` to a host (an object with
+  `run`, not callable) or to an executor (a callable). Over a host,
+  `Shell.run(x)` IS `host.run(x)` -- the host renders one shell layer with its
+  provider's capabilities -- and the flavour must be the host's own
+  (`ValueError` otherwise). Over an executor, `Shell.run()` renders a script
+  and sends it by the executor's capabilities: `args` gets the flavour's
+  invocation as argv (a `CommandLine` for cmd), otherwise the script string;
+  `cwd`/`env` are forwarded when the executor carries them natively and
+  embedded in the script when not. Subprocess options (`stdin`, `stdout`,
+  `stderr`, `capture_output`, `check`, `encoding`, `errors`, `input`,
+  `timeout`, `text`) pass through to the executor or host. `flavour`, `cwd`,
+  `env`, `encoding` and `errors` are read-only properties.
+- `ShellFlavour.script(cmds, *, cwd=None, env=None, epilogue=True) -> str`
+  constructs a script in one target shell language. `epilogue=False` leaves
+  off the status epilogue; `hostctl.shell.wants_epilogue(capabilities)` is
+  `False` for a provider declaring `manages_status` and is how every caller
+  decides.
 - `ShellFlavour.environment_script(env) -> str` is a reusable standalone
   environment-mapping renderer. The base normalizes/validates variable names
   and joins each flavour's `environment_assignment(key, value)` output.
@@ -300,6 +302,8 @@ and `parse_credentials`.
 - `POSIX_SHELL` and `POWERSHELL` are the built-in strategies;
   common built-ins also include `BASH`, `ZSH`, `FISH`, `CMD`, and PowerShell 7
   `PWSH`. PowerShell 5 rejects `AND`/`OR`; PowerShell 7 supports them.
+- `shell_flavour_names()` returns the sorted names `shell_flavour()` accepts,
+  plugin entry points included.
 - `shell_flavour(selection)` accepts a registered string, configured
   `ShellFlavour` instance, or no-argument `ShellFlavour` subclass.
   `register_shell_flavour()` adds application-defined string selections.

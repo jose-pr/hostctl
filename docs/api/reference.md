@@ -108,7 +108,7 @@ re-exported so callers can annotate against it without depending on
 `pathapi` by name.
 
 `ExecutorCommand` (`str | pathlib.PurePath | pathapi.Pathname`) is the
-command type accepted by `Executor` and `Shell.execute()`.
+command type accepted by `Executor`.
 `ExecutorCapability` is the enum whose `.ARGS`, `.CWD`, and `.ENV` members
 declare native executor support. Its members subclass `str`, so
 `ExecutorCapability.CWD == "cwd"`: capability sets are compared as strings

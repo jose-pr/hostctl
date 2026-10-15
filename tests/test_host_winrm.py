@@ -59,12 +59,10 @@ def test_winrm_text_mode_decodes_with_utf8_default():
     assert host.run("Write-Output café", text=True).stdout == "café"
 
 
-def test_winrm_shell_execute_path_invokes_it_as_a_command():
+def test_winrm_shell_run_invokes_a_path_as_a_command():
     host, session = _host()
-    Shell(host.shell_flavour, host.executor).execute(
-        PureWindowsPath(r"C:\Program Files\tool.exe")
-    )
-    assert session.scripts == [r"C:\Program Files\tool.exe"]
+    Shell(host.shell_flavour, host).run(PureWindowsPath(r"C:\Program Files\tool.exe"))
+    assert session.scripts[0].startswith(r"& 'C:\Program Files\tool.exe'")
 
 
 def test_winrm_context_closes_when_session_supports_close():

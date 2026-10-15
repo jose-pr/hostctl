@@ -229,8 +229,6 @@ def test_a_serial_shell_refuses_what_it_cannot_mean():
 
     with pytest.raises(NotImplementedError, match="no shell flavour"):
         host.shell(cwd="/srv")
-    with pytest.raises(NotImplementedError, match="quote an argv"):
-        host.shell.execute("ls", "-l")
 
 
 def test_a_spawned_console_honours_the_errors_it_was_given():

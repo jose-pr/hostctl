@@ -112,8 +112,8 @@ def test_normalize_input_honours_encoding_and_errors():
     assert normalize_input("é", text_mode=False, encoding="latin-1") == b"\xe9"
 
 
-def test_local_shell_execute_path_preserves_native_arguments():
-    result = LocalHost().shell.execute(
+def test_local_executor_path_preserves_native_arguments():
+    result = LocalHost().executor(
         Path(sys.executable),
         "-c",
         "import sys; print(repr(sys.argv[1]))",

@@ -14,12 +14,7 @@ import typing
 import types
 from pathlib import Path, PurePath
 
-from ..executor import (
-    CommandArgument,
-    Executor,
-    ExecutorCapability,
-    ExecutorCommand,
-)
+from ..executor import ExecutorCapability
 from ..executor import (
     CaptureOutput,
     Environment,
@@ -601,40 +596,60 @@ class ShellFlavour(abc.ABC):
         return self.name
 
 
-class Shell(Executor[_Result], typing.Generic[_Result]):
-    """Bind one shell language to a one-string callable or host executor."""
+class Shell(typing.Generic[_Result]):
+    """Bind one shell language to a host or to an executor.
+
+    Over a **host**, `run()` is that host's `run()`: the host renders exactly
+    one shell layer with its provider's capabilities, so `host.shell.run(x)`
+    hands the provider what `host.run(x)` does. Over an **executor** (a
+    callable such as `LocalExecutor()`), the shell renders the script itself
+    and sends it as a script string, as argv (`args`), or as a command line,
+    embedding `cwd`/`env` unless the executor carries them natively.
+
+    A `Shell` is not an `Executor`: calling it configures it, and a
+    positional argument raises `TypeError`.
+    """
 
     def __init__(
         self,
         flavour: ShellFlavour,
-        executor: typing.Union[Executor[_Result], _CommandHost],
+        executor: typing.Union[typing.Callable[..., _Result], _CommandHost],
         *,
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
     ) -> None:
-        self.flavour = flavour
-        #: Defaults applied to every `run`, `execute`, and `session` call that
-        #: does not pass its own value.  `cwd`, `encoding`, and `errors`
-        #: override wholesale; `env` merges per key so a call can change one
-        #: variable without restating the rest (see `_resolve_env`).
-        self.cwd = cwd
-        # `dict(env) if env is not None` kept an empty mapping, which the
-        # local executor forwards to `subprocess` as `env={}` -- a child
-        # started with NO environment at all, where the caller meant "no
-        # overrides". `configure()` already normalised it this way.
-        self.env = dict(env) if env else None
-        self.encoding = encoding
-        self.errors = errors
+        self._flavour = flavour
+        #: Defaults applied to every `run` and `session` call that does not
+        #: pass its own value. `cwd`, `encoding`, and `errors` override
+        #: wholesale; `env` merges per key so a call can change one variable
+        #: without restating the rest (see `_resolve_env`).
+        self._cwd = cwd
+        # An empty mapping would reach `subprocess` as `env={}` -- a child
+        # started with NO environment -- where the caller meant "no overrides".
+        self._env = dict(env) if env else None
+        self._encoding = encoding
+        self._errors = errors
         run = getattr(executor, "run", None)
         spawn = getattr(executor, "spawn", None)
         self._spawn = spawn if callable(spawn) else None
         self._session: typing.Optional[ShellSession] = None
+        self._host = None
         if callable(executor):
             self._execute = executor
         elif callable(run):
+            self._host = executor
             self._execute = run
+            try:
+                named = executor.shell_flavour.name
+            except NotImplementedError:
+                named = None
+            if named != flavour.name:
+                raise ValueError(
+                    f"a {flavour.name} shell cannot run on a host that names "
+                    f"{named or 'no'} shell flavour"
+                )
         else:
             raise TypeError("executor must be callable or provide run(command)")
         try:
@@ -644,24 +659,6 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         self._executor_accepts_options = any(
             item.kind is inspect.Parameter.VAR_KEYWORD
             for item in self._executor_parameters.values()
-        )
-        # A host `run(*cmds)` takes several *commands*; an executor
-        # `__call__(command, *args)` takes one command and its argv. Only the
-        # former needs the program and argv bundled into one `Exec`, since
-        # otherwise each argument would become a separate command. The shapes
-        # differ in their first parameter: VAR_POSITIONAL vs a named one.
-        positional = [
-            item
-            for item in self._executor_parameters.values()
-            if item.kind
-            in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.VAR_POSITIONAL,
-            )
-        ]
-        self._execute_takes_commands = bool(positional) and (
-            positional[0].kind is inspect.Parameter.VAR_POSITIONAL
         )
         published = getattr(executor, "executor_capabilities", None)
         if published is None:
@@ -677,10 +674,6 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
                 inferred.add(ExecutorCapability.ARGS)
             published = frozenset(inferred)
         # One capability vocabulary, strings -- see `ExecutorCapability`.
-        # Its members subclass `str`, so a set published as enum members by a
-        # raw `Executor` and one published as plain strings by a `Host` (via
-        # `ExecutorProvider`) compare and hash identically.  No conversion
-        # happens here, and none is needed at any other boundary.
         self.executor_capabilities = frozenset(published)
         self._executor_accepts_cwd = (
             ExecutorCapability.CWD in self.executor_capabilities
@@ -688,6 +681,12 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         self._executor_accepts_env = (
             ExecutorCapability.ENV in self.executor_capabilities
         )
+
+    flavour = property(lambda self: self._flavour)
+    cwd = property(lambda self: self._cwd)
+    env = property(lambda self: self._env)
+    encoding = property(lambda self: self._encoding)
+    errors = property(lambda self: self._errors)
 
     def _accepts_keyword(self, name: str) -> bool:
         parameter = self._executor_parameters.get(name)
@@ -713,94 +712,31 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         """
         if env is None:
             return None
-        if self.env is None:
+        if self._env is None:
             return dict(env) if env else None
-        merged = dict(self.env)
+        merged = dict(self._env)
         merged.update(env)
         return merged
 
     def _resolve_cwd(self, cwd: typing.Optional[PathLike]) -> typing.Optional[PathLike]:
-        return self.cwd if cwd is None else cwd
+        return self._cwd if cwd is None else cwd
 
-    def execute(
+    def __call__(
         self,
-        command: ExecutorCommand,
-        *args: CommandArgument,
-        stdin: typing.Optional[FileHandle] = None,
-        stdout: typing.Optional[FileHandle] = None,
-        stderr: typing.Optional[FileHandle] = None,
+        *args: object,
         cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
-        capture_output: typing.Optional[CaptureOutput] = None,
-        check: typing.Optional[bool] = None,
+        env: EnvironmentSelection = _INHERIT_ENV,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
-        input: Input = None,
-        timeout: typing.Optional[float] = None,
-        text: typing.Optional[bool] = None,
-    ) -> _Result:
-        """Execute one command and forward supported execution context."""
-        executor_args = args
-        if args and ExecutorCapability.ARGS not in self.executor_capabilities:
-            command = self.flavour.structured_command((command, *args))
-            executor_args = ()
-        # Apply the shell's cwd/env defaults only where the executor can carry
-        # them natively. Where it cannot, the caller renders them into the
-        # script instead -- `run` does exactly that and then passes
-        # cwd=None/env=None here, so resolving again would forward a value this
-        # executor rejects. `execute` used directly against a capability-less
-        # executor therefore ignores the defaults by design: it dispatches one
-        # opaque command rather than building a script.
-        if self._executor_accepts_cwd:
-            cwd = self._resolve_cwd(cwd)
-        if self._executor_accepts_env:
-            env = self._resolve_env(env)
-        if encoding is None:
-            encoding = self.encoding
-        if errors is None:
-            errors = self.errors
-        options = {
-            name: value
-            for name, value in (
-                ("stdin", stdin),
-                ("stdout", stdout),
-                ("stderr", stderr),
-                ("capture_output", capture_output),
-                ("check", check),
-                ("encoding", encoding),
-                ("errors", errors),
-                ("input", input),
-                ("timeout", timeout),
-                ("text", text),
+    ) -> "Shell[_Result]":
+        """Configure: return a copy carrying these defaults (see `configure`)."""
+        if args:
+            raise TypeError(
+                "a Shell is not an Executor: call host.executor(command, *args) "
+                "or host.run(Exec(command, *args)) to run a program with argv, "
+                "or shell.run(...) to run shell commands"
             )
-            if value is not None
-        }
-        if cwd is not None:
-            if not self._executor_accepts_cwd:
-                raise TypeError("executor does not accept cwd")
-            options["cwd"] = cwd
-        if env is not None:
-            if not self._executor_accepts_env:
-                raise TypeError("executor does not accept env")
-            options["env"] = env
-        unsupported = [
-            name
-            for name in options
-            if not self._accepts_keyword(name) and not self._executor_accepts_options
-        ]
-        if unsupported:
-            raise TypeError(f"executor does not accept {sorted(unsupported)[0]}")
-        if executor_args and self._execute_takes_commands:
-            # A host `run(*cmds)` treats several positionals as several
-            # commands, so a program and its argv must arrive as one `Exec`
-            # rather than relying on position to mark direct execution.
-            # Only when there *are* argv values: `Shell.run` renders every
-            # command into one script and dispatches it here with no args, and
-            # that script is shell text to interpret, not a program to exec.
-            return self._execute(Exec(command, *executor_args), **options)
-        return self._execute(command, *executor_args, **options)
-
-    __call__ = execute
+        return self.configure(cwd=cwd, env=env, encoding=encoding, errors=errors)
 
     def run(
         self,
@@ -818,37 +754,65 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> _Result:
-        """Build one script from all commands and pass it to the executor.
+        """Run shell commands, as one script, on the host or executor.
 
         `env` merges over the shell's default per key; the default merges
         nothing and so inherits it. Pass `None` to run without the shell's
         configured environment, keeping whatever the host provides itself.
         """
-        # Resolve defaults here rather than in `execute`: the script is
-        # rendered before dispatch, so an embedded `cd`/env assignment has to
-        # see the shell's defaults too.
         cwd = self._resolve_cwd(cwd)
         env = self._resolve_env(env)
-        script = self.flavour.script(
-            cmds,
-            cwd=None if self._executor_accepts_cwd else cwd,
-            env=None if self._executor_accepts_env else env,
+        options = {
+            name: value
+            for name, value in (
+                ("stdin", stdin),
+                ("stdout", stdout),
+                ("stderr", stderr),
+                ("capture_output", capture_output),
+                ("check", check),
+                ("encoding", self._encoding if encoding is None else encoding),
+                ("errors", self._errors if errors is None else errors),
+                ("input", input),
+                ("timeout", timeout),
+                ("text", text),
+            )
+            if value is not None
+        }
+        if self._host is not None:
+            if cwd is not None:
+                options["cwd"] = cwd
+            if env is not None:
+                options["env"] = env
+            return self._execute(*cmds, **options)
+        if cwd is not None and self._executor_accepts_cwd:
+            options["cwd"] = cwd
+        if env is not None and self._executor_accepts_env:
+            options["env"] = env
+        unsupported = [
+            name
+            for name in options
+            if not self._accepts_keyword(name) and not self._executor_accepts_options
+        ]
+        if unsupported:
+            raise TypeError(f"executor does not accept {sorted(unsupported)[0]}")
+        embed_cwd = None if self._executor_accepts_cwd else cwd
+        embed_env = None if self._executor_accepts_env else env
+        epilogue = wants_epilogue(self.executor_capabilities)
+        if ExecutorCapability.ARGS in self.executor_capabilities:
+            from ._invocation import shell_invocation
+
+            leading = shell_invocation(
+                self._flavour,
+                cmds,
+                cwd=embed_cwd,
+                env=embed_env,
+                epilogue=epilogue,
+            )
+            return self._execute(leading[0], *leading[1:], **options)
+        script = self._flavour.script(
+            cmds, cwd=embed_cwd, env=embed_env, epilogue=epilogue
         )
-        return self.execute(
-            script,
-            cwd=cwd if self._executor_accepts_cwd else None,
-            env=env if self._executor_accepts_env else None,
-            stdin=stdin,
-            stdout=stdout,
-            stderr=stderr,
-            capture_output=capture_output,
-            check=check,
-            encoding=encoding,
-            errors=errors,
-            input=input,
-            timeout=timeout,
-            text=text,
-        )
+        return self._execute(script, **options)
 
     def session(
         self,
@@ -872,12 +836,12 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         cwd = self._resolve_cwd(cwd)
         env = self._resolve_env(env)
         session = ShellSession(
-            self.flavour,
+            self._flavour,
             self._spawn(
                 executable=executable,
                 terminal=terminal,
-                encoding=self.encoding if encoding is None else encoding,
-                errors=self.errors if errors is None else errors,
+                encoding=self._encoding if encoding is None else encoding,
+                errors=self._errors if errors is None else errors,
             ),
         )
         # A shell default cwd/env applies to the session too: it is submitted
@@ -903,15 +867,14 @@ class Shell(Executor[_Result], typing.Generic[_Result]):
         `env` merges over this shell's default the same way a per-call `env`
         does, so configuring twice layers rather than replaces, and `None`
         produces a copy carrying no environment default at all. The original
-        shell is left unchanged, which keeps `host.shell` -- a fresh object
-        per access -- safe to configure without surprising another caller.
+        shell is left unchanged.
         """
         clone = copy.copy(self)
         clone._session = None
-        clone.cwd = self.cwd if cwd is None else cwd
-        clone.env = self._resolve_env(env)
-        clone.encoding = self.encoding if encoding is None else encoding
-        clone.errors = self.errors if errors is None else errors
+        clone._cwd = self._cwd if cwd is None else cwd
+        clone._env = self._resolve_env(env)
+        clone._encoding = self._encoding if encoding is None else encoding
+        clone._errors = self._errors if errors is None else errors
         return clone
 
     def __enter__(self) -> ShellSession:
