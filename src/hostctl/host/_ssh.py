@@ -39,7 +39,6 @@ from ._common import (
     path_flavor_selection,
     starts_direct_command,
     strict_uri_query,
-    uri_host,
     uri_hostname,
     reject_stdin_conflict,
 )
@@ -169,10 +168,9 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             # Only when it was said: `auto` is the default and carrying it
             # would change every existing URI's text.
             query["login_shell"] = self.login_shell
-        return (
-            f"ssh://{user}{uri_host(self.host)}:{self.port or 22}"
-            f"?{urlencode(query)}"
-        )
+        from netimps import join_host
+
+        return f"ssh://{user}{join_host(self.host, self.port)}?{urlencode(query)}"
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> SshConfig:
@@ -181,9 +179,11 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         )
         if not parsed.hostname or parsed.path not in ("", "/"):
             raise ValueError("SSH URI requires a host and no path")
+        from netimps import get_default_port
+
         return cls(
             host=uri_hostname(parsed),
-            port=parsed.port or 22,
+            port=parsed.port or get_default_port("ssh"),
             username=unquote(parsed.username or "") or "root",
             password=typing.cast(typing.Optional[str], credentials.get("password")),
             client_keys=typing.cast(SshClientKeys, credentials.get("client_keys")),
@@ -358,7 +358,7 @@ class _SshTransport:
                     self._ssh = _async.async_to_sync(
                         _async.asyncssh().connect(
                             self.config.host,
-                            port=self.config.port or 22,
+                            port=self.config.port,
                             **self.config.connect_opts(),
                         )
                     )
@@ -453,7 +453,7 @@ class _SshTransport:
                 # would send the two legs to different servers.
                 self._sftp_backend = AsyncSSHBackend(
                     self.config.host,
-                    self.config.port or 22,
+                    self.config.port,
                     user=self.config.username or "root",
                     connect_opts=self.config.connect_opts(),
                     ssh_config=None,

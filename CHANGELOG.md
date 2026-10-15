@@ -174,6 +174,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   read and wrote its decline and probe maps without its lock. Two hosts opened
   concurrently from one config no longer share a transport, or split one host's
   executor and path legs across two.
+- `ConnectionString("nas:8443")` and `ConnectionString("10.1.1.1:22")` with no
+  scheme raise "no scheme" instead of reading `nas` as the scheme, which left
+  the host empty and `is_local` true for a remote machine (Python 3.9 did the
+  same for the address form). With `scheme=` or `defaults=` they parse as host
+  and port. The `ConnectionString` docstring and the API header said a bare host
+  parses without a scheme; they now say it needs one.
+- Default ports, IPv6 bracketing and the local-host check come from netimps
+  where hostctl wrote its own: an SSH, QGA-over-SSH, WinRM or PSRP port, an
+  endpoint or URI authority with a port, `HostInfo.hostname` (a bare IPv6
+  address `::1` is no longer reported as `:`), and `ConnectionString.is_local`,
+  which now also answers `*.localhost`, short IPv4 spellings and this machine's
+  own name. `import hostctl` still does not import netimps.
 
 ## [0.3.2] - 2026-09-23
 

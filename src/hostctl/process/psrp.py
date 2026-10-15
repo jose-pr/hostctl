@@ -101,6 +101,7 @@ class RunspaceSession:
             return self._pool
         require_pypsrp()
         from pypsrp.powershell import RunspacePool
+        from netimps import get_default_port
         from pypsrp.wsman import WSMan
 
         config = self._config
@@ -118,7 +119,7 @@ class RunspaceSession:
             encryption = "never"
         kwargs = {
             "server": getattr(config, "host"),
-            "port": endpoint_port or (5986 if ssl else 5985),
+            "port": endpoint_port or get_default_port("winrms" if ssl else "winrm"),
             "username": getattr(config, "username"),
             "password": getattr(config, "password", None),
             "ssl": ssl,

@@ -152,8 +152,10 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     @property
     def endpoint(self) -> str:
         scheme = "https" if self.ssl else "http"
-        port = self.port or (5986 if self.ssl else 5985)
-        return f"{scheme}://{uri_host(self.host)}:{port}/wsman"
+        from netimps import get_default_port, join_host
+
+        port = self.port or get_default_port(self.scheme)
+        return f"{scheme}://{join_host(self.host, port)}/wsman"
 
     @property
     def scheme(self) -> str:
@@ -176,7 +178,9 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             query += "&allow_cleartext=true"
         authority = uri_host(self.host)
         if self.port is not None:
-            authority += f":{self.port}"
+            from netimps import join_host
+
+            authority = join_host(self.host, self.port)
         return f"{self.scheme}://{quote(self.username, safe='')}@{authority}?{query}"
 
     @classmethod

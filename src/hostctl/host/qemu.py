@@ -55,7 +55,6 @@ from ._common import (
     starts_direct_command,
     strict_uri_credentials,
     strict_uri_query,
-    uri_host,
     uri_hostname,
 )
 from ._ssh import SshConfig, _SshTransport
@@ -161,7 +160,9 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         query["socket_path"] = self.socket_path or (
             f"/run/qemu-server/{self.domain}.qga"
         )
-        authority = f"{quote(ssh.username, safe='')}@{uri_host(ssh.host)}:{ssh.port}"
+        from netimps import join_host
+
+        authority = f"{quote(ssh.username, safe='')}@{join_host(ssh.host, ssh.port)}"
         return (
             f"qga+ssh://{authority}/{quote(self.domain, safe='')}?"
             f"{urlencode(query)}"
@@ -239,9 +240,11 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             )
         if not parsed.hostname or not parsed.username or not parsed.path.strip("/"):
             raise ValueError("SSH QGA URI requires user, host, and domain")
+        from netimps import get_default_port
+
         ssh = SshConfig(
             uri_hostname(parsed),
-            port=parsed.port or 22,
+            port=parsed.port or get_default_port("ssh"),
             username=unquote(parsed.username),
             password=typing.cast(typing.Optional[str], credentials.get("password")),
             client_keys=credentials.get("client_keys"),

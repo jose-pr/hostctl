@@ -692,13 +692,13 @@ class SystemHost(Host):
         # printed the hostname.
         hostname = authority
         if isinstance(authority, str) and authority:
+            from netimps import split_host
+
             hostname = authority.rpartition("@")[2]
-            if hostname.startswith("["):
-                hostname = hostname.partition("]")[0].lstrip("[") or hostname
-            else:
-                head, colon, tail = hostname.rpartition(":")
-                if colon and tail.isdigit():
-                    hostname = head
+            try:
+                hostname = split_host(hostname)[0]
+            except ValueError:
+                pass
         if fields["hostname"] is None:
             fields["hostname"] = hostname
         if fields["os_family"] is None:

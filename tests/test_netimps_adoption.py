@@ -1,0 +1,98 @@
+"""Default ports, host bracketing and local-host checks come from netimps."""
+
+import os
+import pathlib
+import subprocess
+import sys
+
+import pytest
+
+import hostctl
+from hostctl import ConnectionString, HostConfig, PosixConfig, SshConfig, WinRMConfig
+from hostctl.host.qemu import QemuConfig
+
+
+def test_importing_hostctl_does_not_import_netimps():
+    """netimps patches `socket` on Windows when imported, so hostctl imports
+    it where it is used and `import hostctl` stays free of that effect."""
+    source = str(pathlib.Path(hostctl.__file__).resolve().parents[1])
+    code = "import sys, hostctl; print('netimps' in sys.modules)"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={**os.environ, "PYTHONPATH": source},
+    )
+
+    assert result.stdout.strip() == "False"
+
+
+def test_a_winrm_endpoint_defaults_to_the_scheme_port():
+    assert WinRMConfig("h", "u", password="x").endpoint == "http://h:5985/wsman"
+    assert (
+        WinRMConfig("h", "u", password="x", ssl=True).endpoint == "https://h:5986/wsman"
+    )
+    assert (
+        WinRMConfig("h", "u", password="x", port=1234).endpoint == "http://h:1234/wsman"
+    )
+
+
+def test_an_ipv6_host_is_bracketed_beside_its_port():
+    assert (
+        WinRMConfig("::1", "u", password="x", port=5985).endpoint
+        == "http://[::1]:5985/wsman"
+    )
+    assert SshConfig("::1", port=2222).connection_uri.startswith(
+        "ssh://root@[::1]:2222?"
+    )
+
+
+def test_an_ssh_uri_without_a_port_gets_the_ssh_port():
+    assert HostConfig("ssh://u@nas").port == 22
+    config = HostConfig("ssh://u@[::1]")
+    assert (config.host, config.port) == ("::1", 22)
+
+
+def test_the_qga_ssh_uri_gets_the_ssh_port_too():
+    config = HostConfig("qga+ssh://u@nas/vm")
+
+    assert isinstance(config, QemuConfig)
+    assert config.ssh.port == 22
+
+
+@pytest.mark.parametrize(
+    "authority, hostname",
+    [
+        ("root@node:2222", "node"),
+        ("node", "node"),
+        ("[::1]:22", "::1"),
+        ("node:notaport", "node:notaport"),
+    ],
+)
+def test_the_reported_hostname_is_the_host_without_userinfo_or_port(
+    authority, hostname
+):
+    host = PosixConfig(authority, executor=("local",))._create_host()
+
+    assert host.info().hostname == hostname
+
+
+@pytest.mark.parametrize(
+    "host, local",
+    [
+        ("localhost", True),
+        ("LOCALHOST", True),
+        ("app.localhost", True),
+        ("127.0.0.1", True),
+        ("127.1", True),
+        ("[::1]", True),
+        ("nas.example.invalid", False),
+    ],
+)
+def test_is_local_is_netimps_is_local_host(host, local):
+    assert ConnectionString(host, scheme="wss").is_local is local
+
+
+def test_an_empty_host_is_local():
+    assert ConnectionString("local:").is_local
