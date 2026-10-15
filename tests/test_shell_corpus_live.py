@@ -90,9 +90,6 @@ def _pwsh_rewraps(value: str) -> bool:
 
 
 _PERCENT_NAME = re.compile(r"%[A-Za-z_]+%")
-_CMD_SPACED_PROGRAM = frozenset(
-    [' %', ' &', " '", ' ^', ' a', ' lead', '$(id -u)', '(echo injected)', ',x', ';', '=', '=ls', '`id -u`', 'a  b', 'a b', 'a;b', 'a=b', 'x=$(id)', '{a,b}']  # fmt: skip
-)
 _PS = ("powershell", "pwsh")
 
 #: finding id -> predicate over (flavour, slot, value). Every failing cell of
@@ -103,8 +100,6 @@ KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
     "067": lambda f, s, v: (
         f in _PS and s in ("argv_native", "argv_unresolved", "session") and v == "--%"
     ),
-    # A redirect operand is quoted for a C runtime, not for cmd.
-    "024": lambda f, s, v: f == "cmd" and s == "redirect" and v != INTERFERENCE,
     # A relative cwd consults CDPATH.
     "078": lambda f, s, v: s == "cdpath" and v != INTERFERENCE,
     # send() appends `;` to a heredoc terminator, and fish has no open-pipe
@@ -113,10 +108,6 @@ KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
         (v == "<heredoc>" and s == "session")
         or (v == "<open-pipe>" and f == "fish" and s == "session")
     ),
-    # A standalone path is a value to PowerShell and a caret-quoted word to cmd.
-    "082": lambda f, s, v: s == "program_path"
-    and v != INTERFERENCE
-    and (f in _PS or (f == "cmd" and v in _CMD_SPACED_PROGRAM)),
     # fish expands a whole-word `%self`.
     "222": lambda f, s, v: (
         f == "fish" and v == "%self" and s in ("argv", "command_line", "env", "session")
@@ -125,7 +116,7 @@ KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
     "225": lambda f, s, v: f in ("cmd", "powershell") and s == "env" and v == "",
     # Windows PowerShell 5 globs a [..] in a called program path.
     "new-ps5-program-wildcard": lambda f, s, v: (
-        f == "powershell" and s == "program" and v == "[ab]"
+        f == "powershell" and s in ("program", "program_path") and v == "[ab]"
     ),
     # `>` takes a wildcard path under PowerShell.
     "new-ps-redirect-wildcard": lambda f, s, v: (
@@ -164,7 +155,9 @@ DOCUMENTED: typing.Dict[str, Predicate] = {
     ),
     # "Batch files": cmd expands %NAME% in the path of the batch file it runs.
     "batch-path-percent": lambda f, s, v: (
-        f in _PS and s == "program" and _PERCENT_NAME.fullmatch(v) is not None
+        f in _PS
+        and s in ("program", "program_path")
+        and _PERCENT_NAME.fullmatch(v) is not None
     ),
 }
 

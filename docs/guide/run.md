@@ -69,6 +69,11 @@ host.run(["test", "-f", target], ShellOperator.AND, ["rm", target])
 raises `ValueError`, and a flavour may reject one it cannot represent
 portably — PowerShell 5 rejects `AND`/`OR`, while PowerShell 7 accepts them.
 
+After `REDIRECT` or `APPEND` the operand is a file name: raw text stays shell
+source, and a path (or a one-element tuple) is quoted for the shell itself, so
+`host.run("echo hi", ShellOperator.REDIRECT, path)` writes `path` even when it
+holds spaces.
+
 ### `Exec` is direct execution
 
 `Exec(program, *args)` runs one program with an argv, with no shell layer
@@ -342,6 +347,11 @@ nothing. `PSParam("-LiteralPath")` renders a parameter name bare, which the
 binder needs; a plain string is always a value::
 
     host.run(Cmdlet("Remove-Item", PSParam("-LiteralPath"), path))
+
+A path given as a whole command is a one-element command, so PowerShell runs
+it with the call operator instead of printing it. Under `cmd`, a structured
+`start` always renders an empty window title (`start "" ...`) and a structured
+`call` raises `ValueError`: run the program directly.
 
 Both raise `TypeError` for any other shell. Where a value that looks like a
 parameter name is meant as data, pass it as a plain string.

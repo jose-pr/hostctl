@@ -161,7 +161,6 @@ class CmdShellFlavour(ShellFlavour):
         (
             "assoc",
             "break",
-            "call",
             "cd",
             "chdir",
             "cls",
@@ -190,7 +189,6 @@ class CmdShellFlavour(ShellFlavour):
             "set",
             "setlocal",
             "shift",
-            "start",
             "time",
             "title",
             "type",
@@ -273,6 +271,24 @@ class CmdShellFlavour(ShellFlavour):
             return " ".join(_echo_argument(self._text(value)) for value in values)
         if not values:
             return ""
+        word = self._text(values[0]).casefold()
+        if word == "call":
+            raise ValueError(
+                "cmd's call re-expands % and doubles ^ in its arguments, so no "
+                "quoting survives it; run the program directly (a .bat/.cmd "
+                "gets the batch rule without call)"
+            )
+        if word == "start":
+            # `start` takes its first quoted word as a window title, so the
+            # title is always an explicit empty one and the rest is a program
+            # line, whose arguments a C runtime reads.
+            return " ".join(
+                ['start ""']
+                + [
+                    self.argument(value, target=ShellTarget.NATIVE)
+                    for value in values[1:]
+                ]
+            )
         target = self.command_target(values)
         # The first element is the program, never argv data: cmd splits it as
         # a command word, so it takes the quoting a builtin operand takes.

@@ -36,6 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A `cmd` redirect to a path with a space writes that file.** The operand
+  after `REDIRECT`/`APPEND` was quoted for a child's C runtime and wrote a file
+  named after its first word; it is now quoted for the shell that reads it.
+- **A path used as a whole command runs under PowerShell.** It rendered as a
+  string literal that PowerShell printed, with exit status 0; a standalone path
+  is now a one-element command (`& 'path'`), and cmd quotes a spaced one.
+- A structured `cmd` `start` always gets an empty window title, so
+  `("start", "/b", path)` starts the program instead of titling a window.
 - A local `Exec` of a `.bat`/`.cmd` in a directory whose path has a space no
   longer fails with `FileNotFoundError`, and a `cmd` structured command whose
   program path has a space starts instead of reporting `'"C:\Program' is not
@@ -166,6 +174,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The config extension hooks `_from_parsed_uri` and `_create_host` are documented
   as the override points for a `HostConfig` subclass, with a worked example in
   the extending guide. Their names are unchanged and no `from_uri` is added.
+- **Breaking, 0.4.0: a structured `cmd` `call` raises `ValueError`.** `call`
+  re-expands `%` and doubles `^` in its arguments, so no quoting survives it;
+  run the program directly. `call` and `start` are no longer treated as
+  builtins.
 - **Breaking, 0.4.0: `Cmdlet` and `PSParam` replace the PowerShell `-Name`
   inference.** A plain string in a structured command is always a value; a
   string shaped like `-LiteralPath` was rendered bare, which hid a real

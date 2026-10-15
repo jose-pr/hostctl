@@ -9,12 +9,14 @@ observe the filesystem and the environment instead.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
+from pathlib import PureWindowsPath
 
 import pytest
 
-from hostctl.shell import CMD
+from hostctl.shell import CMD, ShellOperator
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="requires a real cmd.exe")
 
@@ -66,6 +68,60 @@ def test_an_environment_value_reaches_the_child_verbatim(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "100%"
+
+
+@pytest.mark.parametrize("operator", (ShellOperator.REDIRECT, ShellOperator.APPEND))
+def test_a_redirect_to_a_spaced_path_writes_that_file_and_nothing_else(
+    operator, tmp_path
+):
+    """The caret form wrote a file named `dir` and left the named file absent."""
+    target = tmp_path / "dir with space" / "out file.txt"
+    target.parent.mkdir()
+
+    result = _run(
+        CMD.command(("echo hi", operator, PureWindowsPath(target))), cwd=tmp_path
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["dir with space"]
+    assert [path.name for path in target.parent.iterdir()] == ["out file.txt"]
+    assert target.read_text().strip() == "hi"
+
+
+def test_a_spaced_standalone_path_runs_as_a_command(tmp_path):
+    directory = tmp_path / "with space"
+    directory.mkdir()
+    exe = directory / "my hostname.exe"
+    shutil.copy(os.path.join(os.environ["SystemRoot"], "System32", "hostname.exe"), exe)
+    bat = directory / "my hello.bat"
+    bat.write_bytes(b"@echo hello-from-bat\r\n")
+
+    for program in (exe, bat):
+        result = _run(CMD.command((PureWindowsPath(program),)), cwd=tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip()
+
+
+def test_start_runs_a_spaced_batch_file(tmp_path):
+    """The first quoted word of `start` is a window title; an explicit empty
+    title makes the program the program."""
+    directory = tmp_path / "with space"
+    directory.mkdir()
+    bat = directory / "my hello.bat"
+    bat.write_bytes(b"@echo hello-from-bat\r\n")
+
+    result = subprocess.run(
+        CMD.command((("start", "/b", "/wait", str(bat)),)).command,
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        timeout=20,
+        cwd=tmp_path,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "hello-from-bat" in result.stdout
 
 
 @pytest.mark.parametrize(

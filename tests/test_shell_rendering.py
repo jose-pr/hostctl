@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
@@ -20,6 +21,7 @@ from hostctl.shell import (
     PowerShellFlavour,
     PSParam,
     Shell,
+    ShellOperator,
     ShellTarget,
 )
 
@@ -482,3 +484,56 @@ def test_a_cmdlet_takes_no_c_runtime_escaping():
     assert POWERSHELL.command_text(Cmdlet("Write-Output", value)) == (
         "& 'Write-Output' 'a \"quoted\" value'"
     )
+
+
+@pytest.mark.parametrize(
+    ("flavour", "target", "expected"),
+    (
+        (CMD, r"C:\a b\out file.txt", 'echo hi > "C:\\a b\\out file.txt"'),
+        (PWSH, r"C:\a b\out file.txt", "echo hi > 'C:\\a b\\out file.txt'"),
+        (POSIX_SHELL, "/a b/out", "echo hi > '/a b/out'"),
+    ),
+)
+def test_a_redirect_operand_is_quoted_for_the_shell_not_for_a_child(
+    flavour, target, expected
+):
+    """The file name after `>` is read by the shell. cmd's caret form for a
+    child's C runtime wrote `dir` and not `dir with space\\out file.txt`."""
+    path = flavour.path_flavor(target)
+
+    for operand in (path, (path,)):
+        rendered = flavour.script(["echo hi", ShellOperator.REDIRECT, operand])
+        assert rendered.startswith(expected)
+
+    appended = flavour.script(["echo hi", ShellOperator.APPEND, path])
+    assert appended.startswith(expected.replace(" > ", " >> "))
+
+
+def test_a_redirect_operand_may_be_raw_text_and_never_several_words():
+    assert CMD.script(["echo hi", ShellOperator.REDIRECT, "NUL"]) == "echo hi > NUL"
+    with pytest.raises(ValueError, match="one file name"):
+        CMD.script(["echo hi", ShellOperator.REDIRECT, ("a", "b")])
+
+
+def test_a_standalone_path_is_a_one_element_command():
+    """PowerShell prints a quoted string; it needs the call operator to run."""
+    exe = PureWindowsPath(r"C:\Windows\System32\whoami.exe")
+
+    assert POWERSHELL.script([exe]).startswith("& 'C:\\Windows\\System32\\whoami.exe'")
+    assert CMD.script([PureWindowsPath(r"C:\Program Files\a.exe")]) == (
+        '"C:\\Program Files\\a.exe"'
+    )
+    assert POSIX_SHELL.script([PurePosixPath("/a b")]) == "'/a b'"
+
+
+def test_cmd_start_always_gets_an_empty_title():
+    """`start` reads its first quoted word as a window title, so a quoted
+    program ran as a title and nothing started."""
+    rendered = CMD.structured_command(("start", "/b", "/wait", r"C:\d s\x.bat", "a b"))
+
+    assert rendered == 'start "" /b /wait ^"C:\\d s\\x.bat^" ^"a b^"'
+
+
+def test_cmd_structured_call_is_refused():
+    with pytest.raises(ValueError, match="call"):
+        CMD.structured_command(("call", "x.bat"))

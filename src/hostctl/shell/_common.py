@@ -431,7 +431,9 @@ class ShellFlavour(abc.ABC):
         if isinstance(value, PSParam):
             raise TypeError("PSParam is only valid inside a PowerShell command")
         if isinstance(value, (bytes, PurePath, Path, os.PathLike)):
-            return self.quote(value)
+            # A standalone path is a program to run: PowerShell needs the call
+            # operator or it prints the string, and cmd reads a command word.
+            return self.structured_command((value,))
         if isinstance(value, str):
             return self._raw_source(value)
         if isinstance(value, collections.abc.Iterable):
@@ -441,10 +443,29 @@ class ShellFlavour(abc.ABC):
             return self.structured_command(values)
         return self._text(value)
 
+    def redirect_operand(self, value: Command) -> str:
+        """Render the file name after `>` or `>>`.
+
+        Raw text stays source. A path, bytes or a one-element structured
+        command is a name, quoted for the shell's own parser: the redirect
+        target is read by the shell, never by a child's C runtime.
+        """
+        if isinstance(value, str):
+            return self._raw_source(value)
+        if isinstance(value, (bytes, PurePath, Path, os.PathLike)):
+            return self.argument(value, target=ShellTarget.SHELL)
+        if isinstance(value, collections.abc.Iterable):
+            values = tuple(value)
+            if len(values) != 1:
+                raise ValueError("a redirect takes exactly one file name")
+            return self.argument(values[0], target=ShellTarget.SHELL)
+        raise TypeError("a redirect operand must be a path or a one-element command")
+
     def join(self, values: typing.Iterable[ShellToken]) -> str:
         """Join commands, preserving raw strings and explicit operators."""
         result = []
         pending = self.command_separator
+        redirecting = False
         has_command = False
         expecting_command = False
         for value in values:
@@ -452,9 +473,15 @@ class ShellFlavour(abc.ABC):
                 if not has_command or expecting_command:
                     raise ValueError("shell operator must appear between commands")
                 pending = self.operator(value)
+                redirecting = value in (ShellOperator.REDIRECT, ShellOperator.APPEND)
                 expecting_command = True
                 continue
-            command = self.command_text(value)
+            # What follows `>` is a file name, not a command.
+            command = (
+                self.redirect_operand(value)
+                if redirecting
+                else self.command_text(value)
+            )
             if not command:
                 continue
             if has_command:
@@ -462,6 +489,7 @@ class ShellFlavour(abc.ABC):
             result.append(command)
             has_command = True
             expecting_command = False
+            redirecting = False
             pending = self.command_separator
         if expecting_command:
             raise ValueError("shell operator must be followed by a command")

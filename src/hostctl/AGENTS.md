@@ -161,7 +161,11 @@ cmd's rules instead of the C runtime's: the program in plain quotes (a `"` or
 a second cmd command, and `%VAR%` expanded before the batch file saw it.
 `Cmdlet(name, *args)` and `PSParam(name)` (exported by `hostctl`,
 `hostctl.host` and `hostctl.shell`) are the PowerShell-only command markers, as
-non-iterable as `Exec`.
+non-iterable as `Exec`. After `REDIRECT`/`APPEND` the operand is a file name
+(`ShellFlavour.redirect_operand`): raw text stays source, a path or one-element
+tuple is quoted for the shell itself. A path given as a whole command renders
+as the one-element command `(path,)`. Under `cmd`, a structured `start` always
+renders `start ""` and a structured `call` raises `ValueError`.
 `Shell.execute(command, *args)` keeps its own program-plus-argv signature and
 wraps into an `Exec` only when dispatching to a host `run(*cmds)` and only when
 argv values are present -- `Shell.run` renders every command into one script
