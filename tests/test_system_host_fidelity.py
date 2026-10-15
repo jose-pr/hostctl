@@ -26,13 +26,12 @@ def test_selection_trace_has_generation_policy_pin_and_redaction():
     )
     selector = ProviderSelector((provider,))
 
-    selected = selector.select(policy="fallback", pin=True)
+    selected = selector.select(pin=True)
     item = selected.trace[0]
     assert item["generation"] == 0
-    assert item["policy"] == "fallback"
+    assert item["policy"] == "ordered"
     assert item["pin"] is True
     assert selected.generation == 0
-    assert selected.policy == "fallback"
     assert selected.pinned is True
     assert "secret" not in item["provider"]
 

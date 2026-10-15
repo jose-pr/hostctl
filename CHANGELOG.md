@@ -75,6 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `TypeError`. `executor="local"` (a bare string) raises `TypeError` where it
   became five one-letter descriptors. A `SystemHost` built from a connection
   string or anything but a `HostConfig` raises `TypeError`.
+- **`ProviderSelector.select()` loses `policy=`, `ProviderSelection` loses
+  `policy`, and `ProviderSelector.last_selection` is gone**, which ships in
+  0.4.0. Nothing varied the policy and nothing but one test read
+  `last_selection`; `host.last_selection` (the trace) stays, and trace entries
+  keep a constant `"policy": "ordered"`.
 - **Registries refuse a duplicate name**, which ships in 0.4.0. A second
   `HostConfig` subclass claiming a scheme that another live config holds
   raises `ValueError` where the class is defined (it used to fail later as

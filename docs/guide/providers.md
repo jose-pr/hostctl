@@ -125,7 +125,13 @@ for item in path.selection_trace:
 ```
 
 Each entry carries the provider name, availability, reason, capabilities,
-whether it was chosen, the connection generation, the policy, and the pin flag.
+whether it was chosen, the connection generation, the policy (always
+`"ordered"`), and the pin flag.
+
+A provider's probe may narrow the capabilities it declared and must not add
+any: `select(capability=...)`, `host.capabilities`, `host.provider_details` and
+a composed path's routing all use the declared set intersected with what the
+probe states.
 
 `host.provider_details` reports availability for every provider **without
 dispatching an operation**, so capability queries are always side-effect free:

@@ -14,6 +14,7 @@ depends on:
 import logging
 import subprocess
 
+import pathapi
 import pytest
 
 from hostctl import (
@@ -441,3 +442,26 @@ def test_a_prefixed_credential_name_is_redacted(rendered):
 def test_a_name_that_merely_ends_in_a_keyword_is_not_a_secret(rendered):
     """`monkey` ends in `key`; over-redaction would ruin the diagnostic."""
     assert ProviderSelector.redact(rendered) == rendered
+
+
+def test_building_a_path_does_not_redact_with_debug_logging_off(monkeypatch):
+    """`PathProvider.path` passed `ProviderSelector.redact(self.name)` to the
+    log call, running the regexes on every path built with nobody listening."""
+    import sys
+
+    calls = []
+    real = ProviderSelector.redact.__func__
+
+    def counted(cls, value):
+        calls.append(sys._getframe(1).f_code.co_name)
+        return real(cls, value)
+
+    monkeypatch.setattr(ProviderSelector, "redact", classmethod(counted))
+    provider = PathProvider("local", pathapi.Path)
+    host = PosixHost(path_providers=(provider,))
+
+    path = host.path(".")
+    for _ in range(10):
+        path.exists()
+
+    assert "path" not in calls

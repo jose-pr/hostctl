@@ -53,7 +53,6 @@ class ProviderSelection:
     provider: typing.Union["ExecutorProvider", "PathProvider"]
     trace: tuple[dict[str, object], ...]
     generation: int = 0
-    policy: str = "ordered"
     pinned: bool = False
 
 
@@ -126,11 +125,6 @@ class _LazyRedaction:
     __repr__ = __str__
 
 
-def _redacted_command(command, args=()) -> _LazyRedaction:
-    """Wrap a command and its argv for redacted, deferred log formatting."""
-    return _LazyRedaction(command, args)
-
-
 class _LazyName:
     """One name, redacted only if a handler formats the record.
 
@@ -152,32 +146,17 @@ class _LazyName:
         return f"_LazyName({str(self)!r})"
 
 
-def _redacted_name(value) -> _LazyName:
-    """Wrap one value for redacted, deferred log formatting."""
-    return _LazyName(value)
+class _Provider:
+    """What an executor provider and a path provider share: a name, a declared
+    set of capabilities, and a probe."""
 
-
-class ExecutorProvider:
-    """Named callable executor with a conservative probe hook."""
-
-    def __init__(
-        self,
-        name: str,
-        executor: typing.Callable[..., object],
-        *,
-        capabilities=None,
-        probe=None,
-    ):
+    def __init__(self, name: str, *, capabilities, probe=None):
         if not name:
             raise ValueError("provider name must not be empty")
         self.name = name
-        self.executor = executor
-        raw = (
-            getattr(executor, "executor_capabilities", ())
-            if capabilities is None
-            else capabilities
+        self.capabilities = frozenset(
+            getattr(item, "value", item) for item in capabilities
         )
-        self.capabilities = frozenset(getattr(item, "value", item) for item in raw)
         self._probe = probe
 
     def probe(self) -> ProviderProbe:
@@ -195,21 +174,44 @@ class ExecutorProvider:
             "available" if result else "unavailable", capabilities=self.capabilities
         )
 
+
+class ExecutorProvider(_Provider):
+    """Named callable executor with a conservative probe hook."""
+
+    def __init__(
+        self,
+        name: str,
+        executor: typing.Callable[..., object],
+        *,
+        capabilities=None,
+        probe=None,
+    ):
+        self.executor = executor
+        super().__init__(
+            name,
+            capabilities=(
+                getattr(executor, "executor_capabilities", ())
+                if capabilities is None
+                else capabilities
+            ),
+            probe=probe,
+        )
+
     def execute(self, command, *args, **options):
         # The rendered command routinely carries credentials, so it is redacted
         # on the way to the record and never interpolated eagerly: with no
         # handler listening, `%`-style args mean the redaction never runs.
         log.debug(
             "provider %s dispatching: %s",
-            _redacted_name(self.name),
-            _redacted_command(command, args),
+            _LazyName(self.name),
+            _LazyRedaction(command, args),
         )
         return self.executor(command, *args, **options)
 
     __call__ = execute
 
 
-class PathProvider:
+class PathProvider(_Provider):
     """Named path factory.  ``path`` must return a pathapi.Path."""
 
     DEFAULT_CAPABILITIES = frozenset(
@@ -248,38 +250,20 @@ class PathProvider:
         capabilities=None,
         probe=None,
     ):
-        if not name:
-            raise ValueError("provider name must not be empty")
-        self.name = name
         self.factory = factory
-        raw_capabilities = (
-            self.DEFAULT_CAPABILITIES if capabilities is None else capabilities
-        )
-        self.capabilities = frozenset(
-            getattr(item, "value", item) for item in raw_capabilities
-        )
-        self._probe = probe
-
-    def probe(self) -> ProviderProbe:
-        if self._probe is None:
-            return ProviderProbe("available", capabilities=self.capabilities)
-        result = self._probe()
-        if isinstance(result, ProviderProbe):
-            return dataclasses.replace(
-                result,
-                capabilities=frozenset(
-                    getattr(item, "value", item) for item in result.capabilities
-                ),
-            )
-        return ProviderProbe(
-            "available" if result else "unavailable", capabilities=self.capabilities
+        super().__init__(
+            name,
+            capabilities=(
+                self.DEFAULT_CAPABILITIES if capabilities is None else capabilities
+            ),
+            probe=probe,
         )
 
     def path(self, *segments):
         log.debug(
             "path provider %s building: %s",
-            ProviderSelector.redact(self.name),
-            _redacted_command("", segments),
+            _LazyName(self.name),
+            _LazyRedaction("", segments),
         )
         value = self.factory(*segments)
         if not isinstance(value, Path):
@@ -299,7 +283,6 @@ class ProviderSelector:
         names = tuple(provider.name for provider in self.providers)
         if len(set(names)) != len(names):
             raise ValueError("provider names must be unique within a selector")
-        self.last_selection: ProviderSelection | None = None
         self._probe_cache: dict[str, ProviderProbe] = {}
         self._declined: dict[str, str] = {}
         self._decline_causes: dict[str, BaseException] = {}
@@ -316,7 +299,7 @@ class ProviderSelector:
         # (chosen).  See `select` for how an attempt sequence is delimited.
         #
         # PER THREAD: an operation's trace describes that operation. Shared,
-        # a concurrent call's records leaked into it, so `last_selection` and
+        # a concurrent call's records leaked into it, so `host.last_selection` and
         # `path.selection_trace` named providers the caller never tried.
         self._traces = threading.local()
 
@@ -359,7 +342,7 @@ class ProviderSelector:
         """
         with self._lock:
             declined = dict(self._declined)
-        return {name: self._safe_name(reason) for name, reason in declined.items()}
+        return {name: self.redact(reason) for name, reason in declined.items()}
 
     def decline(
         self,
@@ -381,9 +364,9 @@ class ProviderSelector:
                 self._decline_causes[str(name)] = cause
         log.debug(
             "provider %s declined before dispatch (generation %d): %s",
-            _redacted_name(name),
+            _LazyName(name),
             self._generation,
-            _redacted_name(reason),
+            _LazyName(reason),
         )
 
     #: ``name=value`` and ``name: value`` credential assignments.
@@ -407,12 +390,6 @@ class ProviderSelector:
     _SECRET_USERINFO = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://[^/\s:@]+):[^/\s@]+@")
 
     @classmethod
-    def _safe_name(cls, value: object) -> str:
-        text = str(value)
-        text = cls._SECRET_ASSIGNMENT.sub(r"\1=<redacted>", text)
-        return cls._SECRET_USERINFO.sub(r"\1:<redacted>@", text)
-
-    @classmethod
     def redact(cls, value: object) -> str:
         """Return a diagnostic string with credential-like values removed.
 
@@ -423,7 +400,8 @@ class ProviderSelector:
         that is only a token) carries no marker and cannot be detected by
         inspection.  Treat debug output as sensitive.
         """
-        return cls._safe_name(value)
+        text = cls._SECRET_ASSIGNMENT.sub(r"\1=<redacted>", str(value))
+        return cls._SECRET_USERINFO.sub(r"\1:<redacted>@", text)
 
     def probe(self, provider) -> ProviderProbe:
         """Return a provider probe cached for this selector generation.
@@ -438,7 +416,7 @@ class ProviderSelector:
         name = provider.name
         declined = self._declined.get(name)
         if declined is not None:
-            return ProviderProbe("unavailable", self._safe_name(declined))
+            return ProviderProbe("unavailable", self.redact(declined))
         with self._lock:
             cached = self._probe_cache.get(name)
         if cached is not None:
@@ -450,7 +428,7 @@ class ProviderSelector:
             result = ProviderProbe("unavailable", type(exc).__name__)
             log.debug(
                 "provider %s probe raised %s; treating as unavailable",
-                _redacted_name(name),
+                _LazyName(name),
                 type(exc).__name__,
             )
         with self._lock:
@@ -482,7 +460,6 @@ class ProviderSelector:
         *,
         capability: typing.Optional[str] = None,
         exclude: typing.Iterable[str] = (),
-        policy: str = "ordered",
         pin: bool = False,
     ) -> ProviderSelection:
         excluded = set(exclude)
@@ -506,13 +483,13 @@ class ProviderSelector:
                 # that suffered it.
                 self._record(
                     {
-                        "provider": self._safe_name(provider.name),
+                        "provider": self.redact(provider.name),
                         "availability": "unavailable",
-                        "reason": self._safe_name(declined),
+                        "reason": self.redact(declined),
                         "capabilities": (),
                         "chosen": False,
                         "generation": self._generation,
-                        "policy": self._safe_name(policy),
+                        "policy": "ordered",
                         "pin": bool(pin),
                     }
                 )
@@ -528,39 +505,35 @@ class ProviderSelector:
             )
             self._record(
                 {
-                    "provider": self._safe_name(provider.name),
+                    "provider": self.redact(provider.name),
                     "availability": probe.availability,
-                    "reason": self._safe_name(probe.reason),
+                    "reason": self.redact(probe.reason),
                     "capabilities": tuple(sorted(capabilities)),
                     "chosen": allowed,
                     "generation": self._generation,
-                    "policy": self._safe_name(policy),
+                    "policy": "ordered",
                     "pin": bool(pin),
                 }
             )
             if not allowed:
                 log.debug(
                     "provider %s skipped: availability=%s capability=%s reason=%s",
-                    _redacted_name(provider.name),
+                    _LazyName(provider.name),
                     probe.availability,
                     capability or "<any>",
-                    _redacted_name(probe.reason or "<none>"),
+                    _LazyName(probe.reason or "<none>"),
                 )
                 continue
             result = ProviderSelection(
                 provider,
                 self.trace,
                 generation=self._generation,
-                policy=policy,
                 pinned=bool(pin),
             )
-            self.last_selection = result
             log.debug(
-                "selected provider %s (generation %d, policy %s, pin %s) "
-                "after %d candidate(s)",
-                _redacted_name(provider.name),
+                "selected provider %s (generation %d, pin %s) " "after %d candidate(s)",
+                _LazyName(provider.name),
                 self._generation,
-                _redacted_name(policy),
                 bool(pin),
                 len(self._attempt_trace),
             )
@@ -571,9 +544,7 @@ class ProviderSelector:
             # without dialling: one transient refusal (sshd restarting) on a
             # single-provider host otherwise bricked it until close(). A
             # decline this operation made itself is in `excluded` and stays.
-            return self.select(
-                capability=capability, exclude=excluded, policy=policy, pin=pin
-            )
+            return self.select(capability=capability, exclude=excluded, pin=pin)
         log.debug(
             "no provider available (generation %d); candidates: %s",
             self._generation,
@@ -620,7 +591,7 @@ class ProviderSelector:
         for name in stale:
             log.debug(
                 "provider %s re-admitted: every other candidate is unavailable",
-                _redacted_name(name),
+                _LazyName(name),
             )
         return bool(stale)
 
@@ -644,7 +615,6 @@ class ProviderSelector:
     def invalidate(self) -> None:
         """Start a new generation, dropping cached probes and declines."""
         with self._lock:
-            self.last_selection = None
             self._probe_cache.clear()
             self._declined.clear()
             self._decline_causes.clear()

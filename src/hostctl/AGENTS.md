@@ -350,9 +350,15 @@ hostctl applies to whatever you return.
   falls through to the next provider for **that call only**; it does not take
   the provider out of service.
 - `ProviderSelector` holds the ordered providers and the per-generation
-  declines; `ProviderSelection` is one resolved choice. `select()` re-admits
+  declines; `ProviderSelection` is one resolved choice (`provider`, `trace`,
+  `generation`, `pinned`). `select(capability=, exclude=, pin=)` re-admits
   a decline recorded by an earlier operation only when no other provider can
-  serve.
+  serve. `effective_capabilities(provider)` is what a provider can do now:
+  its declared set intersected with what its probe states (the declared set
+  when the probe states none), and `select`, `host.capabilities`,
+  `executor_capabilities`, `provider_details` and a composed path's dispatch
+  all read it. `supports()` on a composite stays on the declared set, which
+  must not probe. Trace entries keep a constant `"policy": "ordered"`.
 - A provider's optional `connect()` is where a pre-dispatch failure belongs.
   Composite paths call a path provider's `connect()` before **every**
   dispatch, so it must be idempotent and cheap once connected.

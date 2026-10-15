@@ -101,7 +101,6 @@ def test_system_initializer_failure_cleans_up_without_replay():
     assert first.calls.count("close") == 1
     assert second.calls.count("close") == 0
     assert host._connected is False
-    assert host._executor_selector.last_selection is None
 
 
 def test_system_config_resolves_builtin_local_descriptors():
