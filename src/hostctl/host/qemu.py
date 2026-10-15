@@ -388,11 +388,16 @@ class QemuHost(Host):
             values.add("serial")
         return frozenset(values)
 
-    def open_serial(self) -> Process:
-        """Open the explicitly configured raw VM console."""
+    def open_serial(
+        self,
+        *,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
+    ) -> Process:
+        """Open the explicitly configured VM console; `str` I/O with `encoding`."""
         if self.config.serial_console is None:
             raise NotImplementedError("QEMU host has no configured serial console")
-        return self.config.serial_console.open()
+        return self.config.serial_console.open(encoding=encoding, errors=errors)
 
     def connect(self) -> None:
         if self._commands is not None:

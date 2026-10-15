@@ -249,3 +249,34 @@ def test_a_supplied_path_helper_reaches_the_backend_and_lifts_the_degradation():
     assert path.backend.helper is not None
     assert path.stat().st_size == 3
     assert host.path_provider.probe().availability == "available"
+
+
+def test_open_serial_forwards_text_mode_to_the_console():
+    from hostctl.process.qemu_serial import QemuSerialConsole
+
+    class _Stream:
+        def __init__(self):
+            self.reads = [b"\xc3", b"\xa9"]
+
+        def send(self, data):
+            return len(data)
+
+        def recv(self, size):
+            return self.reads.pop(0) if self.reads else b""
+
+        def finish(self):
+            pass
+
+        def abort(self):
+            pass
+
+    host = QemuHost(
+        QemuConfig(
+            "vm",
+            transport="libvirt",
+            transport_factory=lambda: None,
+            serial_console=QemuSerialConsole(stream=_Stream()),
+        )
+    )
+    with host.open_serial(encoding="utf-8") as console:
+        assert console.read() + console.read() == "é"
