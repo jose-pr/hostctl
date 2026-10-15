@@ -8,6 +8,7 @@ import re
 import subprocess
 import typing
 
+from pathapi import LocalPath
 from pathapi.sync import PathAndStat
 
 from .host import Host
@@ -86,14 +87,14 @@ def host_checksum(
     owners = tuple((host, _host_path_token(host)) for host in hosts)
 
     def checksum(entry: PathAndStat) -> str:
+        # A local file needs no process. Spawning `md5sum` per file cost a
+        # fork, an exec and a shell parse to hash bytes this process can read
+        # directly -- and on Windows it went through certutil, which is slower
+        # still. Decided from the path's backend type, whichever host owns it.
+        if _hashes_in_process(entry.path):
+            return _stream_checksum(entry.path, normalized, chunk_size)
         for host, owner_token in owners:
             if _host_owns_path(host, entry.path, owner_token):
-                if _is_local_owner(host, entry.path):
-                    # A local file needs no process. Spawning `md5sum` per
-                    # file cost a fork, an exec and a shell parse to hash
-                    # bytes this process can read directly -- and on Windows
-                    # it went through certutil, which is slower still.
-                    return _stream_checksum(entry.path, normalized, chunk_size)
                 try:
                     return _remote_checksum(host, entry.path, normalized)
                 except _UNAVAILABLE_REMOTE_TOOL:
@@ -208,7 +209,7 @@ def _remote_checksum(host: Host, path: object, algorithm: str) -> str:
     if flavour in ("powershell", "pwsh"):
         quote = host.shell_flavour.quote
         script = (
-            f"Get-FileHash -LiteralPath {quote(os.fspath(path))} "
+            f"Get-FileHash -LiteralPath {quote(_windows_shell_path(path))} "
             f"-Algorithm {quote(algorithm.upper())} "
             "| Select-Object -ExpandProperty Hash"
         )
@@ -217,12 +218,17 @@ def _remote_checksum(host: Host, path: object, algorithm: str) -> str:
             return _parse_digest(result.stdout, algorithm)
         except ValueError:
             result = host.run(
-                ("certutil.exe", "-hashfile", os.fspath(path), algorithm.upper()),
+                (
+                    "certutil.exe",
+                    "-hashfile",
+                    _windows_shell_path(path),
+                    algorithm.upper(),
+                ),
                 encoding="utf-8",
             )
     elif flavour == "cmd":
         result = host.run(
-            ("certutil", "-hashfile", _hashable_path(path), algorithm.upper()),
+            ("certutil", "-hashfile", _windows_shell_path(path), algorithm.upper()),
             encoding="utf-8",
         )
     else:
@@ -267,6 +273,18 @@ def _hashable_path(path: object) -> str:
         return str(backend)
 
 
+def _windows_shell_path(path: object) -> str:
+    """The backend path as a Windows tool reads it: `C:\\x`, never `/C:/x`.
+
+    An SFTP path spells a drive path `/C:/data/file.txt`, which `certutil`
+    reads as an option and which `Get-FileHash` resolves to another file.
+    """
+    text = _hashable_path(path)
+    if len(text) > 2 and text[0] == "/" and text[2] == ":":
+        text = text[1:]
+    return text.replace("/", "\\")
+
+
 def _parse_digest(output: typing.Union[bytes, str, None], algorithm: str) -> str:
     if isinstance(output, bytes):
         output = output.decode("utf-8", "replace")
@@ -297,17 +315,23 @@ def _stream_checksum(path: object, algorithm: str, chunk_size: int) -> str:
     return digest.hexdigest()
 
 
-def _is_local_owner(host: Host, path: object) -> bool:
-    """Whether the owning host is THIS process's machine.
+def _hashes_in_process(path: object) -> bool:
+    """Whether `path`'s backend is this process's own filesystem.
 
-    Deliberately the host's scheme rather than the path's `is_local()`: an
-    in-memory or otherwise process-resident backend also reports itself as
-    local, and a composed host may reach a local path through a provider
-    whose shell is the one the caller wants used. `local:` is the case where
-    spawning a process to hash bytes we can already read is pure cost.
+    The backend type decides, not `is_local()` (pathapi answers True for a
+    backend that does not implement it, which would stream a remote file
+    through this process) and not the host's scheme (a composed local host
+    owns its paths and has `windows://`, not `local:`).
     """
-    del path
-    return getattr(host, "scheme", "") == "local"
+    resolve = getattr(path, "_provider_path", None)
+    provider = getattr(path, "provider", None)
+    backend = path
+    if callable(resolve) and provider is not None:
+        try:
+            backend = resolve(provider)
+        except Exception:
+            return False
+    return isinstance(backend, LocalPath)
 
 
 def _host_path_token(host: Host) -> typing.Optional[tuple[object, ...]]:

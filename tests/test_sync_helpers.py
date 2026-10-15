@@ -505,3 +505,96 @@ def test_a_local_host_hashes_in_process(tmp_path):
 
     assert digest == hashlib.md5(b"content").hexdigest()
     assert spawned == []
+
+
+@pytest.mark.parametrize("dialect_name", ("cmd", "powershell"))
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        ("C:\\data\\file.txt", "C:\\data\\file.txt"),
+        ("data\\file.txt", "\\data\\file.txt"),
+    ],
+)
+def test_a_windows_shell_is_handed_a_windows_spelling_of_the_backend_path(
+    dialect_name, given, expected
+):
+    """SFTP spells `C:\\data\\file.txt` as `/C:/data/file.txt`; `certutil`
+    reads a `/`-led argument as an option."""
+    from pathlib import PureWindowsPath
+
+    from hostctl import CMD, POWERSHELL, SshConfig
+    from hostctl.sync import _remote_checksum
+
+    dialect = {"cmd": CMD, "powershell": POWERSHELL}[dialect_name]
+    host = SshConfig(
+        "winbox", path_flavor=PureWindowsPath, dialect=dialect
+    )._create_host()
+    seen = []
+
+    def fake_run(*cmds, **options):
+        seen.append(cmds[0])
+        return subprocess.CompletedProcess(cmds, 0, "", "")
+
+    host.run = fake_run
+    with pytest.raises(ValueError):
+        _remote_checksum(host, host.path(given), "md5")
+
+    assert seen
+    for command in seen:
+        if isinstance(command, str):
+            assert f"-LiteralPath '{expected}'" in command
+        else:
+            assert command[2] == expected
+
+
+def test_a_composed_local_host_hashes_in_process(tmp_path, monkeypatch):
+    """The in-process branch tested the host's scheme, but a composed local
+    host is `windows://` or `posix://`, so it forked once per file."""
+    import hashlib
+
+    import hostctl.sync as sync_module
+    from hostctl import HostConfig
+
+    payload = b"local payload"
+    target = tmp_path / "f.bin"
+    target.write_bytes(payload)
+    calls = []
+
+    def remote(host, path, algorithm):
+        calls.append(path)
+        raise AssertionError("a local file must not be hashed by a process")
+
+    monkeypatch.setattr(sync_module, "_remote_checksum", remote)
+    host = HostConfig("posix://node?executor=local&path=local")._create_host()
+
+    digest = host_checksum(host)(PathAndStat(host.path(str(target))))
+
+    assert digest == hashlib.md5(payload).hexdigest()
+    assert calls == []
+
+
+def test_a_composed_host_over_a_non_local_backend_still_hashes_remotely(monkeypatch):
+    import hostctl.sync as sync_module
+
+    calls = []
+    backend = MemPathBackend()
+    _memory_file(backend, "x.bin", b"data")
+
+    def remote(host, path, algorithm):
+        calls.append(path)
+        return "a" * 32
+
+    monkeypatch.setattr(sync_module, "_remote_checksum", remote)
+    host = PosixHost(
+        executor_providers=(
+            ExecutorProvider(
+                "fake", lambda *a, **k: subprocess.CompletedProcess(a, 0, "", "")
+            ),
+        ),
+        path_providers=(
+            PathProvider("mem", lambda *parts: MemPath(*parts, backend=backend)),
+        ),
+    )
+
+    assert host_checksum(host)(PathAndStat(host.path("x.bin"))) == "a" * 32
+    assert len(calls) == 1

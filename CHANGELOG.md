@@ -218,6 +218,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `host.path(backend=name)` probes through the selector, as `.via(name)`
   does, so a probe that raises is `OperationNotStarted` and is cached, where a
   raw transport error escaped and the probe re-ran on every call.
+- `host_checksum` on a Windows SSH target hands `certutil` and `Get-FileHash`
+  the file the transfer wrote, as `C:\\data\\file.txt`: `certutil` read the SFTP
+  spelling `/C:/data/file.txt` as an option, and PowerShell hashed the logical
+  text. A file on this machine's filesystem is hashed in process whichever host
+  owns it; a composed local host (`posix://?executor=local&path=local`)
+  spawned one process per file.
 - One broken `hostctl.configs` plugin no longer breaks every other unclaimed
   scheme: the entry point named for the scheme loads first, a plugin that fails
   to import is warned about and skipped, and only its own scheme raises
