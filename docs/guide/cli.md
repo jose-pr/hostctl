@@ -83,6 +83,10 @@ schema generated from its options.
   distinguishable.
 - A tool call cannot prompt, so `--ask-password` is refused; put
   `HOSTCTL_PASSWORD` in the server's environment.
+- Any tool caller can read that variable (`run local: -- ...` prints the
+  server's environment) and can name any host for it to be offered to. Set
+  `HOSTCTL_PASSWORD` only for an MCP client you would hand that password;
+  otherwise leave it unset and connect with keys.
 - A tool call has no standard input, so `shell` opens a session, sends nothing
   and returns what the host printed before it closed.
 - Output that is not UTF-8 (`cat` of a binary file) goes to the server's
