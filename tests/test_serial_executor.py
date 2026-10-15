@@ -273,3 +273,38 @@ def test_loopback_pyserial_round_trip():
     finally:
         process.close()
         executor.close()
+
+
+def test_a_stale_close_does_not_free_the_lease_of_its_successor():
+    executor = SerialExecutor(SerialSettings("injected"), serial_port=_Serial())
+    first = executor.open()
+    executor.close()
+    second = executor.open()
+    first.close()
+    with pytest.raises(RuntimeError, match="active process"):
+        executor.open()
+    second.close()
+    executor.open().close()
+
+
+def test_closing_the_executor_ends_a_live_process():
+    executor = SerialExecutor(SerialSettings("injected"), serial_port=_Serial())
+    process = executor.open()
+    executor.close()
+    assert process.returncode == 0
+    assert process.wait(0) == 0
+    with pytest.raises(ConnectionError):
+        process.read(1)
+    with pytest.raises(ConnectionError):
+        process.write(b"x")
+    process.close()
+
+
+def test_a_failed_connect_releases_its_own_lease():
+    def factory(port, **options):
+        raise FileNotFoundError("no such port")
+
+    executor = SerialExecutor(SerialSettings("missing"), serial_factory=factory)
+    for _ in range(2):
+        with pytest.raises(FileNotFoundError):
+            executor.open()

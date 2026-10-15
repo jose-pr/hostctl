@@ -244,3 +244,15 @@ def test_a_spawned_console_honours_the_errors_it_was_given():
         session.write("caf\N{LATIN SMALL LETTER E WITH ACUTE}\n")
 
     assert console.writes == [b"caf?\n"]
+
+
+@pytest.mark.parametrize("errors", [None, "replace"])
+def test_text_read_keeps_a_character_split_across_idle_reads(errors):
+    """An idle line reads `b""`, which is not EOF: the decoder must hold the
+    first byte of `é` until the second arrives."""
+    console = _Console()
+    console.reads = [b"\xc3", b"", b"\xa9"]
+    host = SerialHost(SerialConfig("loop://", serial_port=console))
+    with host.spawn(encoding="utf-8", errors=errors) as process:
+        received = "".join(process.read() for _ in range(3))
+    assert received == "é"

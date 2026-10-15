@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import dataclasses
 import errno
+import functools
 import threading
 import time
 import types
 import typing
 
-from ._common import raise_normalized
+from ._common import LeaseToken, StreamLease, raise_normalized
 
 if typing.TYPE_CHECKING:
     from ..process.serial import SerialProcess
@@ -140,7 +141,7 @@ class SerialExecutor:
         self._serial = serial_port
         self._injected = serial_port is not None
         self._owns_serial = owns_serial_port if serial_port is not None else True
-        self._lease = threading.Lock()
+        self._lease = StreamLease("serial connection already has an active process")
         self._io_lock = threading.RLock()
         self._connect_lock = threading.Lock()
 
@@ -164,42 +165,27 @@ class SerialExecutor:
 
     def open(self) -> SerialProcess:
         """Acquire the connection for one raw byte-stream process."""
-        if not self._lease.acquire(blocking=False):
-            raise RuntimeError("serial connection already has an active process")
+        token = self._lease.acquire()
         try:
             serial_port = self.connect()
         except Exception:
-            self._lease.release()
+            self._lease.release(token)
             raise
         from ..process.serial import SerialProcess
 
         return SerialProcess(
             serial_port,
             io_lock=self._io_lock,
-            release=self._release,
+            token=token,
+            release=functools.partial(self._lease.release, token),
         )
-
-    def _release(self) -> None:
-        # Tolerant for the same reason `close()` is: whichever of the two
-        # runs second must not raise about a lease the first already freed.
-        try:
-            self._lease.release()
-        except RuntimeError:
-            pass
 
     def close(self) -> None:
         serial_port = self._serial
-        # The lease goes with the connection it guards. Closing the port
-        # under a live process used to leave the lease held forever -- an
-        # exception inside `with host:` is enough -- and since `connect()`
-        # itself opens a process, the host could never be used again: every
-        # later connect/spawn/run raised "serial connection already has an
-        # active process". Releasing an unheld lock is not an error here;
-        # `_release` may already have run.
-        try:
-            self._lease.release()
-        except RuntimeError:
-            pass
+        # The lease goes with the connection it guards: a process the caller
+        # left open (an exception inside `with host:` is enough) is ended, so
+        # it is refused from now on and the host can be opened again.
+        self._lease.revoke()
         if serial_port is not None and self._owns_serial:
             self._serial = None
             try:

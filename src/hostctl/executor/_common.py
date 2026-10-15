@@ -6,6 +6,7 @@ import enum
 import os
 import subprocess
 import sys
+import threading
 import typing
 from pathlib import PurePath
 
@@ -389,3 +390,60 @@ class Executor(typing.Protocol[_Result]):
         text: typing.Optional[bool] = None,
         **options: object,
     ) -> _Result: ...
+
+
+class LeaseToken:
+    """One acquisition of a :class:`StreamLease`; ``ended`` is set when it ends."""
+
+    __slots__ = ("ended",)
+
+    def __init__(self) -> None:
+        self.ended = threading.Event()
+
+
+class StreamLease:
+    """An exclusive lease whose release is bound to the acquisition it frees.
+
+    A bare lock is released by whoever calls `release()`, so a stale handle
+    closing late freed the lease of the process that replaced it. Here only
+    the current holder's token can free it; `revoke()` ends the holder from
+    outside, and `on_end` runs once whenever a holder ends.
+    """
+
+    def __init__(
+        self,
+        busy_message: str,
+        on_end: typing.Optional[typing.Callable[[], None]] = None,
+    ) -> None:
+        self._busy_message = busy_message
+        self._on_end = on_end
+        self._guard = threading.Lock()
+        self._current: typing.Optional[LeaseToken] = None
+
+    def acquire(self) -> LeaseToken:
+        with self._guard:
+            if self._current is not None:
+                raise RuntimeError(self._busy_message)
+            self._current = LeaseToken()
+            return self._current
+
+    def release(self, token: LeaseToken) -> None:
+        """End `token`; frees the lease only if `token` is the current holder."""
+        with self._guard:
+            if self._current is not token:
+                token.ended.set()
+                return
+            self._end_current()
+
+    def revoke(self) -> None:
+        """End whichever holder there is, if any."""
+        with self._guard:
+            if self._current is not None:
+                self._end_current()
+
+    def _end_current(self) -> None:
+        token = typing.cast(LeaseToken, self._current)
+        self._current = None
+        token.ended.set()
+        if self._on_end is not None:
+            self._on_end()

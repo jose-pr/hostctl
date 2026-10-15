@@ -8,6 +8,7 @@ import types
 import typing
 
 from ..executor import expired
+from ..executor._common import LeaseToken
 from ._common import (
     IncrementalTextDecoder,
     Process,
@@ -28,12 +29,14 @@ class SerialProcess(Process):
         serial_port: SerialLike,
         *,
         io_lock: threading.RLock,
+        token: LeaseToken,
         release: typing.Callable[[], None],
     ) -> None:
         self._serial = serial_port
         self._io_lock = io_lock
+        self._token = token
         self._release = release
-        self._closed = threading.Event()
+        self._closed = token.ended
 
     @property
     def returncode(self) -> typing.Optional[int]:
@@ -198,7 +201,6 @@ class SerialProcess(Process):
     def close(self) -> None:
         if self._closed.is_set():
             return
-        self._closed.set()
         self._release()
 
     def __enter__(self) -> SerialProcess:
@@ -260,7 +262,9 @@ class SerialConsoleProcess(Process):
         value = typing.cast(bytes, self.process.read(size))
         if self._decoder is None:
             return value
-        return self._decoder.decode(value, final=not value)
+        # Never final: an idle line reads `b""` too, so a character split
+        # across two reads would otherwise be cut short.
+        return self._decoder.decode(value)
 
     def read_stderr(self, size: int = -1) -> bytes:
         return self.process.read_stderr(size)
