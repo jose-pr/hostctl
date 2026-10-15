@@ -161,10 +161,6 @@ def test_a_short_scandir_record_is_refused():
         ),
         (lambda h: h.rmdir("/tmp/d"), ("rmdir", ("--", "/tmp/d"))),
         (
-            lambda h: h.rename("/a", "/b"),
-            ("mv", ("-T", "-n", "--", "/a", "/b")),
-        ),
-        (
             lambda h: h.rename("/a", "/b", replace=True),
             ("mv", ("-T", "--", "/a", "/b")),
         ),
@@ -182,6 +178,90 @@ def test_every_mutation_passes_paths_as_argv_after_a_double_dash(call, expected)
     call(PosixGuestPathHelper(guest))
 
     assert guest.calls[-1] == expected
+
+
+#: The only option-shaped argv elements a helper command may carry before
+#: its `--`: literal spellings, never a caller's path.
+_LITERAL_OPTIONS = {
+    "-L",
+    "-c",
+    "-maxdepth",
+    "-mindepth",
+    "-printf",
+    "-m",
+    "-f",
+    "-T",
+    "-n",
+    "--",
+}
+
+
+@pytest.mark.parametrize("hostile", ("-delete", "-rf", "-exec"))
+def test_a_dash_leading_path_is_never_an_option(hostile):
+    """Every element starting with `-` is a literal option or follows `--`.
+
+    `find` is the exception to `--`: it takes none before a starting point,
+    so a relative path is anchored with `./` instead.
+    """
+    guest = _Guest(
+        {
+            "stat": (0, b"41ed 0 0\n", b""),
+            "find": (0, b"", b""),
+        }
+    )
+    helper = PosixGuestPathHelper(guest)
+
+    helper.stat(hostile)
+    helper.scandir(hostile)
+    helper.mkdir(hostile, 0o755)
+    helper.unlink(hostile)
+    helper.rmdir(hostile)
+    helper.chmod(hostile, 0o644)
+    helper.rename(hostile, "/b", replace=True)
+
+    for program, argv in guest.calls:
+        if program == "find":
+            assert argv[0] == "./" + hostile
+            options = argv[1:]
+        else:
+            cut = argv.index("--")
+            options = argv[:cut]
+            assert hostile in argv[cut + 1 :]
+        for element in options:
+            if element.startswith("-"):
+                assert element in _LITERAL_OPTIONS, (program, argv)
+
+
+def test_an_absolute_path_is_the_find_starting_point_as_it_is():
+    guest = _Guest({"find": (0, b"", b"")})
+
+    PosixGuestPathHelper(guest).scandir("/srv/-delete")
+
+    assert guest.calls[-1][1][0] == "/srv/-delete"
+
+
+def test_a_rename_that_mv_skipped_raises_file_exists():
+    """GNU `mv -n` exits 0 whether it moved or skipped, so the source decides."""
+    guest = _Guest({"mv": (0, b"", b""), "stat": (0, b"81a4\n", b"")})
+
+    with pytest.raises(FileExistsError):
+        PosixGuestPathHelper(guest).rename("/a", "/b")
+
+    assert guest.calls == [
+        ("mv", ("-T", "-n", "--", "/a", "/b")),
+        ("stat", ("-c", "%f", "--", "/a")),
+    ]
+
+
+def test_a_rename_that_mv_performed_returns():
+    guest = _Guest(
+        {
+            "mv": (0, b"", b""),
+            "stat": (1, b"", b"stat: cannot statx '/a': No such file or directory"),
+        }
+    )
+
+    PosixGuestPathHelper(guest).rename("/a", "/b")
 
 
 def test_a_failing_guest_command_becomes_a_filesystem_error():

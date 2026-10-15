@@ -24,10 +24,8 @@ from hostctl.shell import POSIX_SHELL, POWERSHELL
 import pytest
 
 from .path_fakes import (
-    LocalQgaPathHelper,
     LocalQgaTransport,
     LocalSftpBackend,
-    QGA_FILE_COMMANDS,
     WinRMFilesystemRunner,
 )
 
@@ -704,24 +702,26 @@ class FakeContainerHost:
 
 class FakeQemuHost:
     transport = "qemu"
+    flavour = "posix"
 
     def __new__(cls):
         from hostctl import QemuConfig, QemuHost
-        from hostctl.host.qemu import QgaPathBackend
 
-        transport = LocalQgaTransport()
+        # The shipped helper is probed through `guest-exec`, which the
+        # transport answers by interpreting GNU or PowerShell commands over
+        # its sandbox.
+        transport = LocalQgaTransport(cls.flavour)
         host = QemuHost(QemuConfig("fake", transport_factory=lambda: transport))
         host.connect()
-        host._path_backend = QgaPathBackend(
-            transport,
-            supported_commands=QGA_FILE_COMMANDS,
-            helper=LocalQgaPathHelper(transport),
-        )
         # Without this the fake's sandbox was never closed, so its temporary
         # directory was collected instead of removed -- a `ResourceWarning`
         # that only became visible once the suite made warnings errors.
         host._conformance_cleanup = transport.close
         return host
+
+
+class FakeQemuWindowsHost(FakeQemuHost):
+    flavour = "windows"
 
 
 class FakeSerialHost:
@@ -747,6 +747,10 @@ class Provider:
     #: from :attr:`capabilities`.  Required so a symlink skip always names a
     #: real transport limitation instead of an unexplained attribute error.
     symlink_gap: str = ""
+    #: Surfaces the real host has but this fake cannot exercise (a Windows
+    #: guest's `run` needs a PowerShell interpreter). The registry guard
+    #: ignores them; the battery does not run them.
+    unexercised: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if "path" in self.capabilities and "symlink" not in self.capabilities:
@@ -830,6 +834,18 @@ def fake_providers() -> tuple[Provider, ...]:
             ),
         ),
         Provider(
+            "qemu-windows",
+            lambda: _fake(FakeQemuWindowsHost),
+            # Paths only: the shipped Windows helper runs the WinRM scripts
+            # through guest-exec, which the transport interprets.
+            frozenset(("path",)),
+            symlink_gap=(
+                "QEMU Guest Agent has no symlink RPC (guest-file-* covers only "
+                "open/read/write/seek/flush/close)"
+            ),
+            unexercised=frozenset(("run",)),
+        ),
+        Provider(
             "serial",
             lambda: _fake(FakeSerialHost),
             # A serial console is a persistent merged byte stream, so spawn is
@@ -844,7 +860,7 @@ def conformance_path(host, provider: Provider, tmp_path: Path, *parts: str):
     """Return an existing, transport-native scratch root joined with parts."""
 
     token = tmp_path.name
-    if provider.name == "winrm":
+    if provider.name in ("winrm", "qemu-windows"):
         root = host.path(r"C:\hostctl-conformance", token)
     elif provider.name in ("ssh", "qemu"):
         root = host.path("/hostctl-conformance", token)

@@ -30,6 +30,7 @@ Measured on Fedora 44 (GNU coreutils 9.10, findutils 4.10.0):
 from __future__ import annotations
 
 import base64
+import errno
 import stat as _stat
 import subprocess
 import typing
@@ -63,9 +64,11 @@ GuestRunner = typing.Callable[..., subprocess.CompletedProcess]
 class PosixGuestPathHelper:
     """Metadata and namespace operations for a GNU-coreutils guest.
 
-    Every path is passed as its own argv element and every command is
-    terminated with `--`, so a path is never interpolated into shell text
-    and a leading `-` is data rather than an option.
+    Every path is passed as its own argv element and every command but
+    `find` is terminated with `--`, so a path is never interpolated into
+    shell text and a leading `-` is data rather than an option. `find`
+    accepts no `--` before a starting point; it gets an absolute path or one
+    anchored with `./`.
     """
 
     #: What `probe()` runs, and what a usable guest answers.
@@ -150,9 +153,12 @@ class PosixGuestPathHelper:
         )
 
     def scandir(self, path: str) -> typing.List[typing.Tuple[str, FileStat]]:
+        # `find` takes no `--` before its starting points, so a relative path
+        # is anchored with `./` instead: `-delete` would otherwise be read as
+        # an expression and run against the current directory.
         argv = [
             "find",
-            path,
+            path if path.startswith("/") else "./" + path,
             "-maxdepth",
             "1",
             "-mindepth",
@@ -210,8 +216,17 @@ class PosixGuestPathHelper:
         # `-T` treats the destination as a name, never as a directory to move
         # INTO: without it `mv a b` silently becomes `mv a b/a` whenever `b`
         # happens to be a directory, which is not what a rename means.
-        argv = ["mv", "-T"] if replace else ["mv", "-T", "-n"]
-        self._execute([*argv, "--", path, target], path=path)
+        if replace:
+            self._execute(["mv", "-T", "--", path, target], path=path)
+            return
+        # `-n` skips an existing target and, on GNU mv, still exits 0, so the
+        # status proves nothing: a source that is still there was not moved.
+        self._execute(["mv", "-T", "-n", "--", path, target], path=path)
+        try:
+            self._execute(["stat", "-c", "%f", "--", path], path=path)
+        except FileNotFoundError:
+            return
+        raise FileExistsError(errno.EEXIST, "File exists", target)
 
     def chmod(self, path: str, mode: int, *, follow_symlinks: bool = True) -> None:
         if not follow_symlinks:

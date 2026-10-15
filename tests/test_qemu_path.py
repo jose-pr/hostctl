@@ -227,7 +227,38 @@ def test_transactional_write_cleanup_and_exclusive_mode():
 
     assert path.read_text() == "first"
     assert not any(".hostctl-" in name for name in transport.files)
-    assert helper.renames[0][2] is True
+    # The overwrite is written in place; only an exclusive create renames.
+    assert helper.renames == []
+
+
+def test_exclusive_write_losing_the_race_leaves_no_temporary_file():
+    transport = _Transport()
+    helper = _Helper(transport)
+    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
+    transport.files["/value"] = bytearray(b"first")
+
+    with pytest.raises(FileExistsError):
+        backend.write_bytes("/value", b"second", exclusive=True)
+
+    assert bytes(transport.files["/value"]) == b"first"
+    assert not any(".hostctl-" in name for name in transport.files)
+    assert helper.renames == []
+
+
+def test_a_nonexclusive_write_is_in_place_with_or_without_a_helper():
+    transport = _Transport()
+    backend = QgaPathBackend(
+        transport, supported_commands=FILE_COMMANDS, helper=_Helper(transport)
+    )
+
+    backend.write_bytes("/value", b"abc")
+
+    opened = [
+        call["arguments"]["path"]
+        for call, _ in transport.calls
+        if call["execute"] == "guest-file-open"
+    ]
+    assert opened == ["/value"]
 
 
 def test_path_flavours_and_backend_survive_derivation():

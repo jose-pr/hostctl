@@ -9,6 +9,7 @@ isolated temporary filesystem.
 from __future__ import annotations
 
 import base64
+import errno
 import json
 import os
 import re
@@ -391,13 +392,32 @@ QGA_FILE_COMMANDS = frozenset(
 class LocalQgaTransport:
     """QGA wire adapter with real handles over an isolated guest filesystem."""
 
-    def __init__(self) -> None:
-        self.sandbox = _Sandbox("posix")
+    def __init__(
+        self,
+        flavour: str = "posix",
+        *,
+        agent_version: Optional[str] = "8.2.2",
+    ) -> None:
+        self.flavour = flavour
+        self.agent_version = agent_version
+        if flavour == "windows":
+            # The file RPCs and the PowerShell scripts must see one guest
+            # filesystem, so the transport borrows the runner's sandbox.
+            self._runner: Optional[WinRMFilesystemRunner] = WinRMFilesystemRunner()
+            self.sandbox = self._runner.sandbox
+            self._programs = None
+        else:
+            self._runner = None
+            self.sandbox = _Sandbox("posix")
+            self._programs = GnuGuestPrograms(self.sandbox)
         self._handles: Dict[int, object] = {}
         self._next_handle = 1
         self._exec_process = None
         self._exec_output = None
+        self._exec_result = None
         self._exec_pid = 0
+        #: Every `(program, argv)` a guest-exec asked for, in order.
+        self.exec_calls: list = []
 
     def _end_exec(self) -> None:
         """End the current guest process and release its pipes.
@@ -411,6 +431,7 @@ class LocalQgaTransport:
         """
         process, self._exec_process = self._exec_process, None
         self._exec_output = None
+        self._exec_result = None
         if process is None:
             return
         # Order matters. `communicate()` READS the pipes, and a
@@ -436,6 +457,26 @@ class LocalQgaTransport:
         except Exception:
             pass
 
+    def _emulate(self, arguments):
+        """Answer a guest-exec this fake interprets, or `None` to run it."""
+        program = arguments["path"]
+        argv = tuple(arguments.get("arg", ()))
+        self.exec_calls.append((program, argv))
+        if self._runner is not None:
+            if program != "powershell.exe":
+                return None
+            if argv[:3] != ("-NoProfile", "-NonInteractive", "-EncodedCommand"):
+                raise AssertionError("unexpected powershell argv: %r" % (argv,))
+            script = base64.b64decode(argv[3]).decode("utf-16-le")
+            if script.strip() == "exit 0":
+                return 0, b"", b""
+            result = self._runner(script)
+            stdout = result.stdout or ""
+            if isinstance(stdout, str):
+                stdout = stdout.encode("utf-8")
+            return result.returncode, stdout, b""
+        return self._programs(program, argv)
+
     def close(self) -> None:
         for stream in tuple(self._handles.values()):
             stream.close()
@@ -455,15 +496,26 @@ class LocalQgaTransport:
                 "guest-get-osinfo",
                 "guest-get-host-name",
             }
-            return {
+            reply = {
                 "supported_commands": [
                     {"name": name, "enabled": True} for name in sorted(commands)
                 ]
             }
+            if self.agent_version is not None:
+                reply["version"] = self.agent_version
+            return reply
         if command == "guest-get-osinfo":
+            if self.flavour == "windows":
+                return {
+                    "id": "mswindows",
+                    "name": "Microsoft Windows",
+                    "kernel-name": "Windows NT",
+                    "machine": "x86_64",
+                }
             return {
                 "id": "linux",
                 "pretty-name": "Linux",
+                "kernel-name": "Linux",
                 "version": "fake",
                 "machine": "x86_64",
             }
@@ -480,6 +532,16 @@ class LocalQgaTransport:
             # Whatever is still running is replaced by this command, so
             # end it first rather than dropping the handle.
             self._end_exec()
+            emulated = self._emulate(arguments)
+            if emulated is not None:
+                self._exec_result = emulated
+                self._exec_pid += 1
+                return {"pid": self._exec_pid}
+            if self._programs is not None and arguments["path"] in GNU_PROGRAMS:
+                raise AssertionError(
+                    "a GNU program must be emulated, never executed: %r"
+                    % (arguments["path"],)
+                )
             environment = os.environ.copy()
             for item in arguments.get("env", ()):
                 key, value = item.split("=", 1)
@@ -507,6 +569,14 @@ class LocalQgaTransport:
             self._exec_pid += 1
             return {"pid": self._exec_pid}
         if command == "guest-exec-status":
+            if self._exec_result is not None:
+                code, stdout, stderr = self._exec_result
+                return {
+                    "exited": True,
+                    "exitcode": code,
+                    "out-data": base64.b64encode(stdout).decode("ascii"),
+                    "err-data": base64.b64encode(stderr).decode("ascii"),
+                }
             process = self._exec_process
             if process is None:
                 raise AssertionError("guest-exec-status preceded guest-exec")
@@ -560,49 +630,175 @@ class LocalQgaTransport:
         raise AssertionError(command)
 
 
-class LocalQgaPathHelper:
-    """Structured metadata/mutation helper used by QgaPathBackend."""
+#: The programs `PosixGuestPathHelper` runs. `GnuGuestPrograms` answers all
+#: of them, so none may reach a real `Popen` against the host's filesystem.
+GNU_PROGRAMS = frozenset(("stat", "find", "mkdir", "rm", "rmdir", "mv", "chmod"))
 
-    def __init__(self, transport: LocalQgaTransport) -> None:
-        self.transport = transport
+_TYPE_LETTERS = (
+    (stat.S_ISREG, "f"),
+    (stat.S_ISDIR, "d"),
+    (stat.S_ISLNK, "l"),
+    (stat.S_ISBLK, "b"),
+    (stat.S_ISCHR, "c"),
+    (stat.S_ISFIFO, "p"),
+    (stat.S_ISSOCK, "s"),
+)
 
-    def _path(self, remote: str) -> Path:
-        return self.transport.sandbox.local(remote)
 
-    def stat(self, path: str, *, follow_symlinks: bool = True):
-        return self.transport.sandbox.metadata(
-            self._path(path), follow_symlinks=follow_symlinks
+class GnuGuestPrograms:
+    """Interpret the GNU coreutils/findutils commands the POSIX helper runs.
+
+    Modelled on coreutils 9.10 and findutils 4.10.0 (measured on Fedora 44):
+    option parsing, output formats and error text are GNU's, so the helper is
+    proven against a guest that behaves like one. `mv -n` onto an existing
+    target exits 0 and changes nothing, as GNU does. Nothing here starts a
+    process.
+    """
+
+    def __init__(self, sandbox: "_Sandbox") -> None:
+        self.sandbox = sandbox
+
+    def __call__(self, program: str, argv: Tuple[str, ...]):
+        """Return `(exitcode, stdout, stderr)`, or `None` for another program."""
+        if program not in GNU_PROGRAMS:
+            return None
+        try:
+            return getattr(self, "_" + program)(list(argv))
+        except OSError as exc:
+            reason = {
+                errno.ENOENT: "No such file or directory",
+                errno.ENOTDIR: "Not a directory",
+                errno.EEXIST: "File exists",
+                errno.EISDIR: "Is a directory",
+                errno.ENOTEMPTY: "Directory not empty",
+                errno.EACCES: "Permission denied",
+            }.get(exc.errno)
+            if reason is None:
+                raise
+            text = "%s: cannot access '%s': %s\n" % (program, exc.filename, reason)
+            return 1, b"", text.encode("utf-8")
+
+    @staticmethod
+    def _split(argv):
+        """Options before the `--`, operands after it."""
+        if "--" not in argv:
+            raise AssertionError("a path operand must follow `--`: %r" % (argv,))
+        cut = argv.index("--")
+        return argv[:cut], argv[cut + 1 :]
+
+    @staticmethod
+    def _error(code: int, remote: str):
+        return OSError(code, os.strerror(code), remote)
+
+    def _stat_local(self, remote: str, local: Path, *, follow: bool = True):
+        try:
+            return os.stat(local) if follow else os.lstat(local)
+        except FileNotFoundError:
+            raise self._error(errno.ENOENT, remote) from None
+        except NotADirectoryError:
+            raise self._error(errno.ENOTDIR, remote) from None
+
+    def _stat(self, argv):
+        options, (remote,) = self._split(argv)
+        value = self._stat_local(
+            remote, self.sandbox.local(remote), follow="-L" in options
         )
+        out = (
+            options[options.index("-c") + 1]
+            .replace("%f", format(value.st_mode, "x"))
+            .replace("%s", str(value.st_size))
+            .replace("%Y", str(int(value.st_mtime)))
+        )
+        return 0, (out + "\n").encode("utf-8"), b""
 
-    def scandir(self, path: str) -> Iterable[Tuple[str, FileStat]]:
-        directory = self._path(path)
-        if not directory.is_dir():
-            raise NotADirectoryError(path)
-        for child in sorted(directory.iterdir(), key=lambda item: item.name):
-            yield child.name, self.transport.sandbox.metadata(
-                child, follow_symlinks=False
-            )
+    def _find(self, argv):
+        start = argv[0]
+        if start.startswith("-"):
+            # GNU find reads a leading `-x` as an expression and would run
+            # it against `.`; the emulation refuses instead of running one.
+            text = "find: unknown predicate `%s'\n" % start
+            return 1, b"", text.encode("utf-8")
+        fmt = argv[argv.index("-printf") + 1]
+        directory = self.sandbox.local(start)
+        try:
+            os.stat(directory)
+        except FileNotFoundError:
+            text = "find: '%s': No such file or directory\n" % start
+            return 1, b"", text.encode("utf-8")
+        records = bytearray()
+        if directory.is_dir():
+            for child in sorted(directory.iterdir(), key=lambda item: item.name):
+                value = child.lstat()
+                letter = next(
+                    (name for test, name in _TYPE_LETTERS if test(value.st_mode)), "U"
+                )
+                record = (
+                    fmt.replace("%f", child.name)
+                    .replace("%m", format(stat.S_IMODE(value.st_mode), "o"))
+                    .replace("%s", str(value.st_size))
+                    .replace("%T@", "%.10f" % value.st_mtime)
+                    .replace("%y", letter)
+                    .replace("\\0", "\0")
+                )
+                records += record.encode("utf-8", "surrogateescape")
+        return 0, bytes(records), b""
 
-    def mkdir(self, path: str, mode: int) -> None:
-        self._path(path).mkdir(mode=mode)
+    def _mkdir(self, argv):
+        options, (remote,) = self._split(argv)
+        local = self.sandbox.local(remote)
+        if os.path.lexists(local):
+            raise self._error(errno.EEXIST, remote)
+        if not local.parent.is_dir():
+            raise self._error(errno.ENOENT, remote)
+        local.mkdir()
+        local.chmod(int(options[options.index("-m") + 1], 8))
+        return 0, b"", b""
 
-    def unlink(self, path: str, *, missing_ok: bool = False) -> None:
-        self._path(path).unlink(missing_ok=missing_ok)
+    def _rm(self, argv):
+        options, (remote,) = self._split(argv)
+        local = self.sandbox.local(remote)
+        if not os.path.lexists(local):
+            if "-f" in options:
+                return 0, b"", b""
+            raise self._error(errno.ENOENT, remote)
+        if local.is_dir() and not local.is_symlink():
+            raise self._error(errno.EISDIR, remote)
+        local.unlink()
+        return 0, b"", b""
 
-    def rmdir(self, path: str) -> None:
-        self._path(path).rmdir()
+    def _rmdir(self, argv):
+        _, (remote,) = self._split(argv)
+        local = self.sandbox.local(remote)
+        value = self._stat_local(remote, local, follow=False)
+        if not stat.S_ISDIR(value.st_mode):
+            raise self._error(errno.ENOTDIR, remote)
+        if any(local.iterdir()):
+            raise self._error(errno.ENOTEMPTY, remote)
+        local.rmdir()
+        return 0, b"", b""
 
-    def rename(self, path: str, target: str, *, replace: bool = False) -> None:
-        source = self._path(path)
-        destination = self._path(target)
-        if destination.exists() and not replace:
-            raise FileExistsError(target)
-        if replace:
-            source.replace(destination)
-        else:
-            source.rename(destination)
+    def _mv(self, argv):
+        options, (source, target) = self._split(argv)
+        assert "-T" in options, "mv without -T moves INTO a directory target"
+        src = self.sandbox.local(source)
+        self._stat_local(source, src, follow=False)
+        dst = self.sandbox.local(target)
+        if os.path.lexists(dst):
+            if "-n" in options:
+                # GNU 9.10: the skip is silent and the status is 0.
+                return 0, b"", b""
+            if dst.is_dir():
+                if any(dst.iterdir()):
+                    raise self._error(errno.ENOTEMPTY, target)
+                dst.rmdir()
+        elif not dst.parent.is_dir():
+            raise self._error(errno.ENOENT, target)
+        src.replace(dst)
+        return 0, b"", b""
 
-    def chmod(self, path: str, mode: int, *, follow_symlinks: bool = True) -> None:
-        if not follow_symlinks:
-            raise NotImplementedError("fake QGA helper cannot chmod a link itself")
-        self._path(path).chmod(mode)
+    def _chmod(self, argv):
+        options, (remote,) = self._split(argv)
+        local = self.sandbox.local(remote)
+        self._stat_local(remote, local)
+        local.chmod(int(options[0], 8))
+        return 0, b"", b""

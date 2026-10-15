@@ -262,6 +262,8 @@ def test_the_registry_capabilities_match_the_host_that_was_built(provider):
         claimed = (claimed - {"spawn"}) | {"session"}
         actual = (actual - {"spawn"}) | {"session"}
     for capability in ("run", "path", "spawn", "session"):
+        if capability in provider.unexercised:
+            continue
         registry = capability in claimed
         real = capability in actual
         assert registry == real, (

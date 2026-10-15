@@ -940,17 +940,20 @@ class QgaPathBackend:
                     raise
 
     def write_bytes(self, path: str, value: bytes, *, exclusive: bool = False) -> None:
-        if self.helper is None:
-            if exclusive:
-                raise NotImplementedError(
-                    "exclusive QGA writes require a transactional guest helper"
-                )
+        if not exclusive:
+            # In place, like a local `open(path, "w")`: the file keeps its
+            # inode, mode, owner and any symlink, and a Windows guest (whose
+            # rename cannot replace) writes at all.
             self._write_direct(path, value)
             return
+        if self.helper is None:
+            raise NotImplementedError(
+                "exclusive QGA writes require a transactional guest helper"
+            )
         temporary = f"{path}.hostctl-{uuid.uuid4().hex}"
         try:
             self._write_direct(temporary, value)
-            self._helper_method("rename")(temporary, path, replace=not exclusive)
+            self._helper_method("rename")(temporary, path, replace=False)
         except Exception:
             try:
                 self._helper_method("unlink")(temporary, missing_ok=True)
@@ -1028,8 +1031,8 @@ class QgaPathBackend:
     def rmdir(self, path: str) -> None:
         self._helper_method("rmdir")(path)
 
-    def rename(self, path: str, target: str) -> None:
-        self._helper_method("rename")(path, target)
+    def rename(self, path: str, target: str, *, replace: bool = False) -> None:
+        self._helper_method("rename")(path, target, replace=replace)
 
     def chmod(self, path: str, mode: int, *, follow_symlinks: bool = True) -> None:
         self._helper_method("chmod")(path, mode, follow_symlinks=follow_symlinks)
@@ -1263,7 +1266,11 @@ class _QgaPathMixin:
             target = type(self)(target, backend=self.backend)
         if target.backend is not self.backend:
             raise ValueError("cannot rename across QGA path backends")
-        self.backend.rename(str(self), str(target))
+        # `os.rename`'s own rule per family: a POSIX guest replaces, a Windows
+        # guest refuses an existing target.
+        self.backend.rename(
+            str(self), str(target), replace=not isinstance(self, WindowsPathname)
+        )
         return target
 
 
