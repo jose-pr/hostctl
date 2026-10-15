@@ -351,10 +351,8 @@ class WinRMFilesystemRunner:
             path.mkdir()
             return ""
 
-        if "[IO.Directory]::Delete($p,$false)" in script:
-            path.rmdir()
-            return ""
-
+        # Before the rmdir script: unlink's script also names
+        # `[IO.Directory]::Delete`, for a directory reparse point.
         if "[IO.File]::Delete($p)" in script:
             if not path.exists():
                 if "throw [IO.FileNotFoundException]" in script:
@@ -363,6 +361,10 @@ class WinRMFilesystemRunner:
             if path.is_dir():
                 raise IsADirectoryError(str(path))
             path.unlink()
+            return ""
+
+        if "[IO.Directory]::Delete($p,$false)" in script:
+            path.rmdir()
             return ""
 
         if "Set-ItemProperty -LiteralPath $p -Name Attributes" in script:

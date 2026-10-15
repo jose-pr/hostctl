@@ -344,6 +344,16 @@ hostctl applies to whatever you return.
   answer `pathapi`'s `_same_filesystem()` with the host's provider set,
   so a cross-host copy is never mistaken for a file copied onto itself.
   `path.via(name)` returns a path pinned to one provider.
+- `pathapi.protocols.supports(path, Protocol)` answers what a host path can
+  do without a call that raises. A composite path says yes to `Stat`,
+  `Listing`, `BinaryOpen`, `Create`, `Remove`, `Chmod`, `Readlink`,
+  `Symlink` or `Move` when some provider it may route to (only the pinned one
+  after `.via()`) declares the operations behind it (`stat`, `scandir`,
+  `open_read`, `mkdir`, `unlink` and `rmdir`, `chmod`, `readlink`,
+  `symlink_to`, `rename`; `path` declares all). No provider is probed, and
+  the answer is advisory. A container path has no `Create`, `Chmod`,
+  `Remove` or `Move`; a QGA path has no `Readlink` or `Symlink`, and its
+  metadata and namespace protocols follow the guest helper.
 
 ## Host contract
 

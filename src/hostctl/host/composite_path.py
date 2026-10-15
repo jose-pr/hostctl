@@ -17,12 +17,38 @@ import typing
 from pathapi import Path, PosixPathname, WindowsPathname
 
 from ..provider import OperationNotStarted, PathProvider, ProviderSelector
+from pathapi.protocols import (
+    BinaryOpen,
+    Chmod,
+    Create,
+    Listing,
+    Move,
+    Readlink,
+    Remove,
+    Stat,
+    Symlink,
+)
 from ._staged_io import copy_from
 
 PathOperation = str
 
+#: The operation each pathapi protocol's primitives are routed under, for
+#: `_supports()`. A protocol left out (`Utime`, `Hardlink`, `Resolve`, ...) is
+#: one a composite path does not forward, so the class answers it.
+_PROTOCOL_OPERATIONS: "dict[type, tuple[PathOperation, ...]]" = {
+    Stat: ("stat",),
+    Listing: ("scandir",),
+    BinaryOpen: ("open_read",),
+    Create: ("mkdir",),
+    Remove: ("unlink", "rmdir"),
+    Chmod: ("chmod",),
+    Readlink: ("readlink",),
+    Symlink: ("symlink_to",),
+    Move: ("rename",),
+}
 
-def _supports(provider: PathProvider, operation: PathOperation) -> bool:
+
+def _provider_supports(provider: PathProvider, operation: PathOperation) -> bool:
     capabilities = provider.capabilities
     # `a|b` means "either will do": a stat-derived predicate is satisfied by
     # `stat` as well as by its own name, and `rm` by `unlink` or `rmdir`.
@@ -438,6 +464,26 @@ class _CompositePathMixin:
         """
         return self._providers is other._providers
 
+    def _supports(self, protocol) -> typing.Optional[bool]:
+        """pathapi's per-instance answer to `supports(path, protocol)`.
+
+        True when, for every primitive of `protocol`, some provider this path
+        may route to declares the operation -- only the pinned one after
+        `.via()`. Read from the declared capabilities: no provider is probed,
+        and like every `supports()` answer it is advisory.
+        """
+        operations = _PROTOCOL_OPERATIONS.get(protocol)
+        if operations is None:
+            return None
+        if self._pinned:
+            providers = (self._provider,) if self._provider is not None else ()
+        else:
+            providers = tuple(self._providers or ())
+        return all(
+            any(_provider_supports(provider, operation) for provider in providers)
+            for operation in operations
+        )
+
     def _adopt(
         self, provider: PathProvider, backend_path: Path, *, pinned: bool
     ) -> None:
@@ -449,7 +495,9 @@ class _CompositePathMixin:
 
     def _providers_in_order(self, operation: PathOperation, *, pin: bool = False):
         if self._pinned:
-            if self._provider is None or not _supports(self._provider, operation):
+            if self._provider is None or not _provider_supports(
+                self._provider, operation
+            ):
                 raise NotImplementedError(
                     f"provider {getattr(self._provider, 'name', '<none>')!r} "
                     f"does not support {operation.split('|')[0]}"
@@ -470,7 +518,7 @@ class _CompositePathMixin:
                     return
                 self._selection_trace = selected.trace
                 provider = selected.provider
-                if _supports(provider, operation):
+                if _provider_supports(provider, operation):
                     excluded.append(provider.name)
                     yield provider
                 else:
@@ -478,7 +526,7 @@ class _CompositePathMixin:
             return
 
         for provider in self._providers:
-            if _supports(provider, operation):
+            if _provider_supports(provider, operation):
                 try:
                     if provider.probe().usable:
                         yield provider
