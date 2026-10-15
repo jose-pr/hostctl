@@ -19,7 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Paths are `pathapi` paths** (`pathapi>=0.1.0,<0.2`, which replaces
   `pathlib_next`; `pathlib-next` was renamed `pathapi`). `HostPath` is
   `pathapi.Path`, `ExecutorCommand` takes a `pathapi.Pathname`, and a path
-  provider must return a `pathapi.Path`. Change `pathlib_next` imports as
+  provider must return a `pathapi.Path`; one that returns anything else fails
+  with `TypeError: path provider 'X' returned LocalPath, expected
+  pathapi.Path`. `local_providers()` is the local pair to use instead of
+  building one. Change `pathlib_next` imports as
   pathapi's changelog says: `pathlib_next.utils.sync` is `pathapi.sync`,
   `pathlib_next.utils.stat.FileStat` is `pathapi.FileStat`.
   - The `ssh` extra is `asyncssh>=2.20,<3` and `sftppath[asyncssh]>=0.1.0,<0.2`,
@@ -121,6 +124,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   path=None)`, which swaps either set, closes each replaced transport once
   unless a kept provider shares it, and starts a new connection generation.
   The provider teardown rule is documented in the providers guide.
+- `local_providers()` returns the local `(executor_provider, path_provider)`
+  pair, beside `ssh_providers()` and `winrm_providers()`, for a host you
+  assemble yourself. `posix://...?executor=local` now builds the same
+  providers.
 
 ### Security
 

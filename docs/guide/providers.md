@@ -348,6 +348,28 @@ detail: nothing outside hostctl constructs them, and they carry no stability
 promise. Write your own `ExecutorProvider`/`PathProvider` instead of
 subclassing one.
 
+### Upgrading a provider to 0.4
+
+hostctl 0.4 builds on `pathapi`, which replaces `pathlib_next`. A path provider
+whose factory still returns a `pathlib_next` path fails on first use:
+
+```text
+TypeError: path provider 'X' returned LocalPath, expected pathapi.Path
+```
+
+To fix it:
+
+- Import `Path` from `pathapi` and `SFTPPath` from `sftppath`, and derive your
+  own path classes from `pathapi.Path`.
+- For a local leg, use `hostctl.local_providers()`, which returns the
+  `(executor_provider, path_provider)` pair for this machine, instead of
+  building your own.
+- Call `host.replace_providers()` instead of assigning the host's private
+  selectors (see below).
+
+The [changelog](https://github.com/jose-pr/hostctl/blob/main/CHANGELOG.md)
+lists the removed names.
+
 ### Inspecting and replacing providers
 
 A host built from providers lists them in order, and can swap them:

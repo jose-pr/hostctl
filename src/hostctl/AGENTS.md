@@ -291,6 +291,8 @@ and `parse_credentials`.
   the finished host `_create_host()` builds. They return a pair instead of
   exposing the transport because both providers must share it -- building them
   separately silently opens two connections, only one of which is closed.
+  `local_providers()` returns the local pair: no transport to share, it is the
+  pair for a local leg.
 - `input=` is normalized to the stream mode every executor is about to use, by
   `executor/_common.normalize_input`. Under a text mode (`encoding`/`errors`/
   `text`) bytes are decoded; under a binary mode str is encoded. This is not
