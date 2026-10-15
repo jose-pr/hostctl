@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - pathapi's own changes reach hostctl's paths: `touch(mode=...)` raises
     `NotImplementedError` on a path that cannot `chmod()`, and a path class
     without `__fspath__` is no longer `os.PathLike`.
+  - A WinRM, Docker archive or QGA write stream whose `with` block raises
+    still uploads nothing, and no longer also emits a `ResourceWarning`; one
+    collected unclosed still warns. The stream is pathapi's `DiscardOnError`.
 - **Requires netimps 0.4** (`netimps>=0.4.0,<0.5`, was `>=0.3.0,<0.4`). No
   hostctl code changed, but three things change for a caller:
   - `winrm`, `winrms`, `wsman`, `wsmans` and `psrp` now have default ports
@@ -45,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `pathapi.protocols.supports(path, Protocol)` answers for a host path. A
+  composed host's path answers from the operations its providers declare
+  (only the pinned provider after `.via()`), without probing; a container path
+  has no `Create`, `Chmod`, `Remove` or `Move`, and a QGA path has no
+  `Readlink` or `Symlink` and answers its metadata and namespace protocols
+  from the guest helper.
 - `HOSTCTL_MCP=stdio` serves every `hostctl` subcommand as an MCP tool over
   stdio. `--ask-password` is refused there, since a tool call cannot prompt;
   use `HOSTCTL_PASSWORD`.

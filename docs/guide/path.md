@@ -67,3 +67,25 @@ For SSH, `SshConfig.path_flavor` explicitly selects
 the `PosixPathname` or `WindowsPathname` constructor; it is independent of the
 command dialect. Concrete stdlib `PurePosixPath` and `PureWindowsPath`
 constructors are accepted too.
+
+## What a path can do
+
+`pathapi.protocols.supports(path, Protocol)` answers without a call that
+raises:
+
+```python
+from pathapi.protocols import Remove, supports
+
+target = host.path("/srv/app/old.log")
+if supports(target, Remove):
+    target.unlink()
+```
+
+A composed host's path says yes to `Stat`, `Listing`, `BinaryOpen`, `Create`,
+`Remove`, `Chmod`, `Readlink`, `Symlink` or `Move` when some provider it may
+route to declares the operations behind it; a path pinned with `.via(name)`
+answers for that provider alone. No provider is probed to answer. A container
+path has no `Create`, `Chmod`, `Remove` or `Move`; a QGA path has no
+`Readlink` or `Symlink`, and its metadata and namespace protocols follow the
+guest helper. The answer is advisory, as pathapi defines it: an operation may
+still refuse an argument it cannot handle.
