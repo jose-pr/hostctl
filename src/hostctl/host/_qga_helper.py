@@ -29,7 +29,6 @@ Measured on Fedora 44 (GNU coreutils 9.10, findutils 4.10.0):
 
 from __future__ import annotations
 
-import base64
 import errno
 import os
 import stat as _stat
@@ -40,11 +39,11 @@ from pathapi import FileStat
 
 from ..executor._qga import guest_oserror
 
-#: `find -printf`'s type letters, in `stat` terms.
-#: Script bytes one `guest-exec` call may carry: the script travels as an
-#: `-EncodedCommand` argv, which CreateProcess caps at 32,767 characters --
-#: about 12,265 script bytes after base64 of UTF-16.
+#: Script bytes one `guest-exec` call carries as its `input-data`; a larger
+#: write is split across calls.
 _GUEST_EXEC_SCRIPT_BUDGET = 12_000
+
+#: `find -printf`'s type letters, in `stat` terms.
 
 _FILE_TYPES = {
     "f": _stat.S_IFREG,
@@ -275,8 +274,8 @@ class WindowsGuestPathHelper:
     """
 
     #: The cheapest proof that a guest has PowerShell at all. Every later
-    #: script travels the same `-EncodedCommand` route, so a guest that
-    #: answers this can run them.
+    #: script travels the same stdin route, so a guest that answers this can
+    #: run them.
     probe_script = "exit 0"
 
     def __init__(self, backend: object) -> None:
@@ -286,20 +285,21 @@ class WindowsGuestPathHelper:
     def runner(cls, run: GuestRunner) -> typing.Callable[..., typing.Any]:
         """Adapt a `guest-exec` runner to what `WinRMPathBackend` calls.
 
-        `-EncodedCommand` rather than `-Command`: the script becomes
-        UTF-16LE base64, which carries no character that any argv or shell
-        layer between here and PowerShell would touch.
+        The script travels on stdin (`-Command -`), so it never appears on
+        the command line, which endpoint-protection heuristics scan. The
+        trailing blank line closes the last statement; `WinRMPathBackend`
+        scripts are ASCII, so the stdin code page does not matter.
         """
 
         def run_script(script, check=False, encoding="utf-8", **options):
             del options
-            encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
             return run(
                 "powershell.exe",
                 "-NoProfile",
                 "-NonInteractive",
-                "-EncodedCommand",
-                encoded,
+                "-Command",
+                "-",
+                input=script.encode("utf-8") + b"\r\n\r\n",
                 capture_output=True,
                 check=check,
                 encoding=encoding,

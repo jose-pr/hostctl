@@ -472,9 +472,9 @@ class LocalQgaTransport:
         if self._runner is not None:
             if program != "powershell.exe":
                 return None
-            if argv[:3] != ("-NoProfile", "-NonInteractive", "-EncodedCommand"):
+            if argv != ("-NoProfile", "-NonInteractive", "-Command", "-"):
                 raise AssertionError("unexpected powershell argv: %r" % (argv,))
-            script = base64.b64decode(argv[3]).decode("utf-16-le")
+            script = base64.b64decode(arguments["input-data"]).decode("utf-8")
             if script.strip() == "exit 0":
                 return 0, b"", b""
             result = self._runner(script)

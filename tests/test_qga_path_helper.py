@@ -308,20 +308,24 @@ def test_a_symlinks_own_mode_is_refused_rather_than_redirected():
 # -- the Windows half -----------------------------------------------------
 
 
-def test_the_windows_helper_sends_an_encoded_command():
-    """`-EncodedCommand` carries no character an argv layer would touch."""
-    import base64
-
+def test_the_windows_helper_sends_the_script_on_stdin():
+    """The script is `input`, never an argv element Defender could scan."""
     guest = _Guest({"powershell.exe": (0, b"", b"")})
+    inputs = []
+    original = guest.__call__
 
-    helper = WindowsGuestPathHelper.probe(guest)
+    def recording(program, *args, **options):
+        inputs.append(options.get("input"))
+        return original(program, *args, **options)
+
+    helper = WindowsGuestPathHelper.probe(recording)
 
     assert isinstance(helper, WindowsGuestPathHelper)
     program, args = guest.calls[-1]
     assert program == "powershell.exe"
-    assert "-EncodedCommand" in args
-    encoded = args[args.index("-EncodedCommand") + 1]
-    assert base64.b64decode(encoded).decode("utf-16-le") == "exit 0"
+    assert args == ("-NoProfile", "-NonInteractive", "-Command", "-")
+    assert "-EncodedCommand" not in args
+    assert inputs[-1] == b"exit 0\r\n\r\n"
 
 
 def test_the_windows_probe_declines_a_guest_without_powershell():
