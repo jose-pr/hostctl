@@ -488,11 +488,20 @@ class ShellFlavour(abc.ABC):
             return self.argument(values[0], target=ShellTarget.SHELL)
         raise TypeError("a redirect operand must be a path or a one-element command")
 
+    def redirect(self, value: ShellOperator, target: Command, operand: str) -> str:
+        """Render a REDIRECT or APPEND `value` together with its target.
+
+        `operand` is `redirect_operand(target)`; `target` is passed as well so
+        a flavour can tell raw source from a file name.
+        """
+        del target
+        return self.operator(value) + operand
+
     def join(self, values: typing.Iterable[ShellToken]) -> str:
         """Join commands, preserving raw strings and explicit operators."""
         result = []
         pending = self.command_separator
-        redirecting = False
+        redirecting: typing.Optional[ShellOperator] = None
         has_command = False
         expecting_command = False
         for value in values:
@@ -500,25 +509,31 @@ class ShellFlavour(abc.ABC):
                 if not has_command or expecting_command:
                     raise ValueError("shell operator must appear between commands")
                 pending = self.operator(value)
-                redirecting = value in (ShellOperator.REDIRECT, ShellOperator.APPEND)
+                redirecting = (
+                    value
+                    if value in (ShellOperator.REDIRECT, ShellOperator.APPEND)
+                    else None
+                )
                 expecting_command = True
                 continue
-            # What follows `>` is a file name, not a command.
-            command = (
-                self.redirect_operand(value)
-                if redirecting
-                else self.command_text(value)
-            )
-            if not command:
-                continue
-            if has_command:
-                if pending == self.command_separator:
-                    pending = self._separator_after(result[-1])
-                result.append(pending)
-            result.append(command)
+            if redirecting is not None:
+                # What follows `>` is a file name, not a command.
+                operand = self.redirect_operand(value)
+                if not operand:
+                    continue
+                result.append(self.redirect(redirecting, value, operand))
+            else:
+                command = self.command_text(value)
+                if not command:
+                    continue
+                if has_command:
+                    if pending == self.command_separator:
+                        pending = self._separator_after(result[-1])
+                    result.append(pending)
+                result.append(command)
             has_command = True
             expecting_command = False
-            redirecting = False
+            redirecting = None
             pending = self.command_separator
         if expecting_command:
             raise ValueError("shell operator must be followed by a command")

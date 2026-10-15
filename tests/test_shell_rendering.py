@@ -513,6 +513,46 @@ def test_a_redirect_operand_may_be_raw_text_and_never_several_words():
         CMD.script(["echo hi", ShellOperator.REDIRECT, ("a", "b")])
 
 
+def test_windows_powershell_redirects_a_file_name_literally():
+    """`>` is `Out-File -FilePath`, which globbed `[ab]` in the name."""
+    path = PureWindowsPath(r"C:\a b\[ab]\out.txt")
+
+    for operand in (path, (path,), (str(path),)):
+        assert POWERSHELL.join(["echo hi", ShellOperator.REDIRECT, operand]) == (
+            "echo hi | Out-File -LiteralPath 'C:\\a b\\[ab]\\out.txt' -Encoding Unicode"
+        )
+    assert POWERSHELL.join(["echo hi", ShellOperator.APPEND, path]) == (
+        "echo hi | Out-File -LiteralPath 'C:\\a b\\[ab]\\out.txt' "
+        "-Encoding Unicode -Append"
+    )
+    # Raw text after `>` is PowerShell source, `$null` included.
+    assert POWERSHELL.join(["echo hi", ShellOperator.REDIRECT, "$null"]) == (
+        "echo hi > $null"
+    )
+    # pwsh writes a native program's bytes untouched only through `>`.
+    assert PWSH.join(["echo hi", ShellOperator.REDIRECT, path]) == (
+        "echo hi > 'C:\\a b\\[ab]\\out.txt'"
+    )
+
+
+def test_windows_powershell_escapes_wildcards_in_an_absolute_program_path():
+    """PowerShell 5 resolved `C:\\x\\[ab]\\t.cmd` as a pattern and ran
+    `C:\\x\\a\\t.cmd`; pwsh reads the path literally and would not find an
+    escaped one."""
+    program = r"C:\x\q`[ab]\t.exe"
+
+    assert POWERSHELL.structured_command((program, "v")) == (
+        "& 'C:\\x\\q```[ab`]\\t.exe' 'v'"
+    )
+    assert POWERSHELL.script([PureWindowsPath(r"C:\x\[ab]\t.exe")]).startswith(
+        "& 'C:\\x\\`[ab`]\\t.exe'"
+    )
+    assert PWSH.structured_command((program,)) == "& 'C:\\x\\q`[ab]\\t.exe'"
+    # A backtick alone is not read as an escape; a relative path cannot be.
+    assert POWERSHELL.structured_command((r"C:\q`x\t.exe",)) == "& 'C:\\q`x\\t.exe'"
+    assert POWERSHELL.structured_command((r".\[ab]\t.exe",)) == "& '.\\[ab]\\t.exe'"
+
+
 def test_a_standalone_path_is_a_one_element_command():
     """PowerShell prints a quoted string; it needs the call operator to run."""
     exe = PureWindowsPath(r"C:\Windows\System32\whoami.exe")

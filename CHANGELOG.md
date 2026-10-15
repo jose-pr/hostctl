@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   pair, beside `ssh_providers()` and `winrm_providers()`, for a host you
   assemble yourself. `posix://...?executor=local` now builds the same
   providers.
+- `ShellFlavour.redirect(value, target, operand)` renders a `REDIRECT`/`APPEND`
+  together with its target, for a flavour whose spelling depends on the
+  target; the default is `operator(value) + operand`.
 
 ### Changed
 
@@ -440,6 +443,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   address `::1` is no longer reported as `:`), and `ConnectionString.is_local`,
   which now also answers `*.localhost`, short IPv4 spellings and this machine's
   own name. `import hostctl` still does not import netimps.
+- Windows PowerShell 5 writes a `REDIRECT`/`APPEND` to a path or one-element
+  tuple with `| Out-File -LiteralPath NAME -Encoding Unicode`, so `[ab]` in the
+  name is no longer a wildcard: the write failed, or went to a file the pattern
+  matched. The bytes are those `>` wrote (UTF-16LE with a byte-order mark).
+  Raw text after the operator, and pwsh, keep `>`.
+- Windows PowerShell 5 runs the program an absolute path names when the path
+  contains `[`, `]`, `*` or `?`: it is backtick-escaped after `&`, where
+  `C:\x\[ab]\t.cmd` ran `C:\x\a\t.cmd` if that existed. A relative path cannot
+  be spelled literally on 5; see the divergence ledger.
 
 ### Security
 

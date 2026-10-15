@@ -169,7 +169,11 @@ a second cmd command, and `%VAR%` expanded before the batch file saw it.
 `hostctl.host` and `hostctl.shell`) are the PowerShell-only command markers, as
 non-iterable as `Exec`. After `REDIRECT`/`APPEND` the operand is a file name
 (`ShellFlavour.redirect_operand`): raw text stays source, a path or one-element
-tuple is quoted for the shell itself. A path given as a whole command renders
+tuple is quoted for the shell itself. Windows PowerShell 5 writes such a name
+with `| Out-File -LiteralPath NAME -Encoding Unicode [-Append]` (the bytes `>`
+wrote), so `[`/`]` in it are literal; pwsh keeps `>`, whose cmdlet output still
+reads them as a wildcard. On PowerShell 5 an absolute program path containing
+`[ ] * ?` is backtick-escaped after `&`. A path given as a whole command renders
 as the one-element command `(path,)`. Under `cmd`, a structured `start` always
 renders `start ""` and a structured `call` raises `ValueError`.
 
@@ -293,6 +297,9 @@ and `parse_credentials`.
 - `ShellOperator.PIPE`, `.AND`, `.OR`, `.REDIRECT`, `.APPEND`, and `.SEQUENCE`
   are explicit infix tokens between top-level commands. Flavours own their
   spelling and may reject operators they cannot represent portably.
+  `ShellFlavour.redirect(value, target, operand) -> str` renders a
+  `REDIRECT`/`APPEND` with its target (`operand` is `redirect_operand(target)`);
+  the default is `operator(value) + operand`.
 - Raw strings stay verbatim; tuple/list commands quote each item as data;
   standalone and structured paths are quoted; top-level commands otherwise
   use the flavour's `command_separator`.

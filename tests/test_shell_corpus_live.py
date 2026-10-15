@@ -96,13 +96,9 @@ _PS = ("powershell", "pwsh")
 #: the corpus must be named here; a new failure is a new finding, not a row to
 #: add without one.
 KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
-    # Windows PowerShell 5 globs a [..] in a called program path.
-    "new-ps5-program-wildcard": lambda f, s, v: (
-        f == "powershell" and s in ("program", "program_path") and v == "[ab]"
-    ),
-    # `>` takes a wildcard path under PowerShell.
+    # pwsh's `>` takes a wildcard path for cmdlet output (`echo` is one).
     "new-ps-redirect-wildcard": lambda f, s, v: (
-        f in _PS and s == "redirect" and v == "[ab]"
+        f == "pwsh" and s == "redirect" and v == "[ab]"
     ),
 }
 

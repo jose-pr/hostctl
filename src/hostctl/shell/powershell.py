@@ -18,7 +18,7 @@ from ._common import (
     login_join,
     program_target,
 )
-from ._grammar import Cmdlet, PSParam
+from ._grammar import Cmdlet, Command, PSParam
 from .cmd import _batch_token, _echo_argument
 
 #: Keeps progress records off stderr; a script that sets it itself still wins.
@@ -101,6 +101,21 @@ def _binder_wraps(token: str, *, major_version: int) -> bool:
 #: through unquoted when the value has no whitespace.
 _BATCH_ACTIVE = frozenset('"&|<>')
 
+_WILDCARD = frozenset("[]*?")
+
+
+def _wildcard_escape(path: str) -> str:
+    """Backtick-escape `path` for a parameter that matches wildcards.
+
+    Windows PowerShell 5 resolves a called program path as a wildcard when it
+    contains one, so `C:\\x\\[ab]\\t.cmd` runs `C:\\x\\a\\t.cmd` if that exists.
+    The backtick is escaped too, but only once a wildcard character makes
+    PowerShell read the path as a pattern.
+    """
+    if not _WILDCARD.intersection(path):
+        return path
+    return "".join("`" + char if char in "`[]*?" else char for char in path)
+
 
 class PowerShellFlavour(ShellFlavour):
     name = "powershell"
@@ -172,13 +187,26 @@ class PowerShellFlavour(ShellFlavour):
         if isinstance(values[0], PSParam):
             raise TypeError("a PSParam cannot be the command itself")
         target = self.command_target(values)
-        rendered = [self.argument(values[0], target=ShellTarget.SHELL)]
+        rendered = [self._program(values[0])]
         for value in values[1:]:
             if isinstance(value, PSParam):
                 rendered.append(value.name)
             else:
                 rendered.append(self.argument(value, target=target))
         return self.structured_command_prefix + " ".join(rendered)
+
+    def _program(self, value: object) -> str:
+        """The program slot after `&`: a literal, wildcard-escaped where needed.
+
+        Only an absolute path is escaped. Measured on 5.1, an escaped
+        relative path is not found at all, and the location a relative path
+        would resolve against is itself reported escaped when it contains a
+        wildcard character, so no spelling reads it literally.
+        """
+        text = self._text(value)
+        if self.major_version < 7 and PureWindowsPath(text).is_absolute():
+            return _literal(_wildcard_escape(text))
+        return self.argument(text, target=ShellTarget.SHELL)
 
     def cmdlet_command(self, value: Cmdlet) -> str:
         """Render `& 'Name' args` for a cmdlet, function or alias.
@@ -276,6 +304,21 @@ class PowerShellFlavour(ShellFlavour):
             raise NotImplementedError(
                 f"{value.name} is not portable to Windows PowerShell"
             ) from exc
+
+    def redirect(self, value: ShellOperator, target: Command, operand: str) -> str:
+        """Write to a file NAME through `Out-File -LiteralPath` on PowerShell 5.
+
+        `>` is `Out-File -FilePath`, which reads `[ab]` in the name as a
+        wildcard. `-Encoding Unicode` is what `>` writes on 5 (UTF-16LE with a
+        byte-order mark); measured identical bytes for native and cmdlet
+        output, new and appended. Raw text after `>` stays PowerShell source.
+        pwsh keeps `>`: there, `| Out-File` would decode a native program's
+        bytes, which its `>` writes untouched.
+        """
+        if self.major_version >= 7 or isinstance(target, str):
+            return super().redirect(value, target, operand)
+        append = " -Append" if value is ShellOperator.APPEND else ""
+        return f" | Out-File -LiteralPath {operand} -Encoding Unicode{append}"
 
     def environment_assignment(self, key: str, value: object) -> str:
         """Render `$env:KEY='VALUE'`.
