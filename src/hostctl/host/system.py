@@ -1158,43 +1158,21 @@ class SystemHost(Host):
 class PosixHost(SystemHost):
     """A POSIX system: POSIX-shell command construction and POSIX paths.
 
-    Compose it from providers directly, or build one over SSH with
-    :meth:`from_ssh`.
+    Compose it from providers directly, or open an :class:`SshConfig`.
     """
 
     system_family = "posix"
     default_shell = POSIX_SHELL
 
-    @classmethod
-    def from_ssh(cls, config: HostConfig) -> PosixHost:
-        """Compose POSIX semantics over an existing :class:`SshConfig`."""
-        host = config._create_host()
-        if not isinstance(host, cls):
-            raise ValueError(
-                f"SSH configuration selects {type(host).__name__}, not {cls.__name__}"
-            )
-        return host
-
 
 class WindowsHost(SystemHost):
     """A Windows system: PowerShell command construction and Windows paths.
 
-    Compose it from providers directly, or build one over WinRM with
-    :meth:`from_winrm`.
+    Compose it from providers directly, or open a :class:`WinRMConfig`.
     """
 
     system_family = "windows"
     default_shell = POWERSHELL
-
-    @classmethod
-    def from_winrm(cls, config: HostConfig) -> WindowsHost:
-        """Compose Windows semantics over an existing :class:`WinRMConfig`."""
-        host = config._create_host()
-        if not isinstance(host, cls):
-            raise ValueError(
-                f"WinRM configuration selects {type(host).__name__}, not {cls.__name__}"
-            )
-        return host
 
 
 class IosHost(SystemHost):

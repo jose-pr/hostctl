@@ -192,7 +192,7 @@ def test_a_uri_backed_path_reports_a_filesystem_logical_path():
     `/sftp:/host:22/...`."""
     from hostctl import SshConfig
 
-    host = PosixHost.from_ssh(SshConfig("h", username="root"))
+    host = SshConfig("h", username="root").open()
 
     assert str(host.path()) == "/"
     assert str(host.path() / "srv" / "app.conf") == "/srv/app.conf"

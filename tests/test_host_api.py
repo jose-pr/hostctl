@@ -135,18 +135,16 @@ def test_ssh_uri_round_trip_keeps_secrets_separate():
 
 
 def test_winrms_uri_round_trip_keeps_secrets_separate():
-    source = WindowsHost.from_winrm(
-        WinRMConfig(
-            "windows.example.com",
-            "domain user",
-            "top-secret",
-            ssl=True,
-            transport="kerberos",
-            message_encryption="always",
-            operation_timeout_sec=40,
-            read_timeout_sec=50,
-        )
-    )
+    source = WinRMConfig(
+        "windows.example.com",
+        "domain user",
+        "top-secret",
+        ssl=True,
+        transport="kerberos",
+        message_encryption="always",
+        operation_timeout_sec=40,
+        read_timeout_sec=50,
+    ).open()
     uri = source.connection_uri
     assert "top-secret" not in uri
     restored = Host(uri, password="top-secret")
@@ -208,9 +206,9 @@ def test_transport_system_hosts_have_safe_info_fallback_without_connection(
     "host",
     [
         LocalHost(),
-        PosixHost.from_ssh(SshConfig("host")),
-        WindowsHost.from_winrm(WinRMConfig("host", "user")),
-        WindowsHost.from_winrm(WinRMConfig("host", "user", ssl=True)),
+        SshConfig("host").open(),
+        WinRMConfig("host", "user").open(),
+        WinRMConfig("host", "user", ssl=True).open(),
     ],
 )
 def test_scheme_matches_connection_uri_and_registered_scheme(host):
@@ -554,12 +552,10 @@ def test_capabilities_are_explicit():
     # This used to assert {run, path} while `spawn()` worked, so a tool gating
     # on `capabilities` -- which contracts.md tells callers to do -- refused
     # to open a shell on every SSH host while offering it on containers.
-    assert PosixHost.from_ssh(SshConfig("host")).capabilities == frozenset(
+    assert SshConfig("host").open().capabilities == frozenset(
         ("run", "path", "spawn", "tty")
     )
-    windows_capabilities = WindowsHost.from_winrm(
-        WinRMConfig("host", "user", "secret")
-    ).capabilities
+    windows_capabilities = WinRMConfig("host", "user", "secret").open().capabilities
     assert {"run", "path"}.issubset(windows_capabilities)
 
 

@@ -39,14 +39,13 @@ host = PosixHost(
 Provider collections are immutable and **ordered**: list order is precedence.
 There is no second priority number to reconcile.
 
-The transport facades remain fully supported. They are *compatible*, not
-deprecated, and no removal is scheduled:
+A transport config opens the system host its path flavour selects:
 
 ```python
-from hostctl import PosixHost, SshConfig, WindowsHost, WinRMConfig
+from hostctl import SshConfig, WinRMConfig
 
-posix = PosixHost.from_ssh(SshConfig("server.example", username="root"))
-windows = WindowsHost.from_winrm(WinRMConfig("server.example", "admin"))
+posix = SshConfig("server.example", username="root").open()
+windows = WinRMConfig("server.example", "admin").open()
 ```
 
 ## Configuration and URIs
@@ -336,9 +335,8 @@ also re-exported from top-level `hostctl`, so the two spellings agree.
 themselves from — `LocalExecutorProvider`, `LocalPathProvider`,
 `ContainerExecutorProvider`, `ContainerArchivePathProvider`, `QgaPathProvider`
 — plus the capability frozensets describing what each built-in backend can do.
-`DownloadPathProvider` sits beside them as a read-only example no built-in
-host uses: it is what a content-only endpoint looks like when written as a
-provider. They are importable, and reading
+`READ_ONLY_PATH_OPERATIONS` is the capability set of a content-only endpoint
+-- pass it as `PathProvider(name, factory, capabilities=...)`. They are importable, and reading
 them is the fastest way to see a complete provider, but they are implementation
 detail: nothing outside hostctl constructs them, and they carry no stability
 promise. Write your own `ExecutorProvider`/`PathProvider` instead of

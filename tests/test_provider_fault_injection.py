@@ -30,7 +30,7 @@ from hostctl import (
 from hostctl.provider.transports import (
     ARCHIVE_PATH_OPERATIONS,
     ContainerArchivePathProvider,
-    DownloadPathProvider,
+    READ_ONLY_PATH_OPERATIONS,
     LocalExecutorProvider,
     LocalPathProvider,
 )
@@ -524,8 +524,10 @@ def test_read_only_download_provider_rejects_a_mutation_without_fallback():
     """A declared read-only provider must not silently route a write away."""
     injector = FaultInjector()
     writable_backend = MemPathBackend()
-    download = DownloadPathProvider(
-        lambda *parts: MemPath(*parts, backend=writable_backend)
+    download = PathProvider(
+        "download",
+        lambda *parts: MemPath(*parts, backend=writable_backend),
+        capabilities=READ_ONLY_PATH_OPERATIONS,
     )
     host = PosixHost(path_providers=(download,))
 
@@ -577,14 +579,16 @@ def test_one_unsupported_operation_does_not_disable_the_provider():
 def test_open_write_is_refused_by_a_read_only_provider():
     """A bare `open` granted every `open_*`, `open_write` included.
 
-    So `DownloadPathProvider` -- read operations only -- accepted `open('wb')`
+    So a provider declaring read operations only accepted `open('wb')`
     and was even preferred for it over a writable sibling, which is exactly
     the silent routing of a mutation that operation-level capabilities exist
     to prevent.
     """
     writable_backend = MemPathBackend()
-    download = DownloadPathProvider(
-        lambda *parts: MemPath(*parts, backend=MemPathBackend())
+    download = PathProvider(
+        "download",
+        lambda *parts: MemPath(*parts, backend=MemPathBackend()),
+        capabilities=READ_ONLY_PATH_OPERATIONS,
     )
     writable = PathProvider(
         "sftp", lambda *parts: MemPath(*parts, backend=writable_backend)
@@ -599,8 +603,10 @@ def test_open_write_is_refused_by_a_read_only_provider():
 
 
 def test_a_read_only_provider_alone_refuses_open_write():
-    download = DownloadPathProvider(
-        lambda *parts: MemPath(*parts, backend=MemPathBackend())
+    download = PathProvider(
+        "download",
+        lambda *parts: MemPath(*parts, backend=MemPathBackend()),
+        capabilities=READ_ONLY_PATH_OPERATIONS,
     )
     host = PosixHost(path_providers=(download,))
 

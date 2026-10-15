@@ -21,7 +21,7 @@ from pathapi.protocols import (
 )
 
 from hostctl import PathProvider, PosixHost
-from hostctl.provider.transports import FULL_PATH_OPERATIONS, DownloadPathProvider
+from hostctl.provider.transports import FULL_PATH_OPERATIONS, READ_ONLY_PATH_OPERATIONS
 
 _MUTATIONS = (Create, Remove, Move, Chmod, Symlink)
 
@@ -33,7 +33,11 @@ def _providers():
         lambda *parts: MemPath(*parts, backend=backend),
         capabilities=FULL_PATH_OPERATIONS | {"symlink_to", "readlink"},
     )
-    read_only = DownloadPathProvider(lambda *parts: MemPath(*parts, backend=backend))
+    read_only = PathProvider(
+        "download",
+        lambda *parts: MemPath(*parts, backend=backend),
+        capabilities=READ_ONLY_PATH_OPERATIONS,
+    )
     return read_only, full
 
 

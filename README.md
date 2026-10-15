@@ -203,10 +203,10 @@ Existing transport URIs remain compatible.  To opt into system semantics while
 retaining those URI/configuration objects, compose them explicitly:
 
 ```python
-from hostctl import PosixHost, SshConfig, WindowsHost, WinRMConfig
+from hostctl import SshConfig, WinRMConfig
 
-posix = PosixHost.from_ssh(SshConfig("server.example", username="root"))
-windows = WindowsHost.from_winrm(WinRMConfig("server.example", "admin"))
+posix = SshConfig("server.example", username="root").open()
+windows = WinRMConfig("server.example", "admin").open()
 ```
 
 SSH and WinRM transport implementations are private providers; QEMU's SSH

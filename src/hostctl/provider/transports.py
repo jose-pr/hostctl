@@ -66,6 +66,15 @@ ARCHIVE_PATH_OPERATIONS = frozenset(
     )
 )
 
+#: Content reads only, for a read-only endpoint such as an application
+#: download. Mutations are absent, so a composite path rejects them rather than
+#: routing them to another provider that might apply them to different state.
+#: `is_file` and `is_dir` derive from `stat`, which these answer; leaving them
+#: out broke every pathapi helper that asks `is_dir()` before doing anything.
+READ_ONLY_PATH_OPERATIONS = frozenset(
+    ("stat", "read", "open", "open_read", "exists", "is_file", "is_dir")
+)
+
 #: QGA file RPCs without a guest helper: content only.  ``stat``/``scandir``
 #: and every namespace mutation require a positively probed helper.
 QGA_FILE_OPERATIONS = frozenset(("open", "open_read", "open_write", "read", "write"))
@@ -287,52 +296,15 @@ class QgaPathProvider(PathProvider):
         return ProviderProbe("available", capabilities=self.capabilities)
 
 
-class DownloadPathProvider(PathProvider):
-    """Read-only content provider for an application download endpoint.
-
-    Mutating operations are absent from the declared capability set, so the
-    composite path rejects them rather than silently routing the mutation to
-    another provider that might apply it to different state.
-    """
-
-    READ_OPERATIONS = frozenset(
-        (
-            "stat",
-            "read",
-            "open",
-            "open_read",
-            "exists",
-            # Both derive from `stat`, which this provider answers. Leaving
-            # them out made `via("download").is_file()` raise while
-            # `.stat()` succeeded, and broke every pathapi helper that
-            # asks `is_dir()` before doing anything.
-            "is_file",
-            "is_dir",
-        )
-    )
-
-    def __init__(self, factory, *, name="download", available=True, reason=""):
-        self._available = bool(available)
-        self._reason = reason
-        super().__init__(name, factory, capabilities=self.READ_OPERATIONS)
-
-    def probe(self) -> ProviderProbe:
-        if not self._available:
-            return ProviderProbe(
-                "unavailable", self._reason or "download endpoint is unavailable"
-            )
-        return ProviderProbe("available", capabilities=self.capabilities)
-
-
 __all__ = [
     "ARCHIVE_PATH_OPERATIONS",
     "ContainerArchivePathProvider",
     "ContainerExecutorProvider",
-    "DownloadPathProvider",
     "FULL_PATH_OPERATIONS",
     "LocalExecutorProvider",
     "LocalPathProvider",
     "QGA_FILE_OPERATIONS",
     "QGA_HELPER_OPERATIONS",
     "QgaPathProvider",
+    "READ_ONLY_PATH_OPERATIONS",
 ]

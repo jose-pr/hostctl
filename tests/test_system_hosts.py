@@ -348,25 +348,27 @@ def test_system_host_close_attempts_all_targets_and_reraises_first_error():
     assert events == ["second"]
 
 
-def test_transport_facade_helpers_validate_system_family():
-    from hostctl import PosixHost, SshConfig, WindowsHost
+def test_a_transport_config_opens_the_system_family_its_paths_select():
+    from hostctl import SshConfig, WindowsHost
 
     from pathapi import WindowsPathname
 
-    with pytest.raises(ValueError, match="selects"):
-        PosixHost.from_ssh(SshConfig("host", path_flavor=WindowsPathname))
-    assert isinstance(WindowsHost.from_winrm(WinRMConfig("host", "user")), WindowsHost)
+    assert isinstance(
+        SshConfig("host", path_flavor=WindowsPathname).open(), WindowsHost
+    )
+    assert isinstance(SshConfig("host").open(), PosixHost)
+    assert isinstance(WinRMConfig("host", "user").open(), WindowsHost)
 
 
 def test_transport_configs_compose_system_hosts_without_uri_changes():
-    from hostctl import PosixHost, SshConfig, WindowsHost, WinRMConfig
+    from hostctl import SshConfig, WinRMConfig
 
     ssh_config = SshConfig("example", username="root")
-    posix = PosixHost.from_ssh(ssh_config)
+    posix = ssh_config.open()
     assert posix.connection_uri == ssh_config.connection_uri
     assert posix.scheme == "ssh"
     winrm_config = WinRMConfig("example", "admin", password="secret")
-    windows = WindowsHost.from_winrm(winrm_config)
+    windows = winrm_config.open()
     assert windows.connection_uri == winrm_config.connection_uri
     assert windows.scheme == "winrm"
     assert all(

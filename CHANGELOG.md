@@ -124,6 +124,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   both the pywinrm and PSRP legs. They sent the password in cleartext on
   pywinrm. This ships in 0.4.0.
 
+### Removed
+
+- **`PosixHost.from_ssh(config)` and `WindowsHost.from_winrm(config)`**, which
+  ship removed in 0.4.0. Each was `config._create_host()` plus a check that
+  could not fail for a config that picked its own paths. Use `config.open()`
+  or `Host(uri)`; `SshConfig("host").open()` is a `PosixHost`, and a config with
+  Windows paths opens a `WindowsHost`.
+
 ### Fixed
 
 - **A serial or QEMU console process can no longer free a lease it does not
@@ -219,7 +227,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   does, so a probe that raises is `OperationNotStarted` and is cached, where a
   raw transport error escaped and the probe re-ran on every call.
 - `host_checksum` on a Windows SSH target hands `certutil` and `Get-FileHash`
-  the file the transfer wrote, as `C:\\data\\file.txt`: `certutil` read the SFTP
+  the file the transfer wrote, as `C:\data\file.txt`: `certutil` read the SFTP
   spelling `/C:/data/file.txt` as an option, and PowerShell hashed the logical
   text. A file on this machine's filesystem is hashed in process whichever host
   owns it; a composed local host (`posix://?executor=local&path=local`)

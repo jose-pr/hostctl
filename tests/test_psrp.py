@@ -31,9 +31,7 @@ def test_explicit_psrp_has_actionable_error_when_missing(monkeypatch):
             ImportError("PSRP requires hostctl[psrp] on Python 3.10+")
         ),
     )
-    host = WindowsHost.from_winrm(
-        WinRMConfig("host", "user", "secret", provider="psrp")
-    )
+    host = WinRMConfig("host", "user", "secret", provider="psrp").open()
     with pytest.raises(ImportError, match="Python 3.10|psrp"):
         host.runspace()
 

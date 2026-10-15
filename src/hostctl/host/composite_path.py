@@ -82,9 +82,8 @@ def _provider_supports(
         "path" in capabilities
         or any(value in capabilities for value in alternatives)
         # A bare `open` stands in for `open_read` only. It used to grant
-        # `open_write` too, so a provider declaring read operations -- the
-        # shipped `DownloadPathProvider`, or QGA on a guest with no write RPCs
-        # -- accepted `open('wb')` and was even preferred for it over a
+        # `open_write` too, so a provider declaring read operations -- a QGA
+        # guest with no write RPCs, say -- accepted `open('wb')` and was even preferred for it over a
         # writable sibling. A mutation has to be declared: that is the whole
         # point of operation-level capabilities.
         or ("open_read" in alternatives and "open" in capabilities)
@@ -300,8 +299,8 @@ class _Row(typing.NamedTuple):
 _FORWARDED: "dict[str, _Row]" = {
     # The stat-derived predicates accept EITHER their own capability or
     # `stat`, because that is what they are: `is_file()` is a stat with a
-    # mask. Gating them on their own name alone meant the shipped
-    # `DownloadPathProvider` answered `stat()` and `is_symlink()` and refused
+    # mask. Gating them on their own name alone meant a read-only provider
+    # answered `stat()` and `is_symlink()` and refused
     # `is_file()` -- and every pathapi helper that asks `is_dir()` first
     # (copy(recursive), mkdir(exist_ok), move) broke on such a path.
     "exists": ("exists|stat", False, True),
@@ -341,9 +340,41 @@ _FORWARDED: "dict[str, _Row]" = {
 
 
 class _CompositePathMixin:
-    """Provider routing shared by the POSIX and Windows concrete classes."""
+    """Provider routing shared by the POSIX and Windows concrete classes.
+
+    The concrete classes keep their own `__slots__`: slots declared on the
+    mixin conflict with `PurePath`'s layout.
+    """
 
     __slots__ = ()
+
+    def __new__(
+        cls,
+        *segments,
+        backend_path=None,
+        provider=None,
+        factory=None,
+        providers=(),
+        selector=None,
+        pinned=False,
+    ):
+        self = super().__new__(cls, *segments)
+        self._init_routing_state(
+            segments,
+            backend_path=backend_path,
+            provider=provider,
+            factory=factory,
+            providers=providers,
+            selector=selector,
+            pinned=pinned,
+        )
+        if not self._routing_state_is_complete():
+            raise TypeError(f"{cls.__name__} requires a provider-backed path")
+        return self
+
+    def __init__(self, *segments, **kwargs):
+        if not hasattr(self, "_raw_paths") and not hasattr(self, "_parts"):
+            pathlib.PurePath.__init__(self, *segments)
 
     def __init_subclass__(cls, **kwargs):
         """Install the forwarders on every concrete composite class.
@@ -753,12 +784,10 @@ class _CompositePathMixin:
         return self._child(str(key), str(self))
 
     def __reduce__(self):
-        # `copy.copy()` and `pickle` go through `PurePath.__reduce__`, which
-        # calls the constructor with the bare segments -- no provider, no
-        # selector -- and hostctl's constructor refuses that, so a job object
-        # holding a host path could not be copied at all. Rebuilding through
-        # the same routing state is the honest answer; providers and selector
-        # travel with it, which is what the path IS.
+        # `copy.copy()` goes through this: `PurePath.__reduce__` rebuilds from
+        # bare segments, which hostctl's constructor refuses, so the rebuilt
+        # path keeps its providers and selector. A composite cannot be pickled,
+        # because it is bound to a live host.
         return (
             _rebuild_composite,
             (
@@ -1110,34 +1139,6 @@ class CompositePosixPath(_CompositePathMixin, PosixPathname, Path):
         "_selection_trace",
     )
 
-    def __new__(
-        cls,
-        *segments,
-        backend_path=None,
-        provider=None,
-        factory=None,
-        providers=(),
-        selector=None,
-        pinned=False,
-    ):
-        self = super().__new__(cls, *segments)
-        self._init_routing_state(
-            segments,
-            backend_path=backend_path,
-            provider=provider,
-            factory=factory,
-            providers=providers,
-            selector=selector,
-            pinned=pinned,
-        )
-        if not self._routing_state_is_complete():
-            raise TypeError("CompositePosixPath requires a provider-backed path")
-        return self
-
-    def __init__(self, *segments, **kwargs):
-        if not hasattr(self, "_raw_paths") and not hasattr(self, "_parts"):
-            pathlib.PurePath.__init__(self, *segments)
-
 
 class CompositeWindowsPath(_CompositePathMixin, WindowsPathname, Path):
     """A provider-selecting path with Windows syntax on every client OS."""
@@ -1151,31 +1152,3 @@ class CompositeWindowsPath(_CompositePathMixin, WindowsPathname, Path):
         "_pinned",
         "_selection_trace",
     )
-
-    def __new__(
-        cls,
-        *segments,
-        backend_path=None,
-        provider=None,
-        factory=None,
-        providers=(),
-        selector=None,
-        pinned=False,
-    ):
-        self = super().__new__(cls, *segments)
-        self._init_routing_state(
-            segments,
-            backend_path=backend_path,
-            provider=provider,
-            factory=factory,
-            providers=providers,
-            selector=selector,
-            pinned=pinned,
-        )
-        if not self._routing_state_is_complete():
-            raise TypeError("CompositeWindowsPath requires a provider-backed path")
-        return self
-
-    def __init__(self, *segments, **kwargs):
-        if not hasattr(self, "_raw_paths") and not hasattr(self, "_parts"):
-            pathlib.PurePath.__init__(self, *segments)

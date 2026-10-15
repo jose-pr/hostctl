@@ -181,11 +181,15 @@ def test_a_download_provider_answers_the_stat_predicates_it_derives():
     pinned download path answered `stat()` and `is_symlink()` and refused
     `is_file()` -- and every pathapi helper that asks `is_dir()` first
     broke on it."""
-    from hostctl.provider.transports import DownloadPathProvider
+    from hostctl.provider.transports import READ_ONLY_PATH_OPERATIONS
 
     backend = MemPathBackend()
     MemPath("payload", backend=backend).write_bytes(b"value")
-    download = DownloadPathProvider(lambda *p: MemPath(*p, backend=backend))
+    download = PathProvider(
+        "download",
+        lambda *p: MemPath(*p, backend=backend),
+        capabilities=READ_ONLY_PATH_OPERATIONS,
+    )
     host = PosixHost(path_providers=(download,))
 
     path = host.path("payload").via("download")
@@ -200,12 +204,18 @@ def test_a_read_only_provider_can_still_copy_out(tmp_path):
     read-only provider could not copy OUT at all -- although only reads
     happen on the source -- while `read_bytes()` on the same path worked."""
     from pathapi import Path as LocalPath
-    from hostctl.provider.transports import DownloadPathProvider
+    from hostctl.provider.transports import READ_ONLY_PATH_OPERATIONS
 
     backend = MemPathBackend()
     MemPath("payload", backend=backend).write_bytes(b"value")
     host = PosixHost(
-        path_providers=(DownloadPathProvider(lambda *p: MemPath(*p, backend=backend)),)
+        path_providers=(
+            PathProvider(
+                "download",
+                lambda *p: MemPath(*p, backend=backend),
+                capabilities=READ_ONLY_PATH_OPERATIONS,
+            ),
+        )
     )
     target = LocalPath(str(tmp_path / "copied"))
 
@@ -284,3 +294,22 @@ def test_the_default_path_syncer_policy_works_over_composite_paths(tmp_path):
     PathSyncer().sync(host.path(str(source_root)), host.path(str(target_root)))
 
     assert LocalPath(str(tmp_path / "target" / "a.txt")).read_bytes() == b"a"
+
+
+def test_a_composite_path_copies_with_its_providers_and_cannot_be_pickled():
+    """`copy.copy()` rebuilds the path through `__reduce__` and keeps the host's
+    providers; pickling fails because the path is bound to a live host."""
+    import copy
+    import pickle
+
+    from pathapi import Path as LocalPath
+
+    host = PosixHost(path_providers=(PathProvider("local", LocalPath),))
+    path = host.path("/x")
+
+    duplicate = copy.copy(path)
+
+    assert type(duplicate) is type(path)
+    assert duplicate.providers is path.providers
+    with pytest.raises(TypeError):
+        pickle.dumps(path)
