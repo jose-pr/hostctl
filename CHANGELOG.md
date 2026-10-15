@@ -7,35 +7,171 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Security
+### Added
 
-- **Windows PowerShell 5 no longer splits a native argument at a space that
-  follows a quote.** `host.run(("tool.exe", 'report" /MIR'))` reached the
-  child as `report"` and `/MIR`, an argument turned into a flag. PS 5 wraps an
-  argument in quotes only when whitespace sits at an even count of `"`; a
-  value that cannot be passed that way now raises `ValueError` (use `PWSH` or
-  `Exec`) instead of arriving split.
-- **A batch file never executes an argument.** `Exec(shim_cmd, 'x"&echo ...')`,
-  a structured command to a `.bat`/`.cmd` under `cmd`, `powershell` or `pwsh`,
-  and a bare name that PATHEXT resolves to a batch file all let a value close
-  cmd's quoting and run the rest (and expanded `%VAR%`). Every argument to a
-  batch target is now one inert token (`"` + body + `"`, `"` as `""`, `%` as
-  `%%cd:~,%`). A Microsoft C runtime reads `""` as one quote; a
-  `CommandLineToArgvW` consumer may split a value that has whitespace after a
-  quote.
-  - **Breaking, 0.4.0**: an argument to a program of unknown type (a bare
-    name, `.ps1`) raises `ValueError` when it holds `"` (cmd) or any of
-    `" & | < >` (PowerShell), since the program may be a batch file. Name the
-    program with its suffix, use `Cmdlet` for a cmdlet, or use `Exec`.
-  - **Breaking, 0.4.0**: a local `Exec` of a batch file raises `ValueError`
-    when the program path contains `"` or `%`.
-- **`WinRMConfig` refuses `transport` `basic`, `plaintext` or `ssl` over plain
-  HTTP** unless `allow_cleartext=True` (URI query `allow_cleartext=true`), on
-  both the pywinrm and PSRP legs. They sent the password in cleartext on
-  pywinrm. This ships in 0.4.0.
-- **A PowerShell native argument `--%` raises `ValueError`.** PowerShell reads
-  it as the stop-parsing token however it is quoted, so the rest of the line
-  reached the program unparsed and re-split. **Breaking, 0.4.0.**
+- `hostctl.shell.wants_epilogue(capabilities)` answers whether a script for a
+  provider needs the flavour's status epilogue (not when it declares
+  `manages_status`). `shell_flavour_names()` (also in `hostctl`) lists the
+  names `shell_flavour()` accepts, plugin flavours included.
+- `run(timeout=)` on the native WinRM leg; it overrides `read_timeout_sec` as
+  the total deadline for that call.
+- `pathapi.protocols.supports(path, Protocol)` answers for a host path. A
+  composed host's path answers from the operations its providers declare
+  (only the pinned provider after `.via()`), without probing; a container path
+  has no `Create`, `Chmod`, `Remove` or `Move`, and a QGA path has no
+  `Readlink` or `Symlink` and answers its metadata and namespace protocols
+  from the guest helper.
+- `HOSTCTL_MCP=stdio` serves every `hostctl` subcommand as an MCP tool over
+  stdio. `--ask-password` is refused there, since a tool call cannot prompt;
+  use `HOSTCTL_PASSWORD`.
+- `hostctl --version`, and `-v`/`-q`/`--loglevel` on every subcommand.
+- `PromptConsoleProfile(login_timeout=10.0)` sets how long each login step and
+  the first prompt may take; the default is the previous fixed 10 seconds. It
+  is a profile argument only, not part of the `serial:///` URI.
+- `QemuHost.open_serial(encoding=, errors=)` (and `QemuSerialConsole.open`)
+  return a console that reads and writes `str`.
+- `ContainerConfig(path_flavor="posix")`, `"windows"` and `SshConfig(path_flavor=
+  "windows")` take the strings `QemuConfig` already accepted; `SshConfig` has
+  no `"auto"`.
+- `run(..., stderr=subprocess.STDOUT)` on a QGA guest asks qemu-ga to
+  interleave the streams (`capture-output: "merged"`) when the agent is 8.0 or
+  later and the guest is not Windows.
+- `host_schemes()` and `system_provider_names()` list what the URI-scheme and
+  system-provider registries hold, sorted, with entry-point names included and
+  not imported. Unknown system-provider descriptors load the
+  `hostctl.system_providers` entry point of that name.
+- `SystemHost.executor_providers` and `path_providers` (read-only tuples, until
+  now only on `LocalHost`) and `SystemHost.replace_providers(*, executor=None,
+  path=None)`, which swaps either set, closes each replaced transport once
+  unless a kept provider shares it, and starts a new connection generation.
+  The provider teardown rule is documented in the providers guide.
+- `local_providers()` returns the local `(executor_provider, path_provider)`
+  pair, beside `ssh_providers()` and `winrm_providers()`, for a host you
+  assemble yourself. `posix://...?executor=local` now builds the same
+  providers.
+
+### Changed
+
+- The config extension hooks `_from_parsed_uri` and `_create_host` are documented
+  as the override points for a `HostConfig` subclass, with a worked example in
+  the extending guide. Their names are unchanged and no `from_uri` is added.
+- **Breaking, 0.4.0: an environment variable name outside
+  `[A-Za-z_][A-Za-z0-9_]*` raises `ValueError` on every transport**, before a
+  provider is selected. Only the embedding transports refused `A.B` or
+  `ProgramFiles(x86)` before, so the same call was valid or not depending on
+  which provider won. `validate_environment_names` is exported by
+  `hostctl.executor`.
+- **Breaking, 0.4.0: `Input` no longer includes `int`.** `input=3` reached
+  `subprocess`' writer thread and hung until `timeout` on Python 3.14; it now
+  raises `TypeError` at once.
+- **Breaking, 0.4.0: `Shell` is not an `Executor`.** `Shell.execute()` and
+  `shell(command, *args)` are removed; calling a `Shell` configures it
+  (`host.shell(cwd=..., env=...)`) and a positional argument raises
+  `TypeError`. Run a program with argv through `host.executor(command, *args)`
+  or `host.run(Exec(command, *args))`. A shell's `flavour`, `cwd`, `env`,
+  `encoding` and `errors` are read-only, and the `host.shell` proxy is gone.
+  A `Shell` over a host is that host's `run`; one over a bare executor sends
+  the flavour's invocation as argv when the executor declares `args`.
+- **Breaking, 0.4.0: `ShellFlavour.script(for_session=)` is
+  `script(epilogue=)`**, with the sense inverted (`for_session=True` is
+  `epilogue=False`). `terminate_submission` is unchanged here.
+- **Breaking, 0.4.0: a structured `cmd` `call` raises `ValueError`.** `call`
+  re-expands `%` and doubles `^` in its arguments, so no quoting survives it;
+  run the program directly. `call` and `start` are no longer treated as
+  builtins.
+- **Breaking, 0.4.0: `Cmdlet` and `PSParam` replace the PowerShell `-Name`
+  inference.** A plain string in a structured command is always a value; a
+  string shaped like `-LiteralPath` was rendered bare, which hid a real
+  argument from a native program and let a program-shaped value read as a
+  parameter. Write `Cmdlet("Remove-Item", PSParam("-LiteralPath"), path)`.
+  Both are exported by `hostctl`, `hostctl.host` and `hostctl.shell`, are
+  non-iterable like `Exec`, and raise `TypeError` for any other shell.
+  `ShellTarget` gains `BATCH` and `UNRESOLVED`.
+- **The `hostctl` command needs the `cli` extra** (`pip install
+  "hostctl[cli]"`, which adds `duho>=0.7.5,<0.8`). Without it the console
+  script prints one line naming the extra and exits non-zero. The command
+  line moved from `hostctl._cli` to `hostctl.cli`; `hostctl.cli.main(argv)`
+  no longer takes `stdout=`/`stderr=` and writes to `sys.stdout`/`sys.stderr`.
+  Subcommands, operands and exit statuses are unchanged, except that the
+  `--` before `run`'s program is now required.
+- **Paths are `pathapi` paths** (`pathapi>=0.1.0,<0.2`, which replaces
+  `pathlib_next`; `pathlib-next` was renamed `pathapi`). `HostPath` is
+  `pathapi.Path`, `ExecutorCommand` takes a `pathapi.Pathname`, and a path
+  provider must return a `pathapi.Path`; one that returns anything else fails
+  with `TypeError: path provider 'X' returned LocalPath, expected
+  pathapi.Path`. `local_providers()` is the local pair to use instead of
+  building one. Change `pathlib_next` imports as
+  pathapi's changelog says: `pathlib_next.utils.sync` is `pathapi.sync`,
+  `pathlib_next.utils.stat.FileStat` is `pathapi.FileStat`.
+  - The `ssh` extra is `asyncssh>=2.20,<3` and `sftppath[asyncssh]>=0.1.0,<0.2`,
+    in place of `pathlib_next[sftp-async]`. An SSH host's path is an
+    `sftppath.SFTPPath`, and its `str()` is the path on the server where it
+    was `sftp://host:22/...`.
+  - The SFTP leg still uses the exec leg's connect options, and reads no
+    `~/.ssh/config`, so both legs reach the same server.
+  - pathapi's own changes reach hostctl's paths: `touch(mode=...)` raises
+    `NotImplementedError` on a path that cannot `chmod()`, and a path class
+    without `__fspath__` is no longer `os.PathLike`.
+  - A WinRM, Docker archive or QGA write stream whose `with` block raises
+    still uploads nothing, and no longer also emits a `ResourceWarning`; one
+    collected unclosed still warns. The stream is pathapi's `DiscardOnError`.
+  - `pathlib.Path(src).copy(host_path)` onto an existing directory of a
+    WinRM, Docker archive or QGA host raises `FileExistsError`, as onto a local
+    directory; it merged before.
+  - A WinRM, Docker archive or QGA write stream whose upload fails on
+    `close()` is closed; write again to retry.
+- **Requires netimps 0.4** (`netimps>=0.4.0,<0.5`, was `>=0.3.0,<0.4`). No
+  hostctl code changed, but three things change for a caller:
+  - `winrm`, `winrms`, `wsman`, `wsmans` and `psrp` now have default ports
+    (5985, 5986, 5985, 5986, 5985) where `ConnectionString.port` was `None`,
+    so `str(ConnectionString("winrm://admin@host"))` renders
+    `winrm://admin@host:5985`. They are the ports `WinRMConfig` already chose.
+  - An all-digit scheme given through `scheme=`, `defaults=` or `replace()` is
+    read as a port, and one outside 0-65535 raises `ValueError` where it gave
+    an object with no port.
+  - netimps 0.4 refuses to import when `NETIMPS_NO_SOCKET_PATCH` is set, and
+    `import hostctl` imports netimps; set `NETIMPS_SOCKET_PATCH=0` instead.
+- The sdist no longer ships the contributor `AGENTS.md` or `benchmarks/`, and
+  neither artifact ships a `CLAUDE*` file.
+- Extras ranges follow the dependency rule: `container` accepts docker 7.0
+  (was 7.1), `serial` requires pyserial 3.3 (was 3.5), `psrp` is limited to
+  pypsrp 0.9.x (was `<1`), and `qemu-libvirt` accepts libvirt-python 12 and
+  later (was `<12`).
+- **The pywinrm leg no longer loads the remote user's PowerShell profile and
+  runs non-interactive**, as the native leg already did. It starts
+  `powershell.exe` directly and sends the script on stdin, instead of through
+  cmd.exe. This ships in 0.4.0.
+- **`provider="pywinrm"` always means pywinrm**, which ships in 0.4.0. It used
+  to mean the native current-context leg for a password-free config on Windows;
+  use the new `provider="native"` (or `"auto"`) for that. An explicit
+  `"pywinrm"` or `"psrp"` without a password now needs `transport="kerberos"`.
+  `str(WinRMConfig)` omits an unset port, so `HostConfig(str(config)) == config`.
+- **One status rule on every WinRM leg**, which ships in 0.4.0: 0 when the last
+  statement succeeded, else the native exit code, else 1. PSRP reports a
+  non-terminating error followed by a successful statement as 0, where it was
+  1, and a remote ACL `PermissionDenied` is a status rather than
+  `PermissionError`. Only transport and authentication failures raise.
+- **PSRP `run()` text matches the other legs** (tables as a console shows
+  them, CRLF line ends), which ships in 0.4.0. It was each object's
+  `ToString()` joined with LF.
+- **`SystemConfig` (`PosixConfig`, `WindowsConfig`, `IosConfig`) takes only
+  `provider_options=` and `initializer=` beyond `shell=`, `executor=` and
+  `path=`**, which ships in 0.4.0. Any other keyword was kept in `options`
+  without complaint, so `executr=("local",)` configured nothing; it now raises
+  `TypeError`. `executor="local"` (a bare string) raises `TypeError` where it
+  became five one-letter descriptors. A `SystemHost` built from a connection
+  string or anything but a `HostConfig` raises `TypeError`.
+- **`ProviderSelector.select()` loses `policy=`, `ProviderSelection` loses
+  `policy`, and `ProviderSelector.last_selection` is gone**, which ships in
+  0.4.0. Nothing varied the policy and nothing but one test read
+  `last_selection`; `host.last_selection` (the trace) stays, and trace entries
+  keep a constant `"policy": "ordered"`.
+- **Registries refuse a duplicate name**, which ships in 0.4.0. A second
+  `HostConfig` subclass claiming a scheme that another live config holds
+  raises `ValueError` where the class is defined (it used to fail later as
+  "ambiguous host URI"); `register_system_provider(name, resolver)` raises for
+  a name already registered. Pass `replace=True` to take the name over on
+  purpose. Redefining the same class (a module reload) is not a duplicate.
 
 ### Removed
 
@@ -217,185 +353,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   which now also answers `*.localhost`, short IPv4 spellings and this machine's
   own name. `import hostctl` still does not import netimps.
 
-### Added
+### Security
 
-- `hostctl.shell.wants_epilogue(capabilities)` answers whether a script for a
-  provider needs the flavour's status epilogue (not when it declares
-  `manages_status`). `shell_flavour_names()` (also in `hostctl`) lists the
-  names `shell_flavour()` accepts, plugin flavours included.
-- `run(timeout=)` on the native WinRM leg; it overrides `read_timeout_sec` as
-  the total deadline for that call.
-- `pathapi.protocols.supports(path, Protocol)` answers for a host path. A
-  composed host's path answers from the operations its providers declare
-  (only the pinned provider after `.via()`), without probing; a container path
-  has no `Create`, `Chmod`, `Remove` or `Move`, and a QGA path has no
-  `Readlink` or `Symlink` and answers its metadata and namespace protocols
-  from the guest helper.
-- `HOSTCTL_MCP=stdio` serves every `hostctl` subcommand as an MCP tool over
-  stdio. `--ask-password` is refused there, since a tool call cannot prompt;
-  use `HOSTCTL_PASSWORD`.
-- `hostctl --version`, and `-v`/`-q`/`--loglevel` on every subcommand.
-- `PromptConsoleProfile(login_timeout=10.0)` sets how long each login step and
-  the first prompt may take; the default is the previous fixed 10 seconds. It
-  is a profile argument only, not part of the `serial:///` URI.
-- `QemuHost.open_serial(encoding=, errors=)` (and `QemuSerialConsole.open`)
-  return a console that reads and writes `str`.
-- `ContainerConfig(path_flavor="posix")`, `"windows"` and `SshConfig(path_flavor=
-  "windows")` take the strings `QemuConfig` already accepted; `SshConfig` has
-  no `"auto"`.
-- `run(..., stderr=subprocess.STDOUT)` on a QGA guest asks qemu-ga to
-  interleave the streams (`capture-output: "merged"`) when the agent is 8.0 or
-  later and the guest is not Windows.
-- `host_schemes()` and `system_provider_names()` list what the URI-scheme and
-  system-provider registries hold, sorted, with entry-point names included and
-  not imported. Unknown system-provider descriptors load the
-  `hostctl.system_providers` entry point of that name.
-- `SystemHost.executor_providers` and `path_providers` (read-only tuples, until
-  now only on `LocalHost`) and `SystemHost.replace_providers(*, executor=None,
-  path=None)`, which swaps either set, closes each replaced transport once
-  unless a kept provider shares it, and starts a new connection generation.
-  The provider teardown rule is documented in the providers guide.
-- `local_providers()` returns the local `(executor_provider, path_provider)`
-  pair, beside `ssh_providers()` and `winrm_providers()`, for a host you
-  assemble yourself. `posix://...?executor=local` now builds the same
-  providers.
-- `hostctl.shell.wants_epilogue(capabilities)` answers whether a script for a
-  provider needs the flavour's status epilogue (not when it declares
-  `manages_status`). `shell_flavour_names()` (also in `hostctl`) lists the
-  names `shell_flavour()` accepts, plugin flavours included.
-- `pathapi.protocols.supports(path, Protocol)` answers for a host path. A
-  composed host's path answers from the operations its providers declare
-  (only the pinned provider after `.via()`), without probing; a container path
-  has no `Create`, `Chmod`, `Remove` or `Move`, and a QGA path has no
-  `Readlink` or `Symlink` and answers its metadata and namespace protocols
-  from the guest helper.
-- `HOSTCTL_MCP=stdio` serves every `hostctl` subcommand as an MCP tool over
-  stdio. `--ask-password` is refused there, since a tool call cannot prompt;
-  use `HOSTCTL_PASSWORD`.
-- `hostctl --version`, and `-v`/`-q`/`--loglevel` on every subcommand.
-
-### Changed
-
-- The config extension hooks `_from_parsed_uri` and `_create_host` are documented
-  as the override points for a `HostConfig` subclass, with a worked example in
-  the extending guide. Their names are unchanged and no `from_uri` is added.
-- **Breaking, 0.4.0: an environment variable name outside
-  `[A-Za-z_][A-Za-z0-9_]*` raises `ValueError` on every transport**, before a
-  provider is selected. Only the embedding transports refused `A.B` or
-  `ProgramFiles(x86)` before, so the same call was valid or not depending on
-  which provider won. `validate_environment_names` is exported by
-  `hostctl.executor`.
-- **Breaking, 0.4.0: `Input` no longer includes `int`.** `input=3` reached
-  `subprocess`' writer thread and hung until `timeout` on Python 3.14; it now
-  raises `TypeError` at once.
-- **Breaking, 0.4.0: `Shell` is not an `Executor`.** `Shell.execute()` and
-  `shell(command, *args)` are removed; calling a `Shell` configures it
-  (`host.shell(cwd=..., env=...)`) and a positional argument raises
-  `TypeError`. Run a program with argv through `host.executor(command, *args)`
-  or `host.run(Exec(command, *args))`. A shell's `flavour`, `cwd`, `env`,
-  `encoding` and `errors` are read-only, and the `host.shell` proxy is gone.
-  A `Shell` over a host is that host's `run`; one over a bare executor sends
-  the flavour's invocation as argv when the executor declares `args`.
-- **Breaking, 0.4.0: `ShellFlavour.script(for_session=)` is
-  `script(epilogue=)`**, with the sense inverted (`for_session=True` is
-  `epilogue=False`). `terminate_submission` is unchanged here.
-- **Breaking, 0.4.0: a structured `cmd` `call` raises `ValueError`.** `call`
-  re-expands `%` and doubles `^` in its arguments, so no quoting survives it;
-  run the program directly. `call` and `start` are no longer treated as
-  builtins.
-- **Breaking, 0.4.0: `Cmdlet` and `PSParam` replace the PowerShell `-Name`
-  inference.** A plain string in a structured command is always a value; a
-  string shaped like `-LiteralPath` was rendered bare, which hid a real
-  argument from a native program and let a program-shaped value read as a
-  parameter. Write `Cmdlet("Remove-Item", PSParam("-LiteralPath"), path)`.
-  Both are exported by `hostctl`, `hostctl.host` and `hostctl.shell`, are
-  non-iterable like `Exec`, and raise `TypeError` for any other shell.
-  `ShellTarget` gains `BATCH` and `UNRESOLVED`.
-- **The `hostctl` command needs the `cli` extra** (`pip install
-  "hostctl[cli]"`, which adds `duho>=0.7.5,<0.8`). Without it the console
-  script prints one line naming the extra and exits non-zero. The command
-  line moved from `hostctl._cli` to `hostctl.cli`; `hostctl.cli.main(argv)`
-  no longer takes `stdout=`/`stderr=` and writes to `sys.stdout`/`sys.stderr`.
-  Subcommands, operands and exit statuses are unchanged, except that the
-  `--` before `run`'s program is now required.
-- **Paths are `pathapi` paths** (`pathapi>=0.1.0,<0.2`, which replaces
-  `pathlib_next`; `pathlib-next` was renamed `pathapi`). `HostPath` is
-  `pathapi.Path`, `ExecutorCommand` takes a `pathapi.Pathname`, and a path
-  provider must return a `pathapi.Path`; one that returns anything else fails
-  with `TypeError: path provider 'X' returned LocalPath, expected
-  pathapi.Path`. `local_providers()` is the local pair to use instead of
-  building one. Change `pathlib_next` imports as
-  pathapi's changelog says: `pathlib_next.utils.sync` is `pathapi.sync`,
-  `pathlib_next.utils.stat.FileStat` is `pathapi.FileStat`.
-  - The `ssh` extra is `asyncssh>=2.20,<3` and `sftppath[asyncssh]>=0.1.0,<0.2`,
-    in place of `pathlib_next[sftp-async]`. An SSH host's path is an
-    `sftppath.SFTPPath`, and its `str()` is the path on the server where it
-    was `sftp://host:22/...`.
-  - The SFTP leg still uses the exec leg's connect options, and reads no
-    `~/.ssh/config`, so both legs reach the same server.
-  - pathapi's own changes reach hostctl's paths: `touch(mode=...)` raises
-    `NotImplementedError` on a path that cannot `chmod()`, and a path class
-    without `__fspath__` is no longer `os.PathLike`.
-  - A WinRM, Docker archive or QGA write stream whose `with` block raises
-    still uploads nothing, and no longer also emits a `ResourceWarning`; one
-    collected unclosed still warns. The stream is pathapi's `DiscardOnError`.
-  - `pathlib.Path(src).copy(host_path)` onto an existing directory of a
-    WinRM, Docker archive or QGA host raises `FileExistsError`, as onto a local
-    directory; it merged before.
-  - A WinRM, Docker archive or QGA write stream whose upload fails on
-    `close()` is closed; write again to retry.
-- **Requires netimps 0.4** (`netimps>=0.4.0,<0.5`, was `>=0.3.0,<0.4`). No
-  hostctl code changed, but three things change for a caller:
-  - `winrm`, `winrms`, `wsman`, `wsmans` and `psrp` now have default ports
-    (5985, 5986, 5985, 5986, 5985) where `ConnectionString.port` was `None`,
-    so `str(ConnectionString("winrm://admin@host"))` renders
-    `winrm://admin@host:5985`. They are the ports `WinRMConfig` already chose.
-  - An all-digit scheme given through `scheme=`, `defaults=` or `replace()` is
-    read as a port, and one outside 0-65535 raises `ValueError` where it gave
-    an object with no port.
-  - netimps 0.4 refuses to import when `NETIMPS_NO_SOCKET_PATCH` is set, and
-    `import hostctl` imports netimps; set `NETIMPS_SOCKET_PATCH=0` instead.
-- The sdist no longer ships the contributor `AGENTS.md` or `benchmarks/`, and
-  neither artifact ships a `CLAUDE*` file.
-- Extras ranges follow the dependency rule: `container` accepts docker 7.0
-  (was 7.1), `serial` requires pyserial 3.3 (was 3.5), `psrp` is limited to
-  pypsrp 0.9.x (was `<1`), and `qemu-libvirt` accepts libvirt-python 12 and
-  later (was `<12`).
-- **The pywinrm leg no longer loads the remote user's PowerShell profile and
-  runs non-interactive**, as the native leg already did. It starts
-  `powershell.exe` directly and sends the script on stdin, instead of through
-  cmd.exe. This ships in 0.4.0.
-- **`provider="pywinrm"` always means pywinrm**, which ships in 0.4.0. It used
-  to mean the native current-context leg for a password-free config on Windows;
-  use the new `provider="native"` (or `"auto"`) for that. An explicit
-  `"pywinrm"` or `"psrp"` without a password now needs `transport="kerberos"`.
-  `str(WinRMConfig)` omits an unset port, so `HostConfig(str(config)) == config`.
-- **One status rule on every WinRM leg**, which ships in 0.4.0: 0 when the last
-  statement succeeded, else the native exit code, else 1. PSRP reports a
-  non-terminating error followed by a successful statement as 0, where it was
-  1, and a remote ACL `PermissionDenied` is a status rather than
-  `PermissionError`. Only transport and authentication failures raise.
-- **PSRP `run()` text matches the other legs** (tables as a console shows
-  them, CRLF line ends), which ships in 0.4.0. It was each object's
-  `ToString()` joined with LF.
-- **`SystemConfig` (`PosixConfig`, `WindowsConfig`, `IosConfig`) takes only
-  `provider_options=` and `initializer=` beyond `shell=`, `executor=` and
-  `path=`**, which ships in 0.4.0. Any other keyword was kept in `options`
-  without complaint, so `executr=("local",)` configured nothing; it now raises
-  `TypeError`. `executor="local"` (a bare string) raises `TypeError` where it
-  became five one-letter descriptors. A `SystemHost` built from a connection
-  string or anything but a `HostConfig` raises `TypeError`.
-- **`ProviderSelector.select()` loses `policy=`, `ProviderSelection` loses
-  `policy`, and `ProviderSelector.last_selection` is gone**, which ships in
-  0.4.0. Nothing varied the policy and nothing but one test read
-  `last_selection`; `host.last_selection` (the trace) stays, and trace entries
-  keep a constant `"policy": "ordered"`.
-- **Registries refuse a duplicate name**, which ships in 0.4.0. A second
-  `HostConfig` subclass claiming a scheme that another live config holds
-  raises `ValueError` where the class is defined (it used to fail later as
-  "ambiguous host URI"); `register_system_provider(name, resolver)` raises for
-  a name already registered. Pass `replace=True` to take the name over on
-  purpose. Redefining the same class (a module reload) is not a duplicate.
+- **Windows PowerShell 5 no longer splits a native argument at a space that
+  follows a quote.** `host.run(("tool.exe", 'report" /MIR'))` reached the
+  child as `report"` and `/MIR`, an argument turned into a flag. PS 5 wraps an
+  argument in quotes only when whitespace sits at an even count of `"`; a
+  value that cannot be passed that way now raises `ValueError` (use `PWSH` or
+  `Exec`) instead of arriving split.
+- **A batch file never executes an argument.** `Exec(shim_cmd, 'x"&echo ...')`,
+  a structured command to a `.bat`/`.cmd` under `cmd`, `powershell` or `pwsh`,
+  and a bare name that PATHEXT resolves to a batch file all let a value close
+  cmd's quoting and run the rest (and expanded `%VAR%`). Every argument to a
+  batch target is now one inert token (`"` + body + `"`, `"` as `""`, `%` as
+  `%%cd:~,%`). A Microsoft C runtime reads `""` as one quote; a
+  `CommandLineToArgvW` consumer may split a value that has whitespace after a
+  quote.
+  - **Breaking, 0.4.0**: an argument to a program of unknown type (a bare
+    name, `.ps1`) raises `ValueError` when it holds `"` (cmd) or any of
+    `" & | < >` (PowerShell), since the program may be a batch file. Name the
+    program with its suffix, use `Cmdlet` for a cmdlet, or use `Exec`.
+  - **Breaking, 0.4.0**: a local `Exec` of a batch file raises `ValueError`
+    when the program path contains `"` or `%`.
+- **`WinRMConfig` refuses `transport` `basic`, `plaintext` or `ssl` over plain
+  HTTP** unless `allow_cleartext=True` (URI query `allow_cleartext=true`), on
+  both the pywinrm and PSRP legs. They sent the password in cleartext on
+  pywinrm. This ships in 0.4.0.
+- **A PowerShell native argument `--%` raises `ValueError`.** PowerShell reads
+  it as the stop-parsing token however it is quoted, so the rest of the line
+  reached the program unparsed and re-split. **Breaking, 0.4.0.**
 
 ## [0.3.2] - 2026-09-23
 
