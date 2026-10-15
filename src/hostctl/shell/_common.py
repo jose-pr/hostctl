@@ -76,6 +76,17 @@ class ShellTarget(str, enum.Enum):
     UNRESOLVED = "unresolved"
 
 
+def wants_epilogue(capabilities: typing.Iterable[str]) -> bool:
+    """Whether a script for a provider with `capabilities` needs a status epilogue.
+
+    A provider that declares `manages_status` reports the remote status on its
+    own channel, and the flavour's epilogue would end the remote pipeline
+    before that report could be emitted. Every caller that renders a script
+    for a provider asks here, so the rule has one home.
+    """
+    return ExecutorCapability.MANAGES_STATUS.value not in set(capabilities)
+
+
 _NATIVE_SUFFIXES = (".exe", ".com")
 _BATCH_SUFFIXES = (".bat", ".cmd")
 
@@ -159,7 +170,7 @@ class ShellSession(Process):
         """Render and submit commands using this session's shell language."""
         if not cmds and cwd is None and not env:
             raise ValueError("send requires commands, cwd, or env")
-        script = self.flavour.script(cmds, cwd=cwd, env=env, for_session=True)
+        script = self.flavour.script(cmds, cwd=cwd, env=env, epilogue=False)
         self.process.write(
             self.flavour.terminate_submission(script) + self.flavour.line_terminator
         )
@@ -501,9 +512,15 @@ class ShellFlavour(abc.ABC):
         *,
         cwd: typing.Optional[PathLike] = None,
         env: typing.Optional[Environment] = None,
-        for_session: bool = False,
+        epilogue: bool = True,
     ) -> str:
-        """Build a script, applying environment and cwd consistently."""
+        """Build a script, applying environment and cwd consistently.
+
+        `epilogue=False` leaves off the flavour's status epilogue, for a
+        script whose transport reports the status itself (`wants_epilogue`
+        answers that for a set of capabilities) or that is one line of a
+        persistent session.
+        """
         command = self.join(cmds)
         changed = self.change_directory(cwd) if cwd is not None else ""
         rendered = {
@@ -521,9 +538,8 @@ class ShellFlavour(abc.ABC):
             rendered["command"] = ""
         parts = [rendered[name] for name in self.context_order if rendered[name]]
         script = self.command_separator.join(parts)
-        epilogue = self.execution_epilogue
-        if script and epilogue and not for_session:
-            script += epilogue
+        if script and epilogue and self.execution_epilogue:
+            script += self.execution_epilogue
         return script
 
     @abc.abstractmethod

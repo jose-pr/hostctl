@@ -454,9 +454,10 @@ def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it(compose):
     to prove. It also drives the composed payload every real dispatch sends,
     not just the bare one.
     """
+    from hostctl import Cmdlet
     from hostctl.shell import POWERSHELL
 
-    # `for_session=True` is what a real dispatch renders for this provider:
+    # `epilogue=False` is what a real dispatch renders for this provider:
     # the native session declares `manages_status`, so the flavour's own exit
     # epilogue is left off and the wrapper's marker epilogue is the one that
     # reports the status. Without that the payload's `exit` ends the runspace
@@ -464,7 +465,7 @@ def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it(compose):
     # exactly what this used to do.
     payload = "cmd /c exit 7"
     if compose:
-        payload = POWERSHELL.script((payload,), for_session=True)
+        payload = POWERSHELL.script((payload,), epilogue=False)
     wrapper = NativeWinRMSession("server.example")._wrapper(payload)
     local = _in_a_job(wrapper)
     result = subprocess.run(
@@ -478,7 +479,7 @@ def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it(compose):
     assert result.stdout == b""
 
     echoing = NativeWinRMSession("server.example")._wrapper(
-        POWERSHELL.script((("Write-Output", "a"),), for_session=True)
+        POWERSHELL.script((Cmdlet("Write-Output", "a"),), epilogue=False)
         if compose
         else "Write-Output 'a'"
     )
@@ -675,13 +676,13 @@ def test_pywinrm_does_not_claim_to_manage_status():
 
 def test_a_status_managing_provider_gets_a_script_without_the_epilogue():
     """The consequence the capability exists for, at the flavour boundary."""
-    from hostctl.shell import POWERSHELL
+    from hostctl.shell import POWERSHELL, wants_epilogue
 
     epilogue = POWERSHELL.execution_epilogue
     assert POWERSHELL.script(("cmd /c exit 7",)).endswith(epilogue)
-    assert not POWERSHELL.script(("cmd /c exit 7",), for_session=True).endswith(
-        epilogue
-    )
+    assert not POWERSHELL.script(("cmd /c exit 7",), epilogue=False).endswith(epilogue)
+    assert wants_epilogue(set()) and wants_epilogue({"args"})
+    assert not wants_epilogue({"script", "manages_status"})
 
 
 def test_auto_prefers_the_native_path_a_password_free_config_documents(monkeypatch):

@@ -20,7 +20,6 @@ from urllib.parse import quote, unquote, urlencode
 from pathapi import FileStat
 
 from ..executor import (
-    ExecutorCapability,
     NativeWinRMSession,
     PsrpExecutor,
     WinRMExecutor,
@@ -54,7 +53,7 @@ from ._common import (
     uri_host,
     uri_hostname,
 )
-from ..shell import POWERSHELL, ShellFlavour
+from ..shell import POWERSHELL, ShellFlavour, wants_epilogue
 from ._backend_path import WindowsBackendPath
 
 log = logging.getLogger("hostctl.host.winrm")
@@ -540,17 +539,15 @@ class _WinRMTransport:
         if direct is not None:
             command, args = direct
             cmds = ((command, *args),)
-        # `for_session` when the session reports its own status: the native
+        # No epilogue when the session reports its own status: the native
         # wrapper carries the remote code back on its marker line, and the
-        # flavour's own `exit` epilogue ends the remote pipeline BEFORE that
-        # marker can be emitted. `SystemHost` applies this rule from the
-        # provider's `manages_status` capability; this path composes its own
-        # script and has to apply the same rule rather than a different one.
+        # flavour's epilogue ends the remote pipeline BEFORE that marker can
+        # be emitted. `wants_epilogue` is the one place the rule lives.
         script = POWERSHELL.script(
             cmds,
             cwd=cwd,
             env=env,
-            for_session=ExecutorCapability.MANAGES_STATUS.value in self.capabilities,
+            epilogue=wants_epilogue(self.capabilities),
         )
         return self.executor(
             script,

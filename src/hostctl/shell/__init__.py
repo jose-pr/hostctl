@@ -11,6 +11,7 @@ from ._common import (
     ShellTarget as ShellTarget,
     ShellSession as ShellSession,
     ShellToken as ShellToken,
+    wants_epilogue as wants_epilogue,
 )
 from ._grammar import Cmdlet as Cmdlet, PSParam as PSParam
 from .cmd import CmdShellFlavour as CmdShellFlavour
@@ -124,5 +125,6 @@ __all__ = [
     "ShellToken",
     "ZshShellFlavour",
     "register_shell_flavour",
+    "wants_epilogue",
     "shell_flavour",
 ]
