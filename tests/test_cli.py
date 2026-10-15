@@ -307,3 +307,43 @@ def test_importing_hostctl_does_not_import_the_command_line():
     )
 
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("operand", ("ssh://deploy:dummyPW@nas", "winrm://u:dummyPW@h"))
+def test_a_password_operand_is_refused_without_echoing_the_password(operand):
+    """The userinfo colon is not the path separator, and no message quotes it."""
+    with pytest.raises(ValueError) as caught:
+        split_operand(operand)
+    assert "dummyPW" not in str(caught.value)
+
+
+def test_operand_errors_never_echo_a_password():
+    for operand in ("ssh://deploy:dummyPW@nas:2222/x", "ssh://deploy:dummyPW@nas:"):
+        with pytest.raises(ValueError) as caught:
+            split_operand(operand)
+        assert "dummyPW" not in str(caught.value)
+    assert split_operand("ssh://deploy:dummyPW@nas:/srv/x") == (
+        "ssh://deploy:dummyPW@nas",
+        "/srv/x",
+    )
+    assert split_operand("ssh://deploy:dummyPW@nas:2222:/srv/x") == (
+        "ssh://deploy:dummyPW@nas:2222",
+        "/srv/x",
+    )
+
+
+def test_cp_with_a_password_operand_exits_125_and_does_not_print_it(capsys):
+    code = main(["cp", "src.txt", "ssh://deploy:dummyPW@nas:2222/x"])
+
+    assert code == 125
+    assert "dummyPW" not in capsys.readouterr().err
+
+
+def test_an_exported_password_is_not_offered_to_a_qemu_socket_scheme(monkeypatch):
+    from hostctl.cli._common import usable_credentials
+
+    assert usable_credentials("qemu+libvirt:///dom", {"password": "x"}) == {}
+    assert usable_credentials("qga+unix:///s?domain=d", {"password": "x"}) == {}
+    assert usable_credentials("qga+ssh://u@h/dom", {"password": "x"}) == {
+        "password": "x"
+    }

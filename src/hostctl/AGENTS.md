@@ -730,7 +730,9 @@ hostctl shell ssh://server
   operation), 126 (permission denied), 127 (not found) and 130 (interrupted).
   A parser usage error is 2.
 - `HOSTCTL_PASSWORD` supplies a password, offered only to schemes that accept
-  one; `--ask-password` prompts instead and is refused in a tool call.
+  one (decided per scheme: `qemu+libvirt:` and `qga+unix:` take none);
+  `--ask-password` prompts instead and is refused in a tool call. A tool
+  caller can read the variable and name any host to offer it to.
 - `HOSTCTL_MCP=stdio` serves every subcommand as an MCP tool over stdio
   (`hostctl.run`, `.ls`, `.cat`, `.cp`, `.info`, `.shell`); `run`'s program
   is the tool argument `"--"`. A tool call has no stdin, so `shell` there

@@ -312,3 +312,15 @@ def test_qemu_path_flavor_strings_round_trip_through_the_uri(spelling):
     config = QemuConfig("guest", path_flavor=spelling)
 
     assert HostConfig(config.connection_uri) == config
+
+
+def test_supported_credentials_depend_on_the_qemu_scheme():
+    common = ("transport_factory", "serial_console", "path_helper")
+    assert HostConfig.supported_credentials("qemu+libvirt:///dom") == common
+    assert HostConfig.supported_credentials("qga+unix:///s?domain=d") == common
+    assert "password" in HostConfig.supported_credentials("qga+ssh://u@h/dom")
+
+
+def test_an_explicit_password_on_a_libvirt_uri_is_still_refused():
+    with pytest.raises(ValueError, match="unknown credential argument: password"):
+        HostConfig("qemu+libvirt:///dom", password="x")

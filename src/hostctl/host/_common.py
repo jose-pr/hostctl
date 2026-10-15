@@ -602,9 +602,20 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         # remembering to call a helper. A typo like `passwrd=` would otherwise
         # build a config with no password and no complaint, surfacing much
         # later as an unexplained authentication failure.
-        if implementation.uri_credentials is not None:
-            strict_uri_credentials(credentials, implementation.uri_credentials)
+        accepted = implementation._uri_credentials_for(parsed)
+        if accepted is not None:
+            strict_uri_credentials(credentials, accepted)
         return implementation._from_parsed_uri(parsed, **credentials)
+
+    @classmethod
+    def _uri_credentials_for(
+        cls, parsed: _SplitResult
+    ) -> _ty.Optional[_ty.Tuple[str, ...]]:
+        """The credential names this implementation accepts for `parsed`.
+
+        `uri_credentials` unless a scheme of the class narrows it.
+        """
+        return cls.uri_credentials
 
     @classmethod
     def supported_credentials(cls, uri: str) -> _ty.Optional[_ty.Tuple[str, ...]]:
@@ -626,7 +637,7 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         ]
         if len(matches) != 1:
             return None
-        return matches[0].uri_credentials
+        return matches[0]._uri_credentials_for(parsed)
 
     @classmethod
     def _matches_uri(cls, parsed: _SplitResult) -> bool:

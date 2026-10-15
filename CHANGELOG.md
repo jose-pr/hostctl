@@ -187,6 +187,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `hostctl cp` no longer splits `ssh://user:password@host` at the password's
+  colon, and no operand error echoes a password. `HOSTCTL_PASSWORD` no
+  longer makes every `qemu+libvirt:`/`qga+unix:` command exit 125.
 - A URI whose password holds an unencoded `/`, `?` or `#` no longer has part
   of the password echoed in the `ValueError` from `HostConfig(uri)`,
   `Host(uri)` or `ConnectionString(uri)`; the message now says to

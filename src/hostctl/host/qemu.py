@@ -52,7 +52,6 @@ from ._common import (
     path_flavor_name,
     path_flavor_selection,
     starts_direct_command,
-    strict_uri_credentials,
     strict_uri_query,
     uri_hostname,
 )
@@ -169,17 +168,20 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
 
     #: Credentials every QEMU scheme accepts. `password`, `client_keys` and
     #: `known_hosts` are meaningful only where an SSH tunnel carries the
-    #: agent stream, so they are checked per scheme below rather than only
-    #: against the class-wide whitelist.
+    #: agent stream, so only `qga+ssh` takes them.
     _COMMON_CREDENTIALS = ("transport_factory", "serial_console", "path_helper")
+
+    @classmethod
+    def _uri_credentials_for(cls, parsed):
+        # A `password=` on a libvirt or Unix socket URI would read as
+        # authentication that had been applied.
+        if parsed.scheme.casefold() != "qga+ssh":
+            return cls._COMMON_CREDENTIALS
+        return cls.uri_credentials
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> QemuConfig:
         scheme = parsed.scheme.casefold()
-        if scheme != "qga+ssh":
-            # Accepted and discarded, a `password=` on a libvirt or Unix
-            # socket URI read as authentication that had been applied.
-            strict_uri_credentials(credentials, cls._COMMON_CREDENTIALS)
         query = strict_uri_query(
             parsed,
             (

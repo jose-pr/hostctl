@@ -11,7 +11,7 @@ import typing
 
 from duho import Cmd, CommandError, LoggingArgs, running_mode
 
-from ..host import Host, HostConfig, HostPath
+from ..host import Host, HostConfig, HostPath, redact_uri
 
 _URI_OPERAND = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
@@ -81,10 +81,15 @@ def split_operand(value: str) -> typing.Optional[typing.Tuple[str, str]]:
         scheme_end = value.find("://") + 3
         authority_end = value.find("/", scheme_end)
         search_end = len(value) if authority_end < 0 else authority_end
-        separator = value.rfind(":", 0, search_end)
-        if separator < scheme_end:
+        # The userinfo may hold colons (`user:password@host`), so the path
+        # separator is only looked for after it.
+        userinfo_end = value.rfind("@", scheme_end, search_end)
+        host_start = scheme_end if userinfo_end < 0 else userinfo_end + 1
+        shown = redact_uri(value)
+        separator = value.rfind(":", host_start, search_end)
+        if separator < host_start:
             raise ValueError(
-                f"remote path operand must be URI:PATH: {value!r} has no "
+                f"remote path operand must be URI:PATH: {shown!r} has no "
                 "path separator"
             )
         if (
@@ -95,7 +100,7 @@ def split_operand(value: str) -> typing.Optional[typing.Tuple[str, str]]:
             # the authority's slash is the port's; splitting there would reach
             # `ssh://host` and the relative path `2222/x`.
             raise ValueError(
-                f"remote path operand must be URI:PATH: {value!r} ends at a "
+                f"remote path operand must be URI:PATH: {shown!r} ends at a "
                 "port, not a path (write it as ssh://host:2222:/x)"
             )
         uri, path = value[:separator], value[separator + 1 :]
@@ -106,7 +111,7 @@ def split_operand(value: str) -> typing.Optional[typing.Tuple[str, str]]:
         uri, path = value[: scheme_end + 1], value[scheme_end + 1 :]
     if not path:
         raise ValueError(
-            f"remote path operand requires a path: {value!r} names a host "
+            f"remote path operand requires a path: {redact_uri(value)!r} names a host "
             "and no file (write it as URI:PATH, e.g. local:/tmp/x or "
             "ssh://host:22:/srv/app)"
         )
