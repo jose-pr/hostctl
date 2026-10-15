@@ -73,6 +73,130 @@ jobs:
       - name: Run tests
         run: python -m pytest -q -rs
 
+  # The declared floors, exercised: every runtime dependency and feature extra
+  # installed AT the lower bound pyproject.toml declares (`>=X.Y.0` -> `==X.Y.0`).
+  # The matrix above only ever gets the newest releases, so a floor that no
+  # longer works would otherwise go unnoticed. 3.10 as well as 3.9: the `psrp`
+  # extra is not installed on 3.9, so only 3.10 holds pypsrp at its floor.
+  floors:
+    name: Floors (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Pin every declared dependency to its floor
+        shell: python
+        run: |
+          import re
+          import subprocess
+          import sys
+
+          subprocess.run([sys.executable, "-m", "pip", "install", "-q", "tomli"], check=True)
+          import tomli
+
+          project = tomli.load(open("pyproject.toml", "rb"))["project"]
+          specs = list(project.get("dependencies", []))
+          for extra, deps in project.get("optional-dependencies", {}).items():
+              if extra not in ("dev", "docs"):
+                  specs += deps
+          pins = []
+          for spec in specs:
+              m = re.match(r"^\s*([A-Za-z0-9._-]+)(\[[^\]]*\])?\s*[^;]*?>=\s*([^,;\s]+)", spec)
+              if m:
+                  pins.append("%s==%s" % (m.group(1), m.group(3)))
+          open("floors.txt", "w").write("\n".join(pins) + "\n")
+          print("\n".join(pins) or "(no floors declared)")
+      - name: Install at the floors
+        run: python -m pip install -c floors.txt -e ".[dev]"
+      - name: Run tests
+        run: python -m pytest -q -rs
+
+  # Build the artifacts a release would publish, so wheel-smoke below can
+  # install them.
+  package:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # What a user installs is the wheel, not the checkout: install it into a clean
+  # environment on each supported OS and check it imports, carries the files it
+  # must ship, and that the console script behaves with and without the `cli` extra.
+  wheel-smoke:
+    name: Installed-wheel smoke (py${{ matrix.python-version }}, ${{ matrix.os }})
+    needs: package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.9", "3.14"] # oldest + newest supported
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Install the wheel into a fresh venv
+        run: |
+          python -m venv "$RUNNER_TEMP/smoke"
+          BIN="$RUNNER_TEMP/smoke/bin"; [ "$RUNNER_OS" = Windows ] && BIN="$RUNNER_TEMP/smoke/Scripts"
+          echo "BIN=$BIN" >> "$GITHUB_ENV"
+          "$BIN/python" -m pip install dist/*.whl
+      - name: Import it, find the files it must ship, and check the bare CLI
+        # Outside the checkout, so nothing shadows the installed package.
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$BIN/python" - <<'PY'
+          import sys
+          from importlib.resources import files
+
+          import hostctl
+
+          root = files("hostctl")
+          for name in ("py.typed", "AGENTS.md", "README.md"):
+              assert (root / name).is_file(), "the wheel does not ship %s" % name
+          assert "duho" not in sys.modules, "importing hostctl pulled in the cli extra"
+          print("ok:", hostctl.__name__)
+          PY
+          # Not `! cmd && grep`: under `bash -e` a failing `&&` list does not stop the step.
+          if "$BIN/hostctl" --help 2> err.txt; then exit 1; fi
+          grep -F "hostctl[cli]" err.txt
+      - name: Install the cli extra and run the console script
+        run: |
+          "$BIN/python" -m pip install "$(ls dist/*.whl)[cli]"
+          "$BIN/hostctl" --version
+          "$BIN/hostctl" info local:
+
   conformance-live:
     name: Cross-transport conformance (live Linux legs)
     runs-on: ubuntu-latest
