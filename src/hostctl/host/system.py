@@ -18,7 +18,6 @@ from ..provider import (
     OperationNotStarted,
     PathProvider,
     ProviderSelector,
-    ProviderSelection,
 )
 from ..shell import POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ._common import (
@@ -511,7 +510,7 @@ class SystemHost(Host):
         values = set()
         for provider in self._executor_selector.providers:
             if self._provider_probe(self._executor_selector, provider).usable:
-                values.update(provider.capabilities)
+                values.update(self._executor_selector.effective_capabilities(provider))
         return frozenset(values)
 
     @staticmethod
@@ -528,7 +527,7 @@ class SystemHost(Host):
         ):
             for provider in selector.providers:
                 probe = self._provider_probe(selector, provider)
-                capabilities = probe.capabilities or provider.capabilities
+                capabilities = selector.effective_capabilities(provider)
                 details.append(
                     {
                         "kind": kind,
@@ -562,7 +561,8 @@ class SystemHost(Host):
         for capability in ("runspace", "spawn", "tty"):
             if any(
                 probe.usable
-                and capability in (probe.capabilities | provider.capabilities)
+                and capability
+                in self._executor_selector.effective_capabilities(provider)
                 for provider, probe in executor_probes
             ):
                 values.add(capability)
@@ -800,7 +800,7 @@ class SystemHost(Host):
                 f"{type(self).__name__} does not provide the 'path' capability"
             )
         if backend is None:
-            selected = self._path_selector.select()
+            provider = self._path_selector.select().provider
         else:
             provider = next(
                 (
@@ -812,21 +812,12 @@ class SystemHost(Host):
             )
             if provider is None:
                 raise ValueError(f"unknown path provider: {backend}")
-            probe = provider.probe()
-            if not probe.usable:
+            # Through the selector: it caches the probe, honours a decline, and
+            # turns a probe that raises into "unavailable" instead of letting a
+            # transport error escape from a routing choice.
+            if not self._path_selector.probe(provider).usable:
                 raise OperationNotStarted(f"path provider {backend!r} is unavailable")
-            selected = ProviderSelection(
-                provider,
-                (
-                    {
-                        "provider": backend,
-                        "availability": probe.availability,
-                        "chosen": True,
-                    },
-                ),
-            )
         path_type = self._composite_path_type()
-        provider = selected.provider
         excluded: typing.List[str] = []
         while True:
             try:

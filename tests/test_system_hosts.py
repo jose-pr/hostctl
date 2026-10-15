@@ -1050,3 +1050,83 @@ def test_system_config_keeps_only_the_two_option_keys_it_reads():
 
     assert config.options == {"provider_options": options, "initializer": len}
     assert PosixConfig("n").options == {}
+
+
+def _probing(name, declared, probed):
+    return ExecutorProvider(
+        name,
+        lambda command, *args, **options: subprocess.CompletedProcess(
+            (command,), 0, b"", b""
+        ),
+        capabilities=declared,
+        probe=lambda: ProviderProbe("available", capabilities=frozenset(probed)),
+    )
+
+
+def test_a_probe_narrows_the_declared_capabilities_everywhere():
+    """A probe may narrow what a provider declared and must not invent any.
+    `select`, `capabilities` and `provider_details` each read a different
+    union of the two, so a narrowed `spawn` was still chosen and reported."""
+    narrowed = _probing("narrowed", ("spawn", "tty"), ("args",))
+    host = PosixHost(executor_providers=(narrowed,))
+
+    with pytest.raises(OperationNotStarted):
+        host._executor_selector.select(capability="spawn")
+    assert host.capabilities == frozenset({"run"})
+    assert host.executor_capabilities == frozenset()
+    (detail,) = host.provider_details
+    assert detail["capabilities"] == ()
+    with pytest.raises(NotImplementedError):
+        host.spawn()
+
+
+def test_a_probe_cannot_invent_a_capability():
+    invented = _probing("invented", (), ("spawn",))
+    host = PosixHost(executor_providers=(invented,))
+
+    with pytest.raises(OperationNotStarted):
+        host._executor_selector.select(capability="spawn")
+    assert "spawn" not in host.capabilities
+
+
+def test_a_probe_that_states_nothing_leaves_the_declared_set():
+    quiet = _probing("quiet", ("spawn",), ())
+    selector = ProviderSelector((quiet,))
+
+    assert selector.effective_capabilities(quiet) == frozenset({"spawn"})
+    assert selector.select(capability="spawn").provider is quiet
+
+
+def test_a_composite_path_honours_a_probe_that_narrows_away_write():
+    backend = MemPathBackend()
+    provider = PathProvider(
+        "narrowing",
+        lambda *parts: MemPath(*parts, backend=backend),
+        probe=lambda: ProviderProbe(
+            "available", capabilities=frozenset({"stat", "read", "open_read"})
+        ),
+    )
+    host = PosixHost(path_providers=(provider,))
+    target = host.path("/x")
+
+    with pytest.raises(NotImplementedError):
+        target.write_bytes(b"data")
+
+
+def test_path_backend_probes_through_the_selector_once():
+    calls = []
+
+    def probe():
+        calls.append(1)
+        raise ConnectionError("probe blew up")
+
+    provider = PathProvider(
+        "a", lambda *parts: MemPath(*parts, backend=MemPathBackend()), probe=probe
+    )
+    host = PosixHost(path_providers=(provider,))
+
+    for _ in range(2):
+        with pytest.raises(OperationNotStarted):
+            host.path("/x", backend="a")
+
+    assert len(calls) == 1

@@ -203,6 +203,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `connection_uri` and `repr`. A percent-encoded C1 control character
   (`%C2%9B`) in a system URI's host or userinfo is refused like the C0 ones,
   instead of reaching `authority` and `info().hostname` decoded.
+- A provider's probe narrows its declared capabilities in every reader.
+  `select(capability=)`, `host.capabilities`, `executor_capabilities`,
+  `provider_details` and a composed path's dispatch each read a different
+  union of the two, so a probe that narrowed `spawn` away was still chosen for
+  it and reported. `ProviderSelector.effective_capabilities(provider)` is the
+  one answer: the declared set intersected with what the probe states, or the
+  declared set when it states none; a capability a probe adds is ignored.
+- `host.path(backend=name)` probes through the selector, as `.via(name)`
+  does, so a probe that raises is `OperationNotStarted` and is cached, where a
+  raw transport error escaped and the probe re-ran on every call.
 - One broken `hostctl.configs` plugin no longer breaks every other unclaimed
   scheme: the entry point named for the scheme loads first, a plugin that fails
   to import is warned about and skipped, and only its own scheme raises

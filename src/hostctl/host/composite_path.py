@@ -67,8 +67,14 @@ _BACKEND_PROTOCOLS: "dict[type, PathOperation]" = {
 }
 
 
-def _provider_supports(provider: PathProvider, operation: PathOperation) -> bool:
-    capabilities = provider.capabilities
+def _provider_supports(
+    provider: PathProvider,
+    operation: PathOperation,
+    capabilities: typing.Optional[typing.AbstractSet[str]] = None,
+) -> bool:
+    """Whether `capabilities` (default: the declared set) cover `operation`."""
+    if capabilities is None:
+        capabilities = provider.capabilities
     # `a|b` means "either will do": a stat-derived predicate is satisfied by
     # `stat` as well as by its own name, and `rm` by `unlink` or `rmdir`.
     alternatives = operation.split("|")
@@ -515,8 +521,9 @@ class _CompositePathMixin:
 
         True when, for every primitive of `protocol`, some provider this path
         may route to declares the operation -- only the pinned one after
-        `.via()`. Read from the declared capabilities: no provider is probed,
-        and like every `supports()` answer it is advisory.
+        `.via()`. Read from the declared capabilities, not narrowed by a
+        probe: no provider is probed, and like every `supports()` answer it is
+        advisory.
         """
         operations = _PROTOCOL_OPERATIONS.get(protocol)
         operation = _BACKEND_PROTOCOLS.get(protocol)
@@ -536,6 +543,12 @@ class _CompositePathMixin:
             any(_provider_supports(provider, operation) for provider in providers)
             for operation in operations
         )
+
+    def _effective_capabilities(self, provider: PathProvider):
+        """The provider's declared set narrowed by its (cached) probe."""
+        if self._selector is None:
+            return None
+        return self._selector.effective_capabilities(provider)
 
     def _backend_supports(self, provider: PathProvider, protocol) -> bool:
         """Whether the path class `provider` builds implements `protocol`.
@@ -560,7 +573,7 @@ class _CompositePathMixin:
     def _providers_in_order(self, operation: PathOperation, *, pin: bool = False):
         if self._pinned:
             if self._provider is None or not _provider_supports(
-                self._provider, operation
+                self._provider, operation, self._effective_capabilities(self._provider)
             ):
                 raise NotImplementedError(
                     f"provider {getattr(self._provider, 'name', '<none>')!r} "
@@ -582,7 +595,9 @@ class _CompositePathMixin:
                     return
                 self._selection_trace = selected.trace
                 provider = selected.provider
-                if _provider_supports(provider, operation):
+                if _provider_supports(
+                    provider, operation, self._effective_capabilities(provider)
+                ):
                     excluded.append(provider.name)
                     yield provider
                 else:

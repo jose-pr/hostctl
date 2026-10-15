@@ -457,6 +457,26 @@ class ProviderSelector:
             self._probe_cache[name] = result
         return result
 
+    def effective_capabilities(self, provider) -> frozenset:
+        """What `provider` can do now: its declared set, narrowed by its probe.
+
+        A probe may narrow the declared capabilities and must not invent any,
+        so the answer is the intersection when the (cached) probe states a set,
+        and the declared set when it states none. A provider declaring the
+        `path` wildcard declares everything, so what its probe states stands.
+        """
+        return self._effective(provider, self.probe(provider))
+
+    @staticmethod
+    def _effective(provider, probe: ProviderProbe) -> frozenset:
+        declared = provider.capabilities
+        stated = probe.capabilities
+        if not stated:
+            return declared
+        if "path" in declared:
+            return stated
+        return declared & stated
+
     def select(
         self,
         *,
@@ -501,8 +521,7 @@ class ProviderSelector:
                 continue
             probe = self.probe(provider)
             allowed = probe.usable and (
-                capability is None
-                or capability in (probe.capabilities | provider.capabilities)
+                capability is None or capability in self._effective(provider, probe)
             )
             capabilities = frozenset(
                 getattr(item, "value", item) for item in probe.capabilities
