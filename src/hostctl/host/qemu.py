@@ -19,12 +19,13 @@ from urllib.parse import quote, unquote, urlencode
 from pathapi import Path, Pathname, PosixPathname, WindowsPathname
 from pathapi import FileStat
 from pathapi.protocols import Chmod, Create, Listing, Move, Remove, Stat
-from pathapi.providers import notimplemented
+from pathapi.providers import is_safe_child_name, is_windows_flavoured, notimplemented
 
 from ..executor import QemuExecutor
 from ..executor._qga import (
     GuestAgentTransport,
     LibvirtGuestAgentTransport,
+    QgaProtocolError,
     guest_oserror,
     SshUnixGuestAgentTransport,
     UnixSocketGuestAgentTransport,
@@ -834,6 +835,36 @@ class QgaPathBackend:
             raise OSError("QGA guest-file-seek returned an invalid position")
         return typing.cast(int, value["position"])
 
+    def _read_chunk(
+        self, handle: int, count: int, *, path: str
+    ) -> typing.Tuple[bytes, bool]:
+        """One `guest-file-read` round trip: the bytes and whether EOF came."""
+        value = self._execute(
+            "guest-file-read",
+            {"handle": handle, "count": count},
+            path=path,
+        )
+        if not isinstance(value, dict):
+            raise OSError("QGA guest-file-read returned invalid data")
+        encoded = value.get("buf-b64", "")
+        if not isinstance(encoded, str):
+            raise OSError("QGA guest-file-read returned invalid content")
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise OSError("QGA guest-file-read returned invalid Base64") from exc
+        if len(data) > count:
+            raise QgaProtocolError(
+                "QGA guest-file-read returned more bytes than requested"
+            )
+        actual = value.get("count", len(data))
+        if not isinstance(actual, int) or actual != len(data):
+            raise OSError("QGA guest-file-read returned an invalid count")
+        eof = value.get("eof", False)
+        if not isinstance(eof, bool):
+            raise OSError("QGA guest-file-read returned an invalid EOF flag")
+        return data, eof or not data
+
     def read_bytes(self, path: str) -> bytes:
         self._require(self._READ_COMMANDS)
         handle = self._open(path, "rb")
@@ -841,30 +872,9 @@ class QgaPathBackend:
         failed = False
         try:
             while True:
-                value = self._execute(
-                    "guest-file-read",
-                    {"handle": handle, "count": self.chunk_size},
-                    path=path,
-                )
-                if not isinstance(value, dict):
-                    raise OSError("QGA guest-file-read returned invalid data")
-                encoded = value.get("buf-b64", "")
-                if not isinstance(encoded, str):
-                    raise OSError("QGA guest-file-read returned invalid content")
-                try:
-                    data = base64.b64decode(encoded, validate=True)
-                except (ValueError, binascii.Error) as exc:
-                    raise OSError(
-                        "QGA guest-file-read returned invalid Base64"
-                    ) from exc
-                count = value.get("count", len(data))
-                if not isinstance(count, int) or count != len(data):
-                    raise OSError("QGA guest-file-read returned an invalid count")
-                eof = value.get("eof", False)
-                if not isinstance(eof, bool):
-                    raise OSError("QGA guest-file-read returned an invalid EOF flag")
+                data, eof = self._read_chunk(handle, self.chunk_size, path=path)
                 chunks.append(data)
-                if eof or count == 0:
+                if eof:
                     break
         except BaseException:
             failed = True
@@ -882,27 +892,7 @@ class QgaPathBackend:
     ) -> typing.Tuple[bytes, bool]:
         if count <= 0:
             return b"", True
-        value = self._execute(
-            "guest-file-read",
-            {"handle": handle, "count": count},
-            path=path,
-        )
-        if not isinstance(value, dict):
-            raise OSError("QGA guest-file-read returned invalid data")
-        encoded = value.get("buf-b64", "")
-        if not isinstance(encoded, str):
-            raise OSError("QGA guest-file-read returned invalid content")
-        try:
-            data = base64.b64decode(encoded, validate=True)
-        except (ValueError, binascii.Error) as exc:
-            raise OSError("QGA guest-file-read returned invalid Base64") from exc
-        actual = value.get("count", len(data))
-        eof = value.get("eof", False)
-        if not isinstance(actual, int) or actual != len(data):
-            raise OSError("QGA guest-file-read returned an invalid count")
-        if not isinstance(eof, bool):
-            raise OSError("QGA guest-file-read returned an invalid EOF flag")
-        return data, eof or not data
+        return self._read_chunk(handle, count, path=path)
 
     def open_read(self, path: str) -> io.BufferedReader:
         self._require(self._READ_COMMANDS)
@@ -1200,7 +1190,12 @@ class _QgaPathMixin:
         return self.backend.stat(str(self), follow_symlinks=follow_symlinks)
 
     def _scandir(self):
-        yield from self.backend.scandir(str(self))
+        # A listing is untrusted input: a name that is not one path component
+        # (`..`, `a/b`) would make `self / name` address outside the directory.
+        windows = is_windows_flavoured(self)
+        for name, value in self.backend.scandir(str(self)):
+            if is_safe_child_name(name, windows=windows):
+                yield name, value
 
     def iterdir(self):
         for name, _ in self._scandir():

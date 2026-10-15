@@ -92,6 +92,16 @@ _GUEST_ERRORS: typing.Tuple[
         IsADirectoryError,
         ("isdir", "eisdir", "is a directory"),
     ),
+    (
+        errno.ENOTDIR,
+        NotADirectoryError,
+        ("enotdir", "not a directory"),
+    ),
+    (
+        errno.ENOTEMPTY,
+        OSError,
+        ("enotempty", "directory not empty", "not empty"),
+    ),
 )
 
 
@@ -298,7 +308,8 @@ class _QgaFramedSession:
                 raise QgaProtocolError("QGA reply exceeded size limit")
             try:
                 reply = json.loads(frame.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+                # A deeply nested reply exhausts the parser's stack.
                 raise QgaProtocolError("QGA returned malformed JSON") from exc
             if not isinstance(reply, dict):
                 raise QgaProtocolError("QGA reply must be a JSON object")

@@ -242,7 +242,9 @@ class QgaPathProvider(PathProvider):
             ),
         )
         if read_commands <= supported:
-            values.update(("read", "open", "open_read"))
+            # `exists` needs only the read RPCs: an open for reading tells
+            # absent from present without a helper.
+            values.update(("read", "open", "open_read", "exists"))
         if write_commands <= supported:
             values.update(("write", "open_write"))
         if getattr(backend, "helper", None) is not None:

@@ -273,6 +273,26 @@ def test_a_failing_guest_command_becomes_a_filesystem_error():
         PosixGuestPathHelper(guest).stat("/nope")
 
 
+def test_exists_below_a_regular_file_is_false_not_an_error():
+    """GNU stat answers ENOTDIR for `/etc/passwd/child`; pathlib says False."""
+    from hostctl.host.qemu import PosixQemuPath, QgaPathBackend
+
+    guest = _Guest(
+        {
+            "stat": (
+                1,
+                b"",
+                b"stat: cannot statx '/etc/passwd/child': Not a directory",
+            )
+        }
+    )
+    backend = QgaPathBackend(
+        object(), supported_commands=(), helper=PosixGuestPathHelper(guest)
+    )
+
+    assert PosixQemuPath("/etc/passwd/child", backend=backend).exists() is False
+
+
 def test_a_symlinks_own_mode_is_refused_rather_than_redirected():
     """GNU chmod has no `-h`, and a link's mode is not meaningful on Linux."""
     with pytest.raises(NotImplementedError, match="symlink"):

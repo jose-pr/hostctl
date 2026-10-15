@@ -129,6 +129,27 @@ def test_unix_qga_timeout_closes_and_resynchronizes_next_connection():
     assert b"guest-sync-delimited" in second.sent[0]
 
 
+class _NestingBombSocket(_Socket):
+    def sendall(self, data):
+        request = json.loads(data.lstrip(b"\xff"))
+        if request["execute"] == "guest-sync-delimited":
+            return super().sendall(data)
+        self.received.extend(b"[" * 200_000 + b"\n")
+
+
+def test_a_deeply_nested_reply_is_a_protocol_error_not_a_recursion_error():
+    transport = UnixSocketGuestAgentTransport(
+        "/run/qga.sock",
+        max_reply_size=1_000_000,
+        socket_factory=lambda *args: _NestingBombSocket(),
+    )
+
+    with pytest.raises(QgaProtocolError, match="malformed") as raised:
+        transport.execute({"execute": "bomb"})
+
+    assert isinstance(raised.value, ConnectionError)
+
+
 def test_unix_qga_bounds_and_structured_errors():
     oversized = UnixSocketGuestAgentTransport(
         "/run/qga.sock",

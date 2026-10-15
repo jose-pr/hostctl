@@ -255,3 +255,26 @@ def test_a_guest_error_without_an_errno_is_still_classified_by_text():
     )
 
     assert isinstance(mapped, IsADirectoryError)
+
+
+@pytest.mark.parametrize(
+    ("description", "expected", "code"),
+    (
+        (
+            "stat: cannot statx 'x': Not a directory",
+            NotADirectoryError,
+            errno.ENOTDIR,
+        ),
+        (
+            "rmdir: failed to remove 'd': Directory not empty",
+            OSError,
+            errno.ENOTEMPTY,
+        ),
+    ),
+)
+def test_gnu_directory_errors_keep_their_errno(description, expected, code):
+    mapped = guest_oserror(QgaCommandError("GenericError", description), "x")
+
+    assert type(mapped) is expected
+    assert mapped.errno == code
+    assert mapped.filename == "x"

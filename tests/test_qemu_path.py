@@ -443,3 +443,83 @@ def test_supports_answers_from_the_probed_helper():
     assert not supports(partial, Remove)
     with pytest.raises(NotImplementedError, match="no readlink RPC"):
         partial.readlink()
+
+
+class _OversizedReads(_Transport):
+    """A hostile agent that answers a read with more bytes than were asked."""
+
+    def execute(self, request, timeout=None):
+        if request["execute"] == "guest-file-read":
+            data = b"x" * (request["arguments"]["count"] + 5)
+            return {
+                "count": len(data),
+                "buf-b64": base64.b64encode(data).decode(),
+                "eof": False,
+            }
+        return super().execute(request, timeout)
+
+
+def test_an_oversized_read_reply_is_a_protocol_error_on_both_read_paths():
+    from hostctl.executor._qga import QgaProtocolError
+
+    transport = _OversizedReads()
+    transport.files["/f"] = bytearray(b"data")
+    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
+    path = PosixQemuPath("/f", backend=backend)
+
+    with pytest.raises(QgaProtocolError, match="more bytes"):
+        with path.open("rb") as stream:
+            stream.read(10)
+    with pytest.raises(QgaProtocolError, match="more bytes"):
+        path.read_bytes()
+    assert transport.handles == {}
+
+
+def test_a_listing_drops_names_that_are_not_one_path_component():
+    class _Hostile(_Helper):
+        def scandir(self, path):
+            entry = FileStat(st_mode=stat.S_IFREG | 0o644)
+            return [(name, entry) for name in self.names]
+
+    transport = _Transport()
+    helper = _Hostile(transport)
+    helper.names = ("..", "../../etc/shadow", "a/b", ".", "ok.txt")
+    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
+
+    listed = list(PosixQemuPath("/srv/drop", backend=backend).iterdir())
+
+    assert [str(item) for item in listed] == ["/srv/drop/ok.txt"]
+
+
+def test_a_windows_listing_drops_names_windows_would_misread():
+    class _Hostile(_Helper):
+        def scandir(self, path):
+            entry = FileStat(st_mode=stat.S_IFREG | 0o644)
+            return [(name, entry) for name in ("D:x", "nul.txt", "a\\b", "ok.txt")]
+
+    transport = _Transport()
+    backend = QgaPathBackend(
+        transport, supported_commands=FILE_COMMANDS, helper=_Hostile(transport)
+    )
+
+    listed = [item.name for item in WindowsQemuPath("C:\\d", backend=backend).iterdir()]
+
+    assert listed == ["ok.txt"]
+
+
+def test_a_helperless_provider_still_answers_exists_through_the_composite():
+    from hostctl import PosixHost
+    from hostctl.provider.transports import QgaPathProvider
+
+    transport = _Transport()
+    transport.files["/etc/hostname"] = bytearray(b"vm\n")
+    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
+    provider = QgaPathProvider(
+        lambda *segments: PosixQemuPath(*(segments or ("/",)), backend=backend),
+        backend,
+    )
+
+    assert "exists" in provider.capabilities
+    host = PosixHost(path_providers=(provider,))
+    assert host.path("/etc/hostname").exists() is True
+    assert host.path("/etc/missing").exists() is False
