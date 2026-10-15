@@ -135,6 +135,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A container path taken before `ContainerHost.close()` raises instead of
   reopening docker-py's client, and a Windows container follows relative links
   with Windows path syntax.
+- A whole-file WinRM read is one round trip (it was one per 8 KiB on Python
+  3.9-3.13), and `open("x")` on an existing file no longer downloads it.
+- A WinRM rename onto an existing entry raises `FileExistsError`, removing a
+  non-empty directory raises `OSError` with `ENOTEMPTY`, and `scandir` of a file
+  and a failed reparse point carry an errno, as the local filesystem's do.
 - `transport="ssl"` over PSRP raised at the first send; it is now Basic over
   HTTPS, as on pywinrm.
 - `RunspaceSession.invoke(script, *args)` rendered `-LiteralPath` as a quoted

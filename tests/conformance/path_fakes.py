@@ -283,12 +283,15 @@ class WinRMFilesystemRunner:
         if "[IO.File]::OpenRead($p)" in script:
             data = path.read_bytes()
             seek = self._SEEK.search(script)
-            if seek is not None:
+            ranged = "while((" not in script
+            if seek is not None and ranged:
                 count = self._BUFFER.search(script)
                 assert count is not None
                 offset = int(seek.group(1))
                 data = data[offset : offset + int(count.group(1))]
                 return base64.b64encode(data).decode("ascii")
+            if seek is not None:
+                data = data[int(seek.group(1)) :]
             chunk = 48 * 1024
             return "\n".join(
                 base64.b64encode(data[offset : offset + chunk]).decode("ascii")

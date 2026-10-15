@@ -430,3 +430,103 @@ def test_a_self_referential_link_stops_rather_than_recursing():
         _Backend().stat(r"C:\loop", follow_symlinks=True)
 
     assert raised.value.errno == errno.ELOOP
+
+
+def _counting_backend(content):
+    import errno
+
+    class _Counting(WinRMPathBackend):
+        def __init__(self):
+            super().__init__(lambda script, **kwargs: None, max_script_bytes=2048)
+            self.calls = []
+
+        def read_bytes(self, path, offset=0):
+            self.calls.append(("read_bytes", offset))
+            return content[offset:]
+
+        def read_range(self, path, offset, count):
+            self.calls.append(("read_range", offset, count))
+            return content[offset : offset + count]
+
+        def stat(self, path, *, follow_symlinks=True):
+            raise FileNotFoundError(errno.ENOENT, "missing", path)
+
+    return _Counting()
+
+
+def test_a_whole_file_read_is_one_round_trip():
+    """`read_bytes()` is `open("rb").read()`: with a small buffer that was one
+    range script per 8 KiB (one per 128 KiB on 3.10+)."""
+    content = os.urandom(3 << 20)
+    backend = _counting_backend(content)
+
+    assert WinRMPath(r"C:\big.bin", backend=backend).read_bytes() == content
+    assert backend.calls == [("read_bytes", 0)]
+
+
+def test_a_partial_read_fetches_one_buffer_of_range():
+    content = os.urandom(3 << 20)
+    backend = _counting_backend(content)
+
+    with WinRMPath(r"C:\big.bin", backend=backend).open("rb") as stream:
+        assert stream.read(100) == content[:100]
+
+    assert backend.calls == [("read_range", 0, 1 << 20)]
+
+
+def test_a_read_after_a_whole_file_read_is_empty_without_a_trip():
+    backend = _counting_backend(b"abc")
+    stream = backend.open_read(r"C:\f")
+
+    assert stream.read() == b"abc"
+    assert stream.read() == b""
+    assert backend.calls == [("read_bytes", 0)]
+
+
+def test_exists_is_false_only_for_a_missing_path():
+    backend = _counting_backend(b"")
+    assert backend.exists(r"C:\nope") is False
+
+    def denied(path, *, follow_symlinks=True):
+        raise PermissionError(13, "denied", path)
+
+    backend.stat = denied
+    with pytest.raises(PermissionError):
+        backend.exists(r"C:\nope")
+
+
+def test_reparse_failures_carry_an_errno():
+    import errno
+
+    stat_result = {
+        "name": "l",
+        "directory": False,
+        "size": 0,
+        "mtime": 1,
+        "readonly": False,
+        "link": True,
+        "target": "",
+    }
+
+    def run(script, **kwargs):
+        return subprocess.CompletedProcess(script, 0, json.dumps(stat_result), "")
+
+    backend = WinRMPathBackend(run, max_script_bytes=_SCRIPT_BUDGET)
+    with pytest.raises(OSError) as raised:
+        backend.stat(r"C:\l")
+    assert raised.value.errno == errno.EINVAL
+    assert raised.value.filename == r"C:\l"
+
+    stat_result["target"] = r"C:\gone"
+
+    class _Dangling(WinRMPathBackend):
+        def __init__(self):
+            super().__init__(run, max_script_bytes=_SCRIPT_BUDGET)
+
+        def stat(self, path, *, follow_symlinks=True, _hops=8):
+            if path == r"C:\gone":
+                raise FileNotFoundError(errno.ENOENT, "missing", path)
+            return super().stat(path, follow_symlinks=follow_symlinks, _hops=_hops)
+
+    with pytest.raises(FileNotFoundError):
+        _Dangling().stat(r"C:\l")

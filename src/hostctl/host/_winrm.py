@@ -540,6 +540,12 @@ class WinRMPathBackend:
             "$_ -is [System.Management.Automation.ItemNotFoundException]){'missing'}"
             "elseif($e -is [IO.IOException] -and "
             "$e.HResult -eq -2147024816){'exists'}"
+            # ERROR_ALREADY_EXISTS: a move onto an existing entry.
+            "elseif($e -is [IO.IOException] -and "
+            "$e.HResult -eq -2147024713){'exists'}"
+            # ERROR_DIR_NOT_EMPTY: a delete of a non-empty directory.
+            "elseif($e -is [IO.IOException] -and "
+            "$e.HResult -eq -2147024751){'notempty'}"
             "else{'oserror'};"
             "$m=[Convert]::ToBase64String("
             "[Text.Encoding]::UTF8.GetBytes($e.Message));"
@@ -576,6 +582,7 @@ class WinRMPathBackend:
                 "exists": (FileExistsError, errno.EEXIST),
                 "isdir": (IsADirectoryError, errno.EISDIR),
                 "notdir": (NotADirectoryError, errno.ENOTDIR),
+                "notempty": (OSError, errno.ENOTEMPTY),
             }.get(kind, (OSError, errno.EIO))
             # The full tuple: an `OSError` with no `errno` and no `filename`
             # cannot be handled generically (`exc.errno == errno.ENOENT`) and
@@ -624,7 +631,7 @@ class WinRMPathBackend:
         if follow_symlinks and _stat.S_ISLNK(result.st_mode):
             target = typing.cast(str, value.get("target") or "")
             if not target:
-                raise OSError(f"cannot resolve reparse point: {path}")
+                raise OSError(errno.EINVAL, "cannot resolve reparse point", path)
             # A link's target is stored as written, and Windows resolves a
             # relative one against the LINK's directory. Re-stating it as an
             # absolute path looked it up from the drive root instead, so
@@ -638,7 +645,11 @@ class WinRMPathBackend:
             except OSError as exc:
                 if getattr(exc, "errno", None) == errno.ELOOP:
                     raise
-                raise OSError(f"cannot resolve reparse point: {path}") from exc
+                # Keep the cause's errno, so a dangling link is a
+                # FileNotFoundError, as local `stat` makes it.
+                raise OSError(
+                    exc.errno or errno.EIO, "cannot resolve reparse point", path
+                ) from exc
         return result
 
     def scandir(self, path: str) -> typing.List[typing.Tuple[str, FileStat]]:
@@ -650,7 +661,7 @@ class WinRMPathBackend:
         # `is_dir()` on the same path returned True.
         current = self.stat(path, follow_symlinks=True)
         if not _stat.S_ISDIR(current.st_mode):
-            raise NotADirectoryError(path)
+            raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
         metadata = self._metadata_script("$_")
         body = (
             f"@((Get-ChildItem -LiteralPath $p -Force)|ForEach-Object{{{metadata}}})"
@@ -661,9 +672,13 @@ class WinRMPathBackend:
             values = [values]
         return [(value["name"], self._stat_value(value)) for value in values]
 
-    def read_bytes(self, path: str) -> bytes:
+    def read_bytes(self, path: str, offset: int = 0) -> bytes:
+        """Read from `offset` to the end of the file in one script."""
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        seek = f"$s.Seek({offset},[IO.SeekOrigin]::Begin)|Out-Null;" if offset else ""
         body = (
-            "$s=[IO.File]::OpenRead($p);try{$b=New-Object byte[] "
+            "$s=[IO.File]::OpenRead($p);try{" + seek + "$b=New-Object byte[] "
             f"{self.chunk_size};while(($n=$s.Read($b,0,$b.Length))-gt 0){{"
             "[Convert]::ToBase64String($b,0,$n)}}finally{$s.Dispose()}"
         )
@@ -686,7 +701,15 @@ class WinRMPathBackend:
         return b"".join(base64.b64decode(line) for line in output.splitlines() if line)
 
     def open_read(self, path: str) -> io.BufferedReader:
-        return io.BufferedReader(_WinRMReadStream(self, path))
+        return io.BufferedReader(_WinRMReadStream(self, path), buffer_size=_READ_BUFFER)
+
+    def exists(self, path: str, *, follow_symlinks: bool = True) -> bool:
+        """Whether the path exists, from metadata alone."""
+        try:
+            self.stat(path, follow_symlinks=follow_symlinks)
+        except FileNotFoundError:
+            return False
+        return True
 
     def write_bytes(self, path: str, value: bytes, *, exclusive: bool = False) -> None:
         temporary = path + ".hostctl-" + uuid.uuid4().hex
@@ -846,7 +869,7 @@ class WinRMPathBackend:
         )
         output = self._execute(path, body).strip()
         if not output:
-            raise OSError(f"cannot resolve reparse point: {path}")
+            raise OSError(errno.EINVAL, "cannot resolve reparse point", path)
         return base64.b64decode(output).decode("utf-8", "replace")
 
     def chmod(self, path: str, mode: int) -> None:
@@ -861,6 +884,10 @@ class WinRMPathBackend:
         )
 
 
+#: One range script per MiB for a partial read.
+_READ_BUFFER = 1 << 20
+
+
 class _WinRMReadStream(io.RawIOBase):
     """Lazy bounded reader backed by independent WinRM range requests."""
 
@@ -868,12 +895,22 @@ class _WinRMReadStream(io.RawIOBase):
         self._backend = backend
         self._path = path
         self._offset = 0
+        self._at_end = False
 
     def readable(self) -> bool:
         return True
 
+    def readall(self) -> bytes:
+        """The rest of the file in one script, which `read()` calls."""
+        if self._at_end:
+            return b""
+        data = self._backend.read_bytes(self._path, self._offset)
+        self._offset += len(data)
+        self._at_end = True
+        return data
+
     def readinto(self, target: bytearray) -> int:
-        if not target:
+        if not target or self._at_end:
             return 0
         data = self._backend.read_range(self._path, self._offset, len(target))
         if not data:

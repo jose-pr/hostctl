@@ -177,3 +177,77 @@ def test_unlinking_a_populated_directory_junction_removes_only_the_link(
 
     assert not link.exists()
     assert (real / "app.exe").read_text(encoding="utf-8") == "payload"
+
+
+def test_removing_a_non_empty_directory_is_enotempty(backend, tmp_path):
+    import errno
+
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / "child").write_text("x")
+
+    with pytest.raises(OSError) as raised:
+        backend.rmdir(str(tmp_path / "full"))
+
+    assert raised.value.errno == errno.ENOTEMPTY
+    assert not isinstance(raised.value, (FileExistsError, PermissionError))
+
+
+def test_renaming_onto_an_existing_entry_is_file_exists(backend, tmp_path):
+    (tmp_path / "a").write_text("1")
+    (tmp_path / "b").write_text("2")
+    (tmp_path / "d1").mkdir()
+    (tmp_path / "d2").mkdir()
+
+    with pytest.raises(FileExistsError):
+        backend.rename(str(tmp_path / "a"), str(tmp_path / "b"))
+    with pytest.raises(FileExistsError):
+        backend.rename(str(tmp_path / "d1"), str(tmp_path / "d2"))
+
+
+def test_scandir_of_a_file_is_enotdir(backend, tmp_path):
+    import errno
+
+    (tmp_path / "f").write_text("x")
+
+    with pytest.raises(NotADirectoryError) as raised:
+        backend.scandir(str(tmp_path / "f"))
+
+    assert raised.value.errno == errno.ENOTDIR
+
+
+def test_exists_answers_from_metadata(backend, tmp_path):
+    (tmp_path / "f").write_text("x")
+
+    assert backend.exists(str(tmp_path / "f")) is True
+    assert backend.exists(str(tmp_path / "missing")) is False
+
+
+def test_exclusive_open_of_an_existing_file_downloads_nothing(transport, tmp_path):
+    """`open("xb")` read the whole existing file just to learn it was there."""
+    from hostctl.host._winrm import WinRMPath
+
+    target = tmp_path / "big.bin"
+    target.write_bytes(os.urandom(1 << 20))
+    backend = transport._path_backend
+    returned = []
+    run = backend._run
+
+    def spy(script, **options):
+        result = run(script, **options)
+        returned.append(len(result.stdout or ""))
+        return result
+
+    backend._run = spy
+    with pytest.raises(FileExistsError):
+        WinRMPath(str(target), backend=backend).open("xb")
+
+    assert returned and sum(returned) < 4096
+
+
+def test_a_read_from_an_offset_is_one_script(backend, tmp_path):
+    data = os.urandom(300_000)
+    (tmp_path / "f").write_bytes(data)
+
+    assert backend.read_bytes(str(tmp_path / "f"), 123_456) == data[123_456:]
+    with pytest.raises(ValueError):
+        backend.read_bytes(str(tmp_path / "f"), -1)
