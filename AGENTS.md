@@ -116,4 +116,8 @@ To prepare a release, set the version in `pyproject.toml` and move the
 `[Unreleased]` sections of `CHANGELOG.md` and `RELEASENOTES.md` under the new
 version heading in the same commit (`RELEASENOTES.md` carries the migration
 detail, benchmark table and validation evidence); the release workflow publishes that
-changelog section as the GitHub release body.
+changelog section as the GitHub release body. Between releases the tree carries
+the next version as `.dev0` (`0.4.0.dev0` on the way to 0.4.0), which PEP 440
+orders after the last release and before the next: a `<0.4` pin refuses the
+checkout, and a `>=0.4.0` pin does too, even with `--pre`, so a downstream
+testing it pins `>=0.4.0.dev0` or installs with `--no-deps`.
