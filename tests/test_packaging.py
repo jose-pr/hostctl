@@ -12,6 +12,9 @@ inside the wheel.
 
 from __future__ import annotations
 
+import ast
+import inspect
+import re
 import shutil
 import subprocess
 import sys
@@ -208,33 +211,126 @@ def test_the_wheel_never_ships_an_assistant_file(wheel):
     ] == []
 
 
-@pytest.mark.parametrize(
-    "name",
-    ("SSHConfig", "WinRMConfig", "ContainerConfig", "QEMUConfig", "SerialConfig"),
-)
-def test_the_header_names_every_constructor_parameter(name):
-    """The header is what a consuming agent reads instead of the source.
+_HEADING_MODULE = re.compile(r"^## .*\(`(hostctl[\w.]*)`\)\s*$")
+_SIGNATURE_START = re.compile(r"^([A-Za-z_][\w.]*)\(")
+_PARAMETER_KIND = {
+    inspect.Parameter.POSITIONAL_ONLY: "positional-only",
+    inspect.Parameter.POSITIONAL_OR_KEYWORD: "positional",
+    inspect.Parameter.VAR_POSITIONAL: "*",
+    inspect.Parameter.KEYWORD_ONLY: "keyword-only",
+    inspect.Parameter.VAR_KEYWORD: "**",
+}
 
-    Four signatures there had drifted: `client_factory`, `max_reply_size`,
-    `transport_factory`, `serial_console` and `path_helper` were absent, and
-    `SerialConfig` had no signature at all -- so the injection seams a
-    caller needs were discoverable nowhere but the source.
-    """
-    import dataclasses
-    import re
 
-    import hostctl
+def _header_signatures():
+    """Yield `(line, module, name, parameter text)` for every signature in a
+    ```python fence of the header, under the module its `##` heading names
+    (`hostctl` where the heading names none)."""
+    module = "hostctl"
+    fenced = False
+    lines = (ROOT / "src" / "hostctl" / "AGENTS.md").read_text("utf-8").splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        heading = _HEADING_MODULE.match(line)
+        if line.startswith("## "):
+            module = heading.group(1) if heading else "hostctl"
+        elif line.startswith("```"):
+            fenced = line == "```python"
+        elif fenced and _SIGNATURE_START.match(line):
+            start, text = index + 1, line
+            # A signature may wrap: join lines until its parentheses balance.
+            while text.count("(") > text.count(")"):
+                index += 1
+                text += " " + lines[index].strip()
+            name = _SIGNATURE_START.match(text).group(1)
+            depth, end = 0, len(name)
+            for end in range(len(name), len(text)):
+                depth += {"(": 1, ")": -1}.get(text[end], 0)
+                if depth == 0:
+                    break
+            yield start, module, name, text[len(name) + 1 : end]
+        index += 1
 
-    header = (ROOT / "src" / "hostctl" / "AGENTS.md").read_text(encoding="utf-8")
-    match = re.search(rf"`{name}\((.*?)\)`", header, re.DOTALL)
-    assert match, f"{name} has no documented signature"
-    documented = match.group(1)
 
-    missing = [
-        field.name
-        for field in dataclasses.fields(getattr(hostctl, name))
-        if not field.name.startswith("_")
-        and not re.search(rf"\b{re.escape(field.name)}\b", documented)
+def _resolve(module, name):
+    """The object `name` denotes, and whether its first parameter is the
+    implicit `self` that the header leaves out."""
+    import importlib
+
+    if name.startswith("hostctl."):
+        parts = name.split(".")
+        for split in range(len(parts) - 1, 0, -1):
+            try:
+                owner = importlib.import_module(".".join(parts[:split]))
+            except ImportError:
+                continue
+            module, name = owner.__name__, ".".join(parts[split:])
+            break
+    owner = importlib.import_module(module)
+    *path, last = name.split(".")
+    for part in path:
+        owner = getattr(owner, part)
+    raw = inspect.getattr_static(owner, last)
+    bound = inspect.isclass(owner) and inspect.isfunction(raw)
+    return getattr(owner, last), bound
+
+
+def _documented(parameters):
+    tree = ast.parse(f"def _({parameters}): pass").body[0].args
+    positional = [(a, "positional-only") for a in tree.posonlyargs]
+    positional += [(a, "positional") for a in tree.args]
+    defaulted = len(positional) - len(tree.defaults)
+    shape = [
+        (arg.arg, kind, number >= defaulted)
+        for number, (arg, kind) in enumerate(positional)
+    ]
+    if tree.vararg:
+        shape.append((tree.vararg.arg, "*", False))
+    shape += [
+        (arg.arg, "keyword-only", default is not None)
+        for arg, default in zip(tree.kwonlyargs, tree.kw_defaults)
+    ]
+    if tree.kwarg:
+        shape.append((tree.kwarg.arg, "**", False))
+    return shape
+
+
+def _actual(target, bound):
+    parameters = list(inspect.signature(target).parameters.values())
+    if bound:
+        parameters = parameters[1:]
+    return [
+        (
+            parameter.name,
+            _PARAMETER_KIND[parameter.kind],
+            parameter.default is not inspect.Parameter.empty,
+        )
+        for parameter in parameters
     ]
 
-    assert missing == [], f"{name} signature omits {missing}"
+
+def test_the_header_documents_signatures():
+    """The scan finds the entries it exists for, so an unparsed header cannot
+    pass the comparison below by yielding nothing."""
+    names = {name for _, _, name, _ in _header_signatures()}
+
+    assert {"SSHConfig", "Shell", "uri_hostname", "write_output"} <= names
+    assert len(names) > 100
+
+
+@pytest.mark.parametrize(
+    "line, module, name, parameters",
+    [pytest.param(*entry, id=entry[2]) for entry in _header_signatures()],
+)
+def test_the_header_signatures_match_the_code(line, module, name, parameters):
+    """The header is what a consuming agent reads instead of the source, so
+    every signature in it states the real parameter names in order, where
+    `/` and `*` fall, and which parameters have a default. Default values
+    and annotations are not compared."""
+    target, bound = _resolve(module, name)
+
+    assert _documented(parameters) == _actual(target, bound), (
+        f"src/hostctl/AGENTS.md:{line}: {name}({parameters}) is not "
+        f"{name}{inspect.signature(target)}"
+    )
