@@ -1,838 +1,989 @@
-# hostctl — API header
+# `hostctl` — public API header
 
-Protocol-independent host execution and filesystem paths. Core requires
-`pathapi`; transport integrations are optional extras.
+Header-file-style reference for the `hostctl` package: every public export with
+its signature, arguments, contract and gotchas, so the package can be used
+without reading its source. It ships inside the package and is
+self-contained. Development documentation lives with the source at
+<https://github.com/jose-pr/hostctl>.
 
+Names are imported from `hostctl`, which re-exports the stable surface (hosts
+and configs you construct, exceptions you catch, types you annotate with), or
+from the public module that is each name's home: `hostctl.host`,
+`hostctl.exceptions`, `hostctl.uri`, `hostctl.system`, `hostctl.provider`,
+`hostctl.executor`, `hostctl.process`, `hostctl.paths`, `hostctl.shell`,
+`hostctl.sync`, `hostctl.cli` and `hostctl.transports.local`, `.ssh`,
+`.winrm`, `.container`, `.qemu`, `.serial`. Every public module declares
+`__all__`; a name outside it, and every module with a `_`-prefixed component,
+is internal and may change without notice. Concrete executors, process
+adapters, path backends and backend path classes are internal: a host hands
+them back typed as `pathapi.Path`, `Process` or `Executor`. `LocalExecutor` is
+the one exported executor, because a caller constructs it directly to compose
+a host out of providers without a transport.
+
+`pip install hostctl` installs the core, which needs only `pathapi` and
+`netimps`; each transport is an extra, `pip install "hostctl[ssh,winrm]"`.
+Importing a transport package whose extra is missing works, and the first use
+raises naming the extra to install. `hostctl.has_ssh()` and
+`hostctl.has_psrp()` answer whether the `ssh` and `psrp` extras are
+installed, importing nothing.
+
+| extra | adds |
+| --- | --- |
+| `ssh` | SSH `run()`/`spawn()` (asyncssh) and the SFTP path leg (sftppath) |
+| `winrm` | WinRM command execution and paths over pywinrm (basic, plaintext, ssl, NTLM) |
+| `psrp` | PowerShell Remoting runspaces over pypsrp; Python 3.10+ only |
+| `container` | Docker Engine containers: exec, sessions, archive-backed paths |
+| `serial` | native, RFC 2217, socket and virtual serial ports (pyserial) |
+| `qemu-libvirt` | local libvirt domain lookup for the QEMU guest agent |
+| `winrm-credssp` | CredSSP authentication for pywinrm |
+| `winrm-kerberos` | Kerberos authentication for pywinrm |
+| `cli` | the `hostctl` command line (duho) |
+
+`hostctl.__version__` is the installed distribution's version string.
+
+## Hosts and configs (`hostctl.host`)
+
+A config is the target and how to reach it; a host is the open connection.
 Every config takes its target positionally and everything else by keyword: a
 second positional argument raises `TypeError`, so an SSH port is always
-`port=2222` (a type checker still reads the dataclass's own `__init__`).
-`has_ssh()` and `has_psrp()` report whether the `ssh` extra (asyncssh and
-sftppath) and the `psrp` extra (pypsrp, on Python 3.10+) are installed,
-importing nothing; a missing extra otherwise fails where it is used, naming
-it.
+`port=2222` (a static type checker still reads each dataclass's generated
+`__init__`, which shows the fields as positional).
 
-The `hostctl` command line is `hostctl.cli` and needs the `cli` extra; see
-"Command line" at the end. `import hostctl` never imports it.
+```python
+Host(connection_string, /, **secrets)
+HostConfig(connection_string, /, **secrets)
+```
 
-`hostctl.__all__` is the stable surface: hosts and configs you construct,
-exceptions you catch, types you annotate with, and the provider/shell contracts
-you implement. Every module whose path has no leading underscore is public and
-declares `__all__`; a name outside it, and every `_`-prefixed module, is
-internal and may change without notice. Concrete executors, process adapters,
-path backends and backend path classes are internal: a host hands them back
-typed as `pathapi.Path`, `Process` or `Executor`. `LocalExecutor` is the one
-exported executor, because it is the one a caller constructs directly, to
-compose a host out of providers without a transport.
-
-Where names are imported from (each is also re-exported from `hostctl` when
-the root lists it):
-
-- `hostctl.host` -- `Host`, `HostConfig`, `HostInfo`, and the selection aliases
-  every config takes: `ShellSelection` (a shell flavour, its class or name, or
-  `"auto"`) for `shell=`, and `PathnameSelection` (a pure-path or
-  `pathapi.Pathname` class, `"posix"`, `"windows"` or `"auto"`) for
-  `pathname=`.
-- `hostctl.exceptions` -- the exception tree (see "Exceptions").
-- `hostctl.uri` -- `ConnectionString`, `parse_credentials`, `redact_uri`,
-  `strict_uri_credentials`, `strict_uri_query`, `uri_host`, `uri_hostname`.
-- `hostctl.system` -- `SystemConfig`, `SystemHost`, `PosixConfig`, `PosixHost`,
-  `WindowsConfig`, `WindowsHost`, `IOSConfig`, `IOSHost`,
-  `register_system_provider`, `system_provider_names`.
-- `hostctl.provider` -- `ExecutorProvider`, `PathProvider`, `ProviderProbe`,
-  `ProviderSelection`, `ProviderSelector`, `SessionInitializer`, and
-  `READ_ONLY_PATH_OPERATIONS`, the capability set of a content-only endpoint.
-- `hostctl.executor` -- the `Executor` protocol, `ExecutorCapability`,
-  `ExecutionOptions`, `CommandLine`, the option aliases `CommandLike`,
-  `CommandArgument`, `CaptureOutput`, `StreamTarget`, `CommandInput`, `StrPath`,
-  `CommandEnvironment`, and the stream helpers listed below.
-- `hostctl.process` -- `Process`, `ProcessData` (`str | bytes`),
-  `TerminalOptions`, `TerminalRequest` (what `spawn(terminal=)` accepts) and
-  `terminal_options()`, which resolves one into the other.
-- `hostctl.paths` -- `CompositePosixPath`, `CompositeWindowsPath`.
-- `hostctl.shell` -- `Shell`, `ShellSession`, `ShellFlavour`, `ShellOperator`,
-  `ShellTarget`, `ShellCommand`, `ShellToken` (one rendered token),
-  `ShellFlavourSelection` (a flavour, its class, or its registered name), the
-  command markers `Exec`, `Cmdlet`, `PSParam`, the flavour classes
-  `PosixShellFlavour`, `BashShellFlavour`, `ZshShellFlavour`,
-  `FishShellFlavour`, `CmdShellFlavour`, `PowerShellFlavour` with their
-  instances `POSIX_SHELL`, `BASH`, `ZSH`, `FISH`, `CMD`, `POWERSHELL`, `PWSH`,
-  and `register_shell_flavour`, `shell_flavour`, `shell_flavour_names`,
-  `wants_epilogue`.
-- `hostctl.sync` -- `ProgressReader`, `host_checksum`, `stat_checksum`.
-- `hostctl.transports.local` -- `LocalConfig`, `LocalHost`, `LocalExecutor`,
-  `local_providers`.
-- `hostctl.transports.ssh` -- `SSHConfig`, `ssh_providers`, and the argument
-  aliases `SSHKeySource` (a key path, bytes or text), `SSHClientKeys` and
-  `SSHKnownHosts` (one source or a sequence of them).
-- `hostctl.transports.winrm` -- `WinRMConfig`, `winrm_providers`, and the PSRP
-  results `RunspaceSession`, `PipelineResult`, `PipelineStreams`.
-- `hostctl.transports.container` -- `ContainerConfig`, `ContainerHost`.
-- `hostctl.transports.qemu` -- `QEMUConfig`, `QEMUHost`, `QEMUTransport` (the
-  guest-agent transport name), the `GuestAgentTransport` and `GuestPathHelper`
-  protocols, `PosixGuestPathHelper`, `WindowsGuestPathHelper`,
-  `QEMUSerialConsole`.
-- `hostctl.transports.serial` -- `SerialConfig`, `SerialHost`, `SerialProcess`,
-  `SerialLike` (the pyserial-shaped port protocol), `SerialFactory`, and the
-  console profiles `ConsoleProfile`, `RawConsoleProfile`,
-  `PromptConsoleProfile`, `LoginStep`.
-- `hostctl.cli` -- `main`, with one subcommand class per module
-  (`hostctl.cli.cat.Cat`, `.cp.Cp`, `.info.Info`, `.ls.Ls`, `.run.Run`,
-  `.shell.Shell`).
-
-The transport packages need their extras; importing one whose dependency is
-missing works, and the first use names the extra to install.
-
-`login_shell` names what parses the command string when it ARRIVES. AsyncSSH
-sends one string and the server hands it to a login shell: on POSIX that is
-`$SHELL -c`, exactly what this package renders for, but Windows OpenSSH's stock
-server hands it to `cmd.exe /c`, so a `cmd`-dialect command line is parsed by
-cmd TWICE. `"auto"` reads the dialect (a Windows path flavour means the stock
-`cmd.exe`); name it explicitly when the server's `DefaultShell` has been
-changed. `ShellFlavour.escape_for_one_parse(text)` is the outer layer this
-selects, implemented by `cmd` and refused by default rather than guessed.
-`"posix"` covers every sh-family shell and fish; csh and tcsh are unsupported.
-`run()` and `spawn()` both render through `render_command(...,
-login_shell=...)`, so they cannot disagree.
-
-A shell flavour answers TWO quoting questions, not one. `quote(value)` is
-syntactic -- enough that this shell sees one word and expands nothing.
-`argument(value, *, target=ShellTarget...)` quotes for whatever parses the token
-NEXT: `SHELL` (a cmd builtin, split by cmd itself), `NATIVE` (a child's own argv
-parser -- the C runtime on Windows, nothing on POSIX), `CMDLET` (PowerShell's
-binder), `PROGRAM` (the program slot, read by `CreateProcess`), `BATCH` (a batch
-file's `%*`/`%1`, which cmd parses again) or `UNRESOLVED` (a program that may
-turn out to be a batch file). Where the layers coincide -- every POSIX-family
-shell, since `execve` takes a vector -- the default `argument()` is just
-`quote()`. `command_target(values)` classifies a Windows program by its name:
-a cmd builtin is `SHELL`, `.exe`/`.com` is `NATIVE`, `.bat`/`.cmd` is `BATCH`,
-anything else (a bare name, `.ps1`) is `UNRESOLVED`. The FIRST element of a
-structured command is the program and is never argv data: cmd quotes it like a
-builtin operand, PowerShell as a literal. A `BATCH` argument is one token
-(`"` + body + `"`, `"` -> `""`, `%` -> `%%cd:~,%`): a Microsoft C runtime reads
-`""` as one quote, a `CommandLineToArgvW` consumer (node, most system tools)
-may split a value with whitespace after a quote, and none executes it. An
-`UNRESOLVED` argument raises `ValueError` for a character a batch re-parse
-would act on (`"` on cmd; `" & | < >` on PowerShell); `%`, `^`, `!` corrupt but
-cannot start a command. Windows PowerShell 5 raises for a native argument it
-would split (whitespace only after an odd count of quotes); `PWSH` and `Exec`
-carry those. PowerShell cannot tell a cmdlet from a program (that needs a
-runspace), so `Cmdlet(name, *args)` is the cmdlet spelling -- PowerShell
-literals, no C-runtime escaping, nothing refused -- and `PSParam("-Name")` is
-the one token rendered bare. A plain string is always a value; there is no
-`-Name` inference. Other shells raise `TypeError` for either marker.
-
-`cwd_guard` declares how a failed `cd` is stopped from running the payload:
-`"operator"` fuses the change onto a GROUPED payload with the AND operator,
-`"statement"` is for a flavour whose change-directory statement aborts the
-script itself (PowerShell's `-ErrorAction Stop`). It is declared rather than
-inferred from `context_order`'s ordering, which puts PowerShell's `env`
-between `cwd` and `command`.
-
-`hostctl.executor`'s public helpers are the ones a transport adapter needs to
-behave like the others; an executor that skips them is where cross-transport
-divergence comes from:
-
-- `normalize_input(input, *, text_mode, encoding=None, errors=None)` -- match
-  `input` to the stream mode about to be used. A mismatch is not a clean
-  error: the writer thread dies without closing the pipe and the call blocks
-  forever. Covers `bytes`, `bytearray` and `memoryview`; `CommandInput` is those and
-  `str`, and anything else (an `int`, say) raises `TypeError`.
-- `normalize_environment(env)` -- `None` stays `None`; everything else becomes
-  a `str`-keyed dict, so a transport never has to guess at `Path` or `int`
-  values. Names are checked first by `validate_environment_names(env)`, which
-  raises `ValueError("invalid environment variable name: ...")` for a name
-  outside `[A-Za-z_][A-Za-z0-9_]*`; `SystemHost.run()` calls it before it
-  selects a provider, so the same call is valid or not on every transport.
-- `capture_streams(capture_output, stdout, stderr)` -- resolve the three
-  spellings of "capture" into one `(stdout, stderr)` pair.
-- `dispatch_output(stdout_target, stderr_target, stdout, stderr, *,
-  encoding=None, errors=None)` -- route captured bytes to where the caller
-  asked. `None` means `sys.stdout`/`sys.stderr`, NOT discard;
-  `subprocess.DEVNULL` is the way to discard.
-- `write_output(target, value, *, encoding=None, errors=None)` -- the single
-  stream half of the same rule.
-- `reject_stdin_conflict(input, stdin)` -- refuse `input=` and `stdin=`
-  together, as `subprocess` does, rather than silently preferring one.
-- `wants_text(text, encoding, errors)` -- one answer to "is this call in text
-  mode", so `errors=` alone selects text on every transport.
-- `expired(command, timeout, *, output=None, stderr=None, orphaned=False,
-  pid=None, text=False)` -- build the one `subprocess.TimeoutExpired` payload
-  every transport raises: `.orphaned` says whether the remote command is still
-  running, `.pid` names it when known, and the output attributes are never
-  `None`.
-- `CommandLine(str)` -- marks a string that is already a finalized command
-  line for the target's own parser, so the executor passes it through instead
-  of quoting it again.
-
-`hostctl.sync` adds `stat_checksum(entry)`, `host_checksum(*hosts,
-algorithm="md5", chunk_size=1048576)`, and `ProgressReader`; these plug into
-`pathapi.sync.PathSyncer` and the existing path copy machinery.
-
-`SystemHost`, `PosixHost`, and `WindowsHost` compose ordered executor/path
-providers. Opening an `SSHConfig` or `WinRMConfig` (`config.open()`) returns a
-`PosixHost` or `WindowsHost` that retains the original connection URI
-and lifecycle while exposing transport operations through provider adapters;
-transport implementations remain private.
-`register_system_provider(name, resolver, *, replace=False)` extends logical
-system URI descriptors; `resolver(config, kind)` returns the provider for
-`kind` (`"executor"` or `"path"`) or `None`. A name already registered raises
-`ValueError` unless `replace=True`, and an unknown descriptor loads the
-`hostctl.system_providers` entry point of that name. Built-ins include
-`local`, `ssh`, `sftp`, and `winrm`; transport descriptors require matching
-objects in `SystemConfig(provider_options=...)` and never serialize
-credentials into the canonical URI. `system_provider_names()` and
-`host_schemes()` return sorted tuples of what is registered, entry-point names
-included without importing them.
-
-`Executor(command, *args, stdin=None, stdout=None, stderr=None, cwd=None,
-env=None, capture_output=None, check=None, encoding=None, errors=None,
-input=None, timeout=None, text=None, **options)` defines the shared
-shell-agnostic option surface. `*args` is positional and is what
-`ExecutorCapability.ARGS` exists for: argv reaches an `ARGS`-capable executor
-as separate elements, while a non-`ARGS` executor never receives them at all,
-because the shell flavour has already rendered them into `command`. `ExecutionOptions` is the corresponding total-false `TypedDict`;
-executor-specific extensions remain keyword options.
-`CommandLike` is `str | pathlib.PurePath | pathapi.Pathname`; paths
-remain path objects until the concrete executor converts them for transport.
-`ExecutorCapability.ARGS`, `.CWD`, and `.ENV` declare native executor support.
-`SSHExecutor` and `WinRMExecutor` inherit the `Executor` protocol so shared
-protocol implementations can be added once. `Shell` is NOT an `Executor`:
-calling a `Shell` configures it (`shell(cwd=..., env=...)`), and a positional
-argument raises `TypeError` -- run a program with argv through
-`host.executor(command, *args)` or `host.run(Exec(command, *args))`.
-`Host` itself supplies the multi-command `run()` provider contract; there is no
-duplicate host-executor protocol or unused host-options wrapper.
-`Exec(program, *args)` is the direct-execution marker for `Host.run()`: one
-program plus argv, no shell layer. The program may be a `str`, `bytes`, or a
-path — all reach the transport as text, so a bare name resolves through the
-target's `PATH`. Direct execution replaces the whole call, so an `Exec`
-combined with any other command raises. Everything else is an ordinary value:
-a path is a value that stringifies wherever it appears, so `run(p1, p2)` is two
-shell commands. `Exec` is a deliberately non-iterable frozen dataclass --
-`ShellFlavour.command_text` dispatches structured commands on `Iterable`, and
-an iterable marker would be quoted into an argv instead of taking the direct
-branch; `command_text` raises if an `Exec` reaches it.
-One platform exception, handled rather than inherited: Windows dispatches a
-`.bat`/`.cmd` target through cmd.exe, so a local `Exec` of one is quoted with
-cmd's rules instead of the C runtime's: the program in plain quotes (a `"` or
-`%` in its path raises `ValueError`), every argument as a batch token (see
-`ShellTarget.BATCH`). Without that an argument could close the quoting and run
-a second cmd command, and `%VAR%` expanded before the batch file saw it.
-`Cmdlet(name, *args)` and `PSParam(name)` (exported by `hostctl`,
-`hostctl.host` and `hostctl.shell`) are the PowerShell-only command markers, as
-non-iterable as `Exec`. After `REDIRECT`/`APPEND` the operand is a file name
-(`ShellFlavour.redirect_operand`): raw text stays source, a path or one-element
-tuple is quoted for the shell itself. Windows PowerShell 5 writes such a name
-with `| Out-File -LiteralPath NAME -Encoding Unicode [-Append]` (the bytes `>`
-wrote), so `[`/`]` in it are literal; pwsh keeps `>`, whose cmdlet output still
-reads them as a wildcard. On PowerShell 5 an absolute program path containing
-`[ ] * ?` is backtick-escaped after `&`. A path given as a whole command renders
-as the one-element command `(path,)`. Under `cmd`, a structured `start` always
-renders `start ""` and a structured `call` raises `ValueError`.
-
-## Configuration and lifecycle
-
-- `Host(connection_string, **secrets) -> Host` dispatches a secret-safe URI
-  through config implementations and the `hostctl.configs` entry-point group.
-- `HostConfig(connection_string, **secrets) -> HostConfig` performs the same
-  dispatch without creating a host. `str(config)` is its canonical,
-  secret-free connection string and can be passed back to `HostConfig`.
-- A `scheme://user:password@host` URI is valid *input*: the password is
-  extracted into the credential arguments and stripped from the parsed
-  authority, so it never reaches a field that `connection_uri` or `repr()`
-  renders. Supplying a password both in the URI and as an argument raises.
-  `redact_uri(uri)` STRIPS a password and returns a valid, reusable URI (not a
-  masked one, so a rendered form can never round-trip a wrong credential), for
-  logs, reprs, and error messages. A WELL-FORMED URI IS NEVER OVER-REDACTED:
-  when it parses, `urlsplit`'s authority is the authority, so an `@` elsewhere
-  (`ssh://nas:22/mail/user@example.com`) is left alone. Only input that does
-  not parse gets the textual last-`@` guess, which may over-redact -- by then
-  the text has already failed to say where its authority ended.
-- A connection URI may carry a raw tab, CR, or LF in its **userinfo**: those
-  are percent-encoded before `urlsplit` sees them, which would otherwise
-  delete them silently (`ssh://u:pw<LF>otp:1@host` would authenticate with
-  `pwotp:1`). So the credential-extras separator can be written naturally.
-  A control character in the **host** is REJECTED -- deletion there rewrites
-  the target (`ssh://host<LF>.other.example/` would resolve to
-  `host.other.example`), and no encoding makes it meaningful.
-  `redact_uri` never raises on either -- it is for diagnostics.
-- `parse_credentials(password) -> (password, extras)` splits a password field
-  on a newline: the first line is the password, each later line is a
-  credential extra. `name:value` sets a value, a bare `name` is a flag
-  equivalent to `name:` (empty string). Names are casefolded and stripped,
-  values keep everything after the first `:`, blank lines are ignored, and
-  CRLF is handled. URI dispatch runs the password field through it, so an OTP
-  or other second factor travels in the same field; an extra a config does not
-  declare is rejected by name rather than dropped.
-- `config.connection_uri` never includes passwords or private keys;
-  `config.scheme` matches its URI scheme.
+- `Host(uri, **secrets)` returns a host; `HostConfig(uri, **secrets)` returns
+  the config of the scheme without creating one. Both dispatch on the URI
+  scheme through the registered configs and the `hostctl.configs` entry-point
+  group. A narrowed parse is `config = HostConfig(uri);
+  isinstance(config, SSHConfig)`.
+- `str(config)` and `config.connection_uri` are the canonical, secret-free
+  connection string, which can be passed back to `HostConfig`;
+  `config.scheme` is its URI scheme. Neither ever contains a password or a
+  private key.
+- A `scheme://user:password@host` URI is valid input: the password moves into
+  the credential arguments and leaves the parsed authority, so it never
+  reaches a field that `connection_uri` or `repr()` renders. A password both
+  in the URI and as a keyword raises `ValueError`. The password field is split
+  by `parse_credentials` (see "URIs"), so a second factor travels in it; an
+  extra the config does not declare is rejected by name.
 - A config constructor takes a host and refuses a URI (`ValueError` naming
   `HostConfig(uri)`, password redacted). A URI refuses a C0, DEL or C1 control
-  character in its host or userinfo, raw or percent-encoded.
-  `SystemConfig(authority, *, shell, executor, path, provider_options,
-  initializer)` takes `executor=`/`path=` as sequences of names (a bare string
-  is a `TypeError`) and no other keywords; a `SystemHost` takes a `HostConfig`,
-  never a connection string.
-- `with config as host:` and `with config.open() as host:` connect and always
-  close. Re-entering the same active config raises `RuntimeError`.
-- Implementing a config: `class MyConfig(HostConfig, schemes=("mine",))` with
-  `uri_credentials = ("password", ...)`;
-  `@classmethod _from_parsed_uri(cls, parsed, **credentials) -> MyConfig`
-  builds it from a `urlsplit` result (use `strict_uri_query`,
-  `strict_uri_credentials`, `uri_host`); `_create_host(self) -> Host` returns
-  the host, which callers reach through `config.open()` or `with config as
-  host`. The single underscore means "override in a subclass, never call";
-  there is no `from_uri`. A narrowed parse is `config = HostConfig(uri);
-  isinstance(config, SSHConfig)`. Registry state (`_uri_schemes`, caches) stays
-  private.
-- External config implementations declare `schemes=(...)`. A scheme another live config
-  already claims raises `ValueError("host scheme 'x' is already registered by
-  Name")` at class definition; redefining the same module-qualified class
-  replaces it, and `replace=True` takes the scheme over. One plugin that fails
-  to import is warned about and skipped, so it does not break dispatch of
-  other schemes; its own scheme raises `RuntimeError` from the import error.
+  character in its host, raw or percent-encoded; a tab, CR or LF in the
+  userinfo is kept (percent-encoded before `urlsplit` would delete it), so
+  `ssh://u:pw<LF>otp:1@host` authenticates with `pw` plus the `otp` extra.
+- An unknown scheme raises `ValueError("unsupported host scheme: ...")`. One
+  plugin that fails to import is warned about and skipped; its own scheme then
+  raises `RuntimeError` from the import error.
 
-`LocalConfig`, `SSHConfig`, `WinRMConfig`, and `ContainerConfig` produce their
-corresponding hosts. `PosixConfig`, `WindowsConfig` and `IOSConfig` compose a
-system host from provider descriptors instead of owning a transport;
-`IOSConfig` produces an `IOSHost`, which is session/command-only -- it has no
-path grammar, so `path()` raises.
+```python
+HostConfig.open() -> Host
+HostConfig.supported_credentials(uri) -> tuple[str, ...] | None
+```
 
-`ConnectionString(value, *, scheme=None, port=None, ...)` is the parsed form
-of a target -- host, scheme, port, user, password -- with `is_local` answered
-by `netimps` rather than guessed. It exists so a caller never reimplements
-connection-string parsing. `import hostctl` changes no stdlib module and does
-not import `netimps`; the first call that needs it (a `ConnectionString`, a
-default port) does, and netimps then adds its `socket`/`os` shims on Windows
-unless `NETIMPS_SOCKET_PATCH=0` is set. A bare host (`nas`) or `host:port` (`nas:8443`)
-needs a `scheme=` or `defaults={"scheme": ...}` and raises "no scheme"
-without one; a full URI carries its own. The value MUST otherwise be a valid
-URI: an unclosed IPv6 literal, a non-numeric port, or an unescaped `/`, `?` or
-`#` in a password RAISES. An opaque URI with no host (`local:`,
-`serial:COM3`) parses, with an empty host that `is_local` calls local.
-**Percent-encode reserved characters in a password** -- there is no lenient
-mode and none will be added, because a password may itself contain `@` and
-`:`, so nothing can recover where an unescaped one ended, and guessing would
-be guessing what to connect to. (`@` and `:` do parse: last `@`, first `:`,
-per the URI grammar.) Use `redact_uri` when the text may not parse at all and
-the job is only keeping a secret out of a log. The error for an unencoded
-`/`, `?` or `#` in a URI password (`HostConfig(uri)`, `Host(uri)`,
-`ConnectionString`) is a fixed message that never echoes the URI or any part
-of the password.
+- `config.open()` creates the host; `with config as host:` and
+  `with config.open() as host:` connect and always close. Re-entering a config
+  whose host is still open raises `RuntimeError`.
+- `supported_credentials(uri)` (a classmethod) names the credentials the
+  config selected by `uri` accepts, or `None` when it declares no list. Offer
+  an ambient credential (one supplied per session, like the command line's
+  `HOSTCTL_PASSWORD`) only where it is accepted.
 
-`uri_hostname(value)` returns the bare hostname of a URI authority,
-unbracketing an IPv6 literal; it is the sibling of `uri_host`, `redact_uri`
-and `parse_credentials`.
+```python
+HostConfig._from_parsed_uri(parsed, **credentials) -> HostConfig
+HostConfig._create_host() -> Host
+```
 
-`__version__` is the installed version string.
+Implementing a config: `class MyConfig(HostConfig, schemes=("mine",))` with
+`uri_credentials = ("password", ...)`, then override the two hooks.
+`_from_parsed_uri` (a classmethod) builds the config from a `urlsplit` result,
+using `strict_uri_query`, `strict_uri_credentials`, `uri_host` and
+`uri_hostname`; `_create_host` returns the host that `config.open()` and
+`with config as host` hand out. The single underscore means "override in a
+subclass, never call"; there is no `from_uri`.
 
-## Shell contract
+- `uri_credentials` makes dispatch reject any other credential before
+  construction, so `passwrd=` fails loudly; `None` (the default) skips the
+  check for a config that validates its own.
+- A scheme another live config already claims raises `ValueError("host scheme
+  'x' is already registered by Name")` at class definition; redefining the
+  same module-qualified class replaces it, and `replace=True` in the class
+  keywords takes the scheme over. Registry state stays private.
+- `hostctl.host_schemes()` returns the sorted registered schemes, entry-point
+  names included without importing them.
 
-- `Shell(flavour, executor)` binds a `ShellFlavour` to a host (an object with
-  `run`, not callable) or to an executor (a callable). Over a host,
-  `Shell.run(x)` IS `host.run(x)` -- the host renders one shell layer with its
-  provider's capabilities -- and the flavour must be the host's own
-  (`ValueError` otherwise). Over an executor, `Shell.run()` renders a script
-  and sends it by the executor's capabilities: `args` gets the flavour's
-  invocation as argv (a `CommandLine` for cmd), otherwise the script string;
-  `cwd`/`env` are forwarded when the executor carries them natively and
-  embedded in the script when not. Subprocess options (`stdin`, `stdout`,
-  `stderr`, `capture_output`, `check`, `encoding`, `errors`, `input`,
-  `timeout`, `text`) pass through to the executor or host. `flavour`, `cwd`,
-  `env`, `encoding` and `errors` are read-only properties.
-- `ShellFlavour.script(cmds, *, cwd=None, env=None, epilogue=True) -> str`
-  constructs a script in one target shell language. `epilogue=False` leaves
-  off the status epilogue; `hostctl.shell.wants_epilogue(capabilities)` is
-  `False` for a provider declaring `manages_status` and is how every caller
-  decides.
-- `ShellFlavour.environment_script(env) -> str` is a reusable standalone
-  environment-mapping renderer. The base normalizes/validates variable names
-  and joins each flavour's `environment_assignment(key, value)` output.
-  Values remain objects so a flavour can preserve meaningful types; built-ins
-  decode bytes and stringify ordinary values.
-- `ShellOperator.PIPE`, `.AND`, `.OR`, `.REDIRECT`, `.APPEND`, and `.SEQUENCE`
-  are explicit infix tokens between top-level commands. Flavours own their
-  spelling and may reject operators they cannot represent portably.
-  `ShellFlavour.redirect(value, target, operand) -> str` renders a
-  `REDIRECT`/`APPEND` with its target (`operand` is `redirect_operand(target)`);
-  the default is `operator(value) + operand`.
-- Raw strings stay verbatim; tuple/list commands quote each item as data;
-  standalone and structured paths are quoted; top-level commands otherwise
-  use the flavour's `command_separator`.
-- `ShellFlavour.command(cmds, *, executable=None, cwd=None, env=None,
-  login_shell=None) -> ShellCommand` wraps that script for an SSH exec channel.
-  `login_shell` names what parses the string first (`None`: nothing, as with
-  `CreateProcess`; `"posix"`: an sh-family shell or fish; `"cmd"`;
-  `"powershell"`). POSIX and fish join with `login_join`, which every
-  sh-family shell and fish read back verbatim, with `cwd` inside the script;
-  `cmd` adds the second escape for `"cmd"`. A custom flavour must accept the
-  keyword to be used over SSH.
-- Structured values are normalized through the base class (including bytes and
-  iterable argv sequences); empty structured commands and control characters
-  are rejected. Raw empty command strings are skipped when joining.
-- `env` is additive on every transport, including the local one: values are
-  merged over the inherited environment, never replacing it. Remote flavours
-  embed `export`/`$env:`/`set -gx` assignments; the local executor merges over
-  `os.environ` rather than handing `subprocess.run(env=...)` a replacing map,
-  which is what made the same call drop PATH locally and keep it over SSH.
-  A genuinely empty environment remains a separate future contract -- and a
-  dangerous one: a replacing environment without PATH/SystemRoot stops
-  `powershell.exe` from starting at all.
-- `POSIX_SHELL` and `POWERSHELL` are the built-in strategies;
-  common built-ins also include `BASH`, `ZSH`, `FISH`, `CMD`, and PowerShell 7
-  `PWSH`. PowerShell 5 rejects `AND`/`OR`; PowerShell 7 supports them.
-- `shell_flavour_names()` returns the sorted names `shell_flavour()` accepts,
-  plugin entry points included.
-- `shell_flavour(selection)` accepts a registered string, configured
-  `ShellFlavour` instance, or no-argument `ShellFlavour` subclass.
-  `register_shell_flavour()` adds application-defined string selections.
-- `ShellCommand.command` is transport-ready text; `.environment` is the
-  environment sent out of band, or `None` when embedded into the script.
-- `Shell(flavour, executor, cwd=None, env=None, encoding=None, errors=None)`
-  accepts defaults applied to every `run`/`session` call that omits them.
-  `host.shell(cwd=..., env=...)` returns such a shell; bare `host.shell` has
-  none. `cwd`/`encoding`/`errors` are replaced by a per-call value, `env`
-  merges per key, and `Shell.configure(...)` returns a configured copy without
-  mutating the original.
-- A custom `HostConfig` should declare `uri_credentials = ("password", ...)`.
-  Dispatch then rejects any other credential BEFORE construction, so a typo
-  (`passwrd=`) fails loudly instead of silently building a config with no
-  password. `None` (default) skips the check for configs that validate
-  themselves. `strict_uri_credentials`, `strict_uri_query`, and `uri_host`
-  are public for configs writing `_from_parsed_uri` by hand.
-- `ssh_providers(SSHConfig)` and `winrm_providers(WinRMConfig)` return an
-  `(executor_provider, path_provider)` pair sharing ONE transport, for
-  composing a transport into a host you assemble yourself rather than taking
-  the finished host `_create_host()` builds. They return a pair instead of
-  exposing the transport because both providers must share it -- building them
-  separately silently opens two connections, only one of which is closed.
-  `local_providers()` returns the local pair: no transport to share, it is the
-  pair for a local leg.
-- `input=` is normalized to the stream mode every executor is about to use, by
-  `hostctl.executor.normalize_input`. Under a text mode (`encoding`/`errors`/
-  `text`) bytes are decoded; under a binary mode str is encoded. This is not
-  cosmetic: handing bytes to a text-mode `subprocess` stdin kills its writer
-  thread, and the call then blocks forever because the child never sees EOF --
-  `timeout=` does not fire. All executors share the helper so the same call
-  behaves identically whichever provider a `SystemHost` selects.
-- Output is `str` when ANY of `text`, `encoding`, or `errors` is given, and
-  `bytes` otherwise -- `subprocess.run`'s rule, decided by the exported
-  `wants_text(text, encoding, errors)`. `text=False` does not veto an
-  `encoding`. An executor implemented outside hostctl must use the same
-  helper, for the same reason as `normalize_input`: a `SystemHost` picks the
-  provider, so a caller cannot write one correct invocation if providers
-  disagree about the result type.
-- `env` on `run`/`session`/`configure` accepts `EnvironmentSelection`: a
-  mapping merges over the shell's default per key, the default empty mapping
-  merges nothing and inherits it, and `None` runs without the shell's
-  configured environment -- keeping whatever the host provides on its own,
-  since nothing is sent to override it. `None` does NOT mean an empty
-  environment. Declining `env` does not affect `cwd`.
-- `Shell.session(*cmds, terminal=False, cwd=None, env=None, ...) -> ShellSession`
-  opens a persistent provider process. `Shell` is also a context manager:
-  `with host.shell as session:` opens a default session and closes it on exit,
-  which is the no-argument shorthand for `with host.shell.session() as ...`.
-  Re-entering a shell whose session is still open raises `RuntimeError`.
-  `ShellSession.send(*cmds, cwd=None,
-  env=None)` uses the same command grammar, writes the flavour terminator and
-  a line terminator, and mutates the live shell context. This newline is
-  required for interactive shells to submit each command.
-  TTY stderr is merged into stdout.
+```python
+hostctl.host_schemes() -> tuple[str, ...]
+Host.run(*cmds, bufsize=-1, executable=None, stdin=None, stdout=None, stderr=None, cwd=None, env=None, capture_output=True, check=True, encoding=None, errors=None, input=None, timeout=None, text=None) -> subprocess.CompletedProcess
+Host.path(*segments, backend=None) -> pathapi.Path
+Host.spawn(*cmds, executable=None, cwd=None, env=None, terminal=None, encoding=None, errors=None) -> Process
+Host.info() -> HostInfo
+Host.connect()
+Host.close()
+```
 
-## Provider contract
-
-These are the names you implement when you add a transport, and the rules
-hostctl applies to whatever you return.
-
-- `ExecutorProvider(name, executor, *, capabilities=None, probe=None)` and
-  `PathProvider(name, factory, *, capabilities=None, probe=None)` are the two
-  provider shapes. `name` is what a trace and a `.via()` pin refer to;
-  `executor` is any callable matching the `Executor` protocol, and `factory`
-  builds a `pathapi.Path` from segments. `capabilities` is a set of
-  operation names -- strings, so an `ExecutorCapability` member and its
-  spelling are interchangeable. `PathProvider.DEFAULT_CAPABILITIES` is the
-  full filesystem vocabulary: `stat`, `scandir`, `open`, `open_read`,
-  `open_write`, `read`, `write`, `exists`, `is_file`, `is_dir`, `mkdir`,
-  `chmod`, `unlink`, `rmdir`, `rename`, `symlink_to`, `readlink`, `utime`,
-  `hardlink_to`.
-- `ProviderProbe(availability, reason="", capabilities=frozenset(),
-  system_hint=None)` is what `probe()` returns: `"available"`, `"degraded"`
-  or `"unavailable"`. `usable` is true for the first two. A probe may narrow
-  the declared capabilities; it must not invent any.
-- `OperationNotStartedError(reason, *, cause=None)` is the **only** way to decline
-  a provider for the generation, and it means exactly one thing: nothing was
-  sent, so the operation may be retried on the next provider. Raise it before
-  dispatch or not at all -- a possibly-started operation is never replayed.
-  A `NotImplementedError` from an operation that cannot mutate before raising
-  falls through to the next provider for **that call only**; it does not take
-  the provider out of service.
-- `ProviderSelector` holds the ordered providers and the per-generation
-  declines; `ProviderSelection` is one resolved choice (`provider`, `trace`,
-  `generation`, `pinned`). `select(capability=, exclude=, pin=)` re-admits
-  a decline recorded by an earlier operation only when no other provider can
-  serve. `effective_capabilities(provider)` is what a provider can do now:
-  its declared set intersected with what its probe states (the declared set
-  when the probe states none), and `select`, `host.capabilities`,
-  `executor_capabilities`, `provider_details` and a composed path's dispatch
-  all read it. `supports()` on a composite stays on the declared set, which
-  must not probe. Trace entries keep a constant `"policy": "ordered"`.
-- `host.executor_providers` and `host.path_providers` are the ordered tuples a
-  `SystemHost` was composed from. `host.replace_providers(*, executor=None,
-  path=None)` swaps either set (`None` keeps it), closes each replaced
-  transport once unless a kept provider shares it, and starts a new connection
-  generation, so the session initializer runs again. Duplicate names raise
-  before anything changes. Paths obtained earlier keep the old providers;
-  obtain them again.
-- Teardown: `close()` closes a provider's `transport` attribute when it has
-  one (providers sharing a transport share the attribute, so it closes once),
-  otherwise the provider's own `close()`.
-- A provider's optional `connect()` is where a pre-dispatch failure belongs.
-  Composite paths call a path provider's `connect()` before **every**
-  dispatch, so it must be idempotent and cheap once connected.
-  `ProviderSelector.redact(value)` is the one redaction used in traces --
-  rendered commands routinely carry credentials, so log through it. It also
-  masks fish `set -gx NAME value` and quoted values holding `'`. An `env=`
-  value embedded in the command text is masked before rendering: the dispatch
-  log, `CompletedProcess.args` and the `cmd` of `CalledProcessError`/
-  `TimeoutExpired` carry `<redacted>` in its place (the sent command is
-  unchanged).
-- `SessionInitializer` is the hook a provider may accept to prepare a session
-  (a login, a `cd`, an environment) once per connection rather than per call.
-- `CompositePosixPath` / `CompositeWindowsPath` are the path types a composed
-  host returns. They preserve the logical path, select a provider per
-  operation, pin mutations and streams to the provider that started them, and
-  answer `pathapi`'s `_same_filesystem()` with the host's provider set,
-  so a cross-host copy is never mistaken for a file copied onto itself.
-  `path.via(name)` returns a path pinned to one provider.
-- `pathapi.protocols.supports(path, Protocol)` answers what a host path can
-  do without a call that raises. A composite path says yes to `Stat`,
-  `Listing`, `BinaryOpen`, `Create`, `Remove`, `Chmod`, `Readlink`,
-  `Symlink` or `Move` when some provider it may route to (only the pinned one
-  after `.via()`) declares the operations behind it (`stat`, `scandir`,
-  `open_read`, `mkdir`, `unlink` and `rmdir`, `chmod`, `readlink`,
-  `symlink_to`, `rename`; `path` declares all). `Utime`, `Hardlink`, `Owned`,
-  `Resolve`, `NativeChecksum` and `Chown` also need the backend path class to
-  implement them (`utime`, `hardlink_to`, `stat`, `stat`, `read`, `chmod`
-  declared), so a composite over a path class without one says no. No provider
-  is probed, and the answer is advisory. A container path has no `Create`, `Chmod`,
-  `Remove` or `Move`; a QGA path has no `Readlink` or `Symlink`, and its
-  metadata and namespace protocols follow the guest helper.
-
-## Host contract
-
-- `Host` is abstract. Base `run()` and `path()` raise `NotImplementedError`.
-- Hosts expose delegated `scheme`/`connection_uri`, explicit `capabilities`,
-  `info() -> HostInfo`, and `connect()`/`close()` plus context management.
-- `host.shell_flavour` is the explicitly known target-shell strategy;
-  `host.shell` builds `Shell(host.shell_flavour, host)`. SSH uses its configured
-  or positively detected flavour, WinRM uses PowerShell, and local execution
-  selects POSIX sh or Windows PowerShell from the local platform.
-- SSH provider run renders through its shell flavour and delegates the finalized
-  command to `SSHExecutor`; WinRM provider run delegates its finalized
-  PowerShell script to `WinRMExecutor`.
-- `HostInfo` fields are optional; unknown system values remain `None`.
-- A usable `path()` returns a `pathapi.Path`.
-- A timeout raises `subprocess.TimeoutExpired` carrying the SAME payload on
-  every transport: `.orphaned` (a bool -- `True` when the transport could not
-  stop the command, so it is still running there), `.pid` (`None` unless the
-  transport knows one), and `.output`/`.stderr` as `b""`/`""` rather than
-  `None`. Build one with `executor.expired(...)` rather than
-  `subprocess.TimeoutExpired(...)`, so a caller's
-  `if exc.orphaned: alert(exc.pid)` cannot raise `AttributeError` depending
-  on which provider answered.
-- A usable `run()` returns `subprocess.CompletedProcess`. **`check` defaults
-  to `True` and `capture_output` to `True`** -- both the opposite of
-  `subprocess.run`, deliberately: a remote command that fails is an error by
-  default, and its output is captured rather than inherited. Pass
-  `check=False` to inspect `returncode` instead. Command timeouts raise
-  `subprocess.TimeoutExpired`.
-- `Host.spawn()` is the low-level persistent `Process` contract. Providers
+- `Host` is abstract; `run()`, `path()` and `spawn()` raise
+  `NotImplementedError` on a host that cannot do them. A host also exposes
+  `scheme`, `connection_uri`, `capabilities`, `executor`,
+  `executor_capabilities`, `last_selection` (the redacted provider trace of
+  the most recent `run()`), `shell_flavour` and `shell`, and is a context
+  manager.
+- `run()` returns `subprocess.CompletedProcess`. **`check` and
+  `capture_output` default to `True`**, the opposite of `subprocess.run`: a
+  failing remote command raises `CalledProcessError`, and its output is
+  captured rather than inherited. Pass `check=False` to read `returncode`.
+  The command grammar (strings, structured lists, operators, `Exec`) is in
+  "Shells".
+- Output is `str` when any of `text`, `encoding` or `errors` is given and
+  `bytes` otherwise (`subprocess.run`'s rule; `text=False` does not veto an
+  `encoding`). A `None` stdout/stderr target means `sys.stdout`/`sys.stderr`;
+  `subprocess.DEVNULL` discards.
+- `env` is additive on every transport, the local one included: values merge
+  over the inherited environment, never replace it. A name outside
+  `[A-Za-z_][A-Za-z0-9_]*` raises `ValueError` before any provider is chosen.
+- A timeout raises `subprocess.TimeoutExpired` with the same payload on every
+  transport: `.orphaned` (`True` when the command is still running on the
+  target), `.pid` (`None` unless known), and `.output`/`.stderr` as `b""`/`""`
+  rather than `None`.
+- `path()` returns a `pathapi.Path`: a composite path on a provider-backed
+  host (see "Paths"). `spawn()` returns a persistent `Process`; providers
   advertise `spawn` and `tty` separately.
+- `info()` returns a `HostInfo` whose unknown fields stay `None`.
+- `host.shell_flavour` is the explicitly known target shell, and `host.shell`
+  is `Shell(host.shell_flavour, host)`. SSH uses its configured or positively
+  detected flavour, WinRM PowerShell, and a local host POSIX `sh` or Windows
+  PowerShell by platform.
 
-## SSH
+```python
+HostInfo(hostname=None, os_family=None, os_name=None, os_version=None, architecture=None)
+```
 
-`SSHConfig(host, port=22, username=None, password=None, client_keys=None,
-executable=None, known_hosts=(), shell=POSIX_SHELL,
-pathname=pathapi.PosixPathname, login_shell="auto", connect_timeout=30.0,
-ssh_config=None, connect_options={})`.
+`ShellSelection` is what every config's `shell=` accepts: a `ShellFlavour`,
+its class, its registered name, or `"auto"`. `PathnameSelection` is what
+`pathname=` accepts: a pure-path or `pathapi.Pathname` class, `"posix"`,
+`"windows"` or `"auto"`; a bare `PurePath` is refused because it would infer
+the local OS.
 
-`username=None` leaves the account to asyncssh (the local user, as `ssh` does);
-there is no `root` default. `ssh_config` is the one way to read an ssh_config,
-and both legs read it; `connect_options` are extra `asyncssh.connect` keywords
-for both legs (a key hostctl owns -- `host`, `port`, `username`, `password`,
-`client_keys`, `known_hosts`, `config`, `connect_timeout` -- raises and names the
-field to use), kept out of the URI and `repr()`. `ssh_config` is kept out of
-the URI too, and an `ssh://` URI naming it raises: a `ProxyCommand` starts a
-local process, which a URI's author (an MCP tool caller, say) must not choose.
+## URIs (`hostctl.uri`)
 
-Authentication fields are explicit and excluded from repr. `shell` selects
-POSIX or PowerShell command construction independently of the POSIX/Windows
-SFTP path flavor. `shell` is a `ShellFlavour` strategy. `pathname` is `"posix"`,
-`"windows"`, `"auto"` or a concrete `pathapi.Pathname` or `pathlib.PurePath`
-subclass; `"auto"` connects while the host is created and reads the SFTP login
-directory (`/C:/...` is Windows, any other `/`-rooted answer POSIX, anything
-else raises); bare `PurePath` is
-rejected because it would infer the local OS. SSH implies neither an OS nor a
-shell. `shell="auto"` performs positive cached probing and raises rather than
-guessing. The SSH executor provider closes its AsyncSSH connection and waits for closure.
-AsyncSSH authentication failures are exposed as `PermissionError`; SSH
-host-key, key-exchange, disconnect, connection-loss, protocol, and channel
-failures are exposed as `ConnectionError`. The original AsyncSSH exception is
-retained as `__cause__`.
-The SFTP path provider reuses one `sftppath.AsyncSSHBackend` per host and
-closes its connections during `close()`; each path call does not create
-another SFTP connection. The path leg is given the exec leg's connect
-options. Without `ssh_config` neither leg reads one: both receive
-`config=None`, so an alias, `IdentityFile`, `UserKnownHostsFile` or
-`ProxyCommand` in `~/.ssh/config` is ignored; pass the host, key and
-known_hosts explicitly.
-Both legs therefore reach the same server and verify its key the same way.
-`SFTPPathProvider.probe()` reports `unavailable` (naming `hostctl[ssh]`) when
-sftppath is missing, so selection routes around it; `shell="auto"` accepts
-sh, dash, ash, ksh, ksh93, mksh, lksh, oksh, yash, posh, bash, zsh and fish
-(csh and tcsh are refused); `ssh://h:0` is a `ValueError`, not port 22.
-`SSHConfig(connect_timeout=30.0)` bounds establishing the connection in
-seconds (`None` leaves asyncssh's own default; otherwise it must be > 0) and is
-the URI key `connect_timeout`, omitted from `connection_uri` at 30. `connect()`
-and `with host:` raise `OperationNotStartedError("no provider connected: ...")`
-when a selector offered providers and none connected (one that connects is
-enough); a refused exec request is a plain `OSError`, not a `ConnectionError`;
-`close()` in a forked child forgets the parent's connection without closing it.
-A relative SSH path (and `host.path()`) resolves against the login directory,
-read once per connection generation with SFTP `realpath(".")` on the exec
-connection, so building one connects; `str()` of the result is the resolved
-path. An absolute spelling asks nothing.
-PowerShell over SSH: `PowerShellFlavour.command(..., login_shell=, stdin_free=)`
-renders `-Command SCRIPT` for a `cmd` login shell (one-line script, escaped for
-the extra parse) and a POSIX one (always); a script with a `#` goes on the
-channel's stdin (`-Command -`, `ShellCommand.stdin`) when `stdin_free`, which
-`SystemHost` sets only for a login-shell provider whose call has no `input=`/
-`stdin=`; a multi-line script or taken stdin falls back to `-EncodedCommand`
-(CLIXML stderr, decoded by `SSHExecutor` for `run()`; endpoint protection flags
-it). Every form starts with `$ProgressPreference='SilentlyContinue'`. `PWSH`
-(major version 7+) adds `if ($PSStyle) { $PSStyle.OutputRendering =
-'PlainText' }` there and at the start of `invocation()`'s script, so captured
-output carries no ANSI colour when `TERM` names a colour terminal.
-A timed-out `SSHProcess.wait()` keeps the output it drained for `read()`;
-the exception carries a copy.
-`host` and `username` are refused where OpenSSH would refuse them (a leading
-`-`, whitespace, shell metacharacters; `${` in a username); the host must be
-an address or a valid name (netimps decides that). `str()` of an SSH host's path is the path on
-the server. Provider close performs all AsyncSSH operations through the
-shared bridge. Omitted `run()` stdin is an explicit EOF stream, `bufsize=0` is
-rejected, and a missing remote exit status is reported as return code `-1`.
-Timeouts raise `subprocess.TimeoutExpired`: the executor sends TERM, waits up
-to 2 s for the channel to close, then closes it and waits 1 s more, so the call
-returns within about three seconds of the deadline. `orphaned` is false only
-when the channel closed during the TERM grace.
-A composed SSH host has two connections, each opened when first needed and
-each authenticating once: the exec connection on the first command (or the
-first relative path), hostctl's own; the SFTP connection on the first path
-operation, `sftppath`'s backend, which takes connect options rather than a live
-connection. A host used only for absolute paths never opens the exec one.
-`_SSHTransport` renders in one place (`_render`) for `spawn()` and `info()`;
-`SystemHost` renders `run()` itself. `bufsize` is
-asyncssh's stdin CHUNK size here, not `subprocess`'s buffering policy, so
-values below 512 are refused rather than obeyed. `run()` buffers the whole
-response in memory even when `stdout=` names a sink, and a file-object
-`stdin=` is read fully before dispatch; both are memory characteristics of
-the buffered contract, not of the channel.
-An SSH host is **not fork-safe** in the sense of inheriting a usable
-connection: a child notices the loop it belongs to has changed and drops the
-inherited connection without closing it (closing would tear down a socket the
-parent still uses), then reconnects on its own. `shell="auto"`
-retains the executable path reported by the successful probe. Persistent SSH
-process reads, writes, EOF, and close operations use the same transport-error
-normalization as `wait()`.
+```python
+ConnectionString(value, *, scheme=None, host=None, port=None, username=None, password=None, extras=None, path=None, query=None, fragment=None, defaults=None)
+ConnectionString.replace(**changes) -> ConnectionString
+ConnectionString.geturl() -> str
+ConnectionString.query_val(name, default=None)
+```
 
-## Containers
+The parsed form of a target -- scheme, host, port, user, password, extras --
+so a caller never reimplements connection-string parsing. `is_local` is
+answered by netimps rather than guessed; `authority` and `qsl` are derived
+properties; `replace(**changes)` returns a copy; `query_val` returns the last
+value for a query key. A bare host (`nas`) or `host:port` (`nas:8443`) needs
+`scheme=` or `defaults={"scheme": ...}` and raises "no scheme" without one. An
+opaque URI with no host (`local:`, `serial:COM3`) parses, with an empty host
+that `is_local` calls local.
 
-`ContainerConfig(container, engine_url=None, username=None, workdir=None,
-executable=None, shell="auto", pathname="auto", client_factory=None)` uses the optional
-`container` extra and Docker Engine API. Inspection selects Linux/POSIX or
-Windows/PowerShell semantics. `ContainerHost` supports buffered exec,
-persistent sessions/TTYs, and archive-backed POSIX or Windows paths.
-`pathname` is `"auto"`, `"posix"`, `"windows"` or a pure-path class. Archive
-paths support stat/traversal/read/write/append/exclusive-create, plus
-`symlink_to()`/`readlink()` -- a `SYMTYPE` tar member is a faithful
-representation; archive-only mkdir/remove/rename/chmod raise
-`NotImplementedError`. `run()` takes no stdin and no `timeout=` (Docker's
-buffered exec streams neither, and the exec API has no cancellable deadline).
-`iterdir()`/`walk()` pull one archive per directory, so a deep tree is
-re-downloaded level by level -- list a large one through `run()` instead.
-An overwrite keeps the existing file's owner and mode (the archive API takes
-ownership from the tar header alone); a new file is uid/gid 0, mode 0644, and
-`username=` applies to exec only. `exists()` and `open("x")` read one member header,
-not the archive. A path taken before `ContainerHost.close()` refuses
-(`ValueError`) instead of reopening the client.
+Raises `ValueError` for anything that is not a valid URI: an unclosed IPv6
+literal, a non-numeric port, or an unescaped `/`, `?` or `#` in a password.
+**Percent-encode reserved characters in a password**: there is no lenient
+mode, because a password may contain `@` and `:` and nothing can recover where
+an unescaped one ended (`@` and `:` do parse: last `@`, first `:`, per the URI
+grammar). The error for an unencoded `/`, `?` or `#` in a password (from
+`HostConfig(uri)`, `Host(uri)` and `ConnectionString`) is a fixed message that
+never echoes the URI or any part of the password.
 
-## QEMU Guest Agent
+```python
+redact_uri(uri) -> str
+parse_credentials(password) -> tuple[str, dict[str, str]]
+```
 
-`QEMUConfig(domain, transport="libvirt", connection=None, socket_path=None,
-ssh=None, agent_timeout=10.0, max_reply_size=48*1024*1024, shell="auto",
-pathname="auto", transport_factory=None, serial_console=None,
-path_helper=None)` creates a
-`QEMUHost`. Transports are local libvirt (`qemu-libvirt` extra), direct Unix
-socket, or an AsyncSSH-tunneled remote Unix socket. Discovery positively probes
-QGA and its enabled command list.
+- `redact_uri` strips a password and returns a valid, reusable URI (not a
+  masked one, so a rendered form never round-trips a wrong credential), for
+  logs, reprs and error messages. It never raises. A well-formed URI is never
+  over-redacted: when it parses, `urlsplit`'s authority is the authority, so
+  an `@` elsewhere (`ssh://nas:22/mail/user@example.com`) is left alone. Only
+  input that does not parse gets a textual guess at the last `@`, which may
+  over-redact. Use it when the text may not parse at all and the job is only
+  keeping a secret out of a log.
+- `parse_credentials` splits a password field on newlines: the first line is
+  the password, each later line a credential extra; `name:value` sets a value
+  and a bare `name` is `name:` (empty string). Names are casefolded and
+  stripped, values keep everything after the first `:`, blank lines are
+  ignored, and CRLF is handled.
 
-`QEMUExecutor` uses buffered `guest-exec`/`guest-exec-status`. It declares
-argv only: `guest-exec`'s `env` list is applied as the guest's whole
-environment rather than added to it, so the host embeds assignments in the
-rendered script and a direct `Exec` refuses `cwd=`/`env=`. QGA cannot cancel
-timed-out processes; `TimeoutExpired.orphaned` is true and `.pid` is retained
-when known. `QGAPathBackend` uses bounded file-handle RPCs; `exists()` is
-answered from those RPCs alone, while metadata and namespace mutations need a
-guest helper (`QEMUConfig(path_helper=...)`) and raise `NotImplementedError`
-without one. `write_bytes()` and `open("w")` write in place, not atomically, so
-the file keeps its inode, mode, owner and links; only the exclusive `x` modes
-need the helper (a temporary file and a rename that does not replace).
-`rename()` follows `os.rename` for the guest family: it replaces on a POSIX
-guest and raises `FileExistsError` on a Windows one. A listing skips any name
-that is not one path component. `run(stderr=STDOUT)` interleaves the streams on
-qemu-ga 8.0+ with a non-Windows guest and otherwise returns stdout followed by
-stderr.
+```python
+strict_uri_query(parsed, allowed, *, repeatable=()) -> dict[str, object]
+strict_uri_credentials(credentials, allowed)
+uri_host(host) -> str
+uri_hostname(parsed: SplitResult) -> str
+```
 
-`SerialHost.run()` frames each command as its own profile exchange and
-refuses a structured (argv) command: the host names no shell flavour, so it has
-no quoting rule to apply. `stdin=`, `bufsize=` and `input=` all raise.
-`spawn()` reads `bytes` unless `encoding=`/`errors=` asks for text. A failed
-login raises `ConsoleProtocolError`, never a bare `TimeoutError`, and a
-transcript attached to an error has `secret=True` login values replaced with
-`<redacted>`. Negotiation is cached against the transport it ran on, so
-`host.executor.close()` forces a fresh login. `SerialConfig` takes no
-`username`/`password`: console credentials live in the profile's `login=`
-steps.
+The helpers a config's `_from_parsed_uri` uses.
 
-QGA paths get their metadata and namespace operations from a guest-side
-helper, because the file RPCs move bytes and nothing else. One is PROBED during
-discovery: `PosixGuestPathHelper` for a POSIX guest (GNU `stat -c` and
-`find -printf`, proven by `stat -c %f -- /` answering hex for a directory) and
-`WindowsGuestPathHelper` for a Windows one (the same PowerShell scripts
-`WinRMPathBackend` uses, sent over `guest-exec` as `powershell.exe -Command -`
-with the script as `input-data`, so no script is on the command line). A
-guest that fails the probe keeps the degraded mode it had before -- reads and
-writes never needed a helper -- rather than losing `path()`.
-`QEMUConfig(path_helper=...)` overrides the probe entirely. Every path is an
-argv element after a `--`, so a leading `-` is data and nothing is interpolated
-into shell text; `find` takes no `--`, so it gets an absolute path or one
-anchored with `./`.
+- `strict_uri_query` returns the query of a `urlsplit` result as a dict and
+  raises `ValueError` for a key outside `allowed`, or a repeated key unless it
+  is in `repeatable` (whose values arrive as an ordered list).
+- `strict_uri_credentials` raises `ValueError` naming any credential outside
+  `allowed`.
+- `uri_host(host)` takes a `str` and brackets an IPv6 literal for a URI
+  authority.
+- `uri_hostname(parsed)` takes a `urlsplit` result (a `str` raises
+  `AttributeError`) and returns its host as written, IPv6 unbracketed, `""`
+  when there is none. `urlsplit().hostname` is lowercased; this keeps the
+  original case, for a value that goes back into a URI or a log. Use it
+  wherever `_from_parsed_uri` stores a host.
 
-`QEMUConfig.max_reply_size` (default 48 MiB) bounds one QGA reply, and
-`agent_timeout` bounds one round trip independently of a command's `timeout=`:
-an agent that stops answering raises `ConnectionError`, not a command timeout.
-`run()` results carry `stdout_truncated`/`stderr_truncated` and warn when set.
-`shell="auto"`/`pathname="auto"` require positive evidence of the guest
-family (`guest-get-osinfo`, or a family-exclusive command in `guest-info`) and
-raise rather than defaulting to POSIX. `info().os_family` is a family from
-`kernel-name`, not the os-release `id`. A `QGAPathBackend` is invalidated by
-`QEMUHost.close()`, so a path handed out earlier refuses instead of
-reconnecting. `open("rb")` is seekable where `guest-file-seek` is advertised;
-the exclusive `x` modes are refused by `open()` without a guest helper.
+## Systems (`hostctl.system`)
 
-`QGACommandError` is a guest agent error reply, carrying `.error_class` and
-`.description`; a path operation translates it into the matching `OSError`
-(`FileNotFoundError`, `PermissionError`, ...). `QGAProtocolError` is a
-malformed or oversized reply and is itself a `ConnectionError` (see
-"Exceptions").
-An injected `QEMUSerialConsole` adds the `serial` capability and
-`QEMUHost.open_serial(*, encoding=None, errors=None)`. It is raw, exclusive,
-and makes no shell/status claim; `encoding=` makes the console read and write
-`str`.
+A system host owns the target's semantics (its shell and path grammar) and
+reaches it through ordered providers. Opening an `SSHConfig` or `WinRMConfig`
+returns a `PosixHost` or `WindowsHost` composed of that transport's providers;
+the transport itself is private.
 
-## WinRM
+```python
+SystemConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None)
+PosixConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None)
+WindowsConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None)
+IOSConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None)
+```
 
-`WinRMConfig(host, username, password=None, auth="ntlm", port=None,
-tls=False, verify=True, message_encryption="auto",
-operation_timeout=20.0, read_timeout=30.0, provider="auto",
-allow_cleartext=False)`. `auth` is the authentication scheme (`ntlm`,
-`kerberos`, `credssp`, `basic`, `plaintext`, `ssl`); `tls=True` is HTTPS
-(`winrms://`); `verify=False` skips the server certificate check
-(`?verify=false`); the timeouts are float seconds, rounded up where a leg
-needs whole seconds. `provider` is `auto|native|pywinrm|psrp`. `auth` `basic`, `plaintext` or `ssl` over plain
-HTTP sends the password in cleartext and raises `ValueError` unless
-`allow_cleartext=True` (URI query `allow_cleartext=true`). `str(config)` omits
-an unset port. `auto` picks one leg: a password-free config on a Windows client
-is `native`; otherwise PSRP when `hostctl[psrp]` is installed on Python
-3.10+, otherwise pywinrm. An explicit value forces a leg: `native` takes no
-password, and `pywinrm`/`psrp` need one (or `auth="kerberos"`).
-`provider="psrp"` requires the extra. PSRP `run()` text is rendered
-by `Out-String -Stream` in the runspace, so tables look as on the other legs,
-joined with CRLF at the runspace's 120 columns; `RunspaceSession.invoke()`
-returns typed objects, and `invoke(script, *args)` renders its arguments with
-the PowerShell flavour's `structured_command`.
+The `posix://`, `windows://` and `ios://` configs compose a system host from
+provider descriptors instead of owning a transport. `executor=` and `path=`
+are sequences of descriptor names (a bare string raises `TypeError`); the
+built-ins are `local`, `ssh`, `sftp` and `winrm`, and a transport descriptor
+needs its config in `provider_options` (`{"ssh": SSHConfig(...)}`), which
+never serializes credentials into the canonical URI. `initializer` is a
+`SessionInitializer` or callable run once per connection generation.
 
-The WinRM executor provider supports PowerShell `run()` and Windows-semantic paths (a `CompositeWindowsPath` over the WinRM path backend).
-The pywinrm leg runs `powershell.exe -NoProfile -NonInteractive -Command -`
-without cmd.exe and sends the script on stdin, so scripts and `run()` commands
-have no command-line cap; every leg shares one 256,000-byte script budget.
-Password-free configs on Windows use current-context native PowerShell
-remoting. On that native path
-`verify=False` becomes `New-PSSessionOption -SkipCACheck
--SkipCNCheck` (both checks, matching pywinrm), and the remote exit code is
-carried back explicitly, so a native command failing only by status is
-reported as a failure rather than as success. A WinRM path's `open("rb")` fetches
-bounded ranges; writable modes stage content and transfer Base64 chunks on
-close. WinRM stdin is
-unsupported. The native leg's `read_timeout` is a total per-call deadline
-(default 30 s) that `run(timeout=)` overrides; the remote command keeps running
-(`orphaned=True`). pywinrm and PSRP have no total deadline and refuse
-`timeout=`. Every leg reports one status: 0 when the last statement succeeded,
-else the native exit code, else 1; a terminating error that sends no status is
-1. Remote error records are a non-zero status with the text on stderr; only
-transport and authentication failures raise (`ConnectionError`,
-`PermissionError`). A remote ACL denial is a status, not `PermissionError`.
-pywinrm Session has no guaranteed close API; hostctl calls `close()` only when
-a provided session exposes it.
-`has_psrp()` reports whether the optional PSRP dependency is installed;
-`provider="psrp"` without it raises the install hint. PSRP runspaces
-are exposed separately through the WinRM transport provider and
-`RunspaceSession.invoke()`. They retain typed PowerShell streams and state, and
-are not advertised as a byte-oriented `spawn`/TTY process.
+```python
+SystemHost(config=None, *, executor_providers=(), path_providers=(), shell=None, info=None, initializer=None)
+PosixHost(config=None, *, executor_providers=(), path_providers=(), shell=None, info=None, initializer=None)
+WindowsHost(config=None, *, executor_providers=(), path_providers=(), shell=None, info=None, initializer=None)
+IOSHost(config=None, *, executor_providers=(), path_providers=(), shell=None, info=None, initializer=None)
+SystemHost.replace_providers(*, executor=None, path=None)
+SystemHost.runspace()
+```
 
-## Local and utilities
+- A system host takes a `HostConfig`, never a connection string, and the
+  providers to compose; each subclass names its `config_type`. `IOSHost` is
+  session/command-only: it has no path grammar, so `path()` raises.
+- `executor_providers` and `path_providers` are the ordered tuples the host
+  was composed from; `provider_details` reports availability without
+  dispatching.
+- `replace_providers()` swaps either set (`None` keeps it), closes each
+  replaced transport once unless a kept provider shares it, and starts a new
+  connection generation, so the initializer runs again. Duplicate names raise
+  before anything changes. Paths obtained earlier keep the old providers.
+- `connect()` raises `OperationNotStartedError("no provider connected: ...")`
+  when providers were offered and none connected (one is enough).
+- `runspace()` returns a provider-owned typed runspace (the WinRM PSRP
+  `RunspaceSession`) when one is available.
 
-`LocalHost.path()` and `LocalHost.run()` work on POSIX and Windows.
-`LocalExecutor` provides native argv, cwd, environment, stream, encoding,
-check, and timeout behavior through `subprocess.run`.
+```python
+register_system_provider(name, resolver, *, replace=False)
+system_provider_names() -> tuple[str, ...]
+```
 
-`SerialConfig(device, baudrate=115200, bytesize=8, parity="N", stopbits=1,
-xonxoff=False, rtscts=False, dsrdtr=False, read_timeout=0.1, write_timeout=10,
-inter_byte_timeout=None, exclusive=None, profile=RawConsoleProfile(),
-serial_factory=None, serial_port=None)` takes the DEVICE as its first
-argument, the way pyserial names one (`"COM3"`, `"/dev/ttyUSB0"`,
-`"rfc2217://host:4001"`); the `serial:///...` URI is the dispatcher's
-spelling, `Host("serial:///COM3")`. `serial_factory` and `serial_port` are
-supported injection seams, not test-only: a caller that already owns a port
-passes `serial_port=` and keeps ownership of it.
+`register_system_provider` adds a descriptor: `resolver(config, kind)` returns
+the provider for `kind` (`"executor"` or `"path"`) or `None`. A name already
+registered raises `ValueError` unless `replace=True`; an unknown descriptor
+loads the `hostctl.system_providers` entry point of that name.
+`system_provider_names()` lists what is registered, entry points included
+without importing them.
 
-`SerialConfig`/`SerialHost` provide an opaque `serial:///...` URI and one
-exclusive byte-stream lease. `RawConsoleProfile` supports sessions only;
-`PromptConsoleProfile` adds bounded login/prompt framing and advertises
-`run` only when `reliable_status=True` and a completion marker is configured.
-Streams are merged, PTY/path/status semantics are absent unless the profile
-explicitly supplies them. Optional PySerial support is the `serial` extra and
-injected serial objects remain caller-owned. Break, DTR, and RTS are available
-on `SerialProcess`/`SerialConsoleProcess`; RFC 2217 URLs are not encrypted.
-Closing the host or `executor.close()` ends a live serial process: its reads and
-writes raise `ConnectionError` and its own `close()` is a no-op, so a stale
-handle can never free the lease of the process that replaced it.
-`PromptConsoleProfile(..., login_timeout=10.0)` bounds each login step and the
-first prompt (`ValueError` unless positive); it is not part of the URI.
-`ConsoleProfile` is the profile contract, `LoginStep` one expect/send
-pair of a login sequence, and `ConsoleProtocolError` what a profile raises
-when the console does not answer the way the protocol requires.
+## Local (`hostctl.transports.local`)
 
-WinRM, container and QGA paths share one base. `rename()` onto a path of
-another host raises `OSError(EXDEV)`, which `move()` takes as the cue to copy
-and delete; `chmod()` takes a mode int or an octal string. A write stream
-(`open("w")`, `"r+"`, `"a"`) uploads once on `close()` and is closed even when
-the upload fails, so write again to retry. `pathlib.Path(src).copy(dest)` onto
-such a path raises `FileExistsError` for an existing directory and
-`ValueError` for a source name that is not one path component.
+```python
+LocalConfig()
+LocalHost(config=None, *, executor_providers=(), path_providers=(), **options)
+local_providers() -> tuple[ExecutorProvider, PathProvider]
+LocalExecutor.__call__(command, *args, bufsize=-1, stdin=None, stdout=None, stderr=None, cwd=None, env=None, capture_output=True, check=True, encoding=None, errors=None, input=None, timeout=None, text=None, **options) -> subprocess.CompletedProcess
+```
 
-`TerminalOptions(term, columns, rows, pixel_width, pixel_height)` is the
-resolved terminal request `spawn(terminal=...)` produces.
+- `LocalConfig` is the `local:` URI. `LocalHost` is a `SystemHost` over the
+  local providers; its family and shell come from `os.name`, and `info()`
+  reports this process's platform. `**options` are `SystemHost`'s keywords.
+- `local_providers()` returns the local `(executor_provider, path_provider)`
+  pair for a host you assemble yourself.
+- `LocalExecutor` runs through `subprocess.run` with native argv, `cwd`,
+  environment (merged over `os.environ`), streams, encoding, `check` and
+  `timeout`. On Windows a `.bat`/`.cmd` target of `Exec` is quoted with cmd's
+  rules (see `ShellTarget.BATCH`): the program in plain quotes, a `"` or `%`
+  in its path raising `ValueError`.
+
+## SSH (`hostctl.transports.ssh`)
+
+```python
+SSHConfig(host, *, port=22, username=None, password=None, client_keys=None, executable=None, known_hosts=(), shell=POSIX_SHELL, pathname=PosixPathname, login_shell='auto', connect_timeout=30.0, ssh_config=None, connect_options={})
+ssh_providers(config) -> tuple[ExecutorProvider, PathProvider]
+```
+
+`ssh://user@host:port`; needs the `ssh` extra. Opening it returns a
+`PosixHost` (or `WindowsHost` for a Windows path flavour) whose `run()` uses
+an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
+
+- `username=None` leaves the account to asyncssh (the local user, as `ssh`
+  does). `client_keys` is an `SSHClientKeys` (one `SSHKeySource` -- a key
+  path, bytes or text -- or a sequence of them); `known_hosts` an
+  `SSHKnownHosts`, the same shape. Authentication fields are excluded from
+  `repr()`.
+- `host` and `username` are refused where OpenSSH would refuse them (a
+  leading `-`, whitespace, shell metacharacters, `${` in a username); the host
+  must be an address or a valid name. `ssh://h:0` is a `ValueError`, not port
+  22.
+- `shell` selects command construction independently of the SFTP path
+  flavour. `shell="auto"` probes positively, caches, and raises rather than
+  guessing; it accepts sh, dash, ash, ksh, ksh93, mksh, lksh, oksh, yash,
+  posh, bash, zsh and fish (csh and tcsh are refused) and keeps the
+  executable path the probe reported.
+- `pathname="auto"` connects while the host is created and reads the SFTP
+  login directory: `/C:/...` is Windows, any other `/`-rooted answer POSIX,
+  anything else raises.
+- `login_shell` names what parses the command string when it arrives: on
+  POSIX `$SHELL -c`, which is what hostctl renders for, but Windows OpenSSH's
+  stock server hands it to `cmd.exe /c`. `"auto"` reads the dialect (a Windows
+  path flavour means `cmd.exe`); name it (`"posix"`, `"cmd"`, `"powershell"`)
+  when the server's `DefaultShell` has been changed.
+- `connect_timeout` bounds establishing the connection, in seconds (`None`
+  keeps asyncssh's default; otherwise it must be > 0); it is the URI key
+  `connect_timeout`, omitted from `connection_uri` at 30.
+- `ssh_config` is the one way to read an ssh_config, and both legs read it.
+  Without it neither leg reads one -- both get `config=None`, so an alias,
+  `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in `~/.ssh/config` is
+  ignored. It is never a URI key, and an `ssh://` URI naming it raises: a
+  `ProxyCommand` starts a local process, which a URI's author must not choose.
+- `connect_options` are extra `asyncssh.connect` keywords for both legs, kept
+  out of the URI and `repr()`; a key hostctl owns (`host`, `port`,
+  `username`, `password`, `client_keys`, `known_hosts`, `config`,
+  `connect_timeout`) raises and names the field to use.
+- `ssh_providers(config)` returns the `(executor_provider, path_provider)`
+  pair sharing one transport, for a host you assemble yourself; building them
+  separately would open two connections and close one.
+
+Behaviour:
+
+- A composed SSH host opens two connections, each when first needed and each
+  authenticating once: the exec connection on the first command (or relative
+  path), the SFTP connection on the first path operation. The SFTP leg gets
+  the exec leg's connect options, so both reach the same server and verify
+  its key the same way. A host used only for absolute paths never opens the
+  exec one.
+- A relative path (and `host.path()`) resolves against the login directory,
+  read once per connection generation with SFTP `realpath(".")`; `str()` of
+  the result is the resolved path on the server.
+- Authentication failures raise `PermissionError`; host-key, key-exchange,
+  disconnect, connection-loss, protocol and channel failures raise
+  `ConnectionError`, with the AsyncSSH exception as `__cause__`. A refused
+  exec request is a plain `OSError`. The SFTP provider probes `unavailable`
+  (naming `hostctl[ssh]`) when sftppath is missing, so selection routes around
+  it.
+- `run()` sends an explicit EOF for omitted stdin, buffers the whole response
+  in memory even when `stdout=` names a sink, reads a file-object `stdin=`
+  fully before dispatch, and reports a missing exit status as `-1`. `bufsize`
+  is asyncssh's stdin chunk size, so values below 512 (and `0`) are refused.
+- A timeout sends TERM, waits up to 2 s for the channel to close, then closes
+  it and waits 1 s more, so the call returns within about three seconds of
+  the deadline; `orphaned` is false only when the channel closed during the
+  TERM grace. A timed-out `wait()` of a spawned process keeps what it drained
+  for `read()`, and the exception carries a copy.
+- PowerShell over SSH: `PowerShellFlavour.command(..., login_shell=,
+  stdin_free=)` renders `-Command SCRIPT` for a `cmd` login shell (a one-line
+  script, escaped for the extra parse) and a POSIX one; a script with a `#`
+  goes on the channel's stdin (`-Command -`) when the call has no
+  `input=`/`stdin=`; a multi-line script or taken stdin falls back to
+  `-EncodedCommand` (CLIXML stderr, decoded for `run()`; endpoint protection
+  flags it). Every form starts with `$ProgressPreference='SilentlyContinue'`,
+  and `PWSH` adds `$PSStyle.OutputRendering = 'PlainText'`, so captured output
+  carries no ANSI colour.
+- See "Gotchas" for fork behaviour and the event-loop threads.
+
+## WinRM (`hostctl.transports.winrm`)
+
+```python
+WinRMConfig(host, *, username, password=None, auth='ntlm', port=None, tls=False, verify=True, message_encryption='auto', operation_timeout=20.0, read_timeout=30.0, provider='auto', allow_cleartext=False)
+winrm_providers(config) -> tuple[ExecutorProvider, PathProvider]
+```
+
+`winrm://` (HTTP) and `winrms://` (HTTPS); needs the `winrm` extra, `psrp` for
+runspaces. Opening it returns a `WindowsHost` running PowerShell, whose paths
+are a `CompositeWindowsPath` over the WinRM path backend.
+
+- `auth` is the scheme (`ntlm`, `kerberos`, `credssp`, `basic`, `plaintext`,
+  `ssl`; CredSSP and Kerberos need `winrm-credssp`/`winrm-kerberos`).
+  `basic`, `plaintext` or `ssl` over plain HTTP sends the password in
+  cleartext and raises `ValueError` unless `allow_cleartext=True` (URI
+  `?allow_cleartext=true`).
+- `tls=True` is HTTPS; `verify=False` (`?verify=false`) skips the server
+  certificate check. `str(config)` omits an unset port.
+- The timeouts are float seconds, rounded up where a leg needs whole seconds.
+- `provider` is `auto`, `native`, `pywinrm` or `psrp`. `auto` picks a
+  password-free config on a Windows client as `native` (current-context
+  PowerShell remoting, see "Environment variables"); otherwise PSRP when
+  `hostctl[psrp]` is installed on Python 3.10+, otherwise pywinrm. `native`
+  takes no password; `pywinrm`/`psrp` need one (or `auth="kerberos"`);
+  `provider="psrp"` without the extra raises the install hint.
+- `winrm_providers(config)` returns the provider pair sharing one transport.
+
+Behaviour:
+
+- Every leg reports one status: 0 when the last statement succeeded, else the
+  native exit code, else 1; a terminating error that sends no status is 1.
+  Remote error records are a non-zero status with the text on stderr; only
+  transport and authentication failures raise (`ConnectionError`,
+  `PermissionError`). A remote ACL denial is a status, not `PermissionError`.
+- The pywinrm leg runs `powershell.exe -NoProfile -NonInteractive -Command -`
+  without cmd.exe and sends the script on stdin, so scripts have no
+  command-line cap; every leg shares one 256,000-byte script budget. WinRM
+  stdin is unsupported.
+- The native leg's `read_timeout` is a total per-call deadline that
+  `run(timeout=)` overrides; the remote command keeps running
+  (`orphaned=True`). pywinrm and PSRP have no total deadline and refuse
+  `timeout=`. On the native leg `verify=False` becomes `New-PSSessionOption
+  -SkipCACheck -SkipCNCheck`, and the remote exit code is carried back
+  explicitly.
+- PSRP `run()` text is rendered by `Out-String -Stream` in the runspace
+  (tables as on the other legs, CRLF-joined, 120 columns).
+- A WinRM path's `open("rb")` fetches bounded ranges; writable modes stage
+  content and transfer Base64 chunks on close (see "Paths").
+
+```python
+RunspaceSession(config=None, *, pool=None)
+RunspaceSession.invoke(script, *args, raw=False, capture_exit=False, format_text=False) -> PipelineResult
+RunspaceSession.connect()
+RunspaceSession.close()
+PipelineResult(output, streams, state, had_errors, returncode)
+PipelineStreams(error=(), warning=(), verbose=(), debug=(), information=(), progress=())
+```
+
+A PSRP runspace with typed PowerShell streams and state, reached through
+`host.runspace()`; it is not a byte-oriented `spawn`/TTY process.
+`invoke(script, *args)` renders its arguments with the PowerShell flavour's
+`structured_command` and returns typed objects in `PipelineResult.output`. An
+injected `pool` is caller-owned: `close()` leaves it open and the session stays
+reopenable.
+
+## Containers (`hostctl.transports.container`)
+
+```python
+ContainerConfig(container, *, engine_url=None, username=None, workdir=None, executable=None, shell='auto', pathname='auto', client_factory=None)
+ContainerHost(config, *, executor_providers=(), path_providers=())
+```
+
+A Docker Engine container; needs the `container` extra. Inspection selects
+Linux/POSIX or Windows/PowerShell semantics. `ContainerHost` supports
+buffered exec, persistent sessions and TTYs, and archive-backed POSIX or
+Windows paths. `client_factory` builds the Docker client (default:
+`docker.DockerClient` for an `engine_url`, otherwise `docker.from_env`).
+
+- `run()` takes no stdin and no `timeout=`: Docker's buffered exec streams
+  neither, and the exec API has no cancellable deadline.
+- Archive paths support stat, traversal, read, write, append,
+  exclusive-create, `symlink_to()` and `readlink()`; `mkdir`, remove, rename
+  and `chmod` raise `NotImplementedError`. `iterdir()`/`walk()` pull one
+  archive per directory, so list a large tree through `run()`.
+- An overwrite keeps the existing file's owner and mode; a new file is uid/gid
+  0, mode 0644, and `username=` applies to exec only. `exists()` and
+  `open("x")` read one member header. A path taken before
+  `ContainerHost.close()` refuses (`ValueError`) instead of reopening the
+  client.
+
+## QEMU guest agent (`hostctl.transports.qemu`)
+
+```python
+QEMUConfig(domain, *, transport='libvirt', connection=None, socket_path=None, ssh=None, agent_timeout=10.0, max_reply_size=48*1024*1024, shell='auto', pathname='auto', transport_factory=None, serial_console=None, path_helper=None)
+QEMUHost(config)
+QEMUHost.open_serial(*, encoding=None, errors=None) -> Process
+```
+
+A guest reached through the QEMU guest agent (QGA). `transport` is a
+`QEMUTransport`: `"libvirt"` (local libvirt, the `qemu-libvirt` extra),
+`"unix"` (a socket at `socket_path`) or `"ssh"` (a remote Unix socket over an
+AsyncSSH tunnel described by `ssh=SSHConfig(...)`). `transport_factory`
+returns a `GuestAgentTransport` instead. Discovery positively probes QGA and
+its enabled command list.
+
+- `run()` uses buffered `guest-exec`/`guest-exec-status` and declares argv
+  only: `guest-exec`'s environment replaces the guest's, so the host embeds
+  assignments in the rendered script and a direct `Exec` refuses
+  `cwd=`/`env=`. QGA cannot cancel a timed-out process: `orphaned` is true and
+  `.pid` is kept. `run(stderr=STDOUT)` interleaves the streams on qemu-ga 8.0+
+  with a non-Windows guest and otherwise returns stdout then stderr. Results
+  carry `stdout_truncated`/`stderr_truncated` and warn when set.
+- `max_reply_size` bounds one QGA reply; `agent_timeout` bounds one round trip
+  independently of a command's `timeout=`: an agent that stops answering
+  raises `ConnectionError`, not a command timeout.
+- `shell="auto"`/`pathname="auto"` need positive evidence of the guest family
+  (`guest-get-osinfo`, or a family-exclusive command in `guest-info`) and
+  raise rather than default to POSIX. `info().os_family` comes from
+  `kernel-name`.
+- Paths use bounded file-handle RPCs; `exists()` needs nothing else, while
+  metadata and namespace operations need a guest path helper and raise
+  `NotImplementedError` without one. `write_bytes()` and `open("w")` write in
+  place (the file keeps its inode, mode, owner and links); only the exclusive
+  `x` modes need the helper. `rename()` follows `os.rename` for the guest
+  family: it replaces on POSIX and raises `FileExistsError` on Windows. A
+  listing skips any name that is not one path component; `open("rb")` is
+  seekable where `guest-file-seek` is advertised. A path handed out before
+  `QEMUHost.close()` refuses instead of reconnecting.
+- A guest-agent error reply raises `QGACommandError`, which path operations
+  translate into the matching `OSError`; a malformed or oversized reply
+  raises `QGAProtocolError` (see "Exceptions").
+- An injected `serial_console` adds the `serial` capability and
+  `open_serial()`: a raw, exclusive console with no shell or status claim;
+  `encoding=` makes it read and write `str`.
+
+```python
+GuestPathHelper.stat(path, *, follow_symlinks=True)
+GuestPathHelper.scandir(path)
+GuestPathHelper.mkdir(path, mode)
+GuestPathHelper.unlink(path, *, missing_ok=False)
+GuestPathHelper.rmdir(path)
+GuestPathHelper.rename(path, target, *, replace=False)
+GuestPathHelper.chmod(path, mode, *, follow_symlinks=True)
+PosixGuestPathHelper(run)
+PosixGuestPathHelper.probe(run)
+WindowsGuestPathHelper.probe(run)
+```
+
+`GuestPathHelper` is the protocol `QEMUConfig(path_helper=...)` takes; without
+one, discovery probes a built-in. `run(program, *args, **options)` returns a
+`subprocess.CompletedProcess` (a QEMU host's `executor` is one). `probe(run)`
+returns a helper, or `None` when the guest cannot support it, and the guest
+keeps its read/write-only paths.
+
+- `PosixGuestPathHelper` drives GNU `stat -c` and `find -printf` (proven by
+  `stat -c %f -- /` answering hex). Every path is an argv element after `--`,
+  so a leading `-` is data and nothing is interpolated into shell text;
+  `find` takes no `--`, so it gets an absolute path or one anchored with `./`.
+  Of a regular file, `scandir` lists nothing.
+- `WindowsGuestPathHelper` sends the WinRM path backend's PowerShell scripts
+  over `guest-exec` as `powershell.exe -Command -` with the script as input,
+  so no script is on the command line; it refuses what Windows cannot express.
+
+```python
+GuestAgentTransport.execute(request, timeout=None) -> object
+GuestAgentTransport.close()
+QEMUSerialConsole(*, stream_factory=None, stream=None, owns_stream=False, resize=None)
+QEMUSerialConsole.open(*, encoding=None, errors=None)
+```
+
+`GuestAgentTransport` sends one QGA request and returns its reply.
+`QEMUSerialConsole` wraps a console byte stream (or a factory for one) for
+`serial_console=`; `owns_stream` says whether closing the console closes an
+injected `stream` (one from `stream_factory` is always closed).
+
+## Serial consoles (`hostctl.transports.serial`)
+
+```python
+SerialConfig(device, *, baudrate=115200, bytesize=8, parity='N', stopbits=1, xonxoff=False, rtscts=False, dsrdtr=False, read_timeout=0.1, write_timeout=10, inter_byte_timeout=None, exclusive=None, profile=RawConsoleProfile(), serial_factory=None, serial_port=None)
+SerialHost(config)
+```
+
+One exclusive byte-stream lease on a serial console; needs the `serial` extra
+unless a port is injected. `device` is what pyserial takes (`"COM3"`,
+`"/dev/ttyUSB0"`, `"rfc2217://host:4001"`); `Host("serial:///COM3")` is the
+URI spelling. `serial_factory` (a `SerialFactory`, returning a `SerialLike`)
+and `serial_port` are supported injection seams: a caller that passes
+`serial_port=` keeps ownership of it. `SerialConfig` takes no
+`username`/`password`; console credentials are the profile's `login=` steps.
+RFC 2217 URLs are not encrypted.
+
+- `run()` frames each command as its own profile exchange, only when the
+  profile advertises it; it refuses a structured (argv) command (the host
+  names no shell flavour), and `stdin=`, `bufsize=` and `input=`. Streams are
+  merged; there is no path or PTY.
+- `spawn()` reads `bytes` unless `encoding=`/`errors=` asks for text.
+- Negotiation is cached against the transport it ran on, so
+  `host.executor.close()` forces a fresh login. Closing the host or the
+  executor ends a live process: its reads and writes raise `ConnectionError`
+  and its own `close()` is a no-op, so a stale handle never frees the lease of
+  the process that replaced it.
+
+```python
+RawConsoleProfile()
+PromptConsoleProfile(prompt, *, login=(), line_terminator=b'\r\n', error_patterns=(), status_marker=None, reliable_status=False, max_buffer=65536, read_size=4096, wakeup=b'\r', echo=True, paging_prompt=None, paging_continue=b' ', paging_disable=None, max_paging_pages=32, terminal_setup=None, status_parser=None, login_timeout=10.0)
+LoginStep(expect, send, secret=False)
+ConsoleProfile.negotiate(process)
+ConsoleProfile.run(process, command, *, timeout=None) -> tuple[bytes, int]
+ConsoleProfile.send(process, command)
+```
+
+- `RawConsoleProfile` supports sessions only.
+- `PromptConsoleProfile` adds bounded login/prompt framing and advertises
+  `run` only when `reliable_status=True` and a `status_marker` is set.
+  `login_timeout` bounds each login step and the first prompt (`ValueError`
+  unless positive); it is not part of the URI. A failed login raises
+  `ConsoleProtocolError`, never a bare `TimeoutError`, and a transcript
+  attached to an error has `secret=True` values replaced with `<redacted>`.
+- `LoginStep` is one expect/send pair; `ConsoleProfile` is the protocol a
+  custom profile implements.
+
+```python
+SerialProcess.read(size=-1, *, timeout=None) -> bytes
+SerialProcess.write(data, *, timeout=None)
+SerialProcess.send_break(duration=0.25)
+SerialProcess.reset_input_buffer()
+```
+
+`SerialProcess` is the leased port as a `Process`, with `dtr`/`rts`
+properties and `send_break()`. `SerialLike` is the pyserial-shaped port
+protocol (`read`, `write`, `flush`, `send_break`, `close`).
+
+## Shells (`hostctl.shell`)
+
+A shell flavour renders commands for one shell language; a `Shell` binds one
+to a host or executor.
+
+```python
+Shell(flavour, executor, *, cwd=None, env=None, encoding=None, errors=None)
+Shell.run(*cmds, stdin=None, stdout=None, stderr=None, cwd=None, env={}, capture_output=None, check=None, encoding=None, errors=None, input=None, timeout=None, text=None)
+Shell.session(*cmds, executable=None, cwd=None, env={}, terminal=None, encoding=None, errors=None) -> ShellSession
+Shell.configure(*, cwd=None, env={}, encoding=None, errors=None) -> Shell
+Shell.__call__(*args, cwd=None, env={}, encoding=None, errors=None) -> Shell
+```
+
+- `executor` is a host (an object with `run`) or an executor (a callable).
+  Over a host, `Shell.run(x)` is `host.run(x)` -- the host renders one shell
+  layer with its provider's capabilities -- and the flavour must be the
+  host's own (`ValueError` otherwise). Over an executor, `run()` renders a
+  script and sends it by the executor's capabilities: `args` gets the
+  flavour's invocation as argv (a `CommandLine` for cmd), otherwise the script
+  string; `cwd`/`env` are forwarded when the executor carries them natively
+  and embedded when not. The subprocess options pass through.
+- The constructor's `cwd`, `env`, `encoding` and `errors` are defaults for
+  every call that omits them; they are read-only properties, as is
+  `flavour`. A per-call `cwd`/`encoding`/`errors` replaces the default; `env`
+  is an `EnvironmentSelection`: a mapping merges over the default per key, the
+  default empty mapping inherits it, and `None` sends no environment at all
+  (the host's own still applies -- it is not an empty environment).
+- `host.shell(cwd=..., env=...)` and `configure(...)` return a configured copy
+  without mutating the original. `Shell` is not an `Executor`: a positional
+  argument to the call raises `TypeError`; run a program with argv through
+  `host.executor(command, *args)` or `host.run(Exec(command, *args))`.
+- `session()` opens a persistent provider process. `with host.shell as
+  session:` opens a default session and closes it on exit; re-entering a
+  shell whose session is open raises `RuntimeError`.
+
+```python
+ShellSession(flavour, process)
+ShellSession.send(*cmds, cwd=None, env=None)
+```
+
+A `Process` that also speaks the flavour: `send()` takes the same command
+grammar, writes the flavour terminator and a line terminator (interactive
+shells need the newline to submit), and mutates the live shell context. TTY
+stderr is merged into stdout.
+
+Command grammar, shared by `Host.run()`, `Shell.run()` and `send()`:
+
+- A raw string is shell text, verbatim; a tuple or list is one structured
+  command whose elements are quoted as data; a path is a value that
+  stringifies wherever it appears, so `run(p1, p2)` is two commands. Several
+  top-level commands join with the flavour's `command_separator`; empty raw
+  strings are skipped; empty structured commands and control characters are
+  rejected.
+- `ShellOperator.PIPE`, `.AND`, `.OR`, `.REDIRECT`, `.APPEND` and `.SEQUENCE`
+  are infix tokens between top-level commands. After `REDIRECT`/`APPEND` the
+  operand is a file name: raw text stays source, a path or one-element tuple
+  is quoted for the shell itself. PowerShell 5 rejects `AND`/`OR`; PowerShell
+  7 supports them. Windows PowerShell 5 writes a redirect as `| Out-File
+  -LiteralPath NAME -Encoding Unicode [-Append]`, so `[`/`]` in the name are
+  literal; pwsh keeps `>`.
+- `ShellToken` is one element of that grammar; `ShellCommand(command,
+  environment, stdin=None)` is a transport-ready rendering, whose
+  `environment` is sent out of band (or `None` when embedded) and whose
+  `stdin` carries a script sent on stdin.
+
+```python
+Exec(program, *args)
+Cmdlet(name, *args)
+PSParam(name)
+```
+
+- `Exec` is direct execution for `Host.run()`: one program plus argv, no
+  shell layer. The program may be `str`, `bytes` or a path; all reach the
+  transport as text, so a bare name resolves through the target's `PATH`. An
+  `Exec` combined with any other command raises. It is a non-iterable frozen
+  dataclass, so it is never quoted into an argv by mistake.
+- `Cmdlet` is the PowerShell cmdlet spelling (PowerShell literals, no
+  C-runtime escaping, nothing refused) and `PSParam("-Name")` is the one token
+  rendered bare; a plain string is always a value. Other shells raise
+  `TypeError` for either marker.
+
+```python
+ShellFlavour.script(cmds, *, cwd=None, env=None, epilogue=True) -> str
+ShellFlavour.command(cmds, *, executable=None, cwd=None, env=None, login_shell=None) -> ShellCommand
+ShellFlavour.invocation(script, *, executable=None)
+ShellFlavour.quote(value) -> str
+ShellFlavour.argument(value, *, target=ShellTarget.NATIVE) -> str
+ShellFlavour.command_target(values) -> ShellTarget
+ShellFlavour.escape_for_one_parse(text) -> str
+ShellFlavour.environment_script(env) -> str
+ShellFlavour.environment_assignment(key, value) -> str
+ShellFlavour.redirect(value, target, operand) -> str
+ShellFlavour.redirect_operand(value) -> str
+PowerShellFlavour(major_version=5, executable=None)
+PowerShellFlavour.command(cmds, *, executable=None, cwd=None, env=None, login_shell=None, stdin_free=False) -> ShellCommand
+```
+
+- `script()` builds one script in the flavour's language; `epilogue=False`
+  leaves off the status epilogue, and `wants_epilogue(capabilities)` (false
+  for a provider declaring `manages_status`) is how every caller decides.
+- `command()` wraps a script for an SSH exec channel. `login_shell` names what
+  parses the string first (`None`: nothing, as with `CreateProcess`;
+  `"posix"`, `"cmd"`, `"powershell"`); `cmd` adds the second escape for a
+  `cmd` login shell, which is `escape_for_one_parse()`, refused by default
+  rather than guessed. A custom flavour must accept the keyword to be used
+  over SSH. `invocation()` is the argv that runs a script.
+- A flavour answers two quoting questions. `quote(value)` is syntactic:
+  enough that this shell sees one word and expands nothing.
+  `argument(value, target=)` quotes for whatever parses the token next, a
+  `ShellTarget`: `SHELL` (a cmd builtin), `NATIVE` (a child's own argv parser
+  -- the C runtime on Windows, nothing on POSIX), `CMDLET` (PowerShell's
+  binder), `PROGRAM` (the program slot `CreateProcess` reads), `BATCH` (a batch
+  file's `%*`/`%1`, which cmd parses again) or `UNRESOLVED` (a program that may
+  be a batch file). On every POSIX-family shell `argument()` is `quote()`.
+- `command_target(values)` classifies a Windows program by name: a cmd
+  builtin is `SHELL`, `.exe`/`.com` `NATIVE`, `.bat`/`.cmd` `BATCH`, anything
+  else `UNRESOLVED`. The first element of a structured command is the program
+  and never argv data. A `BATCH` argument is one token (`"` + body + `"`, `"`
+  -> `""`, `%` -> `%%cd:~,%`). An `UNRESOLVED` argument raises `ValueError`
+  for a character a batch re-parse would act on (`"` on cmd; `" & | < >` on
+  PowerShell). Windows PowerShell 5 raises for a native argument it would
+  split; `PWSH` and `Exec` carry those. Under `cmd`, a structured `start`
+  renders `start ""` and a structured `call` raises `ValueError`. On
+  PowerShell 5 an absolute program path containing `[ ] * ?` is
+  backtick-escaped after `&`.
+- `environment_script(env)` renders a whole mapping by joining
+  `environment_assignment()` per validated name (`export`, `$env:`,
+  `set -gx`); values stay objects until the flavour stringifies them.
+- `redirect()` renders a `REDIRECT`/`APPEND` with its target (`operand` is
+  `redirect_operand(target)`); the default is `operator(value) + operand`.
+- `cwd_guard` declares how a failed `cd` stops the payload: `"operator"`
+  fuses the change onto a grouped payload with AND, `"statement"` is for a
+  flavour whose change-directory statement aborts the script (PowerShell's
+  `-ErrorAction Stop`).
+- `repr()` of a flavour names it: `<PosixShellFlavour 'posix'>`.
+
+```python
+shell_flavour(value) -> ShellFlavour
+shell_flavour_names() -> tuple[str, ...]
+register_shell_flavour(value, *, name=None, replace=False) -> ShellFlavour
+wants_epilogue(capabilities) -> bool
+```
+
+- `shell_flavour()` accepts a `ShellFlavourSelection`: a registered name, a
+  configured `ShellFlavour` or a no-argument subclass.
+  `shell_flavour_names()` lists the names it accepts, plugin entry points
+  included. `register_shell_flavour()` adds a name; a taken name raises
+  `ValueError` unless `replace=True`.
+- Built-in instances: `POSIX_SHELL`, `BASH`, `ZSH`, `FISH`, `CMD`,
+  `POWERSHELL` (Windows PowerShell 5) and `PWSH` (PowerShell 7), of the
+  classes `PosixShellFlavour`, `BashShellFlavour`, `ZshShellFlavour`,
+  `FishShellFlavour`, `CmdShellFlavour` and `PowerShellFlavour`. `"posix"`
+  covers every sh-family shell and fish; csh and tcsh are unsupported.
+
+## Executor contract (`hostctl.executor`)
+
+```python
+Executor.__call__(command, *args, stdin=None, stdout=None, stderr=None, cwd=None, env=None, capture_output=None, check=None, encoding=None, errors=None, input=None, timeout=None, text=None, **options)
+```
+
+The shell-agnostic surface every executor implements. `command` is a
+`CommandLike` (`str | pathlib.PurePath | pathapi.Pathname`, kept a path
+until the executor converts it); `*args` are `CommandArgument`s, which reach
+an `ExecutorCapability.ARGS` executor as separate elements and never reach a
+non-`ARGS` one, because the flavour already rendered them into `command`.
+`ExecutionOptions` is the matching total-false `TypedDict`; transport
+extensions stay keyword options. An executor declares
+`executor_capabilities`, a set of strings: `ExecutorCapability.ARGS`, `CWD`,
+`ENV` (native support), `SCRIPT` (takes a finalized script) and
+`MANAGES_STATUS` (reports status itself, so no epilogue); a provider may
+declare a capability this enum does not know. The aliases `CaptureOutput`,
+`StreamTarget`, `CommandInput`, `StrPath` and `CommandEnvironment` type the
+options. `CommandLine` is a `str` subclass marking a finalized command line,
+which the executor passes through instead of quoting again.
+
+```python
+normalize_input(input, *, text_mode, encoding=None, errors=None)
+normalize_environment(env) -> dict[str, str] | None
+validate_environment_names(env)
+capture_streams(capture_output, stdout, stderr)
+dispatch_output(stdout_target, stderr_target, stdout, stderr, *, encoding, errors)
+write_output(stream, value, *, encoding, errors)
+reject_stdin_conflict(input, stdin)
+wants_text(text, encoding, errors) -> bool
+expired(command, timeout, *, output=None, stderr=None, orphaned=False, pid=None, text=False) -> subprocess.TimeoutExpired
+```
+
+The helpers that make an executor behave like the others; one that skips
+them is where cross-transport divergence comes from.
+
+- `normalize_input` matches `input` to the stream mode about to be used:
+  bytes decoded under a text mode, `str` encoded under a binary one. A
+  mismatch is not a clean error: `subprocess`'s writer thread dies without
+  closing the pipe and the call blocks forever (`timeout=` does not fire).
+  `bytes`, `bytearray`, `memoryview` and `str` are accepted; anything else
+  raises `TypeError`.
+- `normalize_environment` keeps `None` and turns everything else into a
+  `str`-keyed dict, after `validate_environment_names`, which raises
+  `ValueError("invalid environment variable name: ...")` outside
+  `[A-Za-z_][A-Za-z0-9_]*`.
+- `capture_streams` resolves the three spellings of "capture" into one
+  `(stdout, stderr)` pair.
+- `dispatch_output` routes both captured streams, and `write_output` one, to
+  where the caller asked; `encoding` and `errors` are required keywords
+  (pass `None`). A `None` target means `sys.stdout`/`sys.stderr`, not
+  discard.
+- `reject_stdin_conflict` refuses `input=` with `stdin=`, as `subprocess`
+  does.
+- `wants_text` is the one answer to "is this call in text mode": true when
+  any of the three is set (`errors=` alone selects text).
+- `expired` builds the `subprocess.TimeoutExpired` every transport raises:
+  `.orphaned`, `.pid`, and output attributes that are never `None`.
+
+## Processes (`hostctl.process`)
+
+```python
+Process.read(size=-1) -> ProcessData
+Process.read_stderr(size=-1) -> ProcessData
+Process.write(data)
+Process.send_eof()
+Process.wait(timeout=None) -> int
+Process.terminate()
+Process.kill()
+Process.resize(columns, rows, pixel_width=0, pixel_height=0)
+Process.close()
+TerminalOptions(term_type='xterm-256color', columns=80, rows=24, pixel_width=0, pixel_height=0)
+terminal_options(value) -> TerminalOptions | None
+```
+
+`Process` is the persistent-process protocol `spawn()` returns: a context
+manager with `returncode`, reading and writing `ProcessData` (`str | bytes`,
+by the `encoding=` it was opened with). `spawn(terminal=)` takes a
+`TerminalRequest` (`True`, `False`, `None` or `TerminalOptions`), and
+`terminal_options()` resolves one into `TerminalOptions` (`True` gives the
+defaults) or `None`.
+
+## Providers (`hostctl.provider`)
+
+The names you implement when you add a transport, and the rules hostctl
+applies to what you return.
+
+```python
+ExecutorProvider(name, executor, *, capabilities=None, probe=None)
+PathProvider(name, factory, *, capabilities=None, probe=None)
+ProviderProbe(availability, reason='', capabilities=frozenset(), system_hint=None)
+SessionInitializer(initialize, timeout=None)
+```
+
+- `name` is what a trace and a `.via()` pin refer to; `executor` is any
+  callable matching `Executor`; `factory` builds a `pathapi.Path` from
+  segments. `capabilities` is a set of operation names -- strings, so an
+  `ExecutorCapability` member and its spelling are interchangeable.
+  `PathProvider.DEFAULT_CAPABILITIES` is the full vocabulary (`stat`,
+  `scandir`, `open`, `open_read`, `open_write`, `read`, `write`, `exists`,
+  `is_file`, `is_dir`, `mkdir`, `chmod`, `unlink`, `rmdir`, `rename`,
+  `symlink_to`, `readlink`, `utime`, `hardlink_to`);
+  `READ_ONLY_PATH_OPERATIONS` is the set of a content-only endpoint.
+- `probe()` returns a `ProviderProbe`: `"available"`, `"degraded"` or
+  `"unavailable"`; `usable` is true for the first two. A probe may narrow the
+  declared capabilities, never add one.
+- A provider's optional `connect()` is where a pre-dispatch failure belongs.
+  Composite paths call a path provider's `connect()` before every dispatch, so
+  it must be idempotent and cheap once connected.
+- `OperationNotStartedError` is the only way to decline a provider for the
+  generation, and means nothing was sent, so the next provider may be tried.
+  Raise it before dispatch or not at all: a possibly-started operation is
+  never replayed. A `NotImplementedError` from an operation that cannot mutate
+  before raising falls through to the next provider for that call only.
+- Teardown: `close()` closes a provider's `transport` attribute when it has one
+  (providers sharing a transport share the attribute, so it closes once),
+  otherwise the provider's own `close()`.
+- `SessionInitializer` prepares a session (a login, a `cd`, an environment)
+  once per connection rather than per call.
+
+```python
+ProviderSelector(providers=())
+ProviderSelector.select(*, capability=None, exclude=(), pin=False) -> ProviderSelection
+ProviderSelector.effective_capabilities(provider) -> frozenset
+ProviderSelector.decline(name, reason='declined before dispatch', *, cause=None)
+ProviderSelector.redact(value) -> str
+ProviderSelection(provider, trace, generation=0, pinned=False)
+```
+
+- `ProviderSelector` holds the ordered providers and the per-generation
+  declines. `select()` re-admits a decline from an earlier operation only
+  when no other provider can serve. `effective_capabilities()` is the declared
+  set intersected with what the probe states (the declared set when it states
+  none); selection, `host.capabilities`, `executor_capabilities`,
+  `provider_details` and a composite path's dispatch all read it. Trace
+  entries carry a constant `"policy": "ordered"`.
+- `redact(value)` is the redaction used in traces; rendered commands carry
+  credentials, so log through it. It masks fish `set -gx NAME value` and
+  quoted values holding `'`. An `env=` value embedded in command text is
+  masked before rendering: the dispatch log, `CompletedProcess.args` and the
+  `cmd` of `CalledProcessError`/`TimeoutExpired` carry `<redacted>` (the sent
+  command is unchanged).
+
+## Paths (`hostctl.paths`)
+
+```python
+CompositePosixPath.via(name)
+CompositeWindowsPath.via(name)
+```
+
+`CompositePosixPath` and `CompositeWindowsPath` are the `pathapi.Path` types a
+provider-backed host returns. They keep the logical path, select a provider
+per operation, pin mutations and streams to the provider that started them,
+and answer `pathapi`'s `_same_filesystem()` with the host's provider set, so a
+cross-host copy is never taken for a file copied onto itself. `.provider` is
+the selected provider and `path.via(name)` a path pinned to one. A composite
+copies but cannot be pickled: it is bound to a live host.
+
+- `pathapi.protocols.supports(path, Protocol)` answers without a call that
+  raises. A composite says yes to `Stat`, `Listing`, `BinaryOpen`, `Create`,
+  `Remove`, `Chmod`, `Readlink`, `Symlink` or `Move` when some provider it may
+  route to (only the pinned one after `.via()`) declares the operations
+  behind it (`stat`, `scandir`, `open_read`, `mkdir`, `unlink` and `rmdir`,
+  `chmod`, `readlink`, `symlink_to`, `rename`). `Utime`, `Hardlink`, `Owned`,
+  `Resolve`, `NativeChecksum` and `Chown` also need the backend path class to
+  implement them. No provider is probed, and the answer is advisory.
+- WinRM, container and QGA backend paths share one base. `rename()` onto a
+  path of another host raises `OSError(EXDEV)`, which `move()` takes as the
+  cue to copy and delete; `chmod()` takes a mode int or an octal string. A
+  write stream (`open("w")`, `"r+"`, `"a"`) uploads once on `close()` and is
+  closed even when the upload fails, so write again to retry.
+  `pathlib.Path(src).copy(dest)` onto such a path raises `FileExistsError`
+  for an existing directory and `ValueError` for a source name that is not one
+  path component.
+
+## Transfer (`hostctl.sync`)
+
+```python
+stat_checksum(entry) -> tuple[int, float]
+host_checksum(*hosts, algorithm='md5', chunk_size=1048576)
+ProgressReader(reader, callback, *, total=None)
+```
+
+Helpers for `pathapi`'s `Path.copy()` and `pathapi.sync.PathSyncer`; hostctl
+has no transfer engine of its own.
+
+- `stat_checksum(entry)` is rsync's quick check: the cached `(size, mtime)`,
+  reading no content. It misses a change that keeps both, and settles only on
+  a target that takes a modification time (local and SSH paths do; WinRM,
+  container and QGA paths do not, so every sync there copies again).
+- `host_checksum(*hosts, ...)` returns a `PathSyncer` checksum that hashes a
+  path on the host owning it (`<algorithm>sum` under a POSIX-family shell,
+  `Get-FileHash` or `certutil` under PowerShell or cmd) rather than streaming
+  it back. A local path is hashed in process, and a path no listed host owns,
+  or whose host cannot hash it, is read through `open()`. `algorithm` is one
+  of `md5`, `sha1`, `sha256`, `sha384`, `sha512`; an unknown one, no hosts,
+  or `chunk_size <= 0` raises `ValueError`.
+- `ProgressReader` wraps a binary reader and calls `callback(bytes_read,
+  total)` as bytes are read; it is itself a binary reader and a context
+  manager.
 
 ## Exceptions
 
@@ -856,11 +1007,15 @@ HostctlError(Exception)
 └── QGACommandError(HostctlError)
 ```
 
+```python
+OperationNotStartedError(reason='operation was not started', *, cause=None)
+QGACommandError(error_class, description, *, data=None)
+```
+
 - `HostctlError` -- the base; catch it for "anything hostctl raised".
 - `TransportError` -- the connection to the target failed or was never made.
-- `OperationNotStartedError(reason="operation was not started", *,
-  cause=None)` -- a provider declined before anything was sent (`.reason`,
-  `.cause`); see "Provider contract". Raised to the caller when every
+- `OperationNotStartedError` -- a provider declined before anything was sent
+  (`.reason`, `.cause`); see "Providers". Raised to the caller when every
   provider declined, so an `except ConnectionError` retry around it is safe.
   It is an `OSError`, not a `RuntimeError`.
 - `QGADisconnectedError` -- the guest-agent socket or channel closed, or could
@@ -871,16 +1026,22 @@ HostctlError(Exception)
 - `ConsoleProtocolError` -- a serial console profile did not complete its
   login, prompt or status exchange.
 - `QGATimeoutError` -- a guest-agent request missed its deadline.
-- `QGACommandError(error_class, description, *, data=None)` -- the guest
-  agent refused a command (`.error_class`, `.description`, `.data`); path
-  operations translate it into the matching `OSError`.
+- `QGACommandError` -- the guest agent refused a command (`.error_class`,
+  `.description`, `.data`); path operations translate it into the matching
+  `OSError`.
 
 ## Command line
 
-`hostctl.cli.main(argv=None) -> int` is the entry point of the `hostctl`
-console script and of `python -m hostctl`, built on `duho`; install
-`hostctl[cli]`. Without the extra it raises `SystemExit` naming it.
-`hostctl.cli` is not library API and is absent from `hostctl.__all__`.
+```python
+hostctl.cli.main(argv=None) -> int
+```
+
+The entry point of the `hostctl` console script and of `python -m hostctl`,
+built on `duho`; install `hostctl[cli]`. Without the extra it raises
+`SystemExit` naming it. `hostctl.cli` is not library API: `import hostctl`
+never imports it, and it is absent from `hostctl.__all__`. Each subcommand is
+a class in its own module (`hostctl.cli.cat.Cat`, `.cp.Cp`, `.info.Info`,
+`.ls.Ls`, `.run.Run`, `.shell.Shell`).
 
 ```console
 hostctl run local: -- python -c "print('hello')"
@@ -897,18 +1058,57 @@ hostctl shell ssh://server
 - `cp` operands are `URI:PATH` or a local path; the colon before the path is
   required even after a port (`ssh://host:2222:/x`).
 - Each subcommand takes `--ask-password`, `-v`/`-q` and `--loglevel`; the
-  root takes `--version`.
+  root takes `--version`. `--ask-password` is refused in a tool call.
 - Exit status: `run` returns the remote command's own status; the command
   line's own failures are 125 (connection, timeout, usage, unsupported
   operation), 126 (permission denied), 127 (not found) and 130 (interrupted).
-  A parser usage error is 2. An unreachable host is 125 for every
-  subcommand, `info` included (`SystemHost._collect_info()` says whether any
-  provider answered; the library's `info()` stays best effort).
-- `HOSTCTL_PASSWORD` supplies a password, offered only to schemes that accept
-  one (decided per scheme: `qemu+libvirt:` and `qga+unix:` take none);
-  `--ask-password` prompts instead and is refused in a tool call. A tool
-  caller can read the variable and name any host to offer it to.
-- `HOSTCTL_MCP=stdio` serves every subcommand as an MCP tool over stdio
-  (`hostctl.run`, `.ls`, `.cat`, `.cp`, `.info`, `.shell`); `run`'s program
-  is the tool argument `"--"`. A tool call has no stdin, so `shell` there
-  sends nothing.
+  A parser usage error is 2. An unreachable host is 125 for every subcommand,
+  `info` included.
+- Under `HOSTCTL_MCP=stdio` every subcommand is an MCP tool (`hostctl.run`,
+  `.ls`, `.cat`, `.cp`, `.info`, `.shell`); `run`'s program is the tool
+  argument `"--"`. A tool call has no stdin, so `shell` there sends nothing.
+
+## Environment variables
+
+| variable | read by | when |
+| --- | --- | --- |
+| `HOSTCTL_PASSWORD` | the command line | on each subcommand; the password is offered only to schemes whose config accepts one (`qemu+libvirt:` and `qga+unix:` take none). A tool caller can read it and name any host to offer it to. |
+| `HOSTCTL_MCP` | the command line | at start; `stdio` serves every subcommand as an MCP tool over stdio. |
+| `USERNAME` | native WinRM | when a password-free `WinRMConfig` opens on a Windows client: `username` must be this user (alone, `DOMAIN\user` or `user@DOMAIN`). Unset or empty raises `ValueError`. |
+| `USERDOMAIN` | native WinRM | at the same moment, to accept the domain-qualified spellings of the current user; optional. |
+
+The library reads nothing else from the environment; a transport's own
+dependency may (asyncssh, pywinrm, docker), as documented by that package.
+
+## Gotchas
+
+- **Two event-loop threads.** `run()`, `spawn()` and connection setup over
+  SSH (and a QGA tunnel over SSH) run asyncssh on one process-wide asyncio
+  event loop in a daemon thread named `hostctl-asyncssh-loop`, started on
+  first use; asyncssh objects are bound to it. The SSH path leg is sftppath's,
+  which runs asyncssh on a loop thread of its own. Neither touches the
+  caller's event loop, so hostctl is usable from inside `async` code, but each
+  call blocks the calling thread.
+- **Fork.** An SSH host is not fork-safe in the sense of inheriting a usable
+  connection: a child notices its loop changed, drops the inherited connection
+  without closing it (closing would tear down the parent's socket) and
+  reconnects. `close()` in a forked child forgets the parent's connection.
+- **No replay after dispatch.** Provider failover happens only before
+  anything is sent (`OperationNotStartedError`). A command that may have
+  started is never retried on another provider, so a `ConnectionError`
+  mid-command means its effect on the target is unknown.
+- **Timeouts are not all total deadlines.** `run(timeout=)` bounds the call on
+  local, SSH, QEMU and native WinRM. `SSHConfig(connect_timeout=)` bounds only
+  connecting; `QEMUConfig(agent_timeout=)` one agent round trip;
+  `WinRMConfig(operation_timeout=, read_timeout=)` are per-request on pywinrm
+  and PSRP, which refuse `timeout=`; a container's `run()` refuses `timeout=`;
+  `SerialConfig(read_timeout=)` bounds one read.
+- **netimps on first use.** `import hostctl` does not import `netimps`; the
+  first call that needs it (a `ConnectionString`, a default port, a
+  host-name check) does, and on Windows netimps then adds its `socket`/`os`
+  shims unless its own `NETIMPS_SOCKET_PATCH=0` is set.
+- **`check=True` by default.** `run()` raises `CalledProcessError` on a
+  non-zero status, unlike `subprocess.run`.
+- **Paths taken before `close()`.** A container or QGA path handed out before
+  its host closed refuses rather than reconnecting; a path from before
+  `replace_providers()` keeps the old providers. Obtain paths again.
