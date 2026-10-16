@@ -113,6 +113,7 @@ Before a `v*` tag the `downstream-pytruenas` job is green, or its failures are
 all named in the CHANGELOG's upgrade notes for that release.
 
 To prepare a release, set the version in `pyproject.toml` and move the
-`[Unreleased]` section of `CHANGELOG.md` under the new version heading in the
-same commit; the release workflow publishes that
+`[Unreleased]` sections of `CHANGELOG.md` and `RELEASENOTES.md` under the new
+version heading in the same commit (`RELEASENOTES.md` carries the migration
+detail, benchmark table and validation evidence); the release workflow publishes that
 changelog section as the GitHub release body.
