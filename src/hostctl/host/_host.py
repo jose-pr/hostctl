@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import abc as _abc
 import inspect as _inspect
+import logging as _logging
 import subprocess as _subprocess
 import typing as _ty
 import types as _types
+import weakref as _weakref
 
 
 from pathapi import Path
@@ -31,6 +33,29 @@ from ..shell._grammar import Command, Exec
 from ._info import HostInfo
 from ._dispatch import _T, _abstract, _constructor_signature
 from ..executor import _OMITTED
+from ..provider._contracts import SelectionStep
+
+_log = _logging.getLogger(__name__)
+
+
+class _HostLogger(_logging.LoggerAdapter):
+    """Prefixes each record with `[host name]` and sets `record.host`.
+
+    The name is read per record, so a host renamed later logs the new one.
+    Holds the host weakly: the host owns this adapter.
+    """
+
+    def __init__(self, logger: _logging.Logger, host: "Host") -> None:
+        super().__init__(logger, {})
+        self._host = _weakref.ref(host)
+
+    def process(self, msg, kwargs):
+        host = self._host()
+        name = host.name if host is not None else ""
+        kwargs["extra"] = {"host": name, **(kwargs.get("extra") or {})}
+        prefix = f"[{name}] " if name else ""
+        text = str(msg)
+        return (text if text.startswith(prefix) else prefix + text), kwargs
 
 
 class _HostMeta(_abc.ABCMeta):
@@ -103,6 +128,36 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         return self.config.scheme
 
     @property
+    def name(self) -> str:
+        """A short label for this target, for log lines: the config's `name`.
+
+        Never carries a credential. Assigning it replaces the label.
+        """
+        given = self.__dict__.get("_name")
+        return given if given is not None else self.config.name
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self.__dict__["_name"] = str(value)
+
+    @property
+    def logger(self) -> _ty.Union[_logging.Logger, _logging.LoggerAdapter]:
+        """Where records about this host go: by default an adapter over a
+        `hostctl` logger that prefixes `[name]` and sets `record.host`.
+
+        Assign a `Logger` or `LoggerAdapter` to send them elsewhere; a
+        provider fallback's warning is logged here.
+        """
+        logger = self.__dict__.get("_logger")
+        if logger is None:
+            logger = self.__dict__["_logger"] = _HostLogger(_log, self)
+        return logger
+
+    @logger.setter
+    def logger(self, value: _ty.Union[_logging.Logger, _logging.LoggerAdapter]) -> None:
+        self.__dict__["_logger"] = value
+
+    @property
     def connection_uri(self) -> str:
         return self.config.connection_uri
 
@@ -158,13 +213,12 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         return getattr(self, "_executor_selector", None)
 
     @property
-    def last_selection(self) -> _ty.Tuple[_ty.Dict[str, object], ...]:
+    def last_selection(self) -> _ty.Tuple[SelectionStep, ...]:
         """The redacted provider trace for the most recent :meth:`run`.
 
-        The run-side counterpart of ``CompositePosixPath.selection_trace``.
-        Entries appear in provider precedence order and carry ``provider``,
-        ``availability``, ``reason``, ``capabilities``, ``chosen``,
-        ``generation``, ``policy``, and ``pin``.
+        The run-side counterpart of ``CompositePosixPath.selection_trace``:
+        :class:`~hostctl.provider.SelectionStep` records in provider
+        precedence order.
 
         The trace accumulates across the failover attempts of a single
         ``run()``, so a call that fell through from one provider to another

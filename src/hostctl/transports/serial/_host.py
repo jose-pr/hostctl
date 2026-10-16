@@ -186,6 +186,9 @@ class SerialConfig(HostConfig, schemes=("serial",)):
             raise TypeError("profile must implement ConsoleProfile")
         object.__setattr__(self, "settings", settings)
 
+    def _default_name(self) -> str:
+        return self.device
+
     @property
     def connection_uri(self) -> str:
         values: dict[str, object] = {

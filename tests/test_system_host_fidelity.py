@@ -13,7 +13,7 @@ from hostctl.exceptions import OperationNotStartedError
 from hostctl.transports.ssh._config import SSHConfig
 
 
-def test_selection_trace_has_generation_policy_pin_and_redaction():
+def test_selection_trace_has_generation_pin_and_redaction():
     provider = ExecutorProvider(
         "ssh?password=secret",
         lambda command, **options: subprocess.CompletedProcess(command, 0, b"", b""),
@@ -22,12 +22,11 @@ def test_selection_trace_has_generation_policy_pin_and_redaction():
 
     selected = selector.select(pin=True)
     item = selected.trace[0]
-    assert item["generation"] == 0
-    assert item["policy"] == "ordered"
-    assert item["pin"] is True
+    assert item.generation == 0
+    assert item.pin is True
     assert selected.generation == 0
     assert selected.pinned is True
-    assert "secret" not in item["provider"]
+    assert "secret" not in item.provider
 
     selector.invalidate()
     assert selector.select().generation == 1
@@ -63,8 +62,8 @@ def test_provider_details_probe_without_dispatch_and_capabilities_filter():
     host = PosixHost(executor_providers=(unavailable, available))
 
     details = host.provider_details
-    assert [item["name"] for item in details] == ["offline", "online"]
-    assert details[0]["availability"] == "unavailable"
+    assert [item.provider for item in details] == ["offline", "online"]
+    assert details[0].availability == "unavailable"
     assert host.capabilities == frozenset(("run",))
     assert host.executor_capabilities == frozenset(("args",))
     assert calls == []
@@ -137,7 +136,7 @@ def test_composite_mutation_selection_trace_marks_pin(tmp_path):
     path = PosixHost(path_providers=(provider,)).path(tmp_path, "value")
     path.write_bytes(b"payload")
 
-    assert path.selection_trace[-1]["pin"] is True
+    assert path.selection_trace[-1].pin is True
 
 
 def test_concurrent_run_connects_each_provider_exactly_once():

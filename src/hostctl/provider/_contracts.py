@@ -36,9 +36,44 @@ class ProviderProbe:
 
 
 @dataclasses.dataclass(frozen=True)
+class SelectionStep:
+    """One candidate a selection considered, in provider precedence order.
+
+    `provider` is the provider's name and `reason` its refusal or probe
+    reason, both redacted. `availability` is `"unavailable"` for a provider
+    that declined before dispatch this generation. `capabilities` is what the
+    probe stated, sorted.
+    """
+
+    provider: str
+    availability: typing.Literal["available", "unavailable", "degraded"]
+    reason: str = ""
+    capabilities: typing.Tuple[str, ...] = ()
+    chosen: bool = False
+    generation: int = 0
+    pin: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class ProviderDetail:
+    """A provider's availability as `host.provider_details` reports it.
+
+    Read without dispatching; `provider` and `reason` are redacted, and
+    `capabilities` is the effective set (declared, narrowed by the probe).
+    """
+
+    kind: typing.Literal["executor", "path"]
+    provider: str
+    availability: typing.Literal["available", "unavailable", "degraded"]
+    reason: str = ""
+    capabilities: typing.Tuple[str, ...] = ()
+    system_hint: typing.Optional[str] = None
+
+
+@dataclasses.dataclass(frozen=True)
 class ProviderSelection:
     provider: typing.Union["ExecutorProvider", "PathProvider"]
-    trace: tuple[dict[str, object], ...]
+    trace: typing.Tuple[SelectionStep, ...]
     generation: int = 0
     pinned: bool = False
 

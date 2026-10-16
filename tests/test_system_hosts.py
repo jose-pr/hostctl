@@ -1086,7 +1086,7 @@ def test_a_probe_narrows_the_declared_capabilities_everywhere():
     assert host.capabilities == frozenset({"run"})
     assert host.executor_capabilities == frozenset()
     (detail,) = host.provider_details
-    assert detail["capabilities"] == ()
+    assert detail.capabilities == ()
     with pytest.raises(NotImplementedError):
         host.spawn()
 

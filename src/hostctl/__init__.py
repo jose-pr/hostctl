@@ -53,9 +53,11 @@ from .process import Process as Process, TerminalOptions as TerminalOptions
 from .provider import (
     ExecutorProvider as ExecutorProvider,
     PathProvider as PathProvider,
+    ProviderDetail as ProviderDetail,
     ProviderProbe as ProviderProbe,
     ProviderSelection as ProviderSelection,
     ProviderSelector as ProviderSelector,
+    SelectionStep as SelectionStep,
     SessionInitializer as SessionInitializer,
 )
 from ._extras import has_psrp as has_psrp, has_ssh as has_ssh
@@ -201,9 +203,11 @@ __all__ = [
     # Provider composition
     "ExecutorProvider",
     "PathProvider",
+    "ProviderDetail",
     "ProviderProbe",
     "ProviderSelection",
     "ProviderSelector",
+    "SelectionStep",
     "SessionInitializer",
     "register_system_provider",
     "system_provider_names",

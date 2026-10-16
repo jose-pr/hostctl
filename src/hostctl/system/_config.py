@@ -98,6 +98,9 @@ class SystemConfig(HostConfig):
             + ")"
         )
 
+    def _default_name(self) -> str:
+        return self.authority.rpartition("@")[2]
+
     @property
     def connection_uri(self) -> str:
         if not self.uri_scheme:

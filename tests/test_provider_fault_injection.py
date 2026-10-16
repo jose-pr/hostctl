@@ -275,10 +275,10 @@ def test_declined_provider_appears_in_the_selection_trace_without_secrets():
     path.read_bytes()
     trace = path.selection_trace
 
-    declined = [item for item in trace if item["provider"] == "primary"]
-    assert declined and declined[0]["chosen"] is False
+    declined = [item for item in trace if item.provider == "primary"]
+    assert declined and declined[0].chosen is False
     assert "hunter2" not in str(trace)
-    assert "<redacted>" in declined[0]["reason"]
+    assert "<redacted>" in declined[0].reason
 
 
 def test_dispatched_failure_after_a_declined_provider_is_still_terminal():
@@ -570,7 +570,7 @@ def test_one_unsupported_operation_does_not_disable_the_provider():
     # The provider is still usable for everything it does implement.
     assert path.read_bytes() == b"content"
     assert host.path("payload").stat().st_size == 7
-    assert host.provider_details[0]["availability"] == "available"
+    assert host.provider_details[0].availability == "available"
 
 
 # --- (g) the capability vocabulary matches what backends actually do --------
@@ -971,7 +971,7 @@ def test_two_threads_selecting_do_not_share_a_trace():
             try:
                 selector.select(exclude=())
                 selector.select(exclude=[p.name for p in providers if p.name != name])
-                seen = {entry["provider"] for entry in selector.trace}
+                seen = {entry.provider for entry in selector.trace}
             except Exception as exc:  # pragma: no cover - the regression
                 errors.append(exc)
                 return

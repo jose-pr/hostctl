@@ -57,7 +57,7 @@ def test_each_operation_selects_a_provider_that_declares_it(build):
 
     assert type(path) is CompositePosixPath
     assert written_by is writer
-    assert path.selection_trace[-1]["provider"] == "reader"
+    assert path.selection_trace[-1].provider == "reader"
 
 
 def test_a_provider_declining_construction_falls_through_to_the_next(build):
@@ -123,7 +123,7 @@ def test_not_implemented_falls_through_for_this_call_only(build):
     assert path.read_bytes() == b"data"
     # The refusal named one operation, so the next still starts at `first`.
     assert path.exists() is True
-    assert path.selection_trace[-1]["provider"] == "first"
+    assert path.selection_trace[-1].provider == "first"
 
 
 def test_backend_pins_like_via(build):
@@ -384,7 +384,7 @@ def test_sftp_first_then_a_narrower_fallback(tmp_path):
         path = CompositePosixPath.over((sftp, fallback), "/", name)
 
         assert path.read_bytes() == b"from fallback"
-        assert path.selection_trace[-1]["provider"] == "ws"
+        assert path.selection_trace[-1].provider == "ws"
         with pytest.raises(OperationNotStartedError):
             path.write_bytes(b"nowhere to go")
     finally:

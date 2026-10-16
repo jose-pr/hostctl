@@ -27,6 +27,7 @@ from ...uri._parse import (
     pathname_label,
     pathname_selection,
     strict_uri_query,
+    uri_host,
     uri_hostname,
 )
 from ...shell import POSIX_SHELL, shell_flavour
@@ -283,6 +284,10 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
                 f"{self.host}; pass verify=False to skip the host-key check, "
                 "or name the file with known_hosts="
             )
+
+    def _default_name(self) -> str:
+        host = uri_host(self.host)
+        return host if self.port == 22 else f"{host}:{self.port}"
 
     @property
     def connection_uri(self) -> str:

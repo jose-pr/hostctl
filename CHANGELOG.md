@@ -43,6 +43,8 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `host.path(p, backend=name)` re-selecting a provider per operation | pinned to `name`, as `.via(name)`; `host.path(p)` selects per operation |
 | `register_system_provider(name, resolver)` with `resolver(config, kind)` returning one provider | `resolver(host)` returning `(executor provider or None, path provider or None)`; the config is `host.config`. One resolver reached by two names runs once per host, so its two legs share a transport. A two-argument resolver raises `TypeError` at registration |
 | `SystemConfig(executor=(), path=())` meaning "none" | `executor=None`/`path=None` (the defaults) take the host class's `default_providers()`, which is empty for the built-in hosts; `()` still composes none. `config.executors`/`config.paths` are `None` when not named |
+| `host.last_selection`, `ProviderSelection.trace`, `path.selection_trace` entries as dicts (`item["provider"]`, `item["chosen"]`, ..., `item["policy"]`) | frozen `SelectionStep` records (`step.provider`, `step.chosen`, ...); `policy`, which was always `"ordered"`, is gone |
+| `host.provider_details` entries as dicts (`item["name"]`, `item["kind"]`, ..., `item["policy"]`) | frozen `ProviderDetail` records; the name is `detail.provider`; `policy` is gone |
 | `serial:///dev/ttyUSB0` (any `serial:///NAME`, `serial:/NAME`) naming the relative device `dev/ttyUSB0` / `NAME`; `serial:////dev/x` naming `dev/x` | the absolute `/dev/ttyUSB0` / `/NAME`; a relative device is `serial:NAME`; `serial:////...` raises `ValueError`; `COMn`, `\\.\...`, pyserial URLs and the encoded `serial:///%2Fdev%2Fx` are unchanged |
 | `CompositePosixPath.from_path(backend_path, provider, factory, ...)` (undocumented) | `CompositePosixPath.over(providers, *segments, backend=None)`; the same for `CompositeWindowsPath` |
 | `SSHConfig(known_hosts=None)`, `HostConfig(uri, known_hosts=None)` (no host-key check) | `SSHConfig(verify=False)`, `?verify=false`; `known_hosts=None` raises `ValueError` |
@@ -55,6 +57,15 @@ against 0.4.0; `test.yml`'s informative `downstream-pytruenas` job fails at
 collection until pytruenas ports to these names.
 
 ### Added
+
+- **Typed selection records, a host name and an audible fallback**, in
+  0.4.0. `SelectionStep` and `ProviderDetail` (in `hostctl` and
+  `hostctl.provider`) replace the dicts in traces and `provider_details`.
+  `Host.name`/`HostConfig.name` label the target without a credential, and
+  `Host.logger` (settable) prefixes it to each record and sets `record.host`.
+  When `run()` or a path operation is served by a provider ranked below an
+  unavailable one, the host logs one WARNING per skipped provider on
+  `host.logger`; it used to be a DEBUG record from the selector only.
 
 - **Host-bound provider descriptors**, in 0.4.0. A `SystemHost` subclass
   declares its own descriptors in `provider_resolvers` (name ->

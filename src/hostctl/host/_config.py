@@ -170,6 +170,32 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
     def scheme(self) -> str:
         return _urlsplit(self.connection_uri).scheme.casefold()
 
+    @property
+    def name(self) -> str:
+        """A short label for the target, for a log line: never a credential.
+
+        By default the authority of `connection_uri` without its userinfo
+        (`nas.example`, `node:2222`), else its path (`vm1`), else
+        `localhost`. Assigning it replaces the label.
+        """
+        given = self.__dict__.get("_name")
+        return given if given is not None else self._default_name()
+
+    @name.setter
+    def name(self, value: str) -> None:
+        self.__dict__["_name"] = str(value)
+
+    def _default_name(self) -> str:
+        try:
+            parsed = _urlsplit(self.connection_uri)
+        except NotImplementedError:
+            return ""
+        authority = _unquote(parsed.netloc).rpartition("@")[2]
+        if authority:
+            return authority
+        path = _unquote(parsed.path)
+        return (path[1:] if path.startswith("/") else path) or "localhost"
+
     def __str__(self) -> str:
         return self.connection_uri
 

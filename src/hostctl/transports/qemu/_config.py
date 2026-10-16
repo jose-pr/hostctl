@@ -135,6 +135,9 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             return dataclasses.replace(timeouts, connect=timeouts.read)
         return timeouts
 
+    def _default_name(self) -> str:
+        return self.domain
+
     @property
     def connection_uri(self) -> str:
         shell = "auto" if self.shell == "auto" else str(self.shell)

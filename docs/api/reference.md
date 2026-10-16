@@ -92,6 +92,8 @@ points and a worked example are in
 ::: hostctl.PathProvider
 ::: hostctl.ProviderProbe
 ::: hostctl.ProviderSelection
+::: hostctl.SelectionStep
+::: hostctl.ProviderDetail
 ::: hostctl.ProviderSelector
 ::: hostctl.SessionInitializer
 ::: hostctl.register_system_provider

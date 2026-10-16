@@ -17,6 +17,8 @@ import subprocess
 import pathapi
 import pytest
 
+from hostctl import SelectionStep
+
 from hostctl.provider._contracts import ExecutorProvider, PathProvider, ProviderProbe
 from hostctl.provider._selector import ProviderSelector
 from hostctl.transports.local._host import LocalHost
@@ -229,24 +231,17 @@ def test_last_selection_is_public_on_a_system_host():
     host.run("uptime", check=False)
 
     trace = host.last_selection
-    assert [item["provider"] for item in trace] == ["ssh"]
-    assert trace[0]["chosen"] is True
-    for key in (
-        "availability",
-        "reason",
-        "capabilities",
-        "generation",
-        "policy",
-        "pin",
-    ):
-        assert key in trace[0]
+    assert [item.provider for item in trace] == ["ssh"]
+    assert trace[0] == SelectionStep(
+        "ssh", "available", capabilities=trace[0].capabilities, chosen=True
+    )
 
 
 def test_last_selection_is_public_on_a_local_host():
     host = LocalHost(executor_providers=(_executor("local"),))
     host.run("uptime", check=False)
 
-    assert [item["provider"] for item in host.last_selection] == ["local"]
+    assert [item.provider for item in host.last_selection] == ["local"]
 
 
 def test_last_selection_is_empty_for_a_host_without_provider_selection():
@@ -259,13 +254,16 @@ def test_last_selection_is_empty_for_a_host_without_provider_selection():
     assert Bare(executor_providers=(_executor("ssh"),)).last_selection == ()
 
 
-def test_last_selection_is_a_copy_that_cannot_mutate_selector_state():
+def test_last_selection_cannot_mutate_selector_state():
+    import dataclasses
+
     host = PosixHost(executor_providers=(_executor("ssh"),))
     host.run("uptime", check=False)
 
-    host.last_selection[0]["chosen"] = "tampered"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        host.last_selection[0].chosen = "tampered"
 
-    assert host.last_selection[0]["chosen"] is True
+    assert host.last_selection[0].chosen is True
 
 
 # --- (c) the trace accumulates across failover within one run() -------------
@@ -286,12 +284,12 @@ def test_the_first_failing_call_already_shows_every_decline_reason():
     host.run("uptime", check=False)
 
     trace = host.last_selection
-    assert [item["provider"] for item in trace] == ["ssh", "winrm"]
+    assert [item.provider for item in trace] == ["ssh", "winrm"]
     ssh = trace[0]
-    assert ssh["chosen"] is False
-    assert ssh["availability"] == "unavailable"
-    assert "connection lost" in ssh["reason"]
-    assert trace[1]["chosen"] is True
+    assert ssh.chosen is False
+    assert ssh.availability == "unavailable"
+    assert "connection lost" in ssh.reason
+    assert trace[1].chosen is True
 
 
 def test_every_provider_tried_appears_once_after_two_declines():
@@ -308,10 +306,10 @@ def test_every_provider_tried_appears_once_after_two_declines():
     host.run("uptime", check=False)
 
     trace = host.last_selection
-    assert [item["provider"] for item in trace] == ["ssh", "winrm", "serial"]
-    assert [item["chosen"] for item in trace] == [False, False, True]
-    assert "no route" in trace[0]["reason"]
-    assert "service stopped" in trace[1]["reason"]
+    assert [item.provider for item in trace] == ["ssh", "winrm", "serial"]
+    assert [item.chosen for item in trace] == [False, False, True]
+    assert "no route" in trace[0].reason
+    assert "service stopped" in trace[1].reason
 
 
 def test_a_new_run_starts_a_fresh_trace_rather_than_appending_forever():
@@ -342,15 +340,15 @@ def test_provider_details_reports_a_declined_provider_as_unavailable():
         )
     )
 
-    before = {item["name"]: item for item in host.provider_details}
-    assert before["ssh"]["availability"] == "available"
+    before = {item.provider: item for item in host.provider_details}
+    assert before["ssh"].availability == "available"
 
     host.run("uptime", check=False)
 
-    after = {item["name"]: item for item in host.provider_details}
-    assert after["ssh"]["availability"] == "unavailable"
-    assert "sshd stopped" in after["ssh"]["reason"]
-    assert after["winrm"]["availability"] == "available"
+    after = {item.provider: item for item in host.provider_details}
+    assert after["ssh"].availability == "unavailable"
+    assert "sshd stopped" in after["ssh"].reason
+    assert after["winrm"].availability == "available"
 
 
 def test_a_declined_provider_stops_contributing_capabilities():
@@ -385,9 +383,9 @@ def test_a_decline_reason_is_redacted_in_provider_details():
 
     host.run("uptime", check=False)
 
-    details = {item["name"]: item for item in host.provider_details}
-    assert "hunter2" not in details["ssh"]["reason"]
-    assert "<redacted>" in details["ssh"]["reason"]
+    details = {item.provider: item for item in host.provider_details}
+    assert "hunter2" not in details["ssh"].reason
+    assert "<redacted>" in details["ssh"].reason
 
 
 def test_reconnecting_clears_the_decline_from_provider_details():
@@ -399,11 +397,11 @@ def test_reconnecting_clears_the_decline_from_provider_details():
     )
 
     host.run("uptime", check=False)
-    assert host.provider_details[0]["availability"] == "unavailable"
+    assert host.provider_details[0].availability == "unavailable"
 
     host.close()
 
-    assert host.provider_details[0]["availability"] == "available"
+    assert host.provider_details[0].availability == "available"
     assert host.last_selection == ()
 
 

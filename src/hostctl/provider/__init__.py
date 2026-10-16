@@ -11,8 +11,10 @@ from ._contracts import (
     READ_ONLY_PATH_OPERATIONS as READ_ONLY_PATH_OPERATIONS,
     ExecutorProvider as ExecutorProvider,
     PathProvider as PathProvider,
+    ProviderDetail as ProviderDetail,
     ProviderProbe as ProviderProbe,
     ProviderSelection as ProviderSelection,
+    SelectionStep as SelectionStep,
     SessionInitializer as SessionInitializer,
 )
 from ._selector import ProviderSelector as ProviderSelector
@@ -20,9 +22,11 @@ from ._selector import ProviderSelector as ProviderSelector
 __all__ = [
     "ExecutorProvider",
     "PathProvider",
+    "ProviderDetail",
     "ProviderProbe",
     "ProviderSelection",
     "ProviderSelector",
     "READ_ONLY_PATH_OPERATIONS",
+    "SelectionStep",
     "SessionInitializer",
 ]

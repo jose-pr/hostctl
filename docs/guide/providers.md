@@ -134,13 +134,13 @@ reach a log.
 path = host.path("/etc/hosts")
 path.read_bytes()
 
-for item in path.selection_trace:
-    print(item["provider"], item["availability"], item["chosen"], item["reason"])
+for step in path.selection_trace:
+    print(step.provider, step.availability, step.chosen, step.reason)
 ```
 
-Each entry carries the provider name, availability, reason, capabilities,
-whether it was chosen, the connection generation, the policy (always
-`"ordered"`), and the pin flag.
+Each entry is a frozen `SelectionStep`: the provider name, availability,
+reason, capabilities, whether it was chosen, the connection generation, and
+the pin flag.
 
 A provider's probe may narrow the capabilities it declared and must not add
 any: `select(capability=...)`, `host.capabilities`, `host.provider_details` and
@@ -152,8 +152,11 @@ dispatching an operation**, so capability queries are always side-effect free:
 
 ```python
 for detail in host.provider_details:
-    print(detail["kind"], detail["name"], detail["availability"])
+    print(detail.kind, detail.provider, detail.availability)
 ```
+
+Each is a frozen `ProviderDetail` (`kind`, `provider`, `availability`,
+`reason`, `capabilities`, `system_hint`).
 
 A provider that declined before dispatch reports `unavailable` with its refusal
 reason for the rest of the connection generation, rather than continuing to
@@ -192,9 +195,29 @@ hostctl.provider._contracts DEBUG provider ssh declined before dispatch (generat
 hostctl.provider._contracts DEBUG selected provider winrm (generation 0, pin False) after 2 candidate(s)
 ```
 
-`warning` is reserved for events that are recoverable but genuinely surprising —
-a provider silently degrading, for instance — so a `warning` from hostctl is
-always worth reading.
+`warning` is reserved for events that are recoverable but genuinely surprising,
+so a `warning` from hostctl is always worth reading. The one a system host
+emits is the **fallback**: `run()` or a path operation served by a provider
+ranked below one that is unavailable. It is logged once per host and skipped
+provider, on `host.logger`:
+
+```text
+hostctl.host._host WARNING [nas1] run() fell back from ssh to webshell: ssh: SSH connection failed before dispatch
+```
+
+Routing an operation to the provider that supports it, and a pinned path, are
+not fallbacks and log nothing.
+
+### Which host a record is about
+
+`host.name` is a short label for the target (`nas1`, `node:2222`), never a
+credential. `host.logger` is a `LoggerAdapter` that prefixes it and sets
+`record.host`, so a handler can filter or format on it; assign your own
+`Logger` or adapter to send a host's records elsewhere:
+
+```python
+host.logger = logging.getLogger("myapp.nas1")
+```
 
 ### Reading the run-side trace
 
@@ -205,8 +228,8 @@ always worth reading.
 try:
     host.run("systemctl restart nginx")
 except Exception:
-    for item in host.last_selection:
-        print(item["provider"], item["availability"], item["chosen"], item["reason"])
+    for step in host.last_selection:
+        print(step.provider, step.availability, step.chosen, step.reason)
 ```
 
 The trace **accumulates across the failover attempts of a single `run()`**, so
@@ -220,8 +243,8 @@ winrm available    True
 ```
 
 `last_selection` is `()` before the first `run()`, and `()` for a host whose
-`run()` does not choose between providers (`QEMUHost`, `SerialHost`). Each call
-returns a fresh copy, so mutating it cannot disturb selector state.
+`run()` does not choose between providers (`QEMUHost`, `SerialHost`). Its
+records are frozen, so reading it cannot disturb selector state.
 
 ### The redaction guarantee, and its limits
 

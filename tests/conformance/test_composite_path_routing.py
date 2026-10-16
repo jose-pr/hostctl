@@ -46,9 +46,9 @@ def test_selection_trace_belongs_to_the_path_instance():
     host._path_selector.invalidate()
     assert second_path.exists() is False
 
-    assert first_trace[-1]["provider"] == "first"
+    assert first_trace[-1].provider == "first"
     assert first_path.selection_trace == first_trace
-    assert second_path.selection_trace[-1]["provider"] == "second"
+    assert second_path.selection_trace[-1].provider == "second"
 
 
 def test_rename_resolves_target_on_the_selected_source_provider(tmp_path):

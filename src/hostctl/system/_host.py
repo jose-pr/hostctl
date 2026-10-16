@@ -8,6 +8,7 @@ import logging
 import subprocess
 import threading
 import typing
+import weakref
 from urllib.parse import quote
 
 from pathapi import Path
@@ -24,7 +25,12 @@ from ..executor import (
     StrPath,
 )
 from ..exceptions import OperationNotStartedError
-from ..provider._contracts import ExecutorProvider, PathProvider
+from ..provider._contracts import (
+    ExecutorProvider,
+    PathProvider,
+    ProviderDetail,
+    SelectionStep,
+)
 from ..provider._selector import ProviderSelector
 from ..shell import shell_flavour
 from ..shell._flavour import ShellFlavour
@@ -154,8 +160,48 @@ class SystemHost(Host):
                 executor_providers = resolved_executors
             if path_providers is None:
                 path_providers = resolved_paths
-        self._executor_selector = ProviderSelector(executor_providers)
-        self._path_selector = ProviderSelector(path_providers)
+        #: (kind, provider name) pairs already warned about as fallen back from.
+        self._fallbacks_logged: typing.Set[typing.Tuple[str, str]] = set()
+        self._fallbacks_lock = threading.Lock()
+        self._executor_selector = self._selector(executor_providers, "executor")
+        self._path_selector = self._selector(path_providers, "path")
+
+    def _selector(self, providers, kind: str) -> ProviderSelector:
+        """A selector over `providers` that reports a fallback to this host."""
+        selector = ProviderSelector(providers)
+        host = weakref.ref(self)
+
+        def report(provider, skipped: typing.Tuple[SelectionStep, ...]) -> None:
+            owner = host()
+            if owner is not None:
+                owner._log_fallback(kind, provider, skipped)
+
+        selector._fallback_hook = report
+        return selector
+
+    def _log_fallback(
+        self, kind: str, provider, skipped: typing.Tuple[SelectionStep, ...]
+    ) -> None:
+        """One WARNING per host and skipped provider: the operation was served
+        by a provider ranked below one that is unavailable."""
+        with self._fallbacks_lock:
+            fresh = [
+                step
+                for step in skipped
+                if (kind, step.provider) not in self._fallbacks_logged
+            ]
+            self._fallbacks_logged.update((kind, step.provider) for step in fresh)
+        if not fresh:
+            return
+        self.logger.warning(
+            "%s fell back from %s to %s: %s",
+            "run()" if kind == "executor" else "path()",
+            ", ".join(step.provider for step in fresh),
+            ProviderSelector.redact(provider.name),
+            "; ".join(
+                f"{step.provider}: {step.reason or 'unavailable'}" for step in fresh
+            ),
+        )
 
     def default_providers(
         self,
@@ -223,8 +269,10 @@ class SystemHost(Host):
         set (duplicate names) raises before anything changes.
         """
         with self._lifecycle_lock:
-            new_executor = ProviderSelector(executor) if executor is not None else None
-            new_path = ProviderSelector(path) if path is not None else None
+            new_executor = (
+                self._selector(executor, "executor") if executor is not None else None
+            )
+            new_path = self._selector(path, "path") if path is not None else None
             old = [
                 *(self._executor_selector.providers if new_executor else ()),
                 *(self._path_selector.providers if new_path else ()),
@@ -301,8 +349,8 @@ class SystemHost(Host):
         return selector.probe(provider)
 
     @property
-    def provider_details(self):
-        """Return deterministic, non-dispatching provider availability details."""
+    def provider_details(self) -> typing.Tuple[ProviderDetail, ...]:
+        """Every provider's availability, executors first; dispatches nothing."""
         details = []
         for kind, selector in (
             ("executor", self._executor_selector),
@@ -312,15 +360,14 @@ class SystemHost(Host):
                 probe = self._provider_probe(selector, provider)
                 capabilities = selector.effective_capabilities(provider)
                 details.append(
-                    {
-                        "kind": kind,
-                        "name": ProviderSelector.redact(provider.name),
-                        "availability": probe.availability,
-                        "reason": ProviderSelector.redact(probe.reason),
-                        "capabilities": tuple(sorted(capabilities)),
-                        "system_hint": probe.system_hint,
-                        "policy": "ordered",
-                    }
+                    ProviderDetail(
+                        typing.cast(typing.Literal["executor", "path"], kind),
+                        ProviderSelector.redact(provider.name),
+                        probe.availability,
+                        ProviderSelector.redact(probe.reason),
+                        tuple(sorted(capabilities)),
+                        probe.system_hint,
+                    )
                 )
         return tuple(details)
 
@@ -687,7 +734,7 @@ class SystemHost(Host):
         while True:
             provider = self._executor_selector.select(exclude=excluded).provider
             try:
-                return self._run_with_provider(
+                result = self._run_with_provider(
                     provider,
                     cmds,
                     bufsize=bufsize,
@@ -710,6 +757,14 @@ class SystemHost(Host):
                 # was dispatched; planning is repeated for the next provider.
                 self._executor_selector.decline(provider.name, str(exc), cause=exc)
                 excluded.append(provider.name)
+                continue
+            except BaseException:
+                # Dispatched (a failing command among them): this provider
+                # served the call.
+                self._executor_selector._served(provider)
+                raise
+            self._executor_selector._served(provider)
+            return result
 
     @staticmethod
     def _shell_context(provider, cwd, env) -> _ShellContext:

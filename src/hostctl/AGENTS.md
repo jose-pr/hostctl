@@ -126,14 +126,29 @@ Host.spawn(*cmds, executable=None, cwd=None, env=None, terminal=None, encoding=N
 Host.info() -> HostInfo
 Host.connect()
 Host.close()
+Host.name -> str                                   # settable
+Host.logger -> logging.Logger | logging.LoggerAdapter  # settable
+HostConfig.name -> str                             # settable
 ```
 
 - `Host` is abstract; `run()`, `path()` and `spawn()` raise
   `NotImplementedError` on a host that cannot do them. A host also exposes
   `scheme`, `connection_uri`, `capabilities`, `executor`,
-  `executor_capabilities`, `last_selection` (the redacted provider trace of
-  the most recent `run()`), `shell_flavour` and `shell`, and is a context
-  manager.
+  `executor_capabilities`, `last_selection` (the provider trace of the most
+  recent `run()`, `SelectionStep` records), `shell_flavour` and `shell`, and
+  is a context manager.
+- `name` is a short label for the target with no credential in it:
+  `config.name`, which is the `connection_uri` authority without userinfo
+  (`nas.example`, `node:2222`; SSH omits port 22), a QEMU domain, a serial
+  device, `localhost` for `local:`. Assigning either replaces it.
+- `logger` is where records about the host go: by default a
+  `LoggerAdapter` over a `hostctl` logger that prefixes `[name] ` and sets
+  `record.host`. Assign a `Logger` or adapter to redirect them.
+- A system host logs ONE `WARNING` on `host.logger` per skipped provider when
+  `run()` or a path operation is served by a provider ranked below one that
+  is unavailable (its probe said so, or it declined before dispatch):
+  `run() fell back from ssh to webshell: ssh: <reason>`. Routing an operation
+  to the provider that supports it, and a pinned path, are not fallbacks.
 - `run()` returns `subprocess.CompletedProcess`. **`check` and
   `capture_output` default to `True`**, the opposite of `subprocess.run`: a
   failing remote command raises `CalledProcessError`, and its output is
@@ -1258,6 +1273,8 @@ ProviderSelector.effective_capabilities(provider) -> frozenset
 ProviderSelector.decline(name, reason='declined before dispatch', *, cause=None)
 ProviderSelector.redact(value) -> str
 ProviderSelection(provider, trace, generation=0, pinned=False)
+SelectionStep(provider, availability, reason='', capabilities=(), chosen=False, generation=0, pin=False)
+ProviderDetail(kind, provider, availability, reason='', capabilities=(), system_hint=None)
 ```
 
 - `ProviderSelector` holds the ordered providers and the per-generation
@@ -1265,8 +1282,14 @@ ProviderSelection(provider, trace, generation=0, pinned=False)
   when no other provider can serve. `effective_capabilities()` is the declared
   set intersected with what the probe states (the declared set when it states
   none); selection, `host.capabilities`, `executor_capabilities`,
-  `provider_details` and a composite path's dispatch all read it. Trace
-  entries carry a constant `"policy": "ordered"`.
+  `provider_details` and a composite path's dispatch all read it.
+- A trace (`ProviderSelection.trace`, `host.last_selection`,
+  `path.selection_trace`) is a tuple of frozen `SelectionStep` records in
+  precedence order: `provider` is the redacted provider name, `chosen` whether
+  that step selected it, `pin` whether the selection pinned. A provider that
+  declined this generation appears as `availability="unavailable"` with the
+  refusal as `reason`. `host.provider_details` is a tuple of frozen
+  `ProviderDetail` records, executors first, with the effective capabilities.
 - `redact(value)` is the redaction used in traces; rendered commands carry
   credentials, so log through it. It masks fish `set -gx NAME value` and
   quoted values holding `'`. An `env=` value embedded in command text is
@@ -1479,7 +1502,9 @@ dependency may (asyncssh, pywinrm, docker), as documented by that package.
   every logger is a child of `hostctl`: configure that one (at `DEBUG` it
   shows provider selection and dispatch, redacted). Child names follow the
   private module paths and are not API. hostctl installs no handler and sets
-  no level.
+  no level. Records about one host (the fallback warning) go through
+  `host.logger` and carry `record.host`; selection `DEBUG` records do not
+  name a host.
 - **netimps on first use.** `import hostctl` does not import `netimps`; the
   first call that needs it (a `ConnectionString`, a default port, a
   host-name check) does, and on Windows netimps then installs `recvmsg`,

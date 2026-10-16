@@ -10,11 +10,23 @@ import typing
 
 from ..exceptions import OperationNotStartedError
 from ..executor import MASK
-from ._contracts import ProviderProbe, ProviderSelection, _LazyName, log
+from ._contracts import (
+    ProviderProbe,
+    ProviderSelection,
+    SelectionStep,
+    _LazyName,
+    log,
+)
 
 
 class ProviderSelector:
     """Ordered selector which never retries a dispatched operation."""
+
+    #: Called as `hook(provider, skipped_steps)` when `_served()` finds that an
+    #: earlier provider was skipped as unavailable; set by the owning host.
+    _fallback_hook: typing.Optional[
+        typing.Callable[[object, typing.Tuple[SelectionStep, ...]], None]
+    ] = None
 
     def __init__(self, providers=()):
         self.providers = tuple(providers)
@@ -44,7 +56,7 @@ class ProviderSelector:
         self._traces = threading.local()
 
     @property
-    def _attempt_trace(self) -> "dict[str, dict[str, object]]":
+    def _attempt_trace(self) -> "dict[str, SelectionStep]":
         """This thread's accumulating trace for the operation it is running."""
         trace = getattr(self._traces, "entries", None)
         if trace is None:
@@ -53,7 +65,7 @@ class ProviderSelector:
         return trace
 
     @_attempt_trace.setter
-    def _attempt_trace(self, value: "dict[str, dict[str, object]]") -> None:
+    def _attempt_trace(self, value: "dict[str, SelectionStep]") -> None:
         self._traces.entries = value
 
     @property
@@ -230,16 +242,13 @@ class ProviderSelector:
                 # `exclude` says "I already tried it", and the decline is the
                 # reason it did not work, which that call's trace must keep.
                 self._record(
-                    {
-                        "provider": self.redact(provider.name),
-                        "availability": "unavailable",
-                        "reason": self.redact(declined),
-                        "capabilities": (),
-                        "chosen": False,
-                        "generation": self._generation,
-                        "policy": "ordered",
-                        "pin": bool(pin),
-                    }
+                    SelectionStep(
+                        self.redact(provider.name),
+                        "unavailable",
+                        self.redact(declined),
+                        generation=self._generation,
+                        pin=bool(pin),
+                    )
                 )
                 continue
             if provider.name in excluded:
@@ -252,16 +261,15 @@ class ProviderSelector:
                 getattr(item, "value", item) for item in probe.capabilities
             )
             self._record(
-                {
-                    "provider": self.redact(provider.name),
-                    "availability": probe.availability,
-                    "reason": self.redact(probe.reason),
-                    "capabilities": tuple(sorted(capabilities)),
-                    "chosen": allowed,
-                    "generation": self._generation,
-                    "policy": "ordered",
-                    "pin": bool(pin),
-                }
+                SelectionStep(
+                    self.redact(provider.name),
+                    probe.availability,
+                    self.redact(probe.reason),
+                    tuple(sorted(capabilities)),
+                    chosen=allowed,
+                    generation=self._generation,
+                    pin=bool(pin),
+                )
             )
             if not allowed:
                 log.debug(
@@ -297,8 +305,7 @@ class ProviderSelector:
             "no provider available (generation %d); candidates: %s",
             self._generation,
             ", ".join(
-                "%s/%s" % (item["provider"], item["availability"])
-                for item in self.trace
+                "%s/%s" % (item.provider, item.availability) for item in self.trace
             )
             or "<none>",
         )
@@ -342,22 +349,38 @@ class ProviderSelector:
             )
         return bool(stale)
 
-    def _record(self, entry: dict[str, object]) -> None:
-        """Merge one trace entry, letting a later record supersede an earlier.
+    def _record(self, step: SelectionStep) -> None:
+        """Record one step, a later one for a provider superseding the earlier.
 
         Ordering follows first appearance, so the trace still reads in
         provider precedence order after a decline rewrites an entry.
         """
-        name = typing.cast(str, entry["provider"])
-        if name in self._attempt_trace:
-            self._attempt_trace[name].update(entry)
-        else:
-            self._attempt_trace[name] = dict(entry)
+        self._attempt_trace[step.provider] = step
 
     @property
-    def trace(self) -> tuple[dict[str, object], ...]:
+    def trace(self) -> tuple[SelectionStep, ...]:
         """The accumulated trace for the operation currently being selected."""
-        return tuple(dict(entry) for entry in self._attempt_trace.values())
+        return tuple(self._attempt_trace.values())
+
+    def _served(self, provider) -> None:
+        """Note that `provider`, chosen by this thread's last selection, carried
+        the operation; reports to `_fallback_hook` when providers ranked above
+        it were skipped as unavailable (a capability skip is routing, not a
+        fallback)."""
+        hook = self._fallback_hook
+        if hook is None:
+            return
+        name = self.redact(provider.name)
+        skipped = []
+        for step in self._attempt_trace.values():
+            if step.provider == name:
+                break
+            if step.availability == "unavailable":
+                skipped.append(step)
+        else:
+            return
+        if skipped:
+            hook(provider, tuple(skipped))
 
     def invalidate(self) -> None:
         """Start a new generation, dropping cached probes and declines."""

@@ -264,6 +264,10 @@ class _CompositePathMixin:
                 excluded.append(provider.name)
                 provider = selector.select(exclude=excluded).provider
                 continue
+            if backend is None:
+                # The selector's fallback hook (a host's audible fallback); a
+                # selector without one ignores it.
+                selector._served(provider)
             # A named backend pins, as `.via(name)` does.
             return cls._from_backend(
                 value,
@@ -436,6 +440,8 @@ class _CompositePathMixin:
         with_provider: bool = False,
         retry_on_not_implemented: bool = False,
     ):
+        # A pinned dispatch was the caller's choice, never a fallback.
+        selected = self._selector is not None and not self._pinned
         candidates = self._providers_in_order(operation, pin=pin)
         attempted = False
         not_implemented: typing.Optional[NotImplementedError] = None
@@ -490,6 +496,12 @@ class _CompositePathMixin:
                     # on every later operation.
                     self._selector.decline(provider.name, str(exc))
                 continue
+            except BaseException:
+                if selected:
+                    self._selector._served(provider)
+                raise
+            if selected:
+                self._selector._served(provider)
             # Reads are intentionally not pinned: the selected backend applies
             # to this operation only and is not retained on the path.
             return (result, provider) if with_provider else result
