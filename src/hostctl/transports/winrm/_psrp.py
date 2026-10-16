@@ -208,9 +208,9 @@ class RunspaceSession:
             str(getattr(config, "auth", "") or "").casefold(), "negotiate"
         )
         encryption = getattr(config, "message_encryption", "auto")
-        if auth == "basic" and not ssl and getattr(config, "allow_cleartext", False):
+        if auth == "basic" and not ssl and getattr(config, "cleartext_auth", False):
             # pypsrp refuses basic over http unless message encryption is
-            # off; the caller opted in with `allow_cleartext`.
+            # off; the caller opted in with `cleartext_auth`.
             encryption = "never"
         kwargs = {
             "server": getattr(config, "host"),

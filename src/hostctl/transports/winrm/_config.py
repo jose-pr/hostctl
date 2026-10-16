@@ -57,7 +57,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     read_timeout: float = 30.0
     provider: WinRMProviderName = "auto"
     #: Opt in to Basic credentials over plain HTTP; see `__post_init__`.
-    allow_cleartext: bool = False
+    cleartext_auth: bool = False
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
@@ -98,11 +98,11 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
         if (
             self.auth in ("basic", "plaintext", "ssl")
             and not self.tls
-            and not self.allow_cleartext
+            and not self.cleartext_auth
         ):
             raise ValueError(
                 f"auth={self.auth!r} over http sends the password in "
-                "cleartext; use tls=True (winrms://) or allow_cleartext=True"
+                "cleartext; use tls=True (winrms://) or cleartext_auth=True"
             )
 
     @property
@@ -130,8 +130,8 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
         )
         if self.provider != "auto":
             query += "&" + urlencode({"provider": self.provider})
-        if self.allow_cleartext:
-            query += "&allow_cleartext=true"
+        if self.cleartext_auth:
+            query += "&cleartext_auth=true"
         authority = uri_host(self.host)
         if self.port is not None:
             from netimps import join_host
@@ -150,7 +150,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
                 "operation_timeout",
                 "read_timeout",
                 "provider",
-                "allow_cleartext",
+                "cleartext_auth",
             },
         )
         if not parsed.hostname or parsed.path not in ("", "/"):
@@ -172,7 +172,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             operation_timeout=_query_float(query, "operation_timeout", 20.0),
             read_timeout=_query_float(query, "read_timeout", 30.0),
             provider=typing.cast(WinRMProviderName, query.get("provider", "auto")),
-            allow_cleartext=_query_bool(query, "allow_cleartext", False),
+            cleartext_auth=_query_bool(query, "cleartext_auth", False),
         )
 
     def _create_host(self):

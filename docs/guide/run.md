@@ -269,7 +269,7 @@ buffered `pywinrm` provider. PSRP `run()` returns the text a console would show
 
 `auth="basic"`, `"plaintext"` or `"ssl"` over plain HTTP sends the password
 in cleartext, so `WinRMConfig` refuses it unless you pass `tls=True` (a
-`winrms://` URI) or `allow_cleartext=True`.
+`winrms://` URI) or `cleartext_auth=True`.
 
 A serial host has two entry points, and they take different first arguments.
 The constructor takes the **device**, the way pyserial names it --

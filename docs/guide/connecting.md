@@ -115,7 +115,7 @@ assert str(same) == str(config)
 | | |
 | --- | --- |
 | URI | `winrm://user@host[:port][?query]` (HTTP), `winrms://...` (HTTPS) |
-| query keys | `auth`, `verify`, `message_encryption`, `operation_timeout`, `read_timeout`, `provider`, `allow_cleartext` |
+| query keys | `auth`, `verify`, `message_encryption`, `operation_timeout`, `read_timeout`, `provider`, `cleartext_auth` |
 | credentials | `password` |
 | extra | `winrm`; `psrp` for runspaces (Python 3.10+); `winrm-credssp`, `winrm-kerberos` for those `auth` values |
 
@@ -134,7 +134,7 @@ assert "secret" not in str(config)
   (`?verify=false`) skips the server certificate check.
 - **Cleartext.** `auth="basic"`, `"plaintext"` or `"ssl"` over plain HTTP
   would send the password in cleartext, so it raises `ValueError` unless
-  `allow_cleartext=True` (`?allow_cleartext=true`). NTLM (the default),
+  `cleartext_auth=True` (`?cleartext_auth=true`). NTLM (the default),
   Kerberos and CredSSP encrypt the message.
 - **No password.** On a Windows client, a config with no password uses the
   current Windows login (native PowerShell remoting); `username` must name that

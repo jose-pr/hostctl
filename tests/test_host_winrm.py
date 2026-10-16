@@ -806,28 +806,28 @@ def test_basic_over_https_and_an_explicit_opt_in_build(transport):
         "host", username="user", password="secret", auth=transport, tls=True
     )
     config = WinRMConfig(
-        "host", username="user", auth=transport, allow_cleartext=True, port=5985
+        "host", username="user", auth=transport, cleartext_auth=True, port=5985
     )
-    assert "allow_cleartext=true" in config.connection_uri
+    assert "cleartext_auth=true" in config.connection_uri
     assert HostConfig(str(config)) == config
-    assert "allow_cleartext" not in WinRMConfig("host", username="user").connection_uri
+    assert "cleartext_auth" not in WinRMConfig("host", username="user").connection_uri
 
 
 @pytest.mark.parametrize(
     ("value", "expected"),
     [("1", True), ("TRUE", True), ("on", True), ("0", False), ("No", False)],
 )
-def test_allow_cleartext_query_is_a_strict_boolean(value, expected):
+def test_cleartext_auth_query_is_a_strict_boolean(value, expected):
     from hostctl.host._config import HostConfig
 
     config = HostConfig(
-        f"winrm://user@host?auth=basic&allow_cleartext={value}"
+        f"winrm://user@host?auth=basic&cleartext_auth={value}"
         if expected
-        else f"winrm://user@host?allow_cleartext={value}"
+        else f"winrm://user@host?cleartext_auth={value}"
     )
-    assert config.allow_cleartext is expected
-    with pytest.raises(ValueError, match="allow_cleartext"):
-        HostConfig("winrm://user@host?allow_cleartext=maybe")
+    assert config.cleartext_auth is expected
+    with pytest.raises(ValueError, match="cleartext_auth"):
+        HostConfig("winrm://user@host?cleartext_auth=maybe")
 
 
 @pytest.mark.parametrize(

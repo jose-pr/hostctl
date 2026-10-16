@@ -450,7 +450,7 @@ Behaviour:
 ## WinRM (`hostctl.transports.winrm`)
 
 ```python
-WinRMConfig(host, *, username, password=None, auth='ntlm', port=None, tls=False, verify=True, message_encryption='auto', operation_timeout=20.0, read_timeout=30.0, provider='auto', allow_cleartext=False)
+WinRMConfig(host, *, username, password=None, auth='ntlm', port=None, tls=False, verify=True, message_encryption='auto', operation_timeout=20.0, read_timeout=30.0, provider='auto', cleartext_auth=False)
 winrm_providers(config) -> tuple[ExecutorProvider, PathProvider]
 ```
 
@@ -461,8 +461,8 @@ are a `CompositeWindowsPath` over the WinRM path backend.
 - `auth` is the scheme (`ntlm`, `kerberos`, `credssp`, `basic`, `plaintext`,
   `ssl`; CredSSP and Kerberos need `winrm-credssp`/`winrm-kerberos`).
   `basic`, `plaintext` or `ssl` over plain HTTP sends the password in
-  cleartext and raises `ValueError` unless `allow_cleartext=True` (URI
-  `?allow_cleartext=true`).
+  cleartext and raises `ValueError` unless `cleartext_auth=True` (URI
+  `?cleartext_auth=true`).
 - `tls=True` is HTTPS; `verify=False` (`?verify=false`) skips the server
   certificate check. `str(config)` omits an unset port.
 - The timeouts are float seconds, rounded up where a leg needs whole seconds.

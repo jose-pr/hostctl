@@ -376,7 +376,7 @@ def test_psrp_ssl_transport_is_basic_over_https(real_pypsrp):
     transport._build_session()
 
 
-def test_psrp_allow_cleartext_turns_message_encryption_off(real_pypsrp, monkeypatch):
+def test_psrp_cleartext_auth_turns_message_encryption_off(real_pypsrp, monkeypatch):
     from hostctl.transports.winrm._config import WinRMConfig
     import pypsrp.wsman
 
@@ -389,7 +389,7 @@ def test_psrp_allow_cleartext_turns_message_encryption_off(real_pypsrp, monkeypa
 
     monkeypatch.setattr(pypsrp.wsman, "WSMan", spy)
     config = WinRMConfig(
-        "h", username="u", password="p", auth="basic", allow_cleartext=True, tls=False
+        "h", username="u", password="p", auth="basic", cleartext_auth=True, tls=False
     )
     RunspaceSession(config)._make_pool()
     assert built[0]["encryption"] == "never"

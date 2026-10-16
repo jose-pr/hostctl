@@ -30,6 +30,7 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `SSHShellSelection`, `QEMUShellSelection`, `ContainerShellSelection`, `*PathSelection`, `PathnameConstructor` | `hostctl.host.ShellSelection`, `hostctl.host.PathnameSelection` |
 | `ContainerConfig(user=)` (`?user=`); `SerialConfig(port=, protocol=)`; `SerialConsoleProtocol` | `username=` (`?username=`); `device=`, `profile=`; `ConsoleProfile` |
 | `WinRMConfig(transport=, ssl=, server_cert_validation=, operation_timeout_sec=, read_timeout_sec=)` (and the same URI keys) | `auth=`, `tls=`, `verify=` (bool, `?verify=false`), `operation_timeout=`, `read_timeout=` (float s) |
+| `WinRMConfig(transport="basic"/"plaintext"/"ssl")` over plain HTTP (the password sent in cleartext on pywinrm) | `ValueError` unless `cleartext_auth=True` (`?cleartext_auth=true`); or use `tls=True` |
 | positional config arguments after the first | keyword-only (`TypeError` otherwise) |
 | `ExecutorCommand`; `executor.PathLike`, `Input`, `Environment`, `FileHandle` | `CommandLike`; `StrPath`, `CommandInput`, `CommandEnvironment`, `StreamTarget` |
 | `pypsrp_available()`, `require_pypsrp()` | `has_psrp()` (and new `has_ssh()`); the guard is internal |
@@ -618,7 +619,7 @@ collection until pytruenas ports to these names.
   - **Breaking, 0.4.0**: a local `Exec` of a batch file raises `ValueError`
     when the program path contains `"` or `%`.
 - **`WinRMConfig` refuses `transport` `basic`, `plaintext` or `ssl` over plain
-  HTTP** unless `allow_cleartext=True` (URI query `allow_cleartext=true`), on
+  HTTP** unless `cleartext_auth=True` (URI query `cleartext_auth=true`), on
   both the pywinrm and PSRP legs. They sent the password in cleartext on
   pywinrm. This ships in 0.4.0.
 - **A PowerShell native argument `--%` raises `ValueError`.** PowerShell reads
