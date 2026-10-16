@@ -86,9 +86,11 @@ not only spelling:
   PSRP command past 30 s now raises `TimeoutExpired` where it used to run
   unbounded.
 - **SSH defaults changed.** `username=None` is the local account, not
-  `root`; neither leg reads `~/.ssh/config` unless `ssh_config=` names one;
-  a relative `host.path()` is the login directory; `connect()` raises
-  `OperationNotStartedError` when no provider connected.
+  `root`; the connection reads no `~/.ssh/config` unless `ssh_config=` names
+  one; a relative `host.path()` is the login directory; `connect()` raises
+  `OperationNotStartedError` when no provider connected; commands and paths
+  share one connection and one login, so a server's per-connection limits
+  and authentication logs see one where they saw two.
 - **Removed constructors.** `PosixHost.from_ssh()`/`WindowsHost.from_winrm()`
   are `config.open()`; `WinRMPath` and `HostPath` leave `hostctl`.
 - **Logger names.** A logging configuration naming `hostctl.host.ssh`,

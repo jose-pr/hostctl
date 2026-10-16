@@ -202,7 +202,8 @@ What each piece does:
   `PosixHost` does not learn `api`; a subclass may add names or hide one by
   mapping it to `None`. `_ssh` is reached by both `ssh` and `sftp` and runs
   once per host, so the two providers `ssh_providers()` returns share one
-  transport; building them separately would open two connections.
+  transport and one connection; building them separately would open two
+  connections.
 - `default_providers()` is the order used when the config names no
   descriptors (this config never does). A default `ssh`/`sftp` is dropped
   when the `ssh` extra is not installed. Further providers follow in order: a

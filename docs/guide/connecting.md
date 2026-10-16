@@ -153,9 +153,13 @@ assert str(same) == str(config)
   them names the trusted keys. `verify=False` (`?verify=false`) is the one
   way to skip the check: it replaces the usual lookup, while a `known_hosts`
   you name is still checked. `known_hosts=None` raises, and so does an
-  `ssh_config` with `UserKnownHostsFile none` unless `verify=False`. The exec
-  and SFTP connections verify the same way.
-- **ssh_config.** Neither connection reads `~/.ssh/config` unless
+  `ssh_config` with `UserKnownHostsFile none` unless `verify=False`.
+- **One connection.** Commands and paths share one connection and one login,
+  opened by whichever comes first (building an absolute path connects
+  nothing); paths open SFTP channels on it, so every setting here applies
+  once. After `close()` the next use opens a new one, and a path taken
+  before `close()` keeps working on it.
+- **ssh_config.** The connection reads no `~/.ssh/config` unless
   `ssh_config=` names a file. It cannot come from a URI, because a
   `ProxyCommand` starts a local process.
 - **Timeouts.** `timeout.connect` (default 30 s) bounds connecting only:
