@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import abc as _abc
 import dataclasses as _dc
+import inspect as _inspect
 import importlib.metadata as _metadata
 import re as _re
 import subprocess as _subprocess
@@ -377,15 +378,62 @@ def parse_credentials(password: str) -> _ty.Tuple[str, _ty.Dict[str, str]]:
     return password, extras
 
 
+_T = _ty.TypeVar("_T")
+
+if _ty.TYPE_CHECKING:
+    # A checker that sees `HostConfig`/`Host` as abstract rejects the
+    # dispatching `HostConfig(uri)` call; the abstract-method check is the
+    # runtime's, which refuses to build an incomplete subclass.
+    def _abstract(function: _T) -> _T:
+        return function
+
+else:
+    _abstract = _abc.abstractmethod
+
+#: What `HostConfig(...)` and `Host(...)` themselves accept.
+_DISPATCH_SIGNATURE = _inspect.Signature(
+    [
+        _inspect.Parameter(
+            "connection_string",
+            _inspect.Parameter.POSITIONAL_ONLY,
+            annotation="str",
+        ),
+        _inspect.Parameter("secrets", _inspect.Parameter.VAR_KEYWORD, annotation="str"),
+    ]
+)
+
+
+def _constructor_signature(cls: type, base: type) -> _inspect.Signature:
+    """The signature `inspect.signature(cls)` reports through a dispatching
+    metaclass: the dispatch form for the base, `__init__` minus `self` for a
+    subclass, and a `__signature__` the class sets itself, as it is."""
+    own = cls.__dict__.get("__signature__")
+    if isinstance(own, _inspect.Signature):
+        return own
+    if cls is base:
+        return _DISPATCH_SIGNATURE
+    init = _inspect.signature(cls.__init__)
+    parameters = list(init.parameters.values())[1:]
+    return init.replace(
+        parameters=parameters, return_annotation=_inspect.Signature.empty
+    )
+
+
 class _HostConfigMeta(_abc.ABCMeta):
-    def __call__(cls, *args: object, **options: object) -> HostConfig:
+    # The return type is the class called, not `HostConfig`, so a checker
+    # types a subclass call as that subclass and checks its keywords.
+    def __call__(cls: _ty.Type[_T], *args: _ty.Any, **options: _ty.Any) -> _T:
         if cls is HostConfig:
             if len(args) != 1 or not isinstance(args[0], str):
                 raise TypeError(
                     "HostConfig() requires one connection string positional argument"
                 )
-            return cls._from_uri(args[0], **options)
-        return super().__call__(*args, **options)
+            return _ty.cast(_T, HostConfig._from_uri(args[0], **options))
+        return _ty.cast(_T, type.__call__(cls, *args, **options))
+
+    @property
+    def __signature__(cls) -> _inspect.Signature:
+        return _constructor_signature(cls, HostConfig)
 
 
 class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
@@ -419,7 +467,17 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
     _opened_host: _ty.Optional["Host"] = None
     _lifecycle_lock: _ty.Optional["_threading.Lock"] = None
 
-    def __init__(self) -> None:
+    # The second overload is the dispatch form `HostConfig(uri, **secrets)`,
+    # which the metaclass serves; a subclass calls `super().__init__()`.
+    @_ty.overload
+    def __init__(self) -> None: ...
+
+    @_ty.overload
+    def __init__(self, connection_string: str, /, **secrets: str) -> None: ...
+
+    def __init__(self, *args: object, **secrets: object) -> None:
+        if args or secrets:
+            raise TypeError("HostConfig.__init__() takes no arguments")
         self._opened_host: _ty.Optional[Host] = None
         self._lifecycle_lock = _threading.Lock()
 
@@ -491,17 +549,19 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         return self.connection_uri
 
     @property
-    @_abc.abstractmethod
+    @_abstract
     def connection_uri(self) -> str:
         """Credential-safe canonical connection URI."""
+        raise NotImplementedError
 
-    @_abc.abstractmethod
+    @_abstract
     def _create_host(self) -> Host:
         """Create the operational host represented by this configuration.
 
         Documented override point: implement it in a subclass, and reach it
         through :meth:`open` or ``with config as host``.
         """
+        raise NotImplementedError
 
     def open(self) -> Host:
         """Return a host context manager for this configuration."""
@@ -794,15 +854,19 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
 
 
 class _HostMeta(_abc.ABCMeta):
-    def __call__(cls, *args: object, **options: object) -> Host:
+    def __call__(cls: _ty.Type[_T], *args: _ty.Any, **options: _ty.Any) -> _T:
         if cls is Host:
             if len(args) != 1 or not isinstance(args[0], str):
                 raise TypeError(
                     "Host() requires one connection string positional argument"
                 )
             config = HostConfig._from_uri(args[0], **options)
-            return config._create_host()
-        return super().__call__(*args, **options)
+            return _ty.cast(_T, config._create_host())
+        return _ty.cast(_T, type.__call__(cls, *args, **options))
+
+    @property
+    def __signature__(cls) -> _inspect.Signature:
+        return _constructor_signature(cls, Host)
 
 
 class _HostExecutor:
@@ -842,6 +906,17 @@ class Host(_abc.ABC, metaclass=_HostMeta):
     """Protocol-independent operational interface to a machine."""
 
     config: HostConfig
+
+    # The second overload is the dispatch form `Host(uri, **secrets)`, which
+    # the metaclass serves; a subclass calls `super().__init__()`.
+    @_ty.overload
+    def __init__(self) -> None: ...
+
+    @_ty.overload
+    def __init__(self, connection_string: str, /, **secrets: str) -> None: ...
+
+    def __init__(self, *args: object, **secrets: object) -> None:
+        super().__init__(*args, **secrets)
 
     @property
     def scheme(self) -> str:
@@ -928,13 +1003,15 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         return getattr(selector, "trace", ())
 
     @property
-    @_abc.abstractmethod
+    @_abstract
     def capabilities(self) -> _ty.FrozenSet[str]:
         """Operations supported by this host."""
+        raise NotImplementedError
 
-    @_abc.abstractmethod
+    @_abstract
     def info(self) -> HostInfo:
         """Return normalized system information without inferred values."""
+        raise NotImplementedError
 
     def connect(self) -> None:
         """Open transport resources; local/default implementations are no-op."""

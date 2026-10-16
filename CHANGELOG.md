@@ -252,6 +252,11 @@ Every row ships in 0.4.0. No old name is kept as an alias.
 
 ### Fixed
 
+- Config and host constructors report their real parameters to type
+  checkers, `help()` and `inspect.signature()`: `SshConfig("h")` is an
+  `SshConfig` to a checker, which flags a misspelled keyword, and
+  `HostConfig(uri)`/`Host(uri)` show `(connection_string, /, **secrets)`.
+  This ships in 0.4.0.
 - `hostctl ls` escapes control characters, backslashes and undecodable bytes
   in names, so a name can no longer forge listing lines or send terminal
   escape sequences, and an undecodable name no longer raises.
