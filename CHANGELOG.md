@@ -31,6 +31,8 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `ContainerConfig(user=)` (`?user=`); `SerialConfig(port=, protocol=)`; `SerialConsoleProtocol` | `username=` (`?username=`); `device=`, `profile=`; `ConsoleProfile` |
 | `WinRMConfig(transport=, ssl=, server_cert_validation=, operation_timeout_sec=, read_timeout_sec=)` (and the same URI keys) | `auth=`, `tls=`, `verify=` (bool, `?verify=false`), `operation_timeout=`, `read_timeout=` (float s) |
 | `WinRMConfig(transport="basic"/"plaintext"/"ssl")` over plain HTTP (the password sent in cleartext on pywinrm) | `ValueError` unless `cleartext_auth=True` (`?cleartext_auth=true`); or use `tls=True` |
+| native WinRM: `read_timeout_sec=` raised so a long command could finish (it was the command's deadline) | `timeout=` (default 30 s, `None` for none), the default for `run(timeout=)` on every leg; `read_timeout` is per request |
+| pywinrm and PSRP commands with no deadline; `run(timeout=)` refused | `timeout=30.0` applies; pass `timeout=None` to keep them unbounded; `run(timeout=)` is accepted |
 | positional config arguments after the first | keyword-only (`TypeError` otherwise) |
 | `ExecutorCommand`; `executor.PathLike`, `Input`, `Environment`, `FileHandle` | `CommandLike`; `StrPath`, `CommandInput`, `CommandEnvironment`, `StreamTarget` |
 | `pypsrp_available()`, `require_pypsrp()` | `has_psrp()` (and new `has_ssh()`); the guard is internal |
@@ -69,8 +71,9 @@ collection until pytruenas ports to these names.
   provider needs the flavour's status epilogue (not when it declares
   `manages_status`). `shell_flavour_names()` (also in `hostctl`) lists the
   names `shell_flavour()` accepts, plugin flavours included.
-- `run(timeout=)` on the native WinRM leg; it overrides `read_timeout_sec` as
-  the total deadline for that call.
+- `run(timeout=)` on every WinRM leg, with `WinRMConfig(timeout=30.0)` (URI
+  `?timeout=`, empty for `None`) as its default, and
+  `RunspaceSession.invoke(timeout=)`. This ships in 0.4.0.
 - `pathapi.protocols.supports(path, Protocol)` answers for a host path. A
   composed host's path answers from the operations its providers declare
   (only the pinned provider after `.via()`), without probing; a container path
@@ -124,6 +127,17 @@ collection until pytruenas ports to these names.
   `utime(path, *, atime=None, mtime=None)`.
 
 ### Changed
+
+- **Breaking, 0.4.0: `WinRMConfig(timeout=30.0)` is the default for
+  `run(timeout=)` on every WinRM leg, and `read_timeout` is per request
+  on every leg.** The native leg used
+  `read_timeout_sec` as each command's total deadline; it now uses `timeout`
+  (default 30 s), and `read_timeout` bounds opening the remote session
+  (`New-PSSessionOption -OpenTimeout`). pywinrm and PSRP had no deadline and
+  refused `run(timeout=)`; both now apply `timeout` too, so a command running
+  past 30 s raises `TimeoutExpired` (`orphaned=True`, after asking the server
+  to stop it) where it used to finish. Pass `timeout=None` for no default, or
+  `run(timeout=)` per call. See "Migrating from 0.3".
 
 - **Breaking, 0.4.0: `host.path(p, backend=name)` pins the path to that
   provider**, as `.via(name)` does: every operation on it and on every path
