@@ -1,16 +1,16 @@
-"""The root parser: six subcommands under one program name."""
+"""The root parser: seven subcommands under one program name."""
 
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 
 from duho import AUTO, Cli
 
-from ..exceptions import OperationNotStartedError
+from ._status import ERRORS, EXIT_CODES, describe
 from .cat import Cat
 from .cp import Cp
+from .deploy import Deploy
 from .info import Info
 from .ls import Ls
 from .run import Run
@@ -45,31 +45,10 @@ exit status:
   130  interrupted
 """
 
-#: The first `isinstance` match wins, so both OSError subclasses come before
-#: OSError itself.
-_ERRORS = {
-    subprocess.TimeoutExpired: 125,
-    PermissionError: 126,
-    FileNotFoundError: 127,
-    # Raised only before anything was sent: the host was never reached.
-    OperationNotStartedError: 125,
-    ConnectionError: 125,
-    OSError: 125,
-    ValueError: 125,
-    NotImplementedError: 125,
-}
-
-_PREFIXES = (
-    (subprocess.TimeoutExpired, "timed out: "),
-    (PermissionError, "permission denied: "),
-    (FileNotFoundError, "not found: "),
-)
-
 
 def _report(message: str, code: int, error: BaseException) -> None:
     """One `hostctl: ...` line on stderr, naming the kind of failure."""
-    prefix = next((text for kind, text in _PREFIXES if isinstance(error, kind)), "")
-    print(f"hostctl: {prefix}{message}", file=sys.stderr)
+    print(f"hostctl: {describe(message, error)}", file=sys.stderr)
 
 
 class Hostctl(Cli):
@@ -78,16 +57,11 @@ class Hostctl(Cli):
     _parsername_ = "hostctl"
     _version_ = AUTO
     _distribution_ = "hostctl"
-    _subcommands_ = [Run, Ls, Cat, Cp, Info, Shell]
+    _subcommands_ = [Run, Ls, Cat, Cp, Info, Shell, Deploy]
     _help_formatter_ = argparse.RawDescriptionHelpFormatter
-    _errors_ = _ERRORS
+    _errors_ = ERRORS
     _report_error_ = staticmethod(_report)
-    _exit_codes_ = {
-        125: "connection, timeout, usage, or an unsupported operation",
-        126: "permission denied",
-        127: "not found",
-        130: "interrupted",
-    }
+    _exit_codes_ = EXIT_CODES
 
     @classmethod
     def _initparser_(cls, parser, **kwargs):

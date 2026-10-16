@@ -1519,7 +1519,7 @@ built on `duho`; install `hostctl[cli]`. Without the extra it raises
 `SystemExit` naming it. `hostctl.cli` is not library API: `import hostctl`
 never imports it, and it is absent from `hostctl.__all__`. Each subcommand is
 a class in its own module (`hostctl.cli.cat.Cat`, `.cp.Cp`, `.info.Info`,
-`.ls.Ls`, `.run.Run`, `.shell.Shell`).
+`.ls.Ls`, `.run.Run`, `.shell.Shell`, `.deploy.Deploy`).
 
 ```console
 hostctl run local: -- python -c "print('hello')"
@@ -1528,6 +1528,7 @@ hostctl ls ssh://server /etc
 hostctl cat ssh://server /etc/os-release
 hostctl cp ./artifact ssh://server:/tmp/artifact
 hostctl shell ssh://server
+hostctl deploy ssh://server mytool /opt/mytool.pyz -- --version
 ```
 
 - The program after `run` follows `--`; it runs directly, without a shell.
@@ -1535,6 +1536,15 @@ hostctl shell ssh://server
   characters escaped (`\x1b`, `\u2028`); an undecodable byte is `\xNN`.
 - `cp` operands are `URI:PATH` or a local path; the colon before the path is
   required even after a port (`ssh://host:2222:/x`).
+- `deploy URI SOURCE PATH` is `hostctl.deploy.deploy()` (needs the `deploy`
+  extra too): `--mode pyz|dir`, `--package`, `--extra` and `--skip`
+  (repeatable), `--force`, `--python`; `--tree` makes SOURCE a directory
+  (`SourceTree`) with `--ignore-file`, `--ignore-pattern` and `--pythonpath`
+  (repeatable). Without `--` it prints `deployed PATH DIGEST12` or `current
+  PATH DIGEST12`; arguments after `--` run the installed program, whose
+  output and exit status become the command's. `BundleError`, a foreign
+  `PATH` and a failed step on the host (`CalledProcessError`, reported with
+  its last stderr line) exit 125.
 - Each subcommand takes `--ask-password`, `-v`/`-q` and `--loglevel`; the
   root takes `--version`. `--ask-password` is refused in a tool call.
 - Exit status: `run` returns the remote command's own status; the command
@@ -1543,8 +1553,9 @@ hostctl shell ssh://server
   A parser usage error is 2. An unreachable host is 125 for every subcommand,
   `info` included.
 - Under `HOSTCTL_MCP=stdio` every subcommand is an MCP tool (`hostctl.run`,
-  `.ls`, `.cat`, `.cp`, `.info`, `.shell`); `run`'s program is the tool
-  argument `"--"`. A tool call has no stdin, so `shell` there sends nothing.
+  `.ls`, `.cat`, `.cp`, `.info`, `.shell`, `.deploy`); `run`'s program and
+  `deploy`'s arguments are the tool argument `"--"`. A tool call has no
+  stdin, so `shell` there sends nothing.
 
 ## Environment variables
 

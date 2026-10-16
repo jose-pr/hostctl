@@ -257,7 +257,8 @@ def test_every_command_is_an_mcp_tool():
     names = {tool["name"] for tool in duho_mcp.describe_tools(Hostctl)}
 
     assert names == {
-        f"hostctl.{name}" for name in ("run", "ls", "cat", "cp", "info", "shell")
+        f"hostctl.{name}"
+        for name in ("run", "ls", "cat", "cp", "info", "shell", "deploy")
     }
 
 

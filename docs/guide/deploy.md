@@ -131,6 +131,18 @@ bundle("mytool", "dist/mytool", mode="dir")         # lib/ and bin/mytool
 With no target to ask, the whole closure ships, markers evaluated for the
 interpreter running `bundle()`.
 
+## From the command line
+
+`hostctl deploy URI SOURCE PATH` does the same with the `cli` extra
+installed as well; arguments after `--` run what it installed:
+
+```console
+hostctl deploy ssh://admin@nas.example mytool /opt/mytool.pyz -- --version
+hostctl deploy ssh://nas . /opt/mytool --tree --mode dir --package mytool
+```
+
+The options are in the [command-line guide](cli.md).
+
 ## Limits
 
 - The target must be POSIX, with `mv`, `rm`, `mkdir`, `chmod` and a `tar`

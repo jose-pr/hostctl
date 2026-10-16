@@ -12,6 +12,7 @@ hostctl ls ssh://server /etc
 hostctl cat ssh://server /etc/os-release
 hostctl cp ./artifact ssh://server:/tmp/artifact
 hostctl shell ssh://server
+hostctl deploy ssh://server mytool /opt/mytool.pyz -- --version
 ```
 
 `run` runs the program after `--` directly, without a shell, and returns the
@@ -67,6 +68,29 @@ Output stops when the session ends, not when a read comes back empty: a serial
 line answers `b""` whenever its read timeout expires and the device has simply
 said nothing.
 
+`deploy URI SOURCE PATH` installs the distribution SOURCE, with what the
+host's `python3` lacks of its dependencies, at the absolute PATH on the host;
+it needs the `deploy` extra as well as `cli`, and the host must be POSIX.
+`--mode dir` installs a tree with a `bin/PACKAGE` launcher instead of one
+zipapp file; `--package` names the import package when it is not SOURCE with
+`-` as `_`; `--extra` and `--skip` add an extra or leave out a distribution
+(repeatable); `--python` names the host's interpreter; `--force` writes even
+an unchanged bundle. `--tree` makes SOURCE a working directory shipped as it
+is, filtered by its ignore files (`--ignore-file`, `--ignore-pattern`,
+`--pythonpath`; `--mode dir` only). Without `--`, it prints one line,
+`deployed PATH DIGEST` or `current PATH DIGEST` when nothing needed writing.
+Arguments after `--` run the installed program, and its output and status
+become the command's:
+
+```console
+hostctl deploy ssh://nas mytool /opt/mytool --mode dir -- status --json
+```
+
+A PATH that exists and was not written by a deploy is refused (125), as is a
+bundle that cannot be built (a compiled extension, for instance) and a step
+that fails on the host, whose last stderr line is in the message. What the
+command does, step by step, is in [Deploying Python](deploy.md).
+
 A `serial:` URI is **session-only from the CLI**. `shell` and `info` work;
 `run`, `ls`, `cat` and `cp` do not, because a framed `run()` needs a console
 profile (prompt, login, status marker) and there is no URI spelling for one --
@@ -77,14 +101,20 @@ that needs framing through the library, not the CLI.
 
 With `HOSTCTL_MCP=stdio` in its environment, `hostctl` serves every subcommand
 as an MCP tool over stdio instead of running one: `hostctl.run`, `hostctl.ls`,
-`hostctl.cat`, `hostctl.cp`, `hostctl.info` and `hostctl.shell`, each with a
-schema generated from its options.
+`hostctl.cat`, `hostctl.cp`, `hostctl.info`, `hostctl.shell` and
+`hostctl.deploy`, each with a schema generated from its options.
 
 ```json
 {"command": "hostctl", "env": {"HOSTCTL_MCP": "stdio"}}
 ```
 
-- `run` takes its program and arguments as the tool argument `"--"`, an array.
+- `run` takes its program and arguments as the tool argument `"--"`, an array;
+  so does `deploy` for the arguments of the program it installed.
+- `deploy` is served like the rest: it needs no terminal, and it lets a tool
+  caller do nothing `cp` (upload a file from the server's machine) and `run`
+  (execute it) do not already. A tool caller can make the server bundle any
+  distribution installed in its environment, or any directory it can read
+  with `tree`, and install it on any host it can reach.
 - A failure is an error result naming the exit status, so 125, 126 and 127 stay
   distinguishable.
 - A tool call cannot prompt, so `--ask-password` is refused; put

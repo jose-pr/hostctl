@@ -74,6 +74,15 @@ collection until pytruenas ports to these names.
   from `hostctl`. The code and its tests come from pytruenas's generic
   bundler, which knew nothing of TrueNAS.
 
+- **`hostctl deploy URI SOURCE PATH [-- ARG...]`**, the command-line form
+  of `hostctl.deploy` (`--mode`, `--package`, `--extra`, `--skip`,
+  `--force`, `--python`, and `--tree` with `--ignore-file`,
+  `--ignore-pattern`, `--pythonpath`). Arguments after `--` run the
+  installed program and its status becomes the command's. Served over MCP
+  like every subcommand. A `BundleError` and a step that fails on the host
+  (`subprocess.CalledProcessError`, from any subcommand) exit 125 with one
+  line, the step's last stderr line included.
+
 - **Typed selection records, a host name and an audible fallback**, in
   0.4.0. `SelectionStep` and `ProviderDetail` (in `hostctl` and
   `hostctl.provider`) replace the dicts in traces and `provider_details`.
