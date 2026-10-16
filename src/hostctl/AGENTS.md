@@ -808,7 +808,9 @@ its enabled command list.
   raises `QGAProtocolError` (see "Exceptions").
 - An injected `serial_console` adds the `serial` capability and
   `open_serial()`: a raw, exclusive console with no shell or status claim;
-  `encoding=` makes it read and write `str`.
+  `encoding=` makes it read and write `str`. To run commands on a guest
+  shell there, drive the byte-mode process with a console profile:
+  `PosixConsoleProfile().execute(console_stream(guest.open_serial()), ...)`.
 
 ```python
 GuestPathHelper.stat(path, *, follow_symlinks=True)
@@ -883,8 +885,11 @@ value. `inter_byte_timeout` is pyserial's own, separate field.
 
 - `run()` frames each command as its own profile exchange, only when the
   profile advertises it; it refuses a structured (argv) command (the host
-  names no shell flavour), and `stdin=`, `bufsize=` and `input=`. Streams are
-  merged; there is no path or PTY.
+  names no shell flavour) and `bufsize=`. With a profile that has `execute`
+  (`PosixConsoleProfile`), `input=` (one command only) or a `stdin=` stream,
+  read to its end, is the command's stdin, and stderr is separate unless
+  `stderr=subprocess.STDOUT`; any other profile refuses `stdin=`/`input=`
+  and merges the streams (`stderr` is `None`). There is no path or PTY.
 - `spawn()` reads `bytes` unless `encoding=`/`errors=` asks for text.
 - Negotiation is cached against the transport it ran on, so
   `host.executor.close()` forces a fresh login. Closing the host or the
@@ -951,6 +956,42 @@ ConsoleProfile.send(stream, command)
   custom profile implements (`can_run`, `line_terminator`, `encoding` and the
   three methods). A timed-out `run` raises `TimeoutError` carrying the
   transcript so far as `.output`.
+
+```python
+PosixConsoleProfile(*, login=(), login_timeout=10.0, wakeup=b'\n', read_size=4096)
+PosixConsoleProfile.execute(stream, command, *, input=None, merge_stderr=False, timeout=None, on_stdout=None, on_stderr=None) -> tuple[bytes, bytes, int]
+```
+
+**`PosixConsoleProfile` is the profile to use for a POSIX shell's console**
+(a Linux serial getty, a QEMU guest console, a container TTY, a web shell).
+It never reads the echo: the command and its input are typed as base64
+inside fixed shell syntax, so a ^C, TAB, `!` or newline in them is data;
+stdout, stderr and the exit status come back between markers the shell
+prints, each typed in two quoted halves so the echo can never contain one;
+`stty -opost` makes the output exactly the program's bytes, and the
+terminal's settings are restored afterwards.
+
+- Needs sh-compatible syntax (sh, dash, bash, zsh, busybox ash, ksh) and
+  `base64`, `mktemp`, `stty`, `cat`, `rm`. The command runs through `eval`
+  in the console's own shell: `cd` and variables persist, and `exit` ends
+  the session (the next read raises `ConnectionError`).
+- `negotiate()` writes `wakeup`, runs the `login=` steps (as
+  `PromptConsoleProfile`'s, each bounded by `login_timeout`), then a framed
+  `:`; no answer within `login_timeout` raises `TimeoutError`, a non-zero
+  status `ConsoleProtocolError`.
+- `execute()` returns `(stdout, stderr, status)`. `input` (bytes or `str`)
+  is the whole of stdin, delivered through a temporary file; without it
+  stdin is `/dev/null`, so a command that reads stdin gets EOF instead of
+  waiting on the terminal. `merge_stderr=True` is `2>&1`. `on_stdout` gets
+  stdout as it arrives; stderr is delivered when the command ends. `run()`
+  is `execute(merge_stderr=True)` without its stderr.
+- Every typed line is under 1 KiB, and at most 2 KiB is typed before the
+  shell acknowledges it, so neither a minimal line editor nor a serial
+  line's input queue loses a byte. A stream failure before the command line
+  is typed raises `OperationNotStartedError` (nothing ran).
+- On `timeout` it types ^C, which interrupts the command and discards the
+  rest of the line, and raises `TimeoutError` with `.output` and `.stderr`
+  so far; that command's temporary directory is left behind.
 
 ## Shells (`hostctl.shell`)
 

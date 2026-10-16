@@ -102,6 +102,20 @@ collection until pytruenas ports to these names.
   container or SSH `spawn(terminal=True)`) by reading it on a thread, so a
   profile can drive those consoles too. A serial `spawn()` session's `read`
   takes `timeout=`.
+- **`PosixConsoleProfile`: framed commands on a POSIX shell's console**, in
+  0.4.0, and the profile to use wherever the far end is a POSIX shell. The
+  command and its input are typed base64-encoded inside fixed syntax, so a
+  ^C, TAB, `!` or newline in them is data; output, stderr and the exit
+  status come back between markers the echo can never contain, as the
+  program's exact bytes (`stty -opost`). stdin is a temporary file or
+  `/dev/null`, never the terminal, so a command reading stdin cannot hang;
+  a timeout types ^C, which discards the rest of the command line.
+  `execute(stream, command, *, input=, merge_stderr=, timeout=, on_stdout=,
+  on_stderr=)` returns `(stdout, stderr, status)`. `SerialHost.run()` with
+  it accepts `input=` and a `stdin=` stream and returns stderr separately.
+  Typed lines stay under 1 KiB and at most 2 KiB is typed before the shell
+  acknowledges it, so busybox's line editor and a serial line's input queue
+  lose nothing.
 
 - **Typed selection records, a host name and an audible fallback**, in
   0.4.0. `SelectionStep` and `ProviderDetail` (in `hostctl` and

@@ -43,6 +43,7 @@ from .console import (
     ConsoleProfile as ConsoleProfile,
     ConsoleStream as ConsoleStream,
     LoginStep as LoginStep,
+    PosixConsoleProfile as PosixConsoleProfile,
     PromptConsoleProfile as PromptConsoleProfile,
     RawConsoleProfile as RawConsoleProfile,
     console_stream as console_stream,
@@ -202,6 +203,7 @@ __all__ = [
     "ConsoleStream",
     "RawConsoleProfile",
     "PromptConsoleProfile",
+    "PosixConsoleProfile",
     "LoginStep",
     "console_stream",
     # Provider composition

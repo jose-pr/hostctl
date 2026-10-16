@@ -286,7 +286,7 @@ its `SSHConfig`'s `timeout.connect`.
 | extra | `serial` (unless a port is injected) |
 
 ```python
-from hostctl import HostConfig, PromptConsoleProfile, SerialConfig
+from hostctl import HostConfig, PosixConsoleProfile, PromptConsoleProfile, SerialConfig
 
 windows_port = HostConfig("serial:///COM3?baudrate=9600")
 posix_port = HostConfig("serial:///dev/ttyUSB0")
@@ -294,14 +294,23 @@ assert posix_port.device == "/dev/ttyUSB0"
 assert windows_port.device == "COM3"
 network_port = SerialConfig("rfc2217://console.example:4001")
 
-with_login = SerialConfig(
+linux_console = SerialConfig(
     "COM3",
+    profile=PosixConsoleProfile(login=[("login: ", "root"), ("Password: ", "secret")]),
+)
+switch_console = SerialConfig(
+    "COM4",
     profile=PromptConsoleProfile(
-        "$ ",
-        login=[("login: ", "admin"), ("Password: ", "secret")],
+        "switch# ",
+        login=[("Username: ", "admin"), ("Password: ", "secret")],
     ),
 )
 ```
+
+A Linux or other POSIX shell on the line takes `PosixConsoleProfile`, which
+frames output, stderr and the exit status without reading the echo; a network
+device's console takes `PromptConsoleProfile` (see
+[Running commands](run.md)).
 
 The device reads the way a `file:` URI's path does (RFC 8089):
 `serial:///dev/ttyUSB0` and `serial:/dev/ttyUSB0` are `/dev/ttyUSB0`. A

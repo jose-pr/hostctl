@@ -15,8 +15,11 @@ from ...executor import (
     CommandEnvironment,
     StreamTarget,
     CommandInput,
+    _read_stdin,
     capture_streams,
     dispatch_output,
+    normalize_input,
+    reject_stdin_conflict,
     expired,
     wants_text,
     StrPath,
@@ -404,7 +407,8 @@ class SerialHost(Host):
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
         timeout = _call_timeout(self.config, timeout)
-        if not self.config.profile.can_run:
+        profile = self.config.profile
+        if not profile.can_run:
             raise NotImplementedError(
                 "serial console profile does not provide reliable run()"
             )
@@ -416,9 +420,13 @@ class SerialHost(Host):
             raise NotImplementedError("serial consoles do not accept executable")
         if cwd is not None or env is not None:
             raise NotImplementedError("serial console profile does not support cwd/env")
-        if input is not None:
+        # A profile with `execute` (`PosixConsoleProfile`) frames stdin and
+        # stderr of its own; any other one has a single merged stream.
+        execute = getattr(profile, "execute", None)
+        framed = callable(execute)
+        if not framed and input is not None:
             raise NotImplementedError("serial framed run does not support stdin input")
-        if stdin is not None:
+        if not framed and stdin is not None:
             # Accepted and dropped, this looked like a second way to feed a
             # command -- while `input=` right above refuses explicitly.
             raise NotImplementedError(
@@ -442,14 +450,32 @@ class SerialHost(Host):
                     "the command as text, spelled the way the device expects"
                 )
             rendered.append(str(value))
+        data = None
+        if framed:
+            reject_stdin_conflict(input, stdin)
+            if stdin is not None:
+                # The terminal is never the command's stdin: a stream is read
+                # to its end here and travels as input.
+                input = _read_stdin(stdin, encoding=encoding, errors=errors)
+            data = normalize_input(
+                input, text_mode=False, encoding=encoding, errors=errors
+            )
+            if data is not None and len(rendered) > 1:
+                raise NotImplementedError(
+                    "serial run sends input= to one command; run them separately"
+                )
+        output_stream, error_stream = capture_streams(capture_output, stdout, stderr)
+        merge = not framed or error_stream == subprocess.STDOUT
+        text_mode = wants_text(text, encoding, errors)
         self.connect()
         process = self._executor.open()
         deadline = None if timeout is None else time.monotonic() + timeout
         outputs = []
+        error_outputs = []
         returncode = 0
         command = rendered[0] if len(rendered) == 1 else list(rendered)
         try:
-            for index, single in enumerate(rendered):
+            for single in rendered:
                 remaining = (
                     None if deadline is None else max(0.0, deadline - time.monotonic())
                 )
@@ -459,50 +485,70 @@ class SerialHost(Host):
                     # as a single malformed command rather than two -- and a
                     # profile that frames status per exchange could only
                     # report one status for all of them.
-                    output, returncode = self.config.profile.run(
-                        process, single, timeout=remaining
-                    )
+                    if framed:
+                        output, error_output, returncode = typing.cast(
+                            typing.Callable[..., typing.Tuple[bytes, bytes, int]],
+                            execute,
+                        )(
+                            process,
+                            single,
+                            input=data,
+                            merge_stderr=merge,
+                            timeout=remaining,
+                        )
+                        error_outputs.append(error_output)
+                    else:
+                        output, returncode = profile.run(
+                            process, single, timeout=remaining
+                        )
                 except TimeoutError as exc:
-                    # `orphaned=True`: a serial console has no way to stop
-                    # what the device is doing, so the command is still
-                    # running there. One payload shape for every transport
-                    # (see `executor.expired`).
+                    # `orphaned=True`: a console cannot confirm the device
+                    # stopped the command, so it may still be running there.
+                    # One payload shape for every transport (see
+                    # `executor.expired`).
                     partial = b"".join(outputs) + (getattr(exc, "output", None) or b"")
+                    partial_error = (
+                        None
+                        if merge
+                        else b"".join(error_outputs)
+                        + (getattr(exc, "stderr", None) or b"")
+                    )
                     raise expired(
                         command,
                         timeout,
                         output=partial,
+                        stderr=partial_error,
                         orphaned=True,
                         text=bool(text or encoding or errors),
                     ) from exc
                 outputs.append(output)
-                del index
         finally:
             process.close()
-        output = b"".join(outputs)
-        output_stream, _error_stream = capture_streams(capture_output, stdout, stderr)
-        if wants_text(text, encoding, errors):
-            output_value: typing.Union[str, bytes] = output.decode(
-                encoding or "utf-8", errors or "strict"
+
+        def value(raw: bytes) -> typing.Union[str, bytes]:
+            return (
+                raw.decode(encoding or "utf-8", errors or "strict")
+                if text_mode
+                else raw
             )
-        else:
-            output_value = output
+
         # The shared dispatcher owns the "a `None` target means `sys.stdout`"
-        # rule.  A serial console is one merged stream, so the stderr side is
-        # pinned to PIPE to keep the dispatcher from writing an empty second
-        # stream.
-        captured, _ = dispatch_output(
+        # rule. A merged stream pins the stderr side to PIPE, so the
+        # dispatcher does not write an empty second stream.
+        captured, captured_error = dispatch_output(
             output_stream,
-            subprocess.PIPE,
-            output_value,
-            None,
+            subprocess.PIPE if merge else error_stream,
+            value(b"".join(outputs)),
+            None if merge else value(b"".join(error_outputs)),
             encoding=encoding,
             errors=errors,
         )
-        result = subprocess.CompletedProcess(command, returncode, captured, None)
+        result = subprocess.CompletedProcess(
+            command, returncode, captured, captured_error
+        )
         if check and returncode:
             raise subprocess.CalledProcessError(
-                returncode, command, output=captured, stderr=None
+                returncode, command, output=captured, stderr=captured_error
             )
         return result
 

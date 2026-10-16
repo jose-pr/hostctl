@@ -75,6 +75,7 @@ points and a worked example are in
 ::: hostctl.ConsoleProfile
 ::: hostctl.RawConsoleProfile
 ::: hostctl.PromptConsoleProfile
+::: hostctl.PosixConsoleProfile
 ::: hostctl.LoginStep
 
 ## Exceptions

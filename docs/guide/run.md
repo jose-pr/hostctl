@@ -279,6 +279,8 @@ buffered `pywinrm` provider. PSRP `run()` returns the text a console would show
 in cleartext, so `WinRMConfig` refuses it unless you pass `tls=True` (a
 `winrms://` URI) or `cleartext_auth=True`.
 
+## Serial and other consoles
+
 A serial host has two entry points, and they take different first arguments.
 The constructor takes the **device**, the way pyserial names it --
 `SerialConfig("COM3")`, `SerialConfig("/dev/ttyUSB0")`,
@@ -287,16 +289,68 @@ The constructor takes the **device**, the way pyserial names it --
 Passing a URI to the constructor asks pyserial to open a port literally named
 `serial:///COM3`, which no system has. Its default
 `RawConsoleProfile` exposes `host.shell.session()` with a merged byte stream,
-serial break, DTR, and RTS controls, but no filesystem or command status. A
-`PromptConsoleProfile(prompt=..., status_marker=..., reliable_status=True)` can
-opt into framed `host.run()` after defining the device's prompt and completion
-marker. Login steps and credentials are supplied programmatically and are never
-placed in the URI.
+serial break, DTR, and RTS controls, but no filesystem or command status.
+Login steps and credentials are supplied programmatically and are never placed
+in the URI. Two profiles add `host.run()`; the profiles live in
+`hostctl.console` and drive any console stream, not only a serial port.
 
-A framed exchange owns a **window**: it starts after the command the profile
-echoed back and ends at the first prompt following the completion marker.
-That is what makes framing trustworthy on a stream with no request/response
-correlation:
+### A POSIX shell's console: `PosixConsoleProfile`
+
+When the far end is a POSIX shell -- a Linux serial getty, a QEMU guest
+console, a container TTY -- use `PosixConsoleProfile`. It never parses the
+echo, so nothing the terminal does to what is typed can reach the output:
+
+```python
+from hostctl import PosixConsoleProfile, SerialConfig
+
+config = SerialConfig(
+    "/dev/ttyUSB0",
+    profile=PosixConsoleProfile(login=[("login: ", "root"), ("Password: ", "secret")]),
+)
+with config as host:
+    host.run("uname -a").stdout              # exactly what uname printed
+    host.run("sh -c 'exit 3'", check=False).returncode  # 3
+    host.run("wc -c", input=b"\x00\x03 binary").stdout  # stdin is a file
+```
+
+- The command and its `input=` are typed base64-encoded inside fixed shell
+  syntax: a ^C, TAB, `!` or newline in them is data, never a keystroke the
+  line editor acts on.
+- Output, stderr and the exit status come back between markers the shell
+  prints. Each marker is typed in two quoted halves, so the terminal's echo of
+  the line never contains one; banners, prompts and line-editor redraws fall
+  outside every frame. `stty -opost` makes the output the program's exact
+  bytes, and the terminal's settings are restored afterwards.
+- stdin is a temporary file holding `input=` (or a `stdin=` stream read to its
+  end), or `/dev/null`: a command that reads stdin gets EOF instead of waiting
+  on the terminal, and nothing the command leaves unread is ever run by the
+  shell. stderr is separate unless `stderr=subprocess.STDOUT`.
+- On `timeout` the profile types ^C, which interrupts the command and discards
+  the rest of its line, and raises `TimeoutExpired` with the output so far.
+
+The command runs in the console's own shell, so `cd` and variables persist and
+`exit` ends the session. A QEMU console or a container session is driven the
+same way, through `console_stream`:
+
+```python
+from hostctl import PosixConsoleProfile, console_stream
+
+profile = PosixConsoleProfile()
+with guest.open_serial() as process:
+    console = console_stream(process)
+    profile.negotiate(console)
+    stdout, stderr, status = profile.execute(console, "uptime", timeout=30)
+```
+
+### A device console: `PromptConsoleProfile`
+
+A network device or a BMC has no POSIX shell to frame for it.
+`PromptConsoleProfile(prompt=..., status_marker=..., reliable_status=True)`
+opts into framed `host.run()` after defining the device's prompt and
+completion marker. Its exchange owns a **window**: it starts after the command
+the profile echoed back and ends at the first prompt following the completion
+marker. That is what makes framing trustworthy on a stream with no
+request/response correlation:
 
 - Whatever the previous exchange left behind is discarded before the command
   is sent, so a timed-out `run()` cannot hand its tail to the next one.
@@ -309,9 +363,14 @@ correlation:
   transcript with status 0; raise `max_buffer` on the profile to read more.
 - `run(timeout=)` bounds the backend read itself, so a
   `SerialConfig(timeout=Timeout(read=None))` host raises `TimeoutExpired` instead of
-  blocking inside the driver. Device names are opaque (native ports, `loop://`, `socket://`,
-and RFC 2217 URLs are passed to PySerial); RFC 2217 provides no encryption or
-authentication and must be protected by an external secure transport.
+  blocking inside the driver.
+
+What the window cannot do is listed in the
+[divergence ledger](contracts.md#divergence-ledger): it depends on the device
+echoing the command as sent, carries no stdin, and merges the streams. Device
+names are opaque (native ports, `loop://`, `socket://`, and RFC 2217 URLs are
+passed to PySerial); RFC 2217 provides no encryption or authentication and
+must be protected by an external secure transport.
 
 ## What parses a command on arrival
 
@@ -430,7 +489,9 @@ resolve it, rather than quietly answering POSIX.
 
 An optional injected `QEMUSerialConsole` exposes raw rescue-console access
 through `guest.open_serial()`. It is exclusive, merged-stream, and does not
-infer login, shell, prompts, command status, or filesystem behavior. A live
+infer login, shell, prompts, command status, or filesystem behavior; to run
+commands on the guest's shell there, drive it with `PosixConsoleProfile`
+through `console_stream` (see the serial section above). A live
 serial test requires a VM with a separately configured serial device.
 
 !!! note
