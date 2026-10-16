@@ -33,6 +33,7 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | positional config arguments after the first | keyword-only (`TypeError` otherwise) |
 | `ExecutorCommand`; `executor.PathLike`, `Input`, `Environment`, `FileHandle` | `CommandLike`; `StrPath`, `CommandInput`, `CommandEnvironment`, `StreamTarget` |
 | `pypsrp_available()`, `require_pypsrp()` | `has_psrp()` (and new `has_ssh()`); the guard is internal |
+| `host.path(p, backend=name)` re-selecting a provider per operation | pinned to `name`, as `.via(name)`; `host.path(p)` selects per operation |
 
 pytruenas 0.5.4 and earlier pin `hostctl<0.4` and import the 0.3 paths
 (`from hostctl.host import PosixHost, SshConfig, ...`), so they do not import
@@ -105,6 +106,12 @@ collection until pytruenas ports to these names.
   path provider. This ships in 0.4.0.
 
 ### Changed
+
+- **Breaking, 0.4.0: `host.path(p, backend=name)` pins the path to that
+  provider**, as `.via(name)` does: every operation on it and on every path
+  derived from it goes to `name`. Before, the named provider only built the
+  path and each operation re-selected from the first capable provider, so a
+  write meant for `name` could land on another one.
 
 - **Logger names follow module paths under `hostctl`**, which ships in
   0.4.0: every module logs through `logging.getLogger(__name__)`

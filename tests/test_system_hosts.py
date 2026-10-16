@@ -1140,6 +1140,30 @@ def test_path_backend_probes_through_the_selector_once():
     assert len(calls) == 1
 
 
+def test_path_backend_pins_every_operation_to_the_named_provider():
+    """`backend=name` returns what `.via(name)` returns: a read, a write and a
+    derived child all go to the named provider, never back to the first."""
+    first_backend = MemPathBackend()
+    named_backend = MemPathBackend()
+    MemPath("/only-in-first", backend=first_backend).write_bytes(b"x")
+    first = PathProvider("first", lambda *parts: MemPath(*parts, backend=first_backend))
+    named = PathProvider("named", lambda *parts: MemPath(*parts, backend=named_backend))
+    host = PosixHost(path_providers=(first, named))
+
+    path = host.path("/only-in-first", backend="named")
+
+    assert path.provider is named
+    assert path.via("named") is path
+    assert not path.exists()
+    path.write_bytes(b"named")
+    (path.parent / "child").write_bytes(b"child")
+    assert MemPath("/only-in-first", backend=first_backend).read_bytes() == b"x"
+    assert MemPath("/only-in-first", backend=named_backend).read_bytes() == b"named"
+    assert MemPath("/child", backend=named_backend).read_bytes() == b"child"
+    assert not MemPath("/child", backend=first_backend).exists()
+    assert not host.path("/child").exists()
+
+
 class _Transport:
     def __init__(self):
         self.closes = 0

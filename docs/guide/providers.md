@@ -242,8 +242,9 @@ as they are built.
 ## Backend pinning
 
 Composite paths select a provider per operation until they are pinned.
-`.via(name)` returns a derived path pinned to one backend, and `.provider`
-reports the current selection:
+`.via(name)` returns a derived path pinned to one backend (`host.path(p,
+backend=name)` returns the same pinned path), and `.provider` reports the
+current selection:
 
 ```python
 path = host.path("/var/lib/app/state.db")

@@ -152,8 +152,13 @@ Host.close()
   target), `.pid` (`None` unless known), and `.output`/`.stderr` as `b""`/`""`
   rather than `None`.
 - `path()` returns a `pathapi.Path`: a composite path on a provider-backed
-  host (see "Paths"). `spawn()` returns a persistent `Process`; providers
-  advertise `spawn` and `tty` separately.
+  host (see "Paths"). Without `backend` each operation selects a provider;
+  `backend=name` builds the path with that path provider and pins it there,
+  so `host.path(p, backend=name)` is `host.path(p).via(name)`: every
+  operation and every derived path uses it. An unknown name raises
+  `ValueError`, an unavailable provider `OperationNotStartedError`.
+  `spawn()` returns a persistent `Process`; providers advertise `spawn` and
+  `tty` separately.
 - `info()` returns a `HostInfo` whose unknown fields stay `None`.
 - `host.shell_flavour` is the explicitly known target shell, and `host.shell`
   is `Shell(host.shell_flavour, host)`. SSH uses its configured or positively

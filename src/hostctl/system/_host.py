@@ -588,12 +588,15 @@ class SystemHost(Host):
                 excluded.append(provider.name)
                 provider = self._path_selector.select(exclude=excluded).provider
                 continue
+            # A named backend pins, as `.via(name)` does: every operation on
+            # the path goes to the provider the caller chose.
             return path_type.from_path(
                 value,
                 provider,
                 provider.path,
                 self._path_selector.providers,
                 self._path_selector,
+                pinned=backend is not None,
                 logical_segments=segments,
             )
 

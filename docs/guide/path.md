@@ -21,7 +21,10 @@ host.path("/tmp/example.txt").write_text("hello")
 ```
 
 A composite path keeps the logical path and picks a provider per operation;
-`path.provider` is the one selected and `path.via(name)` pins one. The
+`path.provider` is the one selected and `path.via(name)` pins one.
+`host.path(p, backend=name)` builds the path with the named provider and
+returns it pinned there, the same path as `host.path(p).via(name)`: every
+operation on it, and on every path derived from it, goes to that provider. The
 [Systems and providers](providers.md) guide covers selection and pinning.
 
 Container archive paths support metadata, traversal, streaming reads, and
