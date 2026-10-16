@@ -199,19 +199,6 @@ def _primed(entries: typing.Iterable) -> typing.Iterator:
     return itertools.chain((first,), iterator)
 
 
-def _rebuild_composite(cls, text, provider, factory, providers, selector, pinned):
-    """Reconstruct a composite path from its routing state (see __reduce__)."""
-    return cls(
-        text,
-        backend_path=None,
-        provider=provider,
-        factory=factory,
-        providers=providers,
-        selector=selector,
-        pinned=pinned,
-    )
-
-
 def _make_forwarder(
     name: str,
     capability: PathOperation,

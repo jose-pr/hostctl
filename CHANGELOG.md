@@ -42,6 +42,7 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `pypsrp_available()`, `require_pypsrp()` | `has_psrp()` (and new `has_ssh()`); the guard is internal |
 | `host.path(p, backend=name)` re-selecting a provider per operation | pinned to `name`, as `.via(name)`; `host.path(p)` selects per operation |
 | `serial:///dev/ttyUSB0` (any `serial:///NAME`, `serial:/NAME`) naming the relative device `dev/ttyUSB0` / `NAME`; `serial:////dev/x` naming `dev/x` | the absolute `/dev/ttyUSB0` / `/NAME`; a relative device is `serial:NAME`; `serial:////...` raises `ValueError`; `COMn`, `\\.\...`, pyserial URLs and the encoded `serial:///%2Fdev%2Fx` are unchanged |
+| `CompositePosixPath.from_path(backend_path, provider, factory, ...)` (undocumented) | `CompositePosixPath.over(providers, *segments, backend=None)`; the same for `CompositeWindowsPath` |
 
 pytruenas 0.5.4 and earlier pin `hostctl<0.4` and import the 0.3 paths
 (`from hostctl.host import PosixHost, SshConfig, ...`), so they do not import
@@ -142,6 +143,11 @@ collection until pytruenas ports to these names.
   call. `supports(path, Utime)` is False for a guest without a helper and a
   container without the program. `GuestPathHelper` gains an optional
   `utime(path, *, atime=None, mtime=None)`.
+- `CompositePosixPath.over(providers, *segments, backend=None)` and
+  `CompositeWindowsPath.over(...)` build a composite path with no host, from
+  an iterable of path providers or a `ProviderSelector`. `host.path()` calls
+  the same constructor, so per-operation fallback, `.via()` pinning,
+  `supports()`, forwarding and `backend=` behave alike. This ships in 0.4.0.
 
 ### Changed
 
@@ -358,6 +364,12 @@ collection until pytruenas ports to these names.
   "ambiguous host URI"); `register_system_provider(name, resolver)` raises for
   a name already registered. Pass `replace=True` to take the name over on
   purpose. Redefining the same class (a module reload) is not a duplicate.
+- Composite paths are on one filesystem (`_same_filesystem()`, which guards
+  `copy()`, `move()` and `PathSyncer` against a file copied onto itself) when
+  they can route to the same provider object, not only when they came from
+  one host's provider set. `pickle` and `copy.deepcopy()` of a composite raise
+  `TypeError` naming the reason, rather than whichever error the first
+  unpicklable provider attribute produced. This ships in 0.4.0.
 
 ### Removed
 
@@ -370,6 +382,9 @@ collection until pytruenas ports to these names.
   could not fail for a config that picked its own paths. Use `config.open()`
   or `Host(uri)`; `SshConfig("host").open()` is a `PosixHost`, and a config with
   Windows paths opens a `WindowsHost`.
+- **Breaking, 0.4.0**: the undocumented `CompositePosixPath.from_path()` and
+  `CompositeWindowsPath.from_path()`. Use `over(providers, *segments,
+  backend=name)`.
 
 ### Fixed
 

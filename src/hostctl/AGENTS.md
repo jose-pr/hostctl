@@ -1124,6 +1124,8 @@ ProviderSelection(provider, trace, generation=0, pinned=False)
 ## Paths (`hostctl.paths`)
 
 ```python
+CompositePosixPath.over(providers, *segments, backend=None) -> CompositePosixPath
+CompositeWindowsPath.over(providers, *segments, backend=None) -> CompositeWindowsPath
 CompositePosixPath.via(name)
 CompositeWindowsPath.via(name)
 ```
@@ -1131,10 +1133,28 @@ CompositeWindowsPath.via(name)
 `CompositePosixPath` and `CompositeWindowsPath` are the `pathapi.Path` types a
 provider-backed host returns. They keep the logical path, select a provider
 per operation, pin mutations and streams to the provider that started them,
-and answer `pathapi`'s `_same_filesystem()` with the host's provider set, so a
-cross-host copy is never taken for a file copied onto itself. `.provider` is
-the selected provider and `path.via(name)` a path pinned to one. A composite
-copies but cannot be pickled: it is bound to a live host.
+and answer `pathapi`'s `_same_filesystem()` from their providers: two paths
+are on one filesystem when they can route to the same provider object, so a
+cross-host copy is never taken for a file copied onto itself, nor a file
+copied onto itself for a cross-host copy. `.provider` is the selected
+provider, `.providers` the ordered set, and `path.via(name)` a path pinned to
+one. A composite copies (`copy.copy()`, sharing its providers) but
+`pickle` and `copy.deepcopy()` raise `TypeError`: it is bound to live
+providers.
+
+- `over(providers, *segments, backend=None)` builds one with no host:
+  `providers` is an iterable of `PathProvider`s in fallback order, or a
+  `ProviderSelector`. It is the constructor `host.path()` calls, so per-
+  operation fallback, `.via()`, `supports()`, forwarding and `backend=` (pin
+  to that provider; unknown name `ValueError`, unavailable
+  `OperationNotStartedError`) behave the same. A provider whose factory
+  raises `OperationNotStartedError` is declined and the next one builds the
+  path. Paths built over one `ProviderSelector` share its declines and probe
+  cache; an iterable gets a selector of its own per call. A `str`, a lone
+  provider or an empty set raises `TypeError`/`ValueError`. The path owns no
+  provider: close them yourself (for `ssh_providers()`, the executor
+  provider's `close()` closes the shared transport). The bare constructor
+  still refuses plain segments with `TypeError`.
 
 - `pathapi.protocols.supports(path, Protocol)` answers without a call that
   raises. A composite says yes to `Stat`, `Listing`, `BinaryOpen`, `Create`,

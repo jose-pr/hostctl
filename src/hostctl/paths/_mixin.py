@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 
+import os
 import pathlib
 import typing
 
 from pathapi import Path
 
 from ..exceptions import OperationNotStartedError
+from ..executor import StrPath
 from ..provider._contracts import PathProvider
 from ..provider._selector import ProviderSelector
 
@@ -25,9 +27,10 @@ from ._forwarding import (
     _make_forwarder,
     _primed,
     _provider_supports,
-    _rebuild_composite,
     _resolves_on,
 )
+
+_C = typing.TypeVar("_C", bound="_CompositePathMixin")
 
 
 class _CompositePathMixin:
@@ -60,7 +63,10 @@ class _CompositePathMixin:
             pinned=pinned,
         )
         if not self._routing_state_is_complete():
-            raise TypeError(f"{cls.__name__} requires a provider-backed path")
+            raise TypeError(
+                f"{cls.__name__} requires a provider-backed path; build one with "
+                f"{cls.__name__}.over(providers, *segments) or host.path()"
+            )
         return self
 
     def __init__(self, *segments, **kwargs):
@@ -166,7 +172,7 @@ class _CompositePathMixin:
         """Wrap a backend path result back into a composite, if it is one."""
         if isinstance(value, _CompositePathMixin) or not isinstance(value, Path):
             return value
-        return type(self).from_path(
+        return type(self)._from_backend(
             value,
             provider,
             provider.path,
@@ -186,7 +192,91 @@ class _CompositePathMixin:
         return copy_from(self, source, **kwargs)
 
     @classmethod
-    def from_path(
+    def over(
+        cls: typing.Type[_C],
+        providers: typing.Union[ProviderSelector, typing.Iterable[PathProvider]],
+        *segments: StrPath,
+        backend: typing.Optional[str] = None,
+    ) -> _C:
+        """A composite path over `providers`, with no host.
+
+        `providers` is the ordered fallback list, or a `ProviderSelector`
+        whose declines and probe cache the path then shares. Routing, pinning
+        and `backend=` are exactly `host.path()`'s: this is the constructor
+        it calls.
+        """
+        if isinstance(providers, ProviderSelector):
+            selector = providers
+        elif isinstance(providers, (str, bytes, os.PathLike, PathProvider)):
+            raise TypeError(
+                f"{cls.__name__}.over() takes an iterable of path providers or a "
+                f"ProviderSelector first, not {type(providers).__name__}"
+            )
+        else:
+            selector = ProviderSelector(providers)
+        if not selector.providers:
+            raise ValueError(f"{cls.__name__}.over() needs at least one path provider")
+        return cls._select(selector, segments, backend=backend)
+
+    @classmethod
+    def _select(
+        cls: typing.Type[_C],
+        selector: ProviderSelector,
+        segments: typing.Tuple[StrPath, ...],
+        *,
+        backend: typing.Optional[str] = None,
+        on_use: typing.Optional[typing.Callable[[PathProvider], None]] = None,
+    ) -> _C:
+        """Choose the provider that builds the path, and build it.
+
+        `on_use` sees each provider just before its factory runs; a host uses
+        it to track the transports its paths may reopen.
+        """
+        if backend is None:
+            provider = selector.select().provider
+        else:
+            provider = next(
+                (item for item in selector.providers if item.name == backend), None
+            )
+            if provider is None:
+                raise ValueError(f"unknown path provider: {backend}")
+            # Through the selector: it caches the probe, honours a decline, and
+            # turns a probe that raises into "unavailable" instead of letting a
+            # transport error escape from a routing choice.
+            if not selector.probe(provider).usable:
+                raise OperationNotStartedError(
+                    f"path provider {backend!r} is unavailable"
+                )
+        excluded: typing.List[str] = []
+        while True:
+            try:
+                # Building a path does no I/O of its own; a provider that must
+                # (SSH, for a relative path) connects itself and declines.
+                if on_use is not None:
+                    on_use(provider)
+                value = provider.path(*segments)
+            except OperationNotStartedError as exc:
+                if backend is not None:
+                    raise
+                # Every candidate in turn, as `run()` does: falling back once
+                # failed three providers whose third was usable.
+                selector.decline(provider.name, str(exc))
+                excluded.append(provider.name)
+                provider = selector.select(exclude=excluded).provider
+                continue
+            # A named backend pins, as `.via(name)` does.
+            return cls._from_backend(
+                value,
+                provider,
+                provider.path,
+                selector.providers,
+                selector,
+                pinned=backend is not None,
+                logical_segments=segments,
+            )
+
+    @classmethod
+    def _from_backend(
         cls,
         backend_path: Path,
         provider: PathProvider,
@@ -228,14 +318,18 @@ class _CompositePathMixin:
         reads `/etc/app.conf` on two different hosts as one file and refuses
         the transfer.
 
-        The answer is the host's provider set: one shared object per composed
-        host, kept across `path()` calls and through a `.via()` pin. The
-        *selected* provider is the wrong token -- it changes per operation,
-        so two paths on one host could disagree and lose the guard against
-        copying a file onto itself -- and resolving it may probe, which is
-        I/O this hook must not do.
+        The answer is the provider set, kept across `path()` calls and through
+        a `.via()` pin: two paths are on one filesystem when they can route to
+        the same provider object. Comparing the set object alone made two
+        `over()` calls over one provider list two filesystems, so copying a
+        file onto itself truncated it. The *selected* provider is the wrong
+        token -- it changes per operation, and resolving it may probe, which
+        is I/O this hook must not do.
         """
-        return self._providers is other._providers
+        mine, theirs = self._providers, getattr(other, "_providers", ())
+        if mine is theirs:
+            return True
+        return any(provider is item for provider in mine for item in theirs)
 
     def _supports(self, protocol) -> typing.Optional[bool]:
         """pathapi's per-instance answer to `supports(path, protocol)`.
@@ -435,7 +529,7 @@ class _CompositePathMixin:
             if not probe.usable:
                 raise OperationNotStartedError(f"path provider {name!r} is unavailable")
         backend = self._provider_path(provider)
-        return type(self).from_path(
+        return type(self)._from_backend(
             backend,
             provider,
             provider.path,
@@ -470,22 +564,26 @@ class _CompositePathMixin:
         # slots -- an `AttributeError` on its next operation either way.
         return self._child(str(key), str(self))
 
+    def __copy__(self):
+        # `PurePath.__reduce__` rebuilds from bare segments, which the
+        # constructor refuses; a copy shares the providers and the selector.
+        return type(self)(
+            str(self),
+            backend_path=None,
+            provider=self._provider,
+            factory=self._factory,
+            providers=self._providers,
+            selector=self._selector,
+            pinned=self._pinned,
+        )
+
     def __reduce__(self):
-        # `copy.copy()` goes through this: `PurePath.__reduce__` rebuilds from
-        # bare segments, which hostctl's constructor refuses, so the rebuilt
-        # path keeps its providers and selector. A composite cannot be pickled,
-        # because it is bound to a live host.
-        return (
-            _rebuild_composite,
-            (
-                type(self),
-                str(self),
-                self._provider,
-                self._factory,
-                tuple(self._providers or ()),
-                self._selector,
-                self._pinned,
-            ),
+        # Pickling and `deepcopy()` would have to duplicate live providers (a
+        # transport, a lock). Refused here, so the error does not depend on
+        # whether some factory happens to pickle.
+        raise TypeError(
+            f"{type(self).__name__} cannot be pickled or deep-copied: "
+            "it is bound to live path providers"
         )
 
     def _adopt_state_from(self, other: "_CompositePathMixin") -> None:
@@ -646,7 +744,7 @@ class _CompositePathMixin:
             retry_on_not_implemented=True,
         )
         for name, _stat in entries:
-            yield type(self).from_path(
+            yield type(self)._from_backend(
                 provider.path(str(self), name),
                 provider,
                 provider.path,
@@ -705,7 +803,7 @@ class _CompositePathMixin:
         # stays relative, exactly like pathlib.Path.readlink(). Rebuild it as
         # a composite path so the result keeps this path's provider routing.
         text = _logical_text(target)
-        return type(self).from_path(
+        return type(self)._from_backend(
             provider.path(text),
             provider,
             provider.path,
@@ -800,7 +898,7 @@ class _CompositePathMixin:
             else:
                 target_path = provider.path(logical_target)
             path.rename(target_path)
-            return type(self).from_path(
+            return type(self)._from_backend(
                 target_path,
                 provider,
                 provider.path,

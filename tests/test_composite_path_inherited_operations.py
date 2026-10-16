@@ -296,7 +296,7 @@ def test_the_default_path_syncer_policy_works_over_composite_paths(tmp_path):
 
 
 def test_a_composite_path_copies_with_its_providers_and_cannot_be_pickled():
-    """`copy.copy()` rebuilds the path through `__reduce__` and keeps the host's
+    """`copy.copy()` rebuilds the path through `__copy__` and keeps the host's
     providers; pickling fails because the path is bound to a live host."""
     import copy
     import pickle

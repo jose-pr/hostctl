@@ -547,60 +547,16 @@ class SystemHost(Host):
             raise NotImplementedError(
                 f"{type(self).__name__} does not provide the 'path' capability"
             )
-        if backend is None:
-            provider = self._path_selector.select().provider
-        else:
-            provider = next(
-                (
-                    item
-                    for item in self._path_selector.providers
-                    if item.name == backend
-                ),
-                None,
-            )
-            if provider is None:
-                raise ValueError(f"unknown path provider: {backend}")
-            # Through the selector: it caches the probe, honours a decline, and
-            # turns a probe that raises into "unavailable" instead of letting a
-            # transport error escape from a routing choice.
-            if not self._path_selector.probe(provider).usable:
-                raise OperationNotStartedError(
-                    f"path provider {backend!r} is unavailable"
-                )
-        path_type = self._composite_path_type()
-        excluded: typing.List[str] = []
-        while True:
-            try:
-                # Note the provider as in use WITHOUT connecting: the host does
-                # no I/O to build a path (a provider that must, as SSH does for
-                # a relative one, connects itself and declines on failure). The marker is what matters
-                # here -- a transport these paths later reopen lazily was left
-                # on `_closed_targets`, so every later close() skipped it and
-                # the connection lived until process exit.
-                self._note_provider_in_use(provider)
-                value = provider.path(*segments)
-            except OperationNotStartedError as exc:
-                if backend is not None:
-                    raise
-                # Every candidate, not just one. Falling back exactly once
-                # meant three ordered providers with the first two offline
-                # failed although the third was usable -- while `run()`,
-                # which loops, succeeded on the same host.
-                self._path_selector.decline(provider.name, str(exc))
-                excluded.append(provider.name)
-                provider = self._path_selector.select(exclude=excluded).provider
-                continue
-            # A named backend pins, as `.via(name)` does: every operation on
-            # the path goes to the provider the caller chose.
-            return path_type.from_path(
-                value,
-                provider,
-                provider.path,
-                self._path_selector.providers,
-                self._path_selector,
-                pinned=backend is not None,
-                logical_segments=segments,
-            )
+        # `on_use` notes each provider as in use WITHOUT connecting: a
+        # transport these paths later reopen lazily was left on
+        # `_closed_targets`, so every later close() skipped it and the
+        # connection lived until process exit.
+        return self._composite_path_type()._select(
+            self._path_selector,
+            segments,
+            backend=backend,
+            on_use=self._note_provider_in_use,
+        )
 
     @staticmethod
     def _out_of_band_env(provider, rendered, options):
