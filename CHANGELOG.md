@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Migrating from 0.3
 
-Every row ships in 0.4.0. No old name is kept as an alias.
+Every row ships in 0.4.0. No old name is kept as an alias. Entries further
+down that predate these renames keep the 0.3 spellings; this table maps them.
 
 | 0.3 | 0.4.0 |
 | --- | --- |
