@@ -541,14 +541,15 @@ an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
   exchange, authentication), 30 s, and `None` there keeps asyncssh's own
   (an ssh_config `ConnectTimeout`, else the OS connect timeout plus
   asyncssh's 2-minute login timeout). `read`/`write` raise.
-- `ssh_config` is the one way to read an ssh_config, and both legs read it.
-  Without it neither leg reads one -- both get `config=None`, so an alias,
-  `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in `~/.ssh/config` is
-  ignored. It is never a URI key, and an `ssh://` URI naming it raises: a
-  `ProxyCommand` starts a local process, which a URI's author must not choose.
-- `connect_options` are extra `asyncssh.connect` keywords for both legs, kept
-  out of the URI and `repr()`; a key hostctl owns (`host`, `port`,
-  `username`, `password`, `client_keys`, `known_hosts`, `config`,
+- `ssh_config` is the one way to read an ssh_config, for the host's one
+  connection. Without it none is read -- the connection gets `config=None`,
+  so an alias, `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in
+  `~/.ssh/config` is ignored. It is never a URI key, and an `ssh://` URI
+  naming it raises: a `ProxyCommand` starts a local process, which a URI's
+  author must not choose.
+- `connect_options` are extra `asyncssh.connect` keywords for that
+  connection, kept out of the URI and `repr()`; a key hostctl owns (`host`,
+  `port`, `username`, `password`, `client_keys`, `known_hosts`, `config`,
   `connect_timeout`) raises and names the keyword to use
   (`timeout=Timeout(connect=...)` for `connect_timeout`).
 - `ssh_providers(config)` returns the `(executor_provider, path_provider)`
@@ -565,8 +566,9 @@ returns and a composed SSH host holds in `executor_providers` (name `"ssh"`);
 find it with `isinstance`. Its constructor takes the private transport, so
 obtain it only through those two routes.
 
-- `connection` is the asyncssh connection `run()` and `spawn()` use, for
-  port forwarding or an SFTP client of your own. It connects on first access
+- `connection` is the asyncssh connection `run()` and `spawn()` use, and
+  the one the host's SFTP paths open their channels on, for port forwarding
+  or an SFTP client of your own. It connects on first access
   (raising what connecting raises: `PermissionError`, `ConnectionError`,
   `TimeoutError`, or the `OSError` of a refused or unresolvable host --
   never `OperationNotStartedError`) and returns the same object until it
@@ -584,12 +586,17 @@ obtain it only through those two routes.
 
 Behaviour:
 
-- A composed SSH host opens two connections, each when first needed and each
-  authenticating once: the exec connection on the first command (or relative
-  path), the SFTP connection on the first path operation. The SFTP leg gets
-  the exec leg's connect options, so both reach the same server and verify
-  its key the same way. A host used only for absolute paths never opens the
-  exec one.
+- A composed SSH host opens one connection and authenticates once, on its
+  first command, relative path or path operation, whichever comes first.
+  Paths open SFTP channels on that connection (sftppath's
+  `AsyncSSHBackend.over_connection()`), so `ssh_config`, `connect_options`
+  and `timeout.connect` apply once, to it. Building an absolute path connects
+  nothing. After `close()` or a dropped connection the next command or path
+  operation opens a new connection, and a path taken before then runs on it.
+  A failed connect on the path leg declines the SFTP provider
+  (`OperationNotStartedError`), as on `run()`. An SSH path's
+  `SFTPPath.backend` cannot be pickled (`TypeError`), and its `close()`
+  exits the SFTP channel only.
 - A relative path (and `host.path()`) resolves against the login directory,
   read once per connection generation with SFTP `realpath(".")`; `str()` of
   the result is the resolved path on the server. When the exec connection
@@ -620,7 +627,7 @@ Behaviour:
   flags it). Every form starts with `$ProgressPreference='SilentlyContinue'`,
   and `PWSH` adds `$PSStyle.OutputRendering = 'PlainText'`, so captured output
   carries no ANSI colour.
-- See "Gotchas" for fork behaviour and the event-loop threads.
+- See "Gotchas" for fork behaviour and the event-loop thread.
 
 ## WinRM (`hostctl.transports.winrm`)
 
@@ -1661,17 +1668,18 @@ dependency may (asyncssh, pywinrm, docker), as documented by that package.
 
 ## Gotchas
 
-- **Two event-loop threads.** `run()`, `spawn()` and connection setup over
-  SSH (and a QGA tunnel over SSH) run asyncssh on one process-wide asyncio
-  event loop in a daemon thread named `hostctl-asyncssh-loop`, started on
-  first use; asyncssh objects are bound to it. The SSH path leg is sftppath's,
-  which runs asyncssh on a loop thread of its own. Neither touches the
-  caller's event loop, so hostctl is usable from inside `async` code, but each
-  call blocks the calling thread.
+- **One event-loop thread.** `run()`, `spawn()`, SFTP paths and connection
+  setup over SSH (and a QGA tunnel over SSH) run asyncssh on one
+  process-wide asyncio event loop in a daemon thread named
+  `hostctl-asyncssh-loop`, started on first use; asyncssh objects are bound
+  to it, and sftppath starts no loop thread for an SSH host's paths. It never
+  touches the caller's event loop, so hostctl is usable from inside `async`
+  code, but each call blocks the calling thread.
 - **Fork.** An SSH host is not fork-safe in the sense of inheriting a usable
-  connection: a child notices its loop changed, drops the inherited connection
-  without closing it (closing would tear down the parent's socket) and
-  reconnects. `close()` in a forked child forgets the parent's connection.
+  connection: a child notices its loop changed, drops the inherited
+  connection and SFTP channel without closing them (closing would tear down
+  the parent's socket) and reconnects. `close()` in a forked child forgets
+  the parent's connection.
 - **No replay after dispatch.** Provider failover happens only before
   anything is sent (`OperationNotStartedError`). A command that may have
   started is never retried on another provider, so a `ConnectionError`
@@ -1699,5 +1707,6 @@ dependency may (asyncssh, pywinrm, docker), as documented by that package.
 - **`check=True` by default.** `run()` raises `CalledProcessError` on a
   non-zero status, unlike `subprocess.run`.
 - **Paths taken before `close()`.** A container or QGA path handed out before
-  its host closed refuses rather than reconnecting; a path from before
-  `replace_providers()` keeps the old providers. Obtain paths again.
+  its host closed refuses rather than reconnecting, where an SSH path runs on
+  the host's next connection; a path from before `replace_providers()` keeps
+  the old providers. Obtain paths again.

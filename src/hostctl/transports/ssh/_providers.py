@@ -39,7 +39,8 @@ class SSHExecutorProvider(ExecutorProvider):
     def connection(self) -> typing.Any:
         """The `asyncssh.SSHClientConnection` this provider runs commands on.
 
-        Connects on first access and is reused after. It is bound to `loop`:
+        The host's SFTP paths open their channels on it too. Connects on
+        first access and is reused after. It is bound to `loop`:
         run its coroutines with
         `asyncio.run_coroutine_threadsafe(coro, provider.loop).result()`.
         `close()` closes it; an access after that opens a new one, which the
@@ -104,20 +105,20 @@ class SFTPPathProvider(PathProvider):
     # Closing is owned by SSHExecutorProvider for the shared transport.
     #
     # Composite paths call this before EVERY dispatch, so it stays cheap: the
-    # client is cached after the first call. Opening it here keeps a failed
-    # connection a pre-dispatch decline rather than an error mid-operation.
+    # connection and the SFTP channel are cached after the first call. Opening
+    # them here keeps a failure a pre-dispatch decline rather than an error
+    # mid-operation.
     def connect(self):
         from ... import _async
 
+        self.transport.connect_or_decline()
         try:
-            client = getattr(self.transport._backend(), "client", None)
-            if client is not None:
-                client()
+            self.transport._backend().client()
         except OperationNotStartedError:
             raise
         except Exception as exc:
             # sftppath translates asyncssh's errors but not its timeouts: on
-            # 3.9 a connect timeout is `asyncio.TimeoutError`, not the builtin.
+            # 3.9 a request timeout is `asyncio.TimeoutError`, not the builtin.
             mapped = _async.normalize_asyncssh_error(exc)
             if not isinstance(mapped, (OSError, TimeoutError)):
                 raise
@@ -127,7 +128,7 @@ class SFTPPathProvider(PathProvider):
                 ProviderSelector.redact(mapped),
             )
             raise OperationNotStartedError(
-                "SFTP connection failed before dispatch", cause=mapped
+                "SFTP channel failed before dispatch", cause=mapped
             ) from exc
 
 

@@ -1,10 +1,10 @@
 """Run an awaitable to completion from synchronous code.
 
 ``asyncssh`` is fully async, but :class:`~hostctl.host.Host` presents a
-synchronous API, so its direct-asyncssh operations (opening the connection,
-running a remote command) are driven to completion here. SFTP is NOT among
-them: :meth:`~hostctl.host.Host.path` uses `sftppath`'s ``SFTPPath``, which
-runs asyncssh on an event-loop thread of its own, not this one.
+synchronous API, so its asyncssh operations (opening the connection, running
+a remote command) are driven to completion here. SFTP paths run here too:
+`sftppath`'s ``AsyncSSHBackend.over_connection()`` is handed this loop and the
+exec connection, so sftppath starts no loop thread of its own.
 
 The bridge is a single **shared background event loop** running in a daemon
 thread; each call submits its coroutine with ``run_coroutine_threadsafe`` and

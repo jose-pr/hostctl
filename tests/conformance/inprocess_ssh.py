@@ -21,6 +21,9 @@ class _Server(asyncssh.SSHServer):
     def __init__(self, events: list) -> None:
         self._events = events
 
+    def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
+        self._events.append(("connection", conn))
+
     def begin_auth(self, username: str) -> bool:
         self._events.append(("begin_auth", username))
         return True
@@ -36,7 +39,8 @@ class InProcessSSHServer:
     """Serve `handler(process)` on 127.0.0.1 with host-key verification on.
 
     `events` is a list the handler may append to; the server records each
-    `begin_auth` there too. `sftp_root` enables SFTP chrooted to that
+    `("connection", server_connection)` and `("begin_auth", username)` there
+    too. `sftp_root` enables SFTP chrooted to that
     directory; `sftp_factory` overrides how the SFTP server is built, and
     `home` makes `realpath(".")` answer that path (recorded in `events`).
     """

@@ -113,6 +113,16 @@ class _TimeoutSSH(_StubSSH):
         return self.process
 
 
+class _StubSFTP:
+    """The SFTP backend over `_StubSSH`, which is no asyncssh connection."""
+
+    def client(self):
+        return None
+
+    def close(self):
+        return None
+
+
 def _compose(config, stub):
     """A composed host over one transport whose connection is `stub`.
 
@@ -125,6 +135,7 @@ def _compose(config, stub):
     executor, paths = ssh_providers(config)
     transport = executor.transport
     transport._ssh = stub
+    transport._sftp_generation = (stub, _StubSFTP())
     transport._loop_generation = _async.loop_generation()
     kind = WindowsHost if issubclass(config.pathname, PureWindowsPath) else PosixHost
     host = kind(
@@ -450,18 +461,28 @@ def test_sftp_path_survives_uri_syntax_in_a_filename(remote):
     assert path.name == remote.rsplit("/", 1)[1]
 
 
-def test_sftp_backend_is_reused_and_invalidated_on_close():
+def test_sftp_backend_is_shared_and_outlives_close():
+    """Paths keep one backend across `close()`; the connection-bound part of
+    it is per connection and dropped by `close()`."""
+
+    class _Channel:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
     host, stub = _host()
     transport = host.transport
     first = transport.path("/etc")
     second = transport.path("/var")
     assert first.backend is second.backend
-    backend = first.backend
+    channel = _Channel()
+    transport._sftp_generation = (stub, channel)
     transport.close()
-    assert transport._sftp_backend is None
+    assert transport._sftp_generation is None
+    assert channel.closed
     assert stub.closed and stub.waited
-    # A later path call gets a fresh backend after lifecycle close.
-    assert transport.path("/tmp").backend is not backend
+    assert transport.path("/tmp").backend is first.backend
 
 
 def test_auto_posix_probe_preserves_shell_executable():
@@ -554,7 +575,7 @@ def test_closing_a_host_whose_sftp_invalidation_fails_still_closes_ssh():
             raise OSError("sftp close failed")
 
     transport = host.transport
-    transport._sftp_backend = _FailingBackend()
+    transport._sftp_generation = (stub, _FailingBackend())
 
     with pytest.raises(OSError, match="sftp close failed"):
         transport.close()
@@ -598,9 +619,7 @@ def test_a_forked_child_does_not_reuse_the_parents_connection(monkeypatch):
     assert not stub.closed
 
 
-def test_the_default_verifies_the_host_key_on_both_legs():
-    """The SFTP leg's library default is the opposite of the exec leg's, so
-    both are pinned: `path()` must not accept a host key `run()` rejects."""
+def test_the_default_verifies_the_host_key_and_reads_no_ssh_config():
     options = SSHConfig("h").connect_opts()
 
     assert options == {
@@ -609,15 +628,16 @@ def test_the_default_verifies_the_host_key_on_both_legs():
         "connect_timeout": 30.0,
     }
 
-    # The SFTP leg gets the same dict, and reads no ssh_config, so it
-    # verifies the host key and resolves the host as the exec leg does.
-    transport = _SSHTransport(SSHConfig("h"))
-    transport.path("/tmp/x")
-    backend = transport._sftp_backend
 
-    assert backend.connect_opts["known_hosts"] == ()
-    assert backend.connect_opts["config"] is None
+def test_an_absolute_sftp_path_connects_nothing_until_used():
+    """The SFTP leg has no connection of its own: it opens channels on the
+    exec connection, so building an absolute path must not open it."""
+    transport = _SSHTransport(SSHConfig("h"))
+    backend = transport.path("/tmp/x").backend
+
+    assert transport._ssh is None
     assert (backend.host, backend.port, backend.user) == ("h", 22, None)
+    assert backend.endpoint == ("h", 22, None)
 
 
 @pytest.mark.parametrize("shell", ("/bin/ash", "/bin/ksh", "/usr/bin/mksh"))

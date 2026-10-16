@@ -494,6 +494,18 @@ collection until pytruenas ports to these names.
   boolean (`"false"`) raises `ValueError`. Native WinRM's `verify=False` adds
   `-SkipRevocationCheck` to `-SkipCACheck -SkipCNCheck`, so it checks nothing,
   as the other legs do. This ships in 0.4.0.
+- **An SSH host opens one connection and authenticates once.** Its SFTP
+  paths open their channels on the connection `run()` uses
+  (`SSHExecutorProvider.connection`), on the `hostctl-asyncssh-loop` thread,
+  where they had a second connection and login of their own on a loop thread
+  sftppath started. A host used only for paths opens that connection on its
+  first path operation; building an absolute path still connects nothing, and
+  a path taken before `close()` runs on the next connection. `ssh_config`,
+  `connect_options` and `timeout=Timeout(connect=...)` therefore apply once,
+  to that one connection. The `ssh` extra needs `sftppath[asyncssh]>=0.1.2`
+  (`AsyncSSHBackend.over_connection()`). An SSH path's sftppath backend can no
+  longer be pickled (`TypeError`): its connection belongs to the process.
+  This ships in 0.4.0.
 
 ### Removed
 

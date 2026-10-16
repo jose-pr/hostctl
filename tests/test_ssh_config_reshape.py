@@ -56,7 +56,7 @@ def test_the_default_options_read_no_ssh_config():
     ]
 
 
-def test_ssh_config_is_an_opt_in_on_both_legs(tmp_path, monkeypatch):
+def test_ssh_config_is_an_opt_in_for_the_one_connection(tmp_path, monkeypatch):
     with InProcessSSHServer(_handler, sftp_root=tmp_path) as server:
         path = tmp_path / "ssh_config"
         path.write_text(
@@ -73,7 +73,7 @@ def test_ssh_config_is_an_opt_in_on_both_legs(tmp_path, monkeypatch):
             host.close()
 
     begun = [event for event in server.events if event[0] == "begin_auth"]
-    assert len(begun) == 2  # one authentication per leg
+    assert len(begun) == 1  # run() and path() share the alias's connection
     assert "ssh_config" not in config.connection_uri
 
 
@@ -95,20 +95,29 @@ def test_connect_options_cannot_override_what_hostctl_owns(key):
         SSHConfig("h", connect_options={"connect_timeout": 1})
 
 
-def test_connect_options_reach_both_legs_and_stay_out_of_the_repr_and_uri():
+def test_connect_options_stay_out_of_the_repr_and_uri():
     config = SSHConfig(
         "h", connect_options={"keepalive_interval": 5, "passphrase": "s3"}
     )
 
     options = config.connect_opts()
     assert options["keepalive_interval"] == 5
-
-    from hostctl.transports.ssh._transport import _SSHTransport
-
-    transport = _SSHTransport(config)
-    transport.path("/x")
-    assert transport._sftp_backend.connect_opts["keepalive_interval"] == 5
     assert "s3" not in repr(config) and "s3" not in config.connection_uri
+
+
+def test_connect_options_reach_the_connection_paths_use(tmp_path):
+    with InProcessSSHServer(_handler, sftp_root=tmp_path) as server:
+        config = server.config(connect_options={"client_version": "hostctl-probe"})
+        host = config._create_host()
+        try:
+            host.path("/marker").write_text("x")
+            host.run("true")
+        finally:
+            host.close()
+
+    connections = [event for event in server.events if event[0] == "connection"]
+    assert len(connections) == 1
+    assert "hostctl-probe" in connections[0][1].get_extra_info("client_version")
 
 
 def _sftp_answering(home):

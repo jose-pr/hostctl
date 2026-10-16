@@ -823,7 +823,9 @@ def _sftp_that_cannot_connect(*, connect=None, warm=None):
     from hostctl.transports.ssh._transport import _SSHTransport
 
     transport = _SSHTransport(SSHConfig("nas.example", username="root"))
-    refuse = connect or warm or (lambda: None)
+    # `connect` fails opening the connection, `warm` the SFTP channel on it.
+    transport.connect = connect or (lambda: None)
+    refuse = warm or (lambda: None)
 
     class _Backend:
         def client(self):

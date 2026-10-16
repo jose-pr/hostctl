@@ -44,7 +44,10 @@ class _SSHTransport:
         self._resolved_dialect: typing.Optional[
             typing.Tuple[typing.Tuple[object, ...], ShellFlavour, typing.Optional[str]]
         ] = None
+        #: The backend every path of this host holds; see `_backend()`.
         self._sftp_backend: typing.Optional[object] = None
+        #: `(connection, AsyncSSHBackend.over_connection(connection, ...))`.
+        self._sftp_generation: typing.Optional[typing.Tuple[object, typing.Any]] = None
         #: SFTP `realpath(".")`, asked once per connection generation.
         self._login_dir: typing.Optional[str] = None
         #: What `pathname="auto"` resolved to from the login directory.
@@ -214,7 +217,7 @@ class _SSHTransport:
         if self._loop_generation == generation:
             return False
         self._ssh = None
-        self._sftp_backend = None
+        self._sftp_generation = None
         self._login_dir = None
         self._resolved_flavor = None
         self._loop_generation = generation
@@ -325,12 +328,44 @@ class _SSHTransport:
     def _invalidate_sftp(self) -> None:
         self._login_dir = None
         self._resolved_flavor = None
-        backend, self._sftp_backend = self._sftp_backend, None
-        if backend is None:
+        generation, self._sftp_generation = self._sftp_generation, None
+        if generation is None:
             return
-        # `BaseSFTPBackend.close()` closes every connection the backend
-        # cached and leaves it usable, so the next path() reconnects.
-        backend.close()
+        # Exits the SFTP channel only: an over_connection backend never
+        # closes the connection it was given.
+        generation[1].close()
+
+    def _sftp_over_connection(self) -> typing.Any:
+        """The SFTP backend over the current connection, rebuilt after a reconnect.
+
+        An `over_connection()` backend is bound to one connection object and
+        raises `ConnectionResetError` once that closes, so a new connection
+        needs a new one.
+        """
+        from ... import _async
+
+        with self._ssh_lock:
+            connection = self.ssh
+            generation = self._sftp_generation
+            if generation is not None and generation[0] is connection:
+                return generation[1]
+            self._sftp_generation = None
+            if generation is not None:
+                generation[1].close()
+            # `host=` always: a tunnelled connection may report no peer address.
+            backend = _async.sftppath().AsyncSSHBackend.over_connection(
+                connection, _async._ensure_loop(), host=self.config.host
+            )
+            self._sftp_generation = (connection, backend)
+            return backend
+
+    def _close_sftp_channel(self) -> None:
+        with self._ssh_lock:
+            if self._drop_if_forked():
+                return
+            generation = self._sftp_generation
+            if generation is not None:
+                generation[1].close()
 
     def _login_directory(self) -> str:
         """The SFTP login directory, asked once per connection generation.
@@ -386,19 +421,16 @@ class _SSHTransport:
         return SFTPPath(remote_path, backend=self._backend())
 
     def _backend(self) -> typing.Any:
-        """The SFTP backend this host shares, built once."""
-        from ... import _async
+        """The SFTP backend this host's paths share; building it connects nothing.
 
+        It opens its SFTP channels on `ssh`, the connection `run()` uses, so a
+        host authenticates once whichever leg connects first.
+        """
         with self._ssh_lock:
             if self._sftp_backend is None:
-                # The options carry `config` (see `connect_opts`), which
-                # sftppath keeps, so this leg reads the exec leg's ssh_config.
-                self._sftp_backend = _async.sftppath().AsyncSSHBackend(
-                    self.config.host,
-                    self.config.port,
-                    user=self.config.username,
-                    connect_opts=self.config.connect_opts(),
-                )
+                from ._sftp import _SharedSFTPBackend
+
+                self._sftp_backend = _SharedSFTPBackend(self)
             return self._sftp_backend
 
     def spawn(
