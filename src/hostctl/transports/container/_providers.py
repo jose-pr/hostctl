@@ -32,6 +32,9 @@ ARCHIVE_PATH_OPERATIONS = frozenset(
         # made a composed host refuse operations its backend performs.
         "symlink_to",
         "readlink",
+        # Not an archive call: an exec of `touch` or PowerShell, which a
+        # container without them refuses with NotImplementedError.
+        "utime",
     )
 )
 

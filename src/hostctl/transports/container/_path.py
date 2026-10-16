@@ -11,6 +11,7 @@ import tarfile
 import typing
 
 from pathapi import FileStat
+from pathapi.protocols import Utime
 from pathapi.providers import notimplemented
 
 
@@ -26,6 +27,7 @@ from ._archive import (
     _put_archive_error,
     _safe_name,
 )
+from ._times import ExecTimes
 
 
 class ContainerPathBackend:
@@ -37,10 +39,25 @@ class ContainerPathBackend:
         self.container = container
         self.pathname = pathname
         self._closed = False
+        self._times = ExecTimes(self._engine, windows=pathname == "windows")
 
     def invalidate(self) -> None:
         """Refuse further work: the host that owned this backend is closed."""
         self._closed = True
+
+    def can_set_times(self) -> typing.Optional[bool]:
+        """Whether `utime()` can work here; None when the exec probe failed."""
+        return self._times.supported()
+
+    def utime(
+        self,
+        path: str,
+        *,
+        atime: typing.Optional[float] = None,
+        mtime: typing.Optional[float] = None,
+    ) -> None:
+        """Set an existing entry's times through an exec (see `ExecTimes`)."""
+        self._times.utime(path, atime=atime, mtime=mtime, require=self.stat)
 
     def _engine(self) -> ContainerArchiveClient:
         if self._closed:
@@ -445,8 +462,11 @@ class _ContainerPathMixin:
     @notimplemented("Docker archive APIs cannot rename paths")
     def rename(self, target): ...
 
-    @notimplemented("Docker archive APIs cannot set times")
-    def _utime(self, *, atime=None, mtime=None): ...
+    def _supports(self, protocol) -> typing.Optional[bool]:
+        """`Utime` holds only where the container has a program to set times."""
+        if protocol is Utime:
+            return self.backend.can_set_times()
+        return None
 
 
 class PosixContainerPath(_ContainerPathMixin, PosixBackendPath):

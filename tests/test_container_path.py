@@ -793,3 +793,151 @@ def test_a_path_obtained_before_close_refuses_and_makes_no_request():
             operation()
     assert requests == []
     assert container.puts == []
+
+
+# -- times, through an exec ------------------------------------------------
+
+
+class _Exec:
+    def __init__(self, code, out=b"", err=b""):
+        self.exit_code = code
+        self.output = (out, err)
+
+
+class _ExecContainer(_Container):
+    """A container whose `exec_run` answers per program, as scripted."""
+
+    def __init__(self, answers=None):
+        super().__init__()
+        self.answers = dict(answers or {})
+        self.execs = []
+
+    def exec_run(self, cmd, **options):
+        self.execs.append((list(cmd), options))
+        answer = self.answers.get(cmd[0], (0, b"", b""))
+        if callable(answer):
+            answer = answer(cmd)
+        if isinstance(answer, Exception):
+            raise answer
+        return _Exec(*answer)
+
+
+def test_a_container_sets_times_with_touch_as_root_after_one_probe():
+    from pathapi.protocols import Utime, supports
+
+    container = _ExecContainer()
+    container.archives["/srv/f"] = _tar([("f", b"x")])
+    path = PosixContainerPath("/srv/f", backend=ContainerPathBackend(container))
+
+    assert supports(path, Utime)
+    path._utime(mtime=1_000_000_000.5)
+    path._utime(atime=7, mtime=7)
+
+    assert [argv for argv, _ in container.execs] == [
+        ["touch", "-c", "-d", "@0", "--", "/.hostctl-utime-probe/absent"],
+        ["touch", "-c", "-m", "-d", "@1000000000.500000000", "--", "/srv/f"],
+        ["touch", "-c", "-d", "@7", "--", "/srv/f"],
+    ]
+    # The archive API writes as root, so the exec that follows it does too.
+    assert all(
+        options["user"] == "0" and options["workdir"] == "/"
+        for _, options in container.execs
+    )
+    # Content is never re-sent to change a time.
+    assert container.puts == []
+
+
+def test_utime_of_a_missing_container_path_touches_nothing():
+    container = _ExecContainer()
+    path = PosixContainerPath("/srv/missing", backend=ContainerPathBackend(container))
+
+    with pytest.raises(FileNotFoundError):
+        path._utime(mtime=1)
+
+    assert [argv[0] for argv, _ in container.execs] == ["touch"]  # the probe
+
+
+@pytest.mark.parametrize(
+    "answer",
+    (
+        (127, b"", b'exec: "touch": executable file not found in $PATH'),
+        RuntimeError(
+            'OCI runtime exec failed: exec: "touch": executable file not found'
+        ),
+    ),
+    ids=("exit status", "engine error"),
+)
+def test_a_container_without_touch_cannot_set_times(answer):
+    from pathapi.protocols import Utime, supports
+
+    container = _ExecContainer({"touch": answer})
+    container.archives["/srv/f"] = _tar([("f", b"x")])
+    path = PosixContainerPath("/srv/f", backend=ContainerPathBackend(container))
+
+    assert not supports(path, Utime)
+    with pytest.raises(NotImplementedError):
+        path._utime(mtime=1)
+    # `touch()` of an existing file is then a no-op, as pathapi documents.
+    path.touch()
+    assert len(container.execs) == 1
+
+
+def test_a_client_without_exec_cannot_set_times():
+    from pathapi.protocols import Utime, supports
+
+    path = PosixContainerPath("/srv/f", backend=ContainerPathBackend(_Container()))
+
+    assert not supports(path, Utime)
+
+
+def test_a_failed_probe_is_not_remembered_as_unsupported():
+    """An engine error says nothing about the image, so it is asked again."""
+    from pathapi.protocols import Utime, supports
+
+    failures = [ConnectionError("engine went away")]
+
+    def touch(cmd):
+        return failures.pop() if failures else (0, b"", b"")
+
+    container = _ExecContainer({"touch": touch})
+    path = PosixContainerPath("/srv/f", backend=ContainerPathBackend(container))
+
+    assert path._supports(Utime) is None
+    assert supports(path, Utime)
+
+
+def test_a_refused_container_touch_is_a_permission_error():
+    def touch(cmd):
+        if cmd[-1] == "/srv/f":
+            return 1, b"", b"touch: /srv/f: Operation not permitted\n"
+        return 0, b"", b""
+
+    container = _ExecContainer({"touch": touch})
+    container.archives["/srv/f"] = _tar([("f", b"x")])
+    path = PosixContainerPath("/srv/f", backend=ContainerPathBackend(container))
+
+    with pytest.raises(PermissionError):
+        path._utime(mtime=1)
+
+
+def test_a_windows_container_sets_times_with_the_winrm_script():
+    container = _ExecContainer()
+    backend = ContainerPathBackend(container, pathname="windows")
+    path = WindowsContainerPath("C:/app/f.txt", backend=backend)
+
+    path._utime(mtime=0.5)
+
+    probe, script = container.execs
+    assert probe[0] == [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "exit 0",
+    ]
+    argv, options = script
+    assert argv[:4] == ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"]
+    assert "SetLastWriteTimeUtc($p,[DateTime]::new(621355968005000000," in argv[4]
+    assert "Get-Item -LiteralPath $p" in argv[4]
+    assert "-EncodedCommand" not in argv
+    assert "user" not in options
