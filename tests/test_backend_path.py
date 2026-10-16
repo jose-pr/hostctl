@@ -129,3 +129,22 @@ def test_the_base_is_shared():
         assert issubclass(cls, BackendPathMixin)
         for name in ("copy", "move", "_symlink_target"):
             assert name not in vars(cls)
+
+
+@pytest.mark.parametrize(
+    "derive",
+    (
+        lambda p: p.with_name("b.txt"),
+        lambda p: p.with_stem("b"),
+        lambda p: p.with_suffix(".log"),
+        lambda p: p.relative_to("/srv"),
+        lambda p: p.parents[0],
+        lambda p: p.parent,
+        lambda p: p / "c",
+    ),
+)
+def test_every_derived_path_keeps_its_backend(derive):
+    backend = object()
+    derived = derive(PosixQEMUPath("/srv/a.txt", backend=backend))
+    assert type(derived) is PosixQEMUPath
+    assert derived.backend is backend

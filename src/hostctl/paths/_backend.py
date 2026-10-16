@@ -70,6 +70,30 @@ class BackendPathMixin:
     def parent(self):
         return type(self)(str(super().parent), backend=self.backend)
 
+    # Before 3.12, pathlib builds these with `object.__new__`, skipping
+    # `__new__` and so the backend; pathapi's safe overwrite names its
+    # temporary sibling with `with_name()`.
+    @property
+    def parents(self):
+        return tuple(
+            type(self)(str(item), backend=self.backend) for item in super().parents
+        )
+
+    def _rebind(self, derived):
+        return type(self)(str(derived), backend=self.backend)
+
+    def with_name(self, name):
+        return self._rebind(super().with_name(name))
+
+    def with_stem(self, stem):
+        return self._rebind(super().with_stem(stem))
+
+    def with_suffix(self, suffix):
+        return self._rebind(super().with_suffix(suffix))
+
+    def relative_to(self, *other, **kwargs):
+        return self._rebind(super().relative_to(*other, **kwargs))
+
     def stat(self, *, follow_symlinks: bool = True) -> FileStat:
         return self.backend.stat(str(self), follow_symlinks=follow_symlinks)
 
