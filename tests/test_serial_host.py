@@ -59,6 +59,74 @@ def test_serial_uri_round_trip_and_secret_safe_dispatch():
     assert host.capabilities == frozenset(("session",))
 
 
+@pytest.mark.parametrize(
+    ("uri", "device", "rendered"),
+    [
+        ("serial:///dev/ttyUSB0", "/dev/ttyUSB0", "serial:///dev/ttyUSB0"),
+        ("serial:/dev/ttyUSB0", "/dev/ttyUSB0", "serial:///dev/ttyUSB0"),
+        ("serial:///COM3", "COM3", "serial:///COM3"),
+        ("serial:///com12", "com12", "serial:///com12"),
+        ("serial:COM3", "COM3", "serial:///COM3"),
+        ("serial:///%5C%5C.%5CCOM10", "\\\\.\\COM10", "serial:///%5C%5C.%5CCOM10"),
+        ("serial:///loop%3A%2F%2F", "loop://", "serial:///loop://"),
+        (
+            "serial:///rfc2217://h:4001",
+            "rfc2217://h:4001",
+            "serial:///rfc2217://h:4001",
+        ),
+        # An encoded slash after the leading one is part of the device.
+        ("serial:///%2Fdev%2FttyUSB0", "/dev/ttyUSB0", "serial:///dev/ttyUSB0"),
+        ("serial:///%2FCOM3", "/COM3", "serial:///%2FCOM3"),
+        ("serial:///%2F%2F.%2FCOM10", "//./COM10", "serial:///%2F/./COM10"),
+        ("serial:///dev/tty%20USB0", "/dev/tty USB0", "serial:///dev/tty%20USB0"),
+        (
+            "serial:///dev/serial/by-path/pci-0000:00:14.0-port0",
+            "/dev/serial/by-path/pci-0000:00:14.0-port0",
+            "serial:///dev/serial/by-path/pci-0000:00:14.0-port0",
+        ),
+        ("serial:ttyUSB0", "ttyUSB0", "serial:ttyUSB0"),
+    ],
+)
+def test_a_serial_uri_path_reads_like_a_file_uri(uri, device, rendered):
+    config = HostConfig(uri)
+    assert config.device == device
+    assert config.connection_uri.split("?")[0] == rendered
+    assert HostConfig(config.connection_uri) == config
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "/dev/ttyUSB0",
+        "/COM3",
+        "//./COM10",
+        "\\\\.\\COM10",
+        "COM3",
+        "loop://",
+        "socket://h:7000?logging=debug",
+        "/tmp/a://b",
+        "dev/ttyUSB0",
+        "/dev/a@b#c",
+    ],
+)
+def test_every_serial_device_round_trips_through_its_uri(device):
+    config = SerialConfig(device, baudrate=9600)
+    restored = HostConfig(config.connection_uri)
+    assert restored == config
+    assert restored.device == device
+
+
+def test_a_serial_uri_with_four_slashes_names_the_right_spelling():
+    with pytest.raises(ValueError, match=r"serial:///dev/ttyUSB0"):
+        HostConfig("serial:////dev/ttyUSB0")
+
+
+@pytest.mark.parametrize("uri", ["serial:", "serial:///"])
+def test_a_serial_uri_requires_a_device(uri):
+    with pytest.raises(ValueError, match="requires a device"):
+        HostConfig(uri)
+
+
 def test_raw_serial_shell_session_is_exclusive_and_merged():
     console = _Console()
     host = SerialHost(SerialConfig("loop://", serial_port=console))

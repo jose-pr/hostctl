@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 import subprocess
 import time
 import typing
@@ -46,6 +47,43 @@ def _optional_float(value: str, name: str) -> typing.Optional[float]:
         return float(value)
     except ValueError as exc:
         raise ValueError(f"{name} must be numeric") from exc
+
+
+#: A device pyserial resolves by name rather than as a filesystem path: a
+#: Windows port (`COM3`, `\\.\COM10`) or a pyserial URL (`loop://`,
+#: `rfc2217://host:4001`). Behind the URI's leading slash, as `C:` is in
+#: `file:///C:/x` (RFC 8089), it keeps no slash of its own.
+_NAMED_DEVICE = re.compile(r"(?i:COM[0-9]+)\Z|\\\\|[A-Za-z][A-Za-z0-9+.-]*://")
+
+
+def _device_from_uri_path(path: str) -> str:
+    """The device a `serial:` URI's still-encoded path names, read as `file:` does."""
+    if not path.startswith("/"):
+        return unquote(path)
+    if path.startswith("//"):
+        raise ValueError(
+            "serial URI path has more than one leading slash: write an absolute "
+            "device as serial:///dev/ttyUSB0, and percent-encode a device that "
+            "itself starts with '//' (serial:///%2F/...)"
+        )
+    rest = unquote(path[1:])
+    if not rest:
+        return ""
+    if rest.startswith("/") or _NAMED_DEVICE.match(rest):
+        return rest
+    return "/" + rest
+
+
+def _device_uri_path(device: str) -> str:
+    """The text after `serial:` that `_device_from_uri_path` reads back as `device`."""
+    if not device.startswith("/"):
+        if _NAMED_DEVICE.match(device):
+            return "///" + quote(device, safe="/:")
+        return quote(device, safe="/:")
+    rest = device[1:]
+    if rest.startswith("/") or _NAMED_DEVICE.match(rest):
+        return "///%2F" + quote(rest, safe="/:")
+    return "///" + quote(rest, safe="/:")
 
 
 def _format_number(value: typing.Optional[float]) -> str:
@@ -148,11 +186,11 @@ class SerialConfig(HostConfig, schemes=("serial",)):
             "inter_byte_timeout": _format_number(self.inter_byte_timeout),
             "exclusive": "" if self.exclusive is None else str(self.exclusive).lower(),
         }
-        return f"serial:///{quote(self.device, safe='')}?{urlencode(values)}"
+        return f"serial:{_device_uri_path(self.device)}?{urlencode(values)}"
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> "SerialConfig":
-        device = unquote(parsed.path.lstrip("/"))
+        device = _device_from_uri_path(parsed.path)
         if parsed.netloc:
             raise ValueError("serial URI must not contain an authority")
         if not device:
