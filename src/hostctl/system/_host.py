@@ -18,10 +18,10 @@ from ..executor import (
     run_displayed,
     validate_environment_names,
     CaptureOutput,
-    Environment,
-    FileHandle,
-    Input,
-    PathLike,
+    CommandEnvironment,
+    StreamTarget,
+    CommandInput,
+    StrPath,
 )
 from ..exceptions import OperationNotStartedError
 from ..provider._selector import ProviderSelector
@@ -540,7 +540,7 @@ class SystemHost(Host):
             f"the {self.system_family!r} family is command-only"
         )
 
-    def path(self, *segments: PathLike, backend: typing.Optional[str] = None) -> Path:
+    def path(self, *segments: StrPath, backend: typing.Optional[str] = None) -> Path:
         if not self._path_selector.providers:
             raise NotImplementedError(
                 f"{type(self).__name__} does not provide the 'path' capability"
@@ -626,16 +626,16 @@ class SystemHost(Host):
         *cmds: Command,
         bufsize: int = -1,
         executable: typing.Optional[str] = None,
-        stdin: typing.Optional[FileHandle] = None,
-        stdout: typing.Optional[FileHandle] = None,
-        stderr: typing.Optional[FileHandle] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        stdin: typing.Optional[StreamTarget] = None,
+        stdout: typing.Optional[StreamTarget] = None,
+        stderr: typing.Optional[StreamTarget] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         capture_output: CaptureOutput = True,
         check: bool = True,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
-        input: Input = None,
+        input: CommandInput = None,
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:

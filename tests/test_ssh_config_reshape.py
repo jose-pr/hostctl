@@ -1,4 +1,4 @@
-"""SSHConfig: no root default, an opt-in ssh_config, connect_options, path_flavor="auto"."""
+"""SSHConfig: no root default, an opt-in ssh_config, connect_options, pathname="auto"."""
 
 from __future__ import annotations
 
@@ -124,21 +124,21 @@ def _sftp_answering(home):
     "answer, kind",
     (("/C:/Users/tester", WindowsHost), ("/home/tester", PosixHost)),
 )
-def test_auto_path_flavor_asks_the_server_when_the_host_is_created(answer, kind):
+def test_auto_pathname_asks_the_server_when_the_host_is_created(answer, kind):
     with InProcessSSHServer(_handler, sftp_factory=_sftp_answering(answer)) as server:
-        config = server.config(path_flavor="auto")
+        config = server.config(pathname="auto")
         host = config._create_host()
         try:
             assert isinstance(host, kind)
         finally:
             host.close()
-    assert HostConfig(config.connection_uri).path_flavor == "auto"
+    assert HostConfig(config.connection_uri).pathname == "auto"
 
 
-def test_auto_path_flavor_refuses_an_answer_it_cannot_classify():
+def test_auto_pathname_refuses_an_answer_it_cannot_classify():
     with InProcessSSHServer(_handler, sftp_factory=_sftp_answering("odd")) as server:
         with pytest.raises(ValueError, match="path style"):
-            server.config(path_flavor="auto")._create_host()
+            server.config(pathname="auto")._create_host()
 
 
 def test_a_root_default_is_gone_from_the_source():
@@ -154,6 +154,6 @@ def test_a_root_default_is_gone_from_the_source():
 def test_an_unresolvable_host_in_auto_mode_cleans_up(monkeypatch):
     with pytest.raises(Exception) as raised:
         SSHConfig(
-            "hostctl-alias.invalid", path_flavor="auto", known_hosts=None
+            "hostctl-alias.invalid", pathname="auto", known_hosts=None
         )._create_host()
     assert any(isinstance(c, socket.gaierror) for c in _causes(raised.value))

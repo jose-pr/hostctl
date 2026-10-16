@@ -131,8 +131,8 @@ def test_ssh_spawn_renders_command_and_requests_terminal():
 def test_ssh_spawn_without_command_opens_the_configured_shell():
     """Not None, which starts the account's *login* shell.
 
-    The configured dialect, `SSHConfig.executable`, and the executable
-    recovered by `dialect="auto"` pick the program, since `send()` renders
+    The configured shell, `SSHConfig.executable`, and the executable
+    recovered by `shell="auto"` pick the program, since `send()` renders
     in the configured flavour.
     """
     host = _SSHTransport(SSHConfig("host"))

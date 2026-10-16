@@ -310,8 +310,8 @@ def test_stderr_into_stdout_falls_back_where_the_agent_cannot_merge(version, win
 
 
 @pytest.mark.parametrize("spelling", ("auto", "posix", "windows"))
-def test_qemu_path_flavor_strings_round_trip_through_the_uri(spelling):
-    config = QEMUConfig("guest", path_flavor=spelling)
+def test_qemu_pathname_strings_round_trip_through_the_uri(spelling):
+    config = QEMUConfig("guest", pathname=spelling)
 
     assert HostConfig(config.connection_uri) == config
 

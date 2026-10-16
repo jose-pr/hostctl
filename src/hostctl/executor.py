@@ -16,14 +16,14 @@ from pathapi import Pathname
 
 _Result = typing.TypeVar("_Result", covariant=True)
 
-FileHandle = typing.Union[int, typing.BinaryIO, typing.TextIO]
+StreamTarget = typing.Union[int, typing.BinaryIO, typing.TextIO]
 #: `bytearray` and `memoryview` are here because callers really do pass
 #: them -- a `socket.recv_into` buffer, a slice of a `mmap` -- and the whole
 #: point of `normalize_input` is that the sink must never see a type it
 #: cannot write.
-Input = typing.Optional[typing.Union[bytes, bytearray, memoryview, str]]
-PathLike = typing.Union[str, os.PathLike[str]]
-Environment = typing.Mapping[typing.Union[str, bytes], object]
+CommandInput = typing.Optional[typing.Union[bytes, bytearray, memoryview, str]]
+StrPath = typing.Union[str, os.PathLike[str]]
+CommandEnvironment = typing.Mapping[typing.Union[str, bytes], object]
 CaptureOutput = typing.Literal[True, False, "stdout", "stderr"]
 
 
@@ -47,7 +47,7 @@ class CommandLine(str):
     __slots__ = ()
 
 
-ExecutorCommand = typing.Union[str, PurePath, Pathname]
+CommandLike = typing.Union[str, PurePath, Pathname]
 CommandArgument = typing.Union[str, bytes, PurePath, Pathname]
 
 
@@ -61,9 +61,9 @@ POWERSHELL_STATUS = (
 
 def capture_streams(
     capture_output: CaptureOutput,
-    stdout: typing.Optional[FileHandle],
-    stderr: typing.Optional[FileHandle],
-) -> typing.Tuple[typing.Optional[FileHandle], typing.Optional[FileHandle]]:
+    stdout: typing.Optional[StreamTarget],
+    stderr: typing.Optional[StreamTarget],
+) -> typing.Tuple[typing.Optional[StreamTarget], typing.Optional[StreamTarget]]:
     """Apply hostctl's extended capture_output convention."""
     if capture_output not in (True, False, "stdout", "stderr"):
         raise ValueError("capture_output must be True, False, 'stdout', or 'stderr'")
@@ -87,7 +87,9 @@ def capture_streams(
     return stdout, stderr
 
 
-def reject_stdin_conflict(input: Input, stdin: typing.Optional[FileHandle]) -> None:
+def reject_stdin_conflict(
+    input: CommandInput, stdin: typing.Optional[StreamTarget]
+) -> None:
     if input is not None and stdin is not None:
         raise ValueError("stdin and input arguments may not both be used")
 
@@ -110,12 +112,12 @@ def raise_normalized(
 
 
 def normalize_input(
-    input: Input,
+    input: CommandInput,
     *,
     text_mode: bool,
     encoding: typing.Optional[str] = None,
     errors: typing.Optional[str] = None,
-) -> Input:
+) -> CommandInput:
     """Match `input` to the stream mode the executor is about to use.
 
     A mismatch here is not a clean error. `subprocess` writes `input` on a
@@ -251,7 +253,7 @@ def expired(
 ENVIRONMENT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def validate_environment_names(env: typing.Optional[Environment]) -> None:
+def validate_environment_names(env: typing.Optional[CommandEnvironment]) -> None:
     """Raise `ValueError` for an environment variable name a transport cannot carry.
 
     One rule, applied before a provider is selected: a name that only some
@@ -267,7 +269,7 @@ def validate_environment_names(env: typing.Optional[Environment]) -> None:
 
 
 def normalize_environment(
-    env: typing.Optional[Environment],
+    env: typing.Optional[CommandEnvironment],
 ) -> typing.Optional[typing.Dict[str, str]]:
     if env is None:
         return None
@@ -290,7 +292,9 @@ _DISPATCH_DISPLAY: contextvars.ContextVar[typing.Optional[typing.Tuple[str, ...]
 )
 
 
-def masked_environment(env: Environment) -> typing.Dict[typing.Union[str, bytes], str]:
+def masked_environment(
+    env: CommandEnvironment,
+) -> typing.Dict[typing.Union[str, bytes], str]:
     """`env` with every value replaced by `MASK`; the names stay visible."""
     return {key: MASK for key in env}
 
@@ -341,7 +345,7 @@ def run_displayed(
 
 
 def write_output(
-    stream: FileHandle,
+    stream: StreamTarget,
     value: typing.Optional[typing.Union[str, bytes]],
     *,
     encoding: typing.Optional[str],
@@ -392,8 +396,8 @@ def write_output(
 
 
 def dispatch_output(
-    stdout_target: typing.Optional[FileHandle],
-    stderr_target: typing.Optional[FileHandle],
+    stdout_target: typing.Optional[StreamTarget],
+    stderr_target: typing.Optional[StreamTarget],
     stdout: typing.Optional[typing.Union[str, bytes]],
     stderr: typing.Optional[typing.Union[str, bytes]],
     *,
@@ -448,16 +452,16 @@ class ExecutorCapability(str, enum.Enum):
 class ExecutionOptions(typing.TypedDict, total=False):
     """Shell-agnostic subprocess-style options understood by executors."""
 
-    stdin: typing.Optional[FileHandle]
-    stdout: typing.Optional[FileHandle]
-    stderr: typing.Optional[FileHandle]
-    cwd: typing.Optional[PathLike]
-    env: typing.Optional[Environment]
+    stdin: typing.Optional[StreamTarget]
+    stdout: typing.Optional[StreamTarget]
+    stderr: typing.Optional[StreamTarget]
+    cwd: typing.Optional[StrPath]
+    env: typing.Optional[CommandEnvironment]
     capture_output: CaptureOutput
     check: bool
     encoding: typing.Optional[str]
     errors: typing.Optional[str]
-    input: Input
+    input: CommandInput
     timeout: typing.Optional[float]
     text: bool
 
@@ -474,18 +478,18 @@ class Executor(typing.Protocol[_Result]):
 
     def __call__(
         self,
-        command: ExecutorCommand,
+        command: CommandLike,
         *args: CommandArgument,
-        stdin: typing.Optional[FileHandle] = None,
-        stdout: typing.Optional[FileHandle] = None,
-        stderr: typing.Optional[FileHandle] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        stdin: typing.Optional[StreamTarget] = None,
+        stdout: typing.Optional[StreamTarget] = None,
+        stderr: typing.Optional[StreamTarget] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         capture_output: typing.Optional[CaptureOutput] = None,
         check: typing.Optional[bool] = None,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
-        input: Input = None,
+        input: CommandInput = None,
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
         **options: object,
@@ -553,14 +557,14 @@ __all__ = [
     "CaptureOutput",
     "CommandArgument",
     "CommandLine",
-    "Environment",
+    "CommandEnvironment",
     "ExecutionOptions",
     "Executor",
     "ExecutorCapability",
-    "ExecutorCommand",
-    "FileHandle",
-    "Input",
-    "PathLike",
+    "CommandLike",
+    "StreamTarget",
+    "CommandInput",
+    "StrPath",
     "capture_streams",
     "dispatch_output",
     "expired",

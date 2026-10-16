@@ -109,8 +109,8 @@ def test_ssh_uri_round_trip_keeps_secrets_separate():
         username="admin",
         password="top-secret",
         executable="C:/Program Files/PowerShell/7/pwsh.exe",
-        dialect="powershell",
-        path_flavor=WindowsPathname,
+        shell="powershell",
+        pathname=WindowsPathname,
     )
     source = source.open()
     assert isinstance(source, WindowsHost)
@@ -119,8 +119,8 @@ def test_ssh_uri_round_trip_keeps_secrets_separate():
     restored = Host(uri, password="top-secret", known_hosts=None)
     assert isinstance(restored, WindowsHost)
     assert restored.config.password == "top-secret"
-    assert restored.config.dialect is POWERSHELL
-    assert restored.config.path_flavor is WindowsPathname
+    assert restored.config.shell is POWERSHELL
+    assert restored.config.pathname is WindowsPathname
     assert restored.config.executable == "C:/Program Files/PowerShell/7/pwsh.exe"
     assert restored.connection_uri == uri
     restored_config = HostConfig(uri, password="top-secret", known_hosts=None)
@@ -131,13 +131,13 @@ def test_ssh_uri_round_trip_keeps_secrets_separate():
 def test_winrms_uri_round_trip_keeps_secrets_separate():
     source = WinRMConfig(
         "windows.example.com",
-        "domain user",
-        "top-secret",
-        ssl=True,
-        transport="kerberos",
+        username="domain user",
+        password="top-secret",
+        tls=True,
+        auth="kerberos",
         message_encryption="always",
-        operation_timeout_sec=40,
-        read_timeout_sec=50,
+        operation_timeout=40,
+        read_timeout=50,
     ).open()
     uri = source.connection_uri
     assert "top-secret" not in uri
@@ -152,17 +152,13 @@ def test_winrms_uri_round_trip_keeps_secrets_separate():
     assert str(restored_config) == uri
 
 
-def test_ssh_path_flavor_selects_system_semantics_without_changing_dialect():
+def test_ssh_pathname_selects_system_semantics_without_changing_dialect():
     windows = Host(
-        str(
-            SSHConfig(
-                "windows.example", path_flavor=WindowsPathname, dialect="powershell"
-            )
-        )
+        str(SSHConfig("windows.example", pathname=WindowsPathname, shell="powershell"))
     )
     assert isinstance(windows, WindowsHost)
     assert windows.shell_flavour is POWERSHELL
-    posix_pwsh = Host(str(SSHConfig("posix.example", dialect="powershell")))
+    posix_pwsh = Host(str(SSHConfig("posix.example", shell="powershell")))
     assert isinstance(posix_pwsh, PosixHost)
     assert posix_pwsh.shell_flavour is POWERSHELL
 
@@ -202,8 +198,8 @@ def test_transport_system_hosts_have_safe_info_fallback_without_connection(
     [
         LocalHost(),
         SSHConfig("host").open(),
-        WinRMConfig("host", "user").open(),
-        WinRMConfig("host", "user", ssl=True).open(),
+        WinRMConfig("host", username="user").open(),
+        WinRMConfig("host", username="user", tls=True).open(),
     ],
 )
 def test_scheme_matches_connection_uri_and_registered_scheme(host):
@@ -217,11 +213,11 @@ def test_scheme_matches_connection_uri_and_registered_scheme(host):
     "uri, message",
     [
         ("ftp://host", "unsupported host scheme"),
-        ("ssh://host?dialect=posix&dialect=powershell", "duplicate"),
+        ("ssh://host?shell=posix&shell=powershell", "duplicate"),
         ("ssh://host?guess_os=true", "unknown"),
         ("ssh:///tmp/socket", "requires a host"),
         ("winrm://host", "requires a username"),
-        ("local:?dialect=posix", "local URI"),
+        ("local:?shell=posix", "local URI"),
     ],
 )
 def test_connection_string_rejects_invalid_or_ambiguous_input(uri, message):
@@ -253,13 +249,13 @@ def test_uri_password_conflicting_with_an_argument_is_rejected():
 
 
 def test_redact_uri_strips_the_password_leaving_a_reusable_uri():
-    redacted = redact_uri("ssh://admin:hunter2@nas.example.com:22?dialect=posix")
+    redacted = redact_uri("ssh://admin:hunter2@nas.example.com:22?shell=posix")
 
     assert "hunter2" not in redacted
     # The password is removed, not masked: a placeholder would round-trip into
     # a wrong credential if the rendered form were fed back in.
     assert "*" not in redacted
-    assert redacted == "ssh://admin@nas.example.com:22?dialect=posix"
+    assert redacted == "ssh://admin@nas.example.com:22?shell=posix"
     # Still valid input, and it reconstructs the same configuration.
     assert urlsplit(redacted).hostname == "nas.example.com"
     assert HostConfig(redacted).username == "admin"
@@ -459,7 +455,7 @@ def test_winrm_providers_share_one_transport_for_composition():
     from hostctl.provider._contracts import ExecutorProvider, PathProvider
 
     executor, path = winrm_providers(
-        WinRMConfig("win.example.com", "admin", password="x")
+        WinRMConfig("win.example.com", username="admin", password="x")
     )
 
     assert isinstance(executor, ExecutorProvider)
@@ -481,7 +477,7 @@ def test_uri_password_field_carries_credential_extras():
     [
         "ssh://admin@host",
         "local:",
-        "ssh://host?dialect=posix",
+        "ssh://host?shell=posix",
     ],
 )
 def test_redact_uri_leaves_a_password_free_uri_unchanged(uri):
@@ -538,7 +534,9 @@ def test_entry_point_loading_is_lazy_and_cache_can_be_refreshed(monkeypatch):
 
 def test_repr_redacts_credentials():
     assert "top-secret" not in repr(SSHConfig("host", password="top-secret"))
-    assert "top-secret" not in repr(WinRMConfig("host", "user", "top-secret"))
+    assert "top-secret" not in repr(
+        WinRMConfig("host", username="user", password="top-secret")
+    )
 
 
 def test_capabilities_are_explicit():
@@ -548,7 +546,9 @@ def test_capabilities_are_explicit():
     assert SSHConfig("host").open().capabilities == frozenset(
         ("run", "path", "spawn", "tty")
     )
-    windows_capabilities = WinRMConfig("host", "user", "secret").open().capabilities
+    windows_capabilities = (
+        WinRMConfig("host", username="user", password="secret").open().capabilities
+    )
     assert {"run", "path"}.issubset(windows_capabilities)
 
 

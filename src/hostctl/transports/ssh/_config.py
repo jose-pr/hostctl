@@ -5,22 +5,23 @@ from __future__ import annotations
 import dataclasses
 import os
 import typing
-from pathlib import PurePath, PureWindowsPath
+from pathlib import PureWindowsPath
 from urllib.parse import quote, unquote, urlencode
 
-from pathapi import Pathname, PosixPathname
+from pathapi import PosixPathname
 
 
-from ...executor import PathLike
 from ...host._config import HostConfig
+from ...host._dispatch import _keyword_only
+from ...host._selection import PathnameSelection, ShellSelection
 from ...uri._parse import (
     _refuse_uri,
-    path_flavor_name,
-    path_flavor_selection,
+    pathname_label,
+    pathname_selection,
     strict_uri_query,
     uri_hostname,
 )
-from ...shell import POSIX_SHELL, ShellFlavourSelection, shell_flavour
+from ...shell import POSIX_SHELL, shell_flavour
 
 if typing.TYPE_CHECKING:
     from ._transport import _SSHTransport
@@ -35,12 +36,6 @@ SSHClientKeys = typing.Optional[
 SSHKnownHosts = typing.Optional[
     typing.Union[SSHKeySource, typing.Sequence[SSHKeySource]]
 ]
-
-PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
-
-SSHShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
-
-SSHPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
 
 
 #: `connect_options` keys hostctl owns, and the field to use instead.
@@ -57,7 +52,7 @@ _OWNED_CONNECT_OPTIONS = {
 
 
 #: Login shells hostctl knows how to render for. `"auto"` is resolved from
-#: the dialect; the rest name what the server actually runs.
+#: the shell; the rest name what the server actually runs.
 _LOGIN_SHELLS = frozenset(("auto", "cmd", "powershell", "posix"))
 
 
@@ -109,6 +104,7 @@ def _refuse_unsafe_target(host: str, username: typing.Optional[str]) -> None:
             raise ValueError("SSH username cannot have whitespace before '-'")
 
 
+@_keyword_only()
 @dataclasses.dataclass
 class SSHConfig(HostConfig, schemes=("ssh",)):
     """Explicit SSH transport, authentication, and target-shell settings."""
@@ -126,8 +122,8 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     client_keys: SSHClientKeys = dataclasses.field(default=None, repr=False)
     executable: typing.Optional[str] = None
     known_hosts: SSHKnownHosts = ()
-    dialect: SSHShellSelection = POSIX_SHELL
-    path_flavor: SSHPathSelection = PosixPathname
+    shell: ShellSelection = POSIX_SHELL
+    pathname: PathnameSelection = PosixPathname
     #: What parses the command string when it ARRIVES, before the command
     #: line's own shell runs.
     #:
@@ -135,12 +131,12 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     #: On a POSIX server that is `$SHELL -c`; `"posix"` covers every sh-family
     #: shell and fish (csh and tcsh are unsupported), and the string is
     #: rendered so each reads it back verbatim. Windows OpenSSH's
-    #: stock server hands it to `cmd.exe /c`, so a `cmd`-dialect command
+    #: stock server hands it to `cmd.exe /c`, so a `cmd`-shell command
     #: line (which already carries one cmd layer) is parsed by cmd TWICE:
     #: measured against a real cmd.exe, 4 of 8 adversarial values survived
     #: and two of the failures were command injection.
     #:
-    #: `"auto"` reads the dialect: a Windows path flavour means the stock
+    #: `"auto"` reads the shell: a Windows path flavour means the stock
     #: `cmd.exe`, anything else means a POSIX login shell. The server's
     #: shell is configurable (`HKLM\SOFTWARE\OpenSSH\DefaultShell`), so
     #: say so explicitly when it has been changed -- guessing is wrong in
@@ -169,11 +165,11 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
         _refuse_unsafe_target(self.host, self.username)
         if not 1 <= self.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
-        if self.dialect != "auto":
-            self.dialect = shell_flavour(self.dialect)
+        if self.shell != "auto":
+            self.shell = shell_flavour(self.shell)
         elif self.executable is not None:
-            raise ValueError("executable cannot be combined with dialect='auto'")
-        self.path_flavor = path_flavor_selection(self.path_flavor, allow_auto=True)
+            raise ValueError("executable cannot be combined with shell='auto'")
+        self.pathname = pathname_selection(self.pathname, allow_auto=True)
         self.connect_options = dict(self.connect_options)
         for key in self.connect_options:
             if key in _OWNED_CONNECT_OPTIONS:
@@ -189,16 +185,16 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
 
     @property
     def resolved_login_shell(self) -> str:
-        """`login_shell` with `"auto"` answered from the dialect.
+        """`login_shell` with `"auto"` answered from the shell.
 
-        With `path_flavor="auto"` the answer needs the server: use the
+        With `pathname="auto"` the answer needs the server: use the
         transport's `login_shell`.
         """
         if self.login_shell != "auto":
             return self.login_shell
-        if self.path_flavor == "auto":
-            raise ValueError("login_shell='auto' needs a known path_flavor")
-        return "cmd" if issubclass(self.path_flavor, PureWindowsPath) else "posix"
+        if self.pathname == "auto":
+            raise ValueError("login_shell='auto' needs a known pathname")
+        return "cmd" if issubclass(self.pathname, PureWindowsPath) else "posix"
 
     def connect_opts(self) -> typing.Dict[str, object]:
         opts: typing.Dict[str, object] = {}
@@ -237,8 +233,8 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     def connection_uri(self) -> str:
         user = f"{quote(self.username, safe='')}@" if self.username else ""
         query = {
-            "dialect": self.dialect,
-            "path_flavor": path_flavor_name(self.path_flavor),
+            "shell": self.shell,
+            "pathname": pathname_label(self.pathname),
         }
         if self.executable:
             query["executable"] = self.executable
@@ -257,8 +253,8 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
         query = strict_uri_query(
             parsed,
             {
-                "dialect",
-                "path_flavor",
+                "shell",
+                "pathname",
                 "executable",
                 "login_shell",
                 "connect_timeout",
@@ -276,13 +272,13 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             client_keys=typing.cast(SSHClientKeys, credentials.get("client_keys")),
             executable=query.get("executable") or None,
             known_hosts=typing.cast(SSHKnownHosts, credentials.get("known_hosts", ())),
-            dialect=(
+            shell=(
                 "auto"
-                if query.get("dialect") == "auto"
-                else shell_flavour(query.get("dialect", POSIX_SHELL.name))
+                if query.get("shell") == "auto"
+                else shell_flavour(query.get("shell", POSIX_SHELL.name))
             ),
-            path_flavor=path_flavor_selection(
-                query.get("path_flavor", "posix"), allow_auto=True
+            pathname=pathname_selection(
+                query.get("pathname", "posix"), allow_auto=True
             ),
             login_shell=query.get("login_shell", "auto"),
             connect_timeout=(
@@ -300,7 +296,7 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
         try:
             # "auto" connects while the host is created, because the host
             # class depends on what the server answers.
-            flavor = transport.path_flavor
+            flavor = transport.pathname
         except BaseException:
             transport.close()
             raise
@@ -310,8 +306,8 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             executor_providers=(SSHExecutorProvider(transport),),
             path_providers=(SFTPPathProvider(transport),),
             shell=(
-                self.dialect
-                if self.dialect != "auto"
+                self.shell
+                if self.shell != "auto"
                 else (lambda: transport.shell_flavour)
             ),
         )

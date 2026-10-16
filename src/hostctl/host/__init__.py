@@ -4,4 +4,9 @@ from ._host import Host as Host
 from ._config import HostConfig as HostConfig
 from ._info import HostInfo as HostInfo
 
-__all__ = ["Host", "HostConfig", "HostInfo"]
+from ._selection import (
+    PathnameSelection as PathnameSelection,
+    ShellSelection as ShellSelection,
+)
+
+__all__ = ["Host", "HostConfig", "HostInfo", "PathnameSelection", "ShellSelection"]

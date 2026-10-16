@@ -3,6 +3,14 @@
 Protocol-independent host execution and filesystem paths. Core requires
 `pathapi`; transport integrations are optional extras.
 
+Every config takes its target positionally and everything else by keyword: a
+second positional argument raises `TypeError`, so an SSH port is always
+`port=2222` (a type checker still reads the dataclass's own `__init__`).
+`has_ssh()` and `has_psrp()` report whether the `ssh` extra (asyncssh and
+sftppath) and the `psrp` extra (pypsrp, on Python 3.10+) are installed,
+importing nothing; a missing extra otherwise fails where it is used, naming
+it.
+
 The `hostctl` command line is `hostctl.cli` and needs the `cli` extra; see
 "Command line" at the end. `import hostctl` never imports it.
 
@@ -19,7 +27,11 @@ compose a host out of providers without a transport.
 Where names are imported from (each is also re-exported from `hostctl` when
 the root lists it):
 
-- `hostctl.host` -- `Host`, `HostConfig`, `HostInfo`.
+- `hostctl.host` -- `Host`, `HostConfig`, `HostInfo`, and the selection aliases
+  every config takes: `ShellSelection` (a shell flavour, its class or name, or
+  `"auto"`) for `shell=`, and `PathnameSelection` (a pure-path or
+  `pathapi.Pathname` class, `"posix"`, `"windows"` or `"auto"`) for
+  `pathname=`.
 - `hostctl.exceptions` -- the exception tree (see "Exceptions").
 - `hostctl.uri` -- `ConnectionString`, `parse_credentials`, `redact_uri`,
   `strict_uri_credentials`, `strict_uri_query`, `uri_host`, `uri_hostname`.
@@ -30,9 +42,9 @@ the root lists it):
   `ProviderSelection`, `ProviderSelector`, `SessionInitializer`, and
   `READ_ONLY_PATH_OPERATIONS`, the capability set of a content-only endpoint.
 - `hostctl.executor` -- the `Executor` protocol, `ExecutorCapability`,
-  `ExecutionOptions`, `CommandLine`, the option aliases `ExecutorCommand`,
-  `CommandArgument`, `CaptureOutput`, `FileHandle`, `Input`, `PathLike`,
-  `Environment`, and the stream helpers listed below.
+  `ExecutionOptions`, `CommandLine`, the option aliases `CommandLike`,
+  `CommandArgument`, `CaptureOutput`, `StreamTarget`, `CommandInput`, `StrPath`,
+  `CommandEnvironment`, and the stream helpers listed below.
 - `hostctl.process` -- `Process`, `ProcessData` (`str | bytes`),
   `TerminalOptions`, `TerminalRequest` (what `spawn(terminal=)` accepts) and
   `terminal_options()`, which resolves one into the other.
@@ -61,7 +73,7 @@ the root lists it):
   `QEMUSerialConsole`.
 - `hostctl.transports.serial` -- `SerialConfig`, `SerialHost`, `SerialProcess`,
   `SerialLike` (the pyserial-shaped port protocol), `SerialFactory`, and the
-  console profiles `SerialConsoleProtocol`, `RawConsoleProfile`,
+  console profiles `ConsoleProfile`, `RawConsoleProfile`,
   `PromptConsoleProfile`, `LoginStep`.
 - `hostctl.cli` -- `main`, with one subcommand class per module
   (`hostctl.cli.cat.Cat`, `.cp.Cp`, `.info.Info`, `.ls.Ls`, `.run.Run`,
@@ -123,7 +135,7 @@ divergence comes from:
 - `normalize_input(input, *, text_mode, encoding=None, errors=None)` -- match
   `input` to the stream mode about to be used. A mismatch is not a clean
   error: the writer thread dies without closing the pipe and the call blocks
-  forever. Covers `bytes`, `bytearray` and `memoryview`; `Input` is those and
+  forever. Covers `bytes`, `bytearray` and `memoryview`; `CommandInput` is those and
   `str`, and anything else (an `int`, say) raises `TypeError`.
 - `normalize_environment(env)` -- `None` stays `None`; everything else becomes
   a `str`-keyed dict, so a transport never has to guess at `Path` or `int`
@@ -180,7 +192,7 @@ shell-agnostic option surface. `*args` is positional and is what
 as separate elements, while a non-`ARGS` executor never receives them at all,
 because the shell flavour has already rendered them into `command`. `ExecutionOptions` is the corresponding total-false `TypedDict`;
 executor-specific extensions remain keyword options.
-`ExecutorCommand` is `str | pathlib.PurePath | pathapi.Pathname`; paths
+`CommandLike` is `str | pathlib.PurePath | pathapi.Pathname`; paths
 remain path objects until the concrete executor converts them for transport.
 `ExecutorCapability.ARGS`, `.CWD`, and `.ENV` declare native executor support.
 `SSHExecutor` and `WinRMExecutor` inherit the `Executor` protocol so shared
@@ -540,8 +552,8 @@ hostctl applies to whatever you return.
 ## SSH
 
 `SSHConfig(host, port=22, username=None, password=None, client_keys=None,
-executable=None, known_hosts=(), dialect=POSIX_SHELL,
-path_flavor=pathapi.PosixPathname, login_shell="auto", connect_timeout=30.0,
+executable=None, known_hosts=(), shell=POSIX_SHELL,
+pathname=pathapi.PosixPathname, login_shell="auto", connect_timeout=30.0,
 ssh_config=None, connect_options={})`.
 
 `username=None` leaves the account to asyncssh (the local user, as `ssh` does);
@@ -553,15 +565,15 @@ field to use), kept out of the URI and `repr()`. `ssh_config` is kept out of
 the URI too, and an `ssh://` URI naming it raises: a `ProxyCommand` starts a
 local process, which a URI's author (an MCP tool caller, say) must not choose.
 
-Authentication fields are explicit and excluded from repr. `dialect` selects
+Authentication fields are explicit and excluded from repr. `shell` selects
 POSIX or PowerShell command construction independently of the POSIX/Windows
-SFTP path flavor. `dialect` is a `ShellFlavour` strategy. `path_flavor` is `"posix"`,
+SFTP path flavor. `shell` is a `ShellFlavour` strategy. `pathname` is `"posix"`,
 `"windows"`, `"auto"` or a concrete `pathapi.Pathname` or `pathlib.PurePath`
 subclass; `"auto"` connects while the host is created and reads the SFTP login
 directory (`/C:/...` is Windows, any other `/`-rooted answer POSIX, anything
 else raises); bare `PurePath` is
 rejected because it would infer the local OS. SSH implies neither an OS nor a
-shell. `dialect="auto"` performs positive cached probing and raises rather than
+shell. `shell="auto"` performs positive cached probing and raises rather than
 guessing. The SSH executor provider closes its AsyncSSH connection and waits for closure.
 AsyncSSH authentication failures are exposed as `PermissionError`; SSH
 host-key, key-exchange, disconnect, connection-loss, protocol, and channel
@@ -576,7 +588,7 @@ options. Without `ssh_config` neither leg reads one: both receive
 known_hosts explicitly.
 Both legs therefore reach the same server and verify its key the same way.
 `SFTPPathProvider.probe()` reports `unavailable` (naming `hostctl[ssh]`) when
-sftppath is missing, so selection routes around it; `dialect="auto"` accepts
+sftppath is missing, so selection routes around it; `shell="auto"` accepts
 sh, dash, ash, ksh, ksh93, mksh, lksh, oksh, yash, posh, bash, zsh and fish
 (csh and tcsh are refused); `ssh://h:0` is a `ValueError`, not port 22.
 `SSHConfig(connect_timeout=30.0)` bounds establishing the connection in
@@ -628,19 +640,19 @@ the buffered contract, not of the channel.
 An SSH host is **not fork-safe** in the sense of inheriting a usable
 connection: a child notices the loop it belongs to has changed and drops the
 inherited connection without closing it (closing would tear down a socket the
-parent still uses), then reconnects on its own. `dialect="auto"`
+parent still uses), then reconnects on its own. `shell="auto"`
 retains the executable path reported by the successful probe. Persistent SSH
 process reads, writes, EOF, and close operations use the same transport-error
 normalization as `wait()`.
 
 ## Containers
 
-`ContainerConfig(container, engine_url=None, user=None, workdir=None,
-executable=None, dialect="auto", path_flavor="auto", client_factory=None)` uses the optional
+`ContainerConfig(container, engine_url=None, username=None, workdir=None,
+executable=None, shell="auto", pathname="auto", client_factory=None)` uses the optional
 `container` extra and Docker Engine API. Inspection selects Linux/POSIX or
 Windows/PowerShell semantics. `ContainerHost` supports buffered exec,
 persistent sessions/TTYs, and archive-backed POSIX or Windows paths.
-`path_flavor` is `"auto"`, `"posix"`, `"windows"` or a pure-path class. Archive
+`pathname` is `"auto"`, `"posix"`, `"windows"` or a pure-path class. Archive
 paths support stat/traversal/read/write/append/exclusive-create, plus
 `symlink_to()`/`readlink()` -- a `SYMTYPE` tar member is a faithful
 representation; archive-only mkdir/remove/rename/chmod raise
@@ -650,15 +662,15 @@ buffered exec streams neither, and the exec API has no cancellable deadline).
 re-downloaded level by level -- list a large one through `run()` instead.
 An overwrite keeps the existing file's owner and mode (the archive API takes
 ownership from the tar header alone); a new file is uid/gid 0, mode 0644, and
-`user=` applies to exec only. `exists()` and `open("x")` read one member header,
+`username=` applies to exec only. `exists()` and `open("x")` read one member header,
 not the archive. A path taken before `ContainerHost.close()` refuses
 (`ValueError`) instead of reopening the client.
 
 ## QEMU Guest Agent
 
 `QEMUConfig(domain, transport="libvirt", connection=None, socket_path=None,
-ssh=None, agent_timeout=10.0, max_reply_size=48*1024*1024, dialect="auto",
-path_flavor="auto", transport_factory=None, serial_console=None,
+ssh=None, agent_timeout=10.0, max_reply_size=48*1024*1024, shell="auto",
+pathname="auto", transport_factory=None, serial_console=None,
 path_helper=None)` creates a
 `QEMUHost`. Transports are local libvirt (`qemu-libvirt` extra), direct Unix
 socket, or an AsyncSSH-tunneled remote Unix socket. Discovery positively probes
@@ -710,7 +722,7 @@ anchored with `./`.
 `agent_timeout` bounds one round trip independently of a command's `timeout=`:
 an agent that stops answering raises `ConnectionError`, not a command timeout.
 `run()` results carry `stdout_truncated`/`stderr_truncated` and warn when set.
-`dialect="auto"`/`path_flavor="auto"` require positive evidence of the guest
+`shell="auto"`/`pathname="auto"` require positive evidence of the guest
 family (`guest-get-osinfo`, or a family-exclusive command in `guest-info`) and
 raise rather than defaulting to POSIX. `info().os_family` is a family from
 `kernel-name`, not the os-release `id`. A `QGAPathBackend` is invalidated by
@@ -730,16 +742,20 @@ and makes no shell/status claim; `encoding=` makes the console read and write
 
 ## WinRM
 
-`WinRMConfig(host, username, password=None, transport="ntlm", port=None,
-ssl=False, server_cert_validation="validate", message_encryption="auto",
-operation_timeout_sec=20, read_timeout_sec=30, provider="auto",
-allow_cleartext=False)`. `provider` is `auto|native|pywinrm|psrp`. `transport` `basic`, `plaintext` or `ssl` over plain
+`WinRMConfig(host, username, password=None, auth="ntlm", port=None,
+tls=False, verify=True, message_encryption="auto",
+operation_timeout=20.0, read_timeout=30.0, provider="auto",
+allow_cleartext=False)`. `auth` is the authentication scheme (`ntlm`,
+`kerberos`, `credssp`, `basic`, `plaintext`, `ssl`); `tls=True` is HTTPS
+(`winrms://`); `verify=False` skips the server certificate check
+(`?verify=false`); the timeouts are float seconds, rounded up where a leg
+needs whole seconds. `provider` is `auto|native|pywinrm|psrp`. `auth` `basic`, `plaintext` or `ssl` over plain
 HTTP sends the password in cleartext and raises `ValueError` unless
 `allow_cleartext=True` (URI query `allow_cleartext=true`). `str(config)` omits
 an unset port. `auto` picks one leg: a password-free config on a Windows client
 is `native`; otherwise PSRP when `hostctl[psrp]` is installed on Python
 3.10+, otherwise pywinrm. An explicit value forces a leg: `native` takes no
-password, and `pywinrm`/`psrp` need one (or `transport="kerberos"`).
+password, and `pywinrm`/`psrp` need one (or `auth="kerberos"`).
 `provider="psrp"` requires the extra. PSRP `run()` text is rendered
 by `Out-String -Stream` in the runspace, so tables look as on the other legs,
 joined with CRLF at the runspace's 120 columns; `RunspaceSession.invoke()`
@@ -752,13 +768,13 @@ without cmd.exe and sends the script on stdin, so scripts and `run()` commands
 have no command-line cap; every leg shares one 256,000-byte script budget.
 Password-free configs on Windows use current-context native PowerShell
 remoting. On that native path
-`server_cert_validation="ignore"` becomes `New-PSSessionOption -SkipCACheck
+`verify=False` becomes `New-PSSessionOption -SkipCACheck
 -SkipCNCheck` (both checks, matching pywinrm), and the remote exit code is
 carried back explicitly, so a native command failing only by status is
 reported as a failure rather than as success. A WinRM path's `open("rb")` fetches
 bounded ranges; writable modes stage content and transfer Base64 chunks on
 close. WinRM stdin is
-unsupported. The native leg's `read_timeout_sec` is a total per-call deadline
+unsupported. The native leg's `read_timeout` is a total per-call deadline
 (default 30 s) that `run(timeout=)` overrides; the remote command keeps running
 (`orphaned=True`). pywinrm and PSRP have no total deadline and refuse
 `timeout=`. Every leg reports one status: 0 when the last statement succeeded,
@@ -768,8 +784,8 @@ transport and authentication failures raise (`ConnectionError`,
 `PermissionError`). A remote ACL denial is a status, not `PermissionError`.
 pywinrm Session has no guaranteed close API; hostctl calls `close()` only when
 a provided session exposes it.
-`pypsrp_available()` reports whether the optional PSRP dependency imports;
-`require_pypsrp()` raises the install hint when it does not. PSRP runspaces
+`has_psrp()` reports whether the optional PSRP dependency is installed;
+`provider="psrp"` without it raises the install hint. PSRP runspaces
 are exposed separately through the WinRM transport provider and
 `RunspaceSession.invoke()`. They retain typed PowerShell streams and state, and
 are not advertised as a byte-oriented `spawn`/TTY process.
@@ -780,9 +796,9 @@ are not advertised as a byte-oriented `spawn`/TTY process.
 `LocalExecutor` provides native argv, cwd, environment, stream, encoding,
 check, and timeout behavior through `subprocess.run`.
 
-`SerialConfig(port, baudrate=115200, bytesize=8, parity="N", stopbits=1,
+`SerialConfig(device, baudrate=115200, bytesize=8, parity="N", stopbits=1,
 xonxoff=False, rtscts=False, dsrdtr=False, read_timeout=0.1, write_timeout=10,
-inter_byte_timeout=None, exclusive=None, protocol=RawConsoleProfile(),
+inter_byte_timeout=None, exclusive=None, profile=RawConsoleProfile(),
 serial_factory=None, serial_port=None)` takes the DEVICE as its first
 argument, the way pyserial names one (`"COM3"`, `"/dev/ttyUSB0"`,
 `"rfc2217://host:4001"`); the `serial:///...` URI is the dispatcher's
@@ -803,7 +819,7 @@ writes raise `ConnectionError` and its own `close()` is a no-op, so a stale
 handle can never free the lease of the process that replaced it.
 `PromptConsoleProfile(..., login_timeout=10.0)` bounds each login step and the
 first prompt (`ValueError` unless positive); it is not part of the URI.
-`SerialConsoleProtocol` is the profile contract, `LoginStep` one expect/send
+`ConsoleProfile` is the profile contract, `LoginStep` one expect/send
 pair of a login sequence, and `ConsoleProtocolError` what a profile raises
 when the console does not answer the way the protocol requires.
 

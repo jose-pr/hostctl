@@ -91,7 +91,7 @@ def _host():
     from hostctl.system._kinds import WindowsHost
     from hostctl.transports.ssh._providers import ssh_providers
 
-    config = SSHConfig("h", dialect=POWERSHELL, path_flavor=WindowsPathname)
+    config = SSHConfig("h", shell=POWERSHELL, pathname=WindowsPathname)
     executor, paths = ssh_providers(config)
     connection = _Connection()
     executor.transport._ssh = connection

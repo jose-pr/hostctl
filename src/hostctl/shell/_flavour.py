@@ -8,7 +8,12 @@ import os
 import typing
 from pathlib import Path, PurePath
 
-from ..executor import validate_environment_names, command_text, Environment, PathLike
+from ..executor import (
+    validate_environment_names,
+    command_text,
+    CommandEnvironment,
+    StrPath,
+)
 from ._grammar import Cmdlet, Command, Exec, PSParam
 from ._vocabulary import ShellCommand, ShellOperator, ShellTarget, ShellToken
 
@@ -49,7 +54,7 @@ class ShellFlavour(abc.ABC):
     #: applies.
     cwd_guard: typing.ClassVar[str] = "operator"
     structured_command_prefix = ""
-    path_flavor: type[PurePath] = PurePath
+    pathname: type[PurePath] = PurePath
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self.name!r}>"
@@ -176,7 +181,7 @@ class ShellFlavour(abc.ABC):
     def environment_assignment(self, key: str, value: object) -> str:
         """Render one validated environment assignment."""
 
-    def environment_script(self, env: Environment) -> str:
+    def environment_script(self, env: CommandEnvironment) -> str:
         """Convert an environment mapping into a standalone shell script."""
         assignments = []
         for key, value in env.items():
@@ -286,8 +291,8 @@ class ShellFlavour(abc.ABC):
         self,
         cmds: typing.Iterable[ShellToken],
         *,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         epilogue: bool = True,
     ) -> str:
         """Build a script, applying environment and cwd consistently.
@@ -323,7 +328,7 @@ class ShellFlavour(abc.ABC):
         return script
 
     @abc.abstractmethod
-    def change_directory(self, cwd: PathLike) -> str:
+    def change_directory(self, cwd: StrPath) -> str:
         """Render a directory change which fails if the directory is absent."""
 
     def _separator_after(self, command: str) -> str:
@@ -356,8 +361,8 @@ class ShellFlavour(abc.ABC):
         cmds: typing.Iterable[ShellToken],
         *,
         executable: typing.Optional[str] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         login_shell: typing.Optional[str] = None,
     ) -> ShellCommand:
         """Build the command submitted to an SSH exec channel.

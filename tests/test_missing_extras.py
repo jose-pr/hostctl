@@ -59,9 +59,9 @@ def _winrm_run():
 
 
 def _psrp():
-    from hostctl.transports.winrm._psrp import require_pypsrp
+    from hostctl.transports.winrm._psrp import RunspaceSession
 
-    require_pypsrp()
+    RunspaceSession(pool=None)._make_pool()
 
 
 def _container_run():

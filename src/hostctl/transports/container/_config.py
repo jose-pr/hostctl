@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import dataclasses
 import typing
-from pathlib import PurePath
 from urllib.parse import quote, unquote, urlencode
 
-from pathapi import Pathname
 
-
-from ...shell import ShellFlavourSelection, shell_flavour
+from ...shell import shell_flavour
 from ...host._config import HostConfig
+from ...host._dispatch import _keyword_only
+from ...host._selection import PathnameSelection, ShellSelection
 from ...uri._parse import (
     _refuse_uri,
-    path_flavor_name,
-    path_flavor_selection,
+    pathname_label,
+    pathname_selection,
     strict_uri_query,
 )
 
@@ -23,13 +22,7 @@ if typing.TYPE_CHECKING:
     from ._host import ContainerHost
 
 
-PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
-
-ContainerShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
-
-ContainerPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
-
-
+@_keyword_only()
 @dataclasses.dataclass
 class ContainerConfig(HostConfig, schemes=("docker",)):
     """Docker Engine target and in-container execution defaults."""
@@ -42,11 +35,11 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
 
     container: str
     engine_url: typing.Optional[str] = None
-    user: typing.Optional[str] = None
+    username: typing.Optional[str] = None
     workdir: typing.Optional[str] = None
     executable: typing.Optional[str] = None
-    dialect: ContainerShellSelection = "auto"
-    path_flavor: ContainerPathSelection = "auto"
+    shell: ShellSelection = "auto"
+    pathname: PathnameSelection = "auto"
     client_factory: typing.Optional[typing.Callable[..., object]] = dataclasses.field(
         default=None, repr=False, compare=False
     )
@@ -56,19 +49,19 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
         if not self.container:
             raise ValueError("container must not be empty")
         _refuse_uri("ContainerConfig", self.container)
-        if self.dialect != "auto":
-            self.dialect = shell_flavour(self.dialect)
+        if self.shell != "auto":
+            self.shell = shell_flavour(self.shell)
         elif self.executable is not None:
-            raise ValueError("executable cannot be combined with dialect='auto'")
-        self.path_flavor = path_flavor_selection(self.path_flavor, allow_auto=True)
+            raise ValueError("executable cannot be combined with shell='auto'")
+        self.pathname = pathname_selection(self.pathname, allow_auto=True)
 
     @property
     def connection_uri(self) -> str:
         query: typing.Dict[str, object] = {
-            "dialect": self.dialect,
-            "path_flavor": path_flavor_name(self.path_flavor),
+            "shell": self.shell,
+            "pathname": pathname_label(self.pathname),
         }
-        for name in ("engine_url", "user", "workdir", "executable"):
+        for name in ("engine_url", "username", "workdir", "executable"):
             value = getattr(self, name)
             if value is not None:
                 query[name] = value
@@ -82,11 +75,11 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
             parsed,
             {
                 "engine_url",
-                "user",
+                "username",
                 "workdir",
                 "executable",
-                "dialect",
-                "path_flavor",
+                "shell",
+                "pathname",
             },
         )
         if not parsed.netloc or parsed.path not in ("", "/"):
@@ -96,17 +89,15 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
         return cls(
             container=unquote(parsed.netloc),
             engine_url=query.get("engine_url") or None,
-            user=query.get("user") or None,
+            username=query.get("username") or None,
             workdir=query.get("workdir") or None,
             executable=query.get("executable") or None,
-            dialect=(
+            shell=(
                 "auto"
-                if query.get("dialect", "auto") == "auto"
-                else shell_flavour(query["dialect"])
+                if query.get("shell", "auto") == "auto"
+                else shell_flavour(query["shell"])
             ),
-            path_flavor=path_flavor_selection(
-                query.get("path_flavor", "auto"), allow_auto=True
-            ),
+            pathname=pathname_selection(query.get("pathname", "auto"), allow_auto=True),
             client_factory=typing.cast(
                 typing.Optional[typing.Callable[..., object]],
                 credentials.get("client_factory"),

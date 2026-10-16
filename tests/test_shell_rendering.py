@@ -490,7 +490,7 @@ def test_a_redirect_operand_is_quoted_for_the_shell_not_for_a_child(
 ):
     """The file name after `>` is read by the shell. cmd's caret form for a
     child's C runtime wrote `dir` and not `dir with space\\out file.txt`."""
-    path = flavour.path_flavor(target)
+    path = flavour.pathname(target)
 
     for operand in (path, (path,)):
         rendered = flavour.script(["echo hi", ShellOperator.REDIRECT, operand])

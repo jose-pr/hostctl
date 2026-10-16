@@ -85,16 +85,15 @@ class SFTPPathProvider(PathProvider):
         )
 
     def probe(self):
-        from ... import _async
+        from ..._extras import _missing
 
-        try:
-            _async.sftppath()
-        except ImportError:
+        missing = _missing("ssh")
+        if missing:
             return ProviderProbe(
                 "unavailable",
                 reason=(
-                    "the 'ssh' extra is incomplete: sftppath is not installed; "
-                    "pip install hostctl[ssh]"
+                    f"the 'ssh' extra is incomplete: {', '.join(missing)} is not "
+                    'installed; pip install "hostctl[ssh]"'
                 ),
             )
         return ProviderProbe("available", capabilities=self.capabilities)

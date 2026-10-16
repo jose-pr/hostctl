@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typing
 
-from ..executor import CommandLine, Environment, PathLike
+from ..executor import CommandLine, CommandEnvironment, StrPath
 from ._vocabulary import ShellCommand, ShellToken
 from ._flavour import ShellFlavour
 
@@ -14,8 +14,8 @@ def render_command(
     cmds: typing.Iterable[ShellToken],
     *,
     executable: typing.Optional[str] = None,
-    cwd: typing.Optional[PathLike] = None,
-    env: typing.Optional[Environment] = None,
+    cwd: typing.Optional[StrPath] = None,
+    env: typing.Optional[CommandEnvironment] = None,
     login_shell: typing.Optional[str] = None,
     stdin_free: bool = False,
 ) -> ShellCommand:
@@ -40,8 +40,8 @@ def shell_invocation(
     flavour: ShellFlavour,
     cmds: typing.Iterable[ShellToken],
     *,
-    cwd: typing.Optional[PathLike],
-    env: typing.Optional[Environment],
+    cwd: typing.Optional[StrPath],
+    env: typing.Optional[CommandEnvironment],
     epilogue: bool,
     executable: typing.Optional[str] = None,
     login_shell: typing.Optional[str] = None,

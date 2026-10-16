@@ -2,58 +2,28 @@
 
 from __future__ import annotations
 
-import importlib
+import math
 import subprocess
 import typing
 import types
 
+from ..._extras import _require
 from ...executor import (
     CaptureOutput,
     command_text,
     CommandArgument,
     Executor,
     ExecutorCapability,
-    ExecutorCommand,
-    FileHandle,
-    Input,
+    CommandLike,
+    StreamTarget,
+    CommandInput,
     capture_streams,
     dispatch_output,
     wants_text,
 )
 
-if typing.TYPE_CHECKING:
-    pass
-
 import dataclasses
 import threading
-
-
-def pypsrp_available() -> bool:
-    """Return whether the optional PSRP dependency can be imported."""
-    if __import__("sys").version_info < (3, 10):
-        return False
-    try:
-        importlib.import_module("pypsrp")
-    except ImportError:
-        return False
-    return True
-
-
-def require_pypsrp() -> types.ModuleType:
-    """Import pypsrp with an actionable, version-aware error."""
-    import sys
-
-    if sys.version_info < (3, 10):
-        raise ImportError(
-            "PSRP support requires Python 3.10 or newer; use the pywinrm "
-            "provider on Python 3.9"
-        )
-    try:
-        return importlib.import_module("pypsrp")
-    except ImportError as exc:
-        raise ImportError(
-            "PSRP support requires the 'psrp' extra: " "pip install hostctl[psrp]"
-        ) from exc
 
 
 class PSRPExecutor(Executor[subprocess.CompletedProcess]):
@@ -70,17 +40,17 @@ class PSRPExecutor(Executor[subprocess.CompletedProcess]):
 
     def __call__(
         self,
-        command: ExecutorCommand,
+        command: CommandLike,
         *args: CommandArgument,
         bufsize: int = -1,
-        stdin: typing.Optional[FileHandle] = None,
-        stdout: typing.Optional[FileHandle] = None,
-        stderr: typing.Optional[FileHandle] = None,
+        stdin: typing.Optional[StreamTarget] = None,
+        stdout: typing.Optional[StreamTarget] = None,
+        stderr: typing.Optional[StreamTarget] = None,
         capture_output: CaptureOutput = True,
         check: bool = True,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
-        input: Input = None,
+        input: CommandInput = None,
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
         **options: object,
@@ -224,7 +194,7 @@ class RunspaceSession:
     def _make_pool(self) -> object:
         if self._pool is not None:
             return self._pool
-        require_pypsrp()
+        _require("psrp", "PSRP")
         from pypsrp.powershell import RunspacePool
         from netimps import get_default_port
         from pypsrp.wsman import WSMan
@@ -232,10 +202,10 @@ class RunspaceSession:
         config = self._config
         if config is None:
             raise ValueError("a WinRMConfig is required when pool is not supplied")
-        ssl = bool(getattr(config, "ssl", False))
+        ssl = bool(getattr(config, "tls", False))
         endpoint_port = getattr(config, "port", None)
         auth = _PSRP_AUTH.get(
-            str(getattr(config, "transport", "") or "").casefold(), "negotiate"
+            str(getattr(config, "auth", "") or "").casefold(), "negotiate"
         )
         encryption = getattr(config, "message_encryption", "auto")
         if auth == "basic" and not ssl and getattr(config, "allow_cleartext", False):
@@ -249,12 +219,12 @@ class RunspaceSession:
             "password": getattr(config, "password", None),
             "ssl": ssl,
             "auth": auth,
-            "cert_validation": getattr(config, "server_cert_validation", "validate")
-            == "validate",
+            "cert_validation": bool(getattr(config, "verify", True)),
             "encryption": encryption,
-            "connection_timeout": getattr(config, "read_timeout_sec", 30),
-            "operation_timeout": getattr(config, "operation_timeout_sec", 20),
-            "read_timeout": getattr(config, "read_timeout_sec", 30),
+            "connection_timeout": getattr(config, "read_timeout", 30),
+            # Whole seconds for the WS-Man header, rounded up.
+            "operation_timeout": math.ceil(getattr(config, "operation_timeout", 20)),
+            "read_timeout": getattr(config, "read_timeout", 30),
         }
         return RunspacePool(WSMan(**kwargs))
 

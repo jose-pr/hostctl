@@ -70,7 +70,7 @@ said nothing.
 A `serial:` URI is **session-only from the CLI**. `shell` and `info` work;
 `run`, `ls`, `cat` and `cp` do not, because a framed `run()` needs a console
 profile (prompt, login, status marker) and there is no URI spelling for one --
-a profile is Python, passed as `SerialConfig(protocol=...)`. Reach a device
+a profile is Python, passed as `SerialConfig(profile=...)`. Reach a device
 that needs framing through the library, not the CLI.
 
 ## As MCP tools

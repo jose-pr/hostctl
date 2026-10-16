@@ -146,7 +146,7 @@ waiting to be formatted (`[pscustomobject]@{a=1}` printed nothing).
 - WinRM buffers output to caller-owned file handles. It cannot stream stdin or
   select another executable. The pywinrm leg sends the script on stdin to a
   directly started `powershell.exe`, so a command has no command-line length
-  limit. On the native current-context leg `read_timeout_sec` is a total
+  limit. On the native current-context leg `read_timeout` is a total
   per-call deadline (default 30 s) that `run(timeout=)` overrides, and the
   remote command keeps running when it expires; pywinrm and PSRP have no total
   deadline and refuse `timeout=`. Every leg reports one status: 0 when the last
@@ -154,7 +154,7 @@ waiting to be formatted (`[pscustomobject]@{a=1}` printed nothing).
   status with its text on stderr; only transport and authentication failures are
   normalized to `ConnectionError`/`PermissionError`.
 - SSH command dialect may be explicit (`POSIX_SHELL`, `POWERSHELL`, etc.) or
-  positively detected with `SSHConfig(dialect="auto")`. Structured commands,
+  positively detected with `SSHConfig(shell="auto")`. Structured commands,
   environment variables, and working directories use dialect-specific quoting.
 
 ## Persistent shell sessions
@@ -250,11 +250,13 @@ password-free config on a Windows client uses `native` current-context
 remoting. Otherwise it selects the optional PSRP provider when `hostctl[psrp]`
 is installed on Python 3.10+, and falls back to `pywinrm`. Select
 `provider="native"`, `"pywinrm"` or `"psrp"` to force a leg; `"pywinrm"` and
-`"psrp"` need a password (or `transport="kerberos"`), and `"native"` takes
+`"psrp"` need a password (or `auth="kerberos"`), and `"native"` takes
 none. PSRP exposes a persistent typed runspace rather than a TTY:
 
 ```python
-with WinRMConfig("windows.example.com", "admin", "secret", provider="psrp") as host:
+with WinRMConfig(
+    "windows.example.com", username="admin", password="secret", provider="psrp"
+) as host:
     with host.runspace() as session:
         session.invoke("$x = 1")
         result = session.invoke("$x")
@@ -265,8 +267,8 @@ Install `hostctl[psrp]` for Python 3.10+; Python 3.9 remains on the portable
 buffered `pywinrm` provider. PSRP `run()` returns the text a console would show
 (tables included), joined with CRLF, rendered at the runspace's own width.
 
-`transport="basic"`, `"plaintext"` or `"ssl"` over plain HTTP sends the password
-in cleartext, so `WinRMConfig` refuses it unless you pass `ssl=True` (a
+`auth="basic"`, `"plaintext"` or `"ssl"` over plain HTTP sends the password
+in cleartext, so `WinRMConfig` refuses it unless you pass `tls=True` (a
 `winrms://` URI) or `allow_cleartext=True`.
 
 A serial host has two entry points, and they take different first arguments.
@@ -320,7 +322,7 @@ backslash inside single quotes where sh does not, so a backslash and a single
 quote are written outside the quotes.
 
 `SSHConfig(login_shell="auto" | "cmd" | "powershell" | "posix")` says which.
-`auto` reads the dialect: a Windows path flavour means the stock `cmd.exe`.
+`auto` follows the path grammar: a Windows `pathname` means the stock `cmd.exe`.
 The server's shell is configurable (`HKLM\SOFTWARE\OpenSSH\DefaultShell`),
 so name it explicitly when it has been changed -- guessing is wrong in both
 directions.
@@ -412,7 +414,7 @@ bounded by `QEMUConfig.agent_timeout` independently of the command's own
 `QEMUConfig.max_reply_size` bounds a single reply; a reply refused for size
 takes the captured output with it, so the error names the pid and the setting.
 
-`dialect="auto"` and `path_flavor="auto"` need *positive* evidence of the
+`shell="auto"` and `pathname="auto"` need *positive* evidence of the
 guest's family: `guest-get-osinfo`, or a command in `guest-info` that only one
 family implements. An agent that provides neither -- `guest-get-osinfo` can be
 blocklisted -- makes both raise `NotImplementedError` naming the settings that

@@ -64,10 +64,10 @@ def _host(*, building_takes=0.0, **kwargs):
         made.append(transport)
         return transport
 
-    # `path_flavor` is explicit because this agent advertises no
+    # `pathname` is explicit because this agent advertises no
     # `guest-get-osinfo`: the host refuses to guess a family, which is the
     # subject of its own test.
-    config = QEMUConfig("guest", transport_factory=factory, path_flavor="posix")
+    config = QEMUConfig("guest", transport_factory=factory, pathname="posix")
     return QEMUHost(config), made
 
 

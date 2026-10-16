@@ -16,7 +16,7 @@ from pathlib import PurePath as _PurePath
 
 from pathapi import Pathname as _Pathname
 
-from ..executor import PathLike
+from ..executor import StrPath
 
 #: One argv value. Everything reaching a transport is text, so a program or
 #: argument may be spelled as a string, bytes, or a path object
@@ -122,7 +122,7 @@ class Cmdlet:
         object.__setattr__(self, "args", tuple(args))
 
 
-Command = _ty.Union[str, PathLike, Exec, Cmdlet, _ty.Sequence[object]]
+Command = _ty.Union[str, StrPath, Exec, Cmdlet, _ty.Sequence[object]]
 
 
 def starts_direct_command(

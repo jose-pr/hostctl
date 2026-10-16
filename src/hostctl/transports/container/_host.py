@@ -19,10 +19,10 @@ from ...executor import (
     command_text,
     raise_normalized,
     CaptureOutput,
-    Environment,
-    FileHandle,
-    Input,
-    PathLike,
+    CommandEnvironment,
+    StreamTarget,
+    CommandInput,
+    StrPath,
 )
 from ...exceptions import OperationNotStartedError
 from ...provider._selector import ProviderSelector
@@ -39,7 +39,8 @@ from pathapi import Path
 
 
 from ._path import ContainerPathBackend, PosixContainerPath, WindowsContainerPath
-from ._config import ContainerConfig, PathnameConstructor
+from ...host._selection import PathnameType
+from ._config import ContainerConfig
 
 
 def _close_hijacked(stream: object) -> None:
@@ -92,7 +93,7 @@ class ContainerHost(Host):
         self._attrs: typing.Optional[typing.Mapping[str, object]] = None
         self._executor = ContainerExecutor(
             lambda: self.container,
-            user=config.user,
+            user=config.username,
             workdir=config.workdir,
         )
         self._executor_provider_selector = ProviderSelector(
@@ -197,8 +198,8 @@ class ContainerHost(Host):
 
     @property
     def shell_flavour(self) -> ShellFlavour:
-        if self.config.dialect != "auto":
-            return typing.cast(ShellFlavour, self.config.dialect)
+        if self.config.shell != "auto":
+            return typing.cast(ShellFlavour, self.config.shell)
         return POWERSHELL if self.inspected_os == "windows" else POSIX_SHELL
 
     @property
@@ -259,7 +260,7 @@ class ContainerHost(Host):
             or typing.cast(typing.Optional[str], attrs.get("Architecture")),
         )
 
-    def path(self, *segments: PathLike, backend: typing.Optional[str] = None) -> Path:
+    def path(self, *segments: StrPath, backend: typing.Optional[str] = None) -> Path:
         names = {provider.name for provider in self._path_provider_selector.providers}
         if backend is not None and backend not in (names | {"docker"}):
             raise ValueError(f"unsupported container path backend: {backend!r}")
@@ -277,15 +278,13 @@ class ContainerHost(Host):
                 )
         return provider.path(*segments)
 
-    def _archive_path(self, *segments: PathLike) -> Path:
+    def _archive_path(self, *segments: StrPath) -> Path:
         """Build a Docker-archive-backed path with the configured flavour."""
-        selection = self.config.path_flavor
+        selection = self.config.pathname
         windows = (
             self.inspected_os == "windows"
             if selection == "auto"
-            else issubclass(
-                typing.cast(PathnameConstructor, selection), PureWindowsPath
-            )
+            else issubclass(typing.cast(PathnameType, selection), PureWindowsPath)
         )
         container = self.container
         flavour = "windows" if windows else "posix"
@@ -293,10 +292,10 @@ class ContainerHost(Host):
         if (
             path_backend is None
             or path_backend.container is not container
-            or path_backend.path_flavor != flavour
+            or path_backend.pathname != flavour
         ):
             path_backend = self._path_backend = ContainerPathBackend(
-                container, path_flavor=flavour
+                container, pathname=flavour
             )
         if windows:
             values = segments or ("C:\\",)
@@ -309,16 +308,16 @@ class ContainerHost(Host):
         *cmds: Command,
         bufsize: int = -1,
         executable: typing.Optional[str] = None,
-        stdin: typing.Optional[FileHandle] = None,
-        stdout: typing.Optional[FileHandle] = None,
-        stderr: typing.Optional[FileHandle] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        stdin: typing.Optional[StreamTarget] = None,
+        stdout: typing.Optional[StreamTarget] = None,
+        stderr: typing.Optional[StreamTarget] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         capture_output: CaptureOutput = True,
         check: bool = True,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
-        input: Input = None,
+        input: CommandInput = None,
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
@@ -422,8 +421,8 @@ class ContainerHost(Host):
         self,
         *cmds: Command,
         executable: typing.Optional[str] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         terminal: TerminalRequest = None,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
@@ -491,8 +490,8 @@ class ContainerHost(Host):
             options["environment"] = environment
         if selected_workdir is not None:
             options["workdir"] = selected_workdir
-        if self.config.user is not None:
-            options["user"] = self.config.user
+        if self.config.username is not None:
+            options["user"] = self.config.username
         try:
             created = api.exec_create(
                 getattr(self.container, "id", self.config.container),

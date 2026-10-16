@@ -21,7 +21,13 @@ from ._qga_transports import (
 from ...process import Process
 from ...shell import POWERSHELL, POSIX_SHELL, shell_flavour
 from ...shell._flavour import ShellFlavour
-from ...executor import CaptureOutput, Environment, FileHandle, Input, PathLike
+from ...executor import (
+    CaptureOutput,
+    CommandEnvironment,
+    StreamTarget,
+    CommandInput,
+    StrPath,
+)
 from ...shell._grammar import Command, starts_direct_command
 from ...host._host import Host
 from ...host._info import HostInfo
@@ -31,7 +37,8 @@ from pathapi import Path
 
 from ..ssh._config import SSHConfig
 from ..ssh._transport import _SSHTransport
-from ._config import PathnameConstructor, QEMUConfig
+from ...host._selection import PathnameType
+from ._config import QEMUConfig
 from ._path import PosixQEMUPath, WindowsQEMUPath
 from ._backend import QGAPathBackend
 
@@ -285,15 +292,15 @@ class QEMUHost(Host):
             raise NotImplementedError(
                 "this guest agent did not report an OS: 'guest-get-osinfo' is "
                 "unavailable or blocklisted and the advertised command set "
-                "names no family. Set dialect= and path_flavor= explicitly "
-                "(for example dialect=POSIX_SHELL, path_flavor='posix')."
+                "names no family. Set shell= and pathname= explicitly "
+                "(for example shell=POSIX_SHELL, pathname='posix')."
             )
         return family == "windows"
 
     @property
     def shell_flavour(self) -> ShellFlavour:
-        if self.config.dialect != "auto":
-            return typing.cast(ShellFlavour, self.config.dialect)
+        if self.config.shell != "auto":
+            return typing.cast(ShellFlavour, self.config.shell)
         return POWERSHELL if self._windows else POSIX_SHELL
 
     def info(self) -> HostInfo:
@@ -319,7 +326,7 @@ class QEMUHost(Host):
             ),
         )
 
-    def path(self, *segments: PathLike, backend: typing.Optional[str] = None) -> Path:
+    def path(self, *segments: StrPath, backend: typing.Optional[str] = None) -> Path:
         if "path" not in self.capabilities:
             raise NotImplementedError("guest agent does not provide file RPCs")
         if backend not in (None, "qga"):
@@ -388,16 +395,14 @@ class QEMUHost(Host):
         """The QGA path provider, once :meth:`path` has assembled it."""
         return self._path_provider
 
-    def _qga_path(self, *segments: PathLike) -> Path:
+    def _qga_path(self, *segments: StrPath) -> Path:
         """Build a QGA-backed guest path with the configured pathname flavour."""
         path_backend = self._path_backend
-        selection = self.config.path_flavor
+        selection = self.config.pathname
         windows = (
             self._windows
             if selection == "auto"
-            else issubclass(
-                typing.cast(PathnameConstructor, selection), PureWindowsPath
-            )
+            else issubclass(typing.cast(PathnameType, selection), PureWindowsPath)
         )
         if windows:
             return WindowsQEMUPath(*(segments or ("C:\\",)), backend=path_backend)
@@ -408,16 +413,16 @@ class QEMUHost(Host):
         *cmds: Command,
         bufsize: int = -1,
         executable: typing.Optional[str] = None,
-        stdin: typing.Optional[FileHandle] = None,
-        stdout: typing.Optional[FileHandle] = None,
-        stderr: typing.Optional[FileHandle] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        stdin: typing.Optional[StreamTarget] = None,
+        stdout: typing.Optional[StreamTarget] = None,
+        stderr: typing.Optional[StreamTarget] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         capture_output: CaptureOutput = True,
         check: bool = True,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
-        input: Input = None,
+        input: CommandInput = None,
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:

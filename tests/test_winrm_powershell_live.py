@@ -34,7 +34,9 @@ pytestmark = pytest.mark.skipif(
 def transport():
     """The production pywinrm leg; only the WinRS hop is a local process."""
     built = _WinRMTransport(
-        WinRMConfig("fake", "fake", "fake", provider="pywinrm", transport="ntlm")
+        WinRMConfig(
+            "fake", username="fake", password="fake", provider="pywinrm", auth="ntlm"
+        )
     )
     built._leg._session = _PywinrmStdinSession(LocalWinRSProtocol())
     return built

@@ -10,13 +10,14 @@ from hostctl.provider._contracts import ExecutorProvider
 from hostctl.host._config import HostConfig
 from hostctl.transports.winrm._config import WinRMConfig
 from hostctl.system._kinds import WindowsHost
-from hostctl.transports.winrm._psrp import PSRPExecutor, pypsrp_available
+from hostctl import has_psrp
+from hostctl.transports.winrm._psrp import PSRPExecutor
 from hostctl.transports.winrm._psrp import RunspaceSession
 from hostctl.transports.winrm._psrp import PipelineResult, PipelineStreams
 
 
 def test_provider_uri_roundtrip_and_secret_safety():
-    config = WinRMConfig("host", "user", "secret", provider="psrp")
+    config = WinRMConfig("host", username="user", password="secret", provider="psrp")
     restored = HostConfig(str(config), password="secret")
     assert restored.provider == "psrp"
     assert "secret" not in str(config)
@@ -24,12 +25,14 @@ def test_provider_uri_roundtrip_and_secret_safety():
 
 def test_explicit_psrp_has_actionable_error_when_missing(monkeypatch):
     monkeypatch.setattr(
-        "hostctl.transports.winrm._psrp.require_pypsrp",
-        lambda: (_ for _ in ()).throw(
+        "hostctl.transports.winrm._psrp._require",
+        lambda extra, feature: (_ for _ in ()).throw(
             ImportError("PSRP requires hostctl[psrp] on Python 3.10+")
         ),
     )
-    host = WinRMConfig("host", "user", "secret", provider="psrp").open()
+    host = WinRMConfig(
+        "host", username="user", password="secret", provider="psrp"
+    ).open()
     with pytest.raises(ImportError, match="Python 3.10|psrp"):
         host.runspace()
 
@@ -366,7 +369,7 @@ def test_psrp_ssl_transport_is_basic_over_https(real_pypsrp):
     which raised at the first send because the config carries no certificate."""
     from hostctl.transports.winrm._config import WinRMConfig
 
-    config = WinRMConfig("h", "u", "p", transport="ssl", ssl=True)
+    config = WinRMConfig("h", username="u", password="p", auth="ssl", tls=True)
     transport = RunspaceSession(config)._make_pool().connection.transport
 
     assert transport.auth == "basic"
@@ -386,13 +389,13 @@ def test_psrp_allow_cleartext_turns_message_encryption_off(real_pypsrp, monkeypa
 
     monkeypatch.setattr(pypsrp.wsman, "WSMan", spy)
     config = WinRMConfig(
-        "h", "u", "p", transport="basic", allow_cleartext=True, ssl=False
+        "h", username="u", password="p", auth="basic", allow_cleartext=True, tls=False
     )
     RunspaceSession(config)._make_pool()
     assert built[0]["encryption"] == "never"
 
     built.clear()
-    secure = WinRMConfig("h", "u", "p", transport="basic", ssl=True)
+    secure = WinRMConfig("h", username="u", password="p", auth="basic", tls=True)
     RunspaceSession(secure)._make_pool()
     assert built[0]["encryption"] == "auto"
 
@@ -509,7 +512,7 @@ def test_winrm_provider_backed_host_never_double_wraps_powershell(
         pytest.importorskip(
             "pypsrp", reason="PSRP capability wiring requires the psrp extra"
         )
-        if not pypsrp_available():
+        if not has_psrp():
             pytest.skip("PSRP requires Python 3.10 or newer")
 
     script = "$x='x' * 9000; Write-Output $x.Length"

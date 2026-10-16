@@ -126,14 +126,14 @@ def _compose(config, stub):
     transport = executor.transport
     transport._ssh = stub
     transport._loop_generation = _async.loop_generation()
-    kind = WindowsHost if issubclass(config.path_flavor, PureWindowsPath) else PosixHost
+    kind = WindowsHost if issubclass(config.pathname, PureWindowsPath) else PosixHost
     host = kind(
         config,
         executor_providers=(executor,),
         path_providers=(paths,),
         shell=(
-            config.dialect
-            if config.dialect != "auto"
+            config.shell
+            if config.shell != "auto"
             else (lambda: transport.shell_flavour)
         ),
     )
@@ -324,7 +324,7 @@ def test_ssh_input_stream_remains_owned_by_caller():
 
 
 def test_powershell_dialect_uses_powershell_quoting_cwd_and_environment():
-    shell = SSHConfig("windows.example.com", dialect="powershell")
+    shell = SSHConfig("windows.example.com", shell="powershell")
     host, stub = _host(shell)
     host.run(
         ["Write-Output", "a'b"],
@@ -342,25 +342,25 @@ def test_powershell_dialect_uses_powershell_quoting_cwd_and_environment():
 
 def test_shell_validates_dialect_and_path_style():
     with pytest.raises(ValueError):
-        SSHConfig("host", dialect="csh")
+        SSHConfig("host", shell="csh")
     with pytest.raises(ValueError, match="'auto', 'posix', or 'windows'"):
-        SSHConfig("host", path_flavor="native")
+        SSHConfig("host", pathname="native")
 
 
 def test_ssh_string_options_normalize_to_shell_flavours():
-    config = SSHConfig("host", dialect="powershell", path_flavor=WindowsPathname)
-    assert config.dialect is POWERSHELL
-    assert isinstance(config.dialect, PowerShellFlavour)
-    assert config.path_flavor is WindowsPathname
-    assert str(config.dialect) == "powershell"
+    config = SSHConfig("host", shell="powershell", pathname=WindowsPathname)
+    assert config.shell is POWERSHELL
+    assert isinstance(config.shell, PowerShellFlavour)
+    assert config.pathname is WindowsPathname
+    assert str(config.shell) == "powershell"
 
 
 def test_ssh_auto_selection_round_trips_and_detects_posix_shell():
-    config = SSHConfig("host", dialect="auto")
+    config = SSHConfig("host", shell="auto")
     restored = HostConfig(config.connection_uri)
     host, stub = _host(config, result=_Result(stdout="/bin/bash\n", stderr=""))
 
-    assert restored.dialect == "auto"
+    assert restored.shell == "auto"
     assert host.shell_flavour is BASH
     assert host.shell_flavour is BASH
     assert len(stub.calls) == 1
@@ -368,7 +368,7 @@ def test_ssh_auto_selection_round_trips_and_detects_posix_shell():
 
 def test_ssh_auto_rejects_executable_override():
     with pytest.raises(ValueError, match="executable"):
-        SSHConfig("host", dialect="auto", executable="/bin/custom")
+        SSHConfig("host", shell="auto", executable="/bin/custom")
 
 
 @pytest.mark.parametrize(
@@ -388,7 +388,7 @@ def test_ssh_auto_detects_windows_shell_in_probe_order(responses, expected):
                 _Result(returncode=returncode, stdout=stdout, stderr="")
             )
 
-    host = _SSHTransport(SSHConfig("host", dialect="auto", path_flavor=PureWindowsPath))
+    host = _SSHTransport(SSHConfig("host", shell="auto", pathname=PureWindowsPath))
     stub = _ProbeSSH()
     host._ssh = stub
 
@@ -396,29 +396,29 @@ def test_ssh_auto_detects_windows_shell_in_probe_order(responses, expected):
     assert len(stub.calls) == list((PWSH, POWERSHELL, CMD)).index(expected) + 1
 
 
-def test_ssh_path_flavor_requires_a_concrete_pure_path_constructor():
-    assert SSHConfig("host").path_flavor is PosixPathname
-    config = SSHConfig("host", path_flavor=PureWindowsPath)
-    assert config.path_flavor is PureWindowsPath
+def test_ssh_pathname_requires_a_concrete_pure_path_constructor():
+    assert SSHConfig("host").pathname is PosixPathname
+    config = SSHConfig("host", pathname=PureWindowsPath)
+    assert config.pathname is PureWindowsPath
     with pytest.raises(TypeError, match="pure-path class"):
-        SSHConfig("host", path_flavor=42)
+        SSHConfig("host", pathname=42)
     with pytest.raises(TypeError, match="local OS"):
-        SSHConfig("host", path_flavor=PurePath)
+        SSHConfig("host", pathname=PurePath)
 
 
-def test_ssh_path_flavor_takes_the_same_strings_as_the_other_configs():
-    assert SSHConfig("host", path_flavor="windows").path_flavor is WindowsPathname
-    assert SSHConfig("host", path_flavor="posix").path_flavor is PosixPathname
+def test_ssh_pathname_takes_the_same_strings_as_the_other_configs():
+    assert SSHConfig("host", pathname="windows").pathname is WindowsPathname
+    assert SSHConfig("host", pathname="posix").pathname is PosixPathname
     # `auto` asks the server for its login directory when the host is created.
-    assert SSHConfig("host", path_flavor="auto").path_flavor == "auto"
-    with pytest.raises(ValueError, match="path_flavor"):
-        SSHConfig("host", path_flavor="native")
+    assert SSHConfig("host", pathname="auto").pathname == "auto"
+    with pytest.raises(ValueError, match="pathname"):
+        SSHConfig("host", pathname="native")
 
 
 def test_sftp_path_styles_when_ssh_extra_is_available():
     pytest.importorskip("asyncssh")
     posix = _SSHTransport(SSHConfig("host")).path("/etc")
-    windows = _SSHTransport(SSHConfig("host", path_flavor=WindowsPathname)).path(
+    windows = _SSHTransport(SSHConfig("host", pathname=WindowsPathname)).path(
         r"C:\Temp"
     )
     # The text is the path on the server; a Windows drive keeps its colon.
@@ -464,7 +464,7 @@ def test_sftp_backend_is_reused_and_invalidated_on_close():
 
 def test_auto_posix_probe_preserves_shell_executable():
     host, stub = _host(
-        SSHConfig("host", dialect="auto"),
+        SSHConfig("host", shell="auto"),
         result=_Result(stdout="/usr/local/bin/bash\n", stderr=""),
     )
     host.run("echo hello")
@@ -477,13 +477,13 @@ def test_a_session_starts_the_configured_shell_not_the_login_shell():
 
     The per-call executable alone would start the account's login shell and
     ignore SSHConfig.executable, the flavour's default and the executable
-    recovered by dialect="auto", while send() renders in the configured
-    dialect.
+    recovered by shell="auto", while send() renders in the configured
+    shell.
     """
     for config, expected in (
         (SSHConfig("h", username="root"), "/bin/sh"),
         (SSHConfig("h", username="root", executable="/bin/zsh"), "/bin/zsh"),
-        (SSHConfig("h", username="root", dialect="powershell"), "powershell.exe"),
+        (SSHConfig("h", username="root", shell="powershell"), "powershell.exe"),
     ):
         transport = _SSHTransport(config)
         stub = _StubSSH()
@@ -623,7 +623,7 @@ def test_ssh_auto_accepts_the_other_posix_shells(shell):
     from hostctl.shell import POSIX_SHELL
 
     host, _ = _host(
-        SSHConfig("host", dialect="auto"), result=_Result(stdout=shell + "\n")
+        SSHConfig("host", shell="auto"), result=_Result(stdout=shell + "\n")
     )
 
     assert host.shell_flavour is POSIX_SHELL
@@ -631,7 +631,7 @@ def test_ssh_auto_accepts_the_other_posix_shells(shell):
 
 def test_ssh_auto_still_refuses_csh_and_says_so():
     host, _ = _host(
-        SSHConfig("host", dialect="auto"), result=_Result(stdout="/bin/tcsh\n")
+        SSHConfig("host", shell="auto"), result=_Result(stdout="/bin/tcsh\n")
     )
 
     with pytest.raises(RuntimeError, match="tcsh.*not supported"):

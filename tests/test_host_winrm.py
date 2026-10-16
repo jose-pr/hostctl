@@ -44,7 +44,12 @@ class _Session:
 
 def _host(response=None):
     host = _WinRMTransport(
-        WinRMConfig("windows.example.com", "admin", "secret", provider="pywinrm")
+        WinRMConfig(
+            "windows.example.com",
+            username="admin",
+            password="secret",
+            provider="pywinrm",
+        )
     )
     session = _Session(response)
     host._leg._session = session
@@ -150,7 +155,9 @@ def test_winrm_validates_environment_keys_and_builds_windows_path():
 
 
 def test_winrm_missing_dependency_is_lazy(monkeypatch):
-    host = _WinRMTransport(WinRMConfig("host", "user", "password", provider="pywinrm"))
+    host = _WinRMTransport(
+        WinRMConfig("host", username="user", password="password", provider="pywinrm")
+    )
     monkeypatch.setitem(sys.modules, "winrm", None)
     with pytest.raises(ImportError, match=r"hostctl\[winrm\]"):
         _ = host._leg.session
@@ -159,26 +166,24 @@ def test_winrm_missing_dependency_is_lazy(monkeypatch):
 def test_winrm_config_exposes_secure_transport_settings():
     config = WinRMConfig(
         "host",
-        "user",
-        "password",
-        ssl=True,
-        server_cert_validation="validate",
+        username="user",
+        password="password",
+        tls=True,
+        verify=True,
         message_encryption="always",
-        operation_timeout_sec=40,
-        read_timeout_sec=50,
+        operation_timeout=40,
+        read_timeout=50,
     )
     assert config.endpoint == "https://host:5986/wsman"
-    assert config.server_cert_validation == "validate"
+    assert config.verify is True
     assert config.message_encryption == "always"
 
 
 @pytest.mark.parametrize("provider", ["pywinrm", "psrp"])
 def test_every_leg_uses_one_script_budget(monkeypatch, provider):
-    monkeypatch.setattr(
-        "hostctl.transports.winrm._transport.pypsrp_available", lambda: True
-    )
+    monkeypatch.setattr("hostctl.transports.winrm._transport.has_psrp", lambda: True)
     transport = _WinRMTransport(
-        WinRMConfig("host", "user", "secret", provider=provider)
+        WinRMConfig("host", username="user", password="secret", provider=provider)
     )
     assert transport._path_backend.max_script_bytes == _SCRIPT_BUDGET
 
@@ -381,7 +386,7 @@ def test_native_winrm_option_assembly(monkeypatch):
         "server.example",
         ssl=True,
         port=5987,
-        server_cert_validation="ignore",
+        verify=False,
     ).run_ps("Write-Output x")
     wrapper = captured["input"].decode("utf-8")
     assert "UseSSL=$true" in wrapper
@@ -400,7 +405,7 @@ def test_native_winrm_cert_ignore_survives_both_port_spellings(port):
         "server.example",
         ssl=True,
         port=port,
-        server_cert_validation="ignore",
+        verify=False,
     )._wrapper("Write-Output x")
     # Without a port the old `str.replace` searched for ";};", which the
     # rendered wrapper never contained, so the setting vanished silently.
@@ -636,16 +641,25 @@ def test_native_winrm_live_remote_exit_code():
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"transport": "guess"},
-        {"transport": "certificate"},
-        {"server_cert_validation": "maybe"},
+        {"auth": "guess"},
+        {"auth": "certificate"},
         {"message_encryption": "sometimes"},
         {"port": 70000},
     ],
 )
 def test_winrm_config_rejects_invalid_transport_settings(kwargs):
     with pytest.raises(ValueError):
-        WinRMConfig("host", "user", "password", **kwargs)
+        WinRMConfig("host", username="user", password="password", **kwargs)
+
+
+def test_winrm_verify_is_a_boolean():
+    from hostctl import HostConfig
+
+    with pytest.raises(TypeError, match="verify"):
+        WinRMConfig("host", username="user", password="password", verify="ignore")
+    config = HostConfig("winrms://user@host?verify=false")
+    assert config.verify is False
+    assert "verify=false" in config.connection_uri
 
 
 @pytest.mark.skipif(os.name != "nt", reason="native context is Windows-only")
@@ -659,7 +673,7 @@ def test_native_winrm_declares_that_it_manages_status():
     """
     from hostctl.transports.winrm._providers import WinRMExecutorProvider
 
-    native = _WinRMTransport(WinRMConfig("server.example", "operator"))
+    native = _WinRMTransport(WinRMConfig("server.example", username="operator"))
     assert "manages_status" in native.capabilities
     assert "manages_status" in WinRMExecutorProvider(native).capabilities
 
@@ -674,7 +688,9 @@ def test_pywinrm_does_not_claim_to_manage_status():
     from hostctl.transports.winrm._providers import WinRMExecutorProvider
 
     remote = _WinRMTransport(
-        WinRMConfig("server.example", "operator", password="secret", provider="pywinrm")
+        WinRMConfig(
+            "server.example", username="operator", password="secret", provider="pywinrm"
+        )
     )
     assert "manages_status" not in remote.capabilities
     assert "manages_status" not in WinRMExecutorProvider(remote).capabilities
@@ -698,16 +714,16 @@ def test_auto_prefers_the_native_path_a_password_free_config_documents(monkeypat
     away: PSRP won every `auto`, and PSRP needs a credential."""
     import hostctl.transports.winrm._transport as winrm_module
 
-    monkeypatch.setattr(winrm_module, "pypsrp_available", lambda: True)
+    monkeypatch.setattr(winrm_module, "has_psrp", lambda: True)
     monkeypatch.setattr(winrm_module.os, "name", "nt")
 
-    transport = winrm_module._WinRMTransport(WinRMConfig("server", "admin"))
+    transport = winrm_module._WinRMTransport(WinRMConfig("server", username="admin"))
 
     assert transport._leg.name == "native"
 
     # With a password there is a credential to hand PSRP, so `auto` takes it.
     credentialed = winrm_module._WinRMTransport(
-        WinRMConfig("server", "admin", "secret")
+        WinRMConfig("server", username="admin", password="secret")
     )
     assert credentialed._leg.name == "psrp"
 
@@ -731,7 +747,7 @@ def test_the_native_session_gets_the_configured_deadline(monkeypatch):
     monkeypatch.setenv("USERNAME", "admin")
     monkeypatch.delenv("USERDOMAIN", raising=False)
     transport = winrm_module._WinRMTransport(
-        WinRMConfig("server", "admin", read_timeout_sec=45)
+        WinRMConfig("server", username="admin", read_timeout=45)
     )
     transport._leg.session
     del _os
@@ -761,7 +777,7 @@ def test_the_transports_own_run_applies_the_manages_status_rule(monkeypatch):
             return type("R", (), {"status_code": 0, "std_out": b"", "std_err": b""})()
 
     monkeypatch.setattr(winrm_module, "NativeWinRMSession", _Session)
-    transport = winrm_module._WinRMTransport(WinRMConfig("server", "admin"))
+    transport = winrm_module._WinRMTransport(WinRMConfig("server", username="admin"))
 
     transport.run("cmd /c exit 7", check=False)
 
@@ -775,24 +791,26 @@ def test_basic_credentials_over_http_are_refused(transport):
     -- on pywinrm; pypsrp refused at construction -- so the same config sent a
     password in clear or not depending only on which extra was installed."""
     with pytest.raises(ValueError, match="cleartext"):
-        WinRMConfig("host", "user", "secret", transport=transport)
+        WinRMConfig("host", username="user", password="secret", auth=transport)
     from hostctl.host._config import HostConfig
 
     with pytest.raises(ValueError, match="cleartext"):
-        HostConfig(f"winrm://user@host?transport={transport}")
+        HostConfig(f"winrm://user@host?auth={transport}")
 
 
 @pytest.mark.parametrize("transport", ["basic", "plaintext", "ssl"])
 def test_basic_over_https_and_an_explicit_opt_in_build(transport):
     from hostctl.host._config import HostConfig
 
-    assert WinRMConfig("host", "user", "secret", transport=transport, ssl=True)
+    assert WinRMConfig(
+        "host", username="user", password="secret", auth=transport, tls=True
+    )
     config = WinRMConfig(
-        "host", "user", transport=transport, allow_cleartext=True, port=5985
+        "host", username="user", auth=transport, allow_cleartext=True, port=5985
     )
     assert "allow_cleartext=true" in config.connection_uri
     assert HostConfig(str(config)) == config
-    assert "allow_cleartext" not in WinRMConfig("host", "user").connection_uri
+    assert "allow_cleartext" not in WinRMConfig("host", username="user").connection_uri
 
 
 @pytest.mark.parametrize(
@@ -803,7 +821,7 @@ def test_allow_cleartext_query_is_a_strict_boolean(value, expected):
     from hostctl.host._config import HostConfig
 
     config = HostConfig(
-        f"winrm://user@host?transport=basic&allow_cleartext={value}"
+        f"winrm://user@host?auth=basic&allow_cleartext={value}"
         if expected
         else f"winrm://user@host?allow_cleartext={value}"
     )
@@ -833,9 +851,9 @@ def test_one_rule_picks_the_leg(
     import hostctl.transports.winrm._transport as winrm_module
 
     monkeypatch.setattr(winrm_module.os, "name", os_name)
-    monkeypatch.setattr(winrm_module, "pypsrp_available", lambda: psrp)
+    monkeypatch.setattr(winrm_module, "has_psrp", lambda: psrp)
     config = WinRMConfig(
-        "server", "admin", password, transport=transport, provider=provider
+        "server", username="admin", password=password, auth=transport, provider=provider
     )
 
     assert winrm_module._select_leg(config) == leg
@@ -847,30 +865,32 @@ def test_auto_without_a_password_off_windows_needs_a_password(monkeypatch):
 
     monkeypatch.setattr(winrm_module.os, "name", "posix")
     with pytest.raises(ValueError, match="pass password="):
-        winrm_module._select_leg(WinRMConfig("server", "admin"))
+        winrm_module._select_leg(WinRMConfig("server", username="admin"))
 
 
 def test_provider_native_means_no_password_and_pywinrm_psrp_need_one():
     from hostctl.host._config import HostConfig
 
     with pytest.raises(ValueError, match="current Windows logon"):
-        WinRMConfig("server", "admin", "secret", provider="native")
+        WinRMConfig("server", username="admin", password="secret", provider="native")
     for provider in ("pywinrm", "psrp"):
         with pytest.raises(ValueError, match="password="):
-            WinRMConfig("server", "admin", provider=provider)
-        assert WinRMConfig("server", "admin", provider=provider, transport="kerberos")
-    native = WinRMConfig("server", "admin", provider="native")
+            WinRMConfig("server", username="admin", provider=provider)
+        assert WinRMConfig(
+            "server", username="admin", provider=provider, auth="kerberos"
+        )
+    native = WinRMConfig("server", username="admin", provider="native")
     assert HostConfig(str(native)) == native
     with pytest.raises(ValueError, match="native"):
-        WinRMConfig("server", "admin", provider="bogus")
+        WinRMConfig("server", username="admin", provider="bogus")
 
 
 def test_a_config_without_a_port_survives_its_own_uri():
     from hostctl.host._config import HostConfig
 
-    config = WinRMConfig("h", "u")
+    config = WinRMConfig("h", username="u")
     assert HostConfig(str(config)) == config
-    pinned = WinRMConfig("h", "u", port=5986, ssl=True)
+    pinned = WinRMConfig("h", username="u", port=5986, tls=True)
     assert HostConfig(str(pinned)) == pinned
 
 
@@ -891,7 +911,7 @@ def test_the_psrp_leg_manages_its_own_status():
             return PipelineResult((), PipelineStreams(), "Completed", False, 7)
 
     transport = _WinRMTransport(
-        WinRMConfig("server", "admin", "secret", provider="psrp")
+        WinRMConfig("server", username="admin", password="secret", provider="psrp")
     )
     transport._leg._runspace = _Runspace()
 
@@ -929,7 +949,9 @@ def test_two_threads_open_one_runspace_and_close_closes_it():
     original = winrm_module.RunspaceSession
     winrm_module.RunspaceSession = _Slow
     try:
-        transport = _WinRMTransport(WinRMConfig("h", "u", "p", provider="psrp"))
+        transport = _WinRMTransport(
+            WinRMConfig("h", username="u", password="p", provider="psrp")
+        )
         threads = [threading.Thread(target=transport.runspace) for _ in range(2)]
         for thread in threads:
             thread.start()
@@ -943,7 +965,9 @@ def test_two_threads_open_one_runspace_and_close_closes_it():
 
 
 def test_a_non_psrp_leg_has_no_runspace():
-    transport = _WinRMTransport(WinRMConfig("h", "u", "p", provider="pywinrm"))
+    transport = _WinRMTransport(
+        WinRMConfig("h", username="u", password="p", provider="pywinrm")
+    )
     with pytest.raises(NotImplementedError, match="PSRP runspaces"):
         transport.runspace()
     assert "runspace" not in transport.capabilities

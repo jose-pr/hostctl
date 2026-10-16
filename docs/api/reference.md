@@ -59,7 +59,7 @@ adapters and path backends are internal: a host hands them back typed as
 
 ## Serial consoles
 
-::: hostctl.SerialConsoleProtocol
+::: hostctl.ConsoleProfile
 ::: hostctl.RawConsoleProfile
 ::: hostctl.PromptConsoleProfile
 ::: hostctl.LoginStep
@@ -115,7 +115,7 @@ adapters and path backends are internal: a host hands them back typed as
 
 Every usable `host.path()` returns a `pathapi.Path`; annotate with that.
 
-`ExecutorCommand` (`str | pathlib.PurePath | pathapi.Pathname`) is the
+`CommandLike` (`str | pathlib.PurePath | pathapi.Pathname`) is the
 command type accepted by `Executor`.
 `ExecutorCapability` is the enum whose `.ARGS`, `.CWD`, and `.ENV` members
 declare native executor support. Its members subclass `str`, so
@@ -127,6 +127,10 @@ throughout, which lets providers advertise transport-specific tokens
 `BASH`, `ZSH`, `FISH`, `CMD`, and `PWSH` are the other ready-to-use flavours.
 Any of them can be passed wherever a `ShellFlavour` is expected.
 
-`pypsrp_available()` reports whether the optional PSRP extra is importable and
-`require_pypsrp()` raises an actionable `ImportError` naming the extra when it
-is not. `__version__` contains the installed package version.
+`has_ssh()` and `has_psrp()` report whether the `ssh` and `psrp` extras are
+installed, without importing them; a missing extra otherwise raises an
+`ImportError` naming it where it is used. `__version__` contains the
+installed package version.
+
+`ShellSelection` and `PathnameSelection` (in `hostctl.host`) are what every
+config's `shell=` and `pathname=` accept.

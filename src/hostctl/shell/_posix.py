@@ -6,7 +6,7 @@ import shlex
 import typing
 from pathlib import Path, PurePath, PurePosixPath
 
-from ..executor import Environment, PathLike
+from ..executor import CommandEnvironment, StrPath
 from ._vocabulary import (
     ShellCommand,
     ShellOperator,
@@ -30,7 +30,7 @@ class PosixShellFlavour(ShellFlavour):
         "printf 'os_version=%s\\n' \"$VERSION_ID\"; fi;"
         "printf 'architecture=%s\\n' \"$(uname -m 2>/dev/null)\""
     )
-    path_flavor = PurePosixPath
+    pathname = PurePosixPath
 
     def quote(self, value: object) -> str:
         if isinstance(value, (PurePath, Path)):
@@ -50,7 +50,7 @@ class PosixShellFlavour(ShellFlavour):
     def environment_assignment(self, key: str, value: object) -> str:
         return f"export {key}={self.quote(value)}"
 
-    def change_directory(self, cwd: PathLike) -> str:
+    def change_directory(self, cwd: StrPath) -> str:
         return f"cd -- {self.quote(posix_cwd_operand(cwd))}"
 
     def command(
@@ -58,8 +58,8 @@ class PosixShellFlavour(ShellFlavour):
         cmds: typing.Iterable[ShellToken],
         *,
         executable: typing.Optional[str] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         login_shell: typing.Optional[str] = None,
     ) -> ShellCommand:
         command = self.invocation(

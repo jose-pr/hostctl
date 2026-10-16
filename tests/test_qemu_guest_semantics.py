@@ -101,7 +101,7 @@ def test_an_agent_that_names_no_family_refuses_to_guess():
     with pytest.raises(NotImplementedError, match="guest-get-osinfo"):
         host.shell_flavour
 
-    with pytest.raises(NotImplementedError, match="dialect"):
+    with pytest.raises(NotImplementedError, match="shell"):
         host.path("/tmp/x")
 
 
@@ -120,8 +120,8 @@ def test_an_explicit_selection_needs_no_probe():
     config = QEMUConfig(
         "guest",
         transport_factory=lambda: transport,
-        path_flavor="posix",
-        dialect="posix",
+        pathname="posix",
+        shell="posix",
     )
     host = QEMUHost(config)
 

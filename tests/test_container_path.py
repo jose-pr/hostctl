@@ -764,7 +764,7 @@ def test_a_windows_backend_follows_links_with_windows_syntax():
 
     container.get_archive = get_archive
 
-    result = ContainerPathBackend(container, path_flavor="windows").stat(
+    result = ContainerPathBackend(container, pathname="windows").stat(
         "C:\\app\\current"
     )
 

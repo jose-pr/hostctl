@@ -49,7 +49,7 @@ class _Console:
 
 
 def test_serial_uri_round_trip_and_secret_safe_dispatch():
-    config = SerialConfig("/dev/tty USB0", protocol=RawConsoleProfile())
+    config = SerialConfig("/dev/tty USB0", profile=RawConsoleProfile())
     assert "tty%20USB0" in str(config)
     restored = HostConfig(str(config))
     assert isinstance(restored, SerialConfig)
@@ -80,7 +80,7 @@ def test_prompt_profile_frames_reliable_run_and_check():
         status_marker=rb"STATUS0",
         reliable_status=True,
     )
-    host = SerialHost(SerialConfig("loop://", protocol=profile, serial_port=console))
+    host = SerialHost(SerialConfig("loop://", profile=profile, serial_port=console))
     result = host.run("show")
     assert result.returncode == 0
     assert result.stdout == b"output\n"
@@ -96,7 +96,7 @@ def _prompt_host(console_reads=(b"> ",)):
     profile = PromptConsoleProfile(
         rb"> ", status_marker=rb"STATUS0", reliable_status=True
     )
-    return SerialHost(SerialConfig("loop://", protocol=profile, serial_port=console))
+    return SerialHost(SerialConfig("loop://", profile=profile, serial_port=console))
 
 
 def test_serial_uncaptured_output_is_written_not_discarded(monkeypatch):
@@ -139,7 +139,7 @@ def test_prompt_login_steps_are_ordered():
     profile = PromptConsoleProfile(
         rb"> ", login=(LoginStep(rb"login: ", b"admin", secret=True),)
     )
-    host = SerialHost(SerialConfig("loop://", protocol=profile, serial_port=console))
+    host = SerialHost(SerialConfig("loop://", profile=profile, serial_port=console))
     host.connect()
     assert console.writes[-1] == b"admin\r\n"
 
@@ -160,7 +160,7 @@ def test_prompt_profile_paging_and_terminal_setup_hooks():
         paging_disable=b"terminal length 0",
         terminal_setup=lambda process, columns, rows: setup.append((columns, rows)),
     )
-    host = SerialHost(SerialConfig("loop://", protocol=profile, serial_port=console))
+    host = SerialHost(SerialConfig("loop://", profile=profile, serial_port=console))
     host.connect()
     raw = host._executor.open()
     try:
@@ -183,7 +183,7 @@ def test_prompt_profile_uses_status_parser():
         reliable_status=True,
         status_parser=lambda match: int(match.group(1)),
     )
-    host = SerialHost(SerialConfig("loop://", protocol=profile, serial_port=console))
+    host = SerialHost(SerialConfig("loop://", profile=profile, serial_port=console))
     with pytest.raises(subprocess.CalledProcessError) as raised:
         host.run("cmd")
     assert raised.value.returncode == 7

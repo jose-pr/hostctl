@@ -14,10 +14,10 @@ from ..executor import (
     masked_environment,
     run_displayed,
     CaptureOutput,
-    Environment,
-    FileHandle,
-    Input,
-    PathLike,
+    CommandEnvironment,
+    StreamTarget,
+    CommandInput,
+    StrPath,
 )
 from ..process import Process, TerminalRequest
 from ._vocabulary import (
@@ -45,8 +45,8 @@ class ShellSession(Process):
     def send(
         self,
         *cmds: ShellToken,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
     ) -> None:
         """Render and submit commands using this session's shell language."""
         if not cmds and cwd is None and not env:
@@ -121,8 +121,8 @@ class Shell(typing.Generic[_Result]):
         flavour: ShellFlavour,
         executor: typing.Union[typing.Callable[..., _Result], _CommandHost],
         *,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
     ) -> None:
@@ -201,7 +201,9 @@ class Shell(typing.Generic[_Result]):
             inspect.Parameter.KEYWORD_ONLY,
         )
 
-    def _resolve_env(self, env: EnvironmentSelection) -> typing.Optional[Environment]:
+    def _resolve_env(
+        self, env: EnvironmentSelection
+    ) -> typing.Optional[CommandEnvironment]:
         """Merge a per-call environment over this shell's default.
 
         The default `{}` merges nothing, so a call that says nothing about the
@@ -224,13 +226,13 @@ class Shell(typing.Generic[_Result]):
         merged.update(env)
         return merged
 
-    def _resolve_cwd(self, cwd: typing.Optional[PathLike]) -> typing.Optional[PathLike]:
+    def _resolve_cwd(self, cwd: typing.Optional[StrPath]) -> typing.Optional[StrPath]:
         return self._cwd if cwd is None else cwd
 
     def __call__(
         self,
         *args: object,
-        cwd: typing.Optional[PathLike] = None,
+        cwd: typing.Optional[StrPath] = None,
         env: EnvironmentSelection = _INHERIT_ENV,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
@@ -247,16 +249,16 @@ class Shell(typing.Generic[_Result]):
     def run(
         self,
         *cmds: ShellToken,
-        stdin: typing.Optional[FileHandle] = None,
-        stdout: typing.Optional[FileHandle] = None,
-        stderr: typing.Optional[FileHandle] = None,
-        cwd: typing.Optional[PathLike] = None,
+        stdin: typing.Optional[StreamTarget] = None,
+        stdout: typing.Optional[StreamTarget] = None,
+        stderr: typing.Optional[StreamTarget] = None,
+        cwd: typing.Optional[StrPath] = None,
         env: EnvironmentSelection = _INHERIT_ENV,
         capture_output: typing.Optional[CaptureOutput] = None,
         check: typing.Optional[bool] = None,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
-        input: Input = None,
+        input: CommandInput = None,
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> _Result:
@@ -336,7 +338,7 @@ class Shell(typing.Generic[_Result]):
         self,
         *cmds: ShellToken,
         executable: typing.Optional[str] = None,
-        cwd: typing.Optional[PathLike] = None,
+        cwd: typing.Optional[StrPath] = None,
         env: EnvironmentSelection = _INHERIT_ENV,
         terminal: TerminalRequest = None,
         encoding: typing.Optional[str] = None,
@@ -375,7 +377,7 @@ class Shell(typing.Generic[_Result]):
     def configure(
         self,
         *,
-        cwd: typing.Optional[PathLike] = None,
+        cwd: typing.Optional[StrPath] = None,
         env: EnvironmentSelection = _INHERIT_ENV,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,

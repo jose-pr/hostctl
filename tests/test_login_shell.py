@@ -3,7 +3,7 @@
 AsyncSSH sends one command STRING, and the server hands it to a login
 shell. On POSIX that is `$SHELL -c`, which is exactly what this package
 renders for -- one parse, nothing to add. Windows OpenSSH's stock server
-hands it to `cmd.exe /c`, so a `cmd`-dialect command line (which already
+hands it to `cmd.exe /c`, so a `cmd`-shell command line (which already
 carries one cmd layer) is parsed by cmd TWICE.
 """
 
@@ -29,12 +29,12 @@ ADVERSARIAL = ("a b", "%OS%", "a&b", 'say "hi"', "c^d", "(x)", "100%", "x|y")
 
 def test_auto_reads_the_dialect():
     assert SSHConfig("h").resolved_login_shell == "posix"
-    assert SSHConfig("h", path_flavor=WindowsPathname).resolved_login_shell == "cmd"
+    assert SSHConfig("h", pathname=WindowsPathname).resolved_login_shell == "cmd"
     # Explicit wins: the server's DefaultShell is configurable, so guessing
     # is wrong in both directions.
     assert (
         SSHConfig(
-            "h", path_flavor=WindowsPathname, login_shell="powershell"
+            "h", pathname=WindowsPathname, login_shell="powershell"
         ).resolved_login_shell
         == "powershell"
     )
@@ -151,7 +151,7 @@ def _transport(**config):
 
 
 def test_spawn_delivers_the_same_line_as_run():
-    transport = _transport(dialect=CMD, path_flavor=WindowsPathname)
+    transport = _transport(shell=CMD, pathname=WindowsPathname)
 
     transport.spawn(("tool.exe", "a&b"))
 
@@ -215,16 +215,16 @@ def _shell_command(name):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX host")
-@pytest.mark.parametrize("dialect", ("posix", "fish"))
+@pytest.mark.parametrize("shell", ("posix", "fish"))
 @pytest.mark.parametrize("login", ("sh", "bash", "zsh", "fish", "busybox ash"))
-def test_a_line_survives_every_posix_family_login_shell(login, dialect, tmp_path):
+def test_a_line_survives_every_posix_family_login_shell(login, shell, tmp_path):
     shell = _shell_command(login)
     if shell is None:
         pytest.skip(f"{login} is not installed")
-    flavour = FISH if dialect == "fish" else POSIX_SHELL
-    inner = shutil.which("fish" if dialect == "fish" else "sh")
+    flavour = FISH if shell == "fish" else POSIX_SHELL
+    inner = shutil.which("fish" if shell == "fish" else "sh")
     if inner is None:
-        pytest.skip(f"{dialect} is not installed")
+        pytest.skip(f"{shell} is not installed")
     marker = tmp_path / "MARKER"
     values = tuple(v.replace("MARKER", str(marker)) for v in POSIX_VALUES)
 
@@ -256,15 +256,15 @@ def test_the_portable_join_quotes_what_fish_and_sh_read_differently():
 def test_the_uri_carries_the_setting():
     from hostctl.host._config import HostConfig
 
-    config = SSHConfig("h", path_flavor=WindowsPathname, login_shell="powershell")
+    config = SSHConfig("h", pathname=WindowsPathname, login_shell="powershell")
     restored = HostConfig(config.connection_uri)
     assert isinstance(restored, SSHConfig)
     assert restored.login_shell == "powershell"
-    assert restored.path_flavor is WindowsPathname
+    assert restored.pathname is WindowsPathname
 
     # `auto` is the default and is left out, so an existing URI's text is
     # unchanged by this field existing.
-    default = SSHConfig("h", path_flavor=PosixPathname)
+    default = SSHConfig("h", pathname=PosixPathname)
     assert "login_shell" not in default.connection_uri
     assert HostConfig(default.connection_uri).login_shell == "auto"
 

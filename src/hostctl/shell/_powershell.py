@@ -7,7 +7,7 @@ import subprocess
 import typing
 from pathlib import PureWindowsPath
 
-from ..executor import Environment, PathLike, POWERSHELL_STATUS
+from ..executor import CommandEnvironment, StrPath, POWERSHELL_STATUS
 from ._vocabulary import (
     ShellCommand,
     ShellOperator,
@@ -141,7 +141,7 @@ class PowerShellFlavour(ShellFlavour):
     # such as `[pscustomobject]@{a=1}` printed nothing with status 0.
     execution_epilogue = "\n$host.SetShouldExit(" + POWERSHELL_STATUS + ")"
     structured_command_prefix = "& "
-    path_flavor = PureWindowsPath
+    pathname = PureWindowsPath
     info_script = (
         'Write-Output ("hostname=" + [Environment]::MachineName);'
         'Write-Output ("os_family=" + [Environment]::OSVersion.Platform);'
@@ -330,7 +330,7 @@ class PowerShellFlavour(ShellFlavour):
         """
         return f"$env:{key}={_literal(self._text(value))}"
 
-    def change_directory(self, cwd: PathLike) -> str:
+    def change_directory(self, cwd: StrPath) -> str:
         # `-ErrorAction Stop` is what guards the payload here: PowerShell 5
         # has no `&&`, so a failed `Set-Location` must terminate the script
         # itself rather than be joined to the payload by an operator. That
@@ -349,8 +349,8 @@ class PowerShellFlavour(ShellFlavour):
         cmds: typing.Iterable[ShellToken],
         *,
         executable: typing.Optional[str] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         login_shell: typing.Optional[str] = None,
         stdin_free: bool = False,
     ) -> ShellCommand:

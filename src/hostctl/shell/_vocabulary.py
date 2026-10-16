@@ -9,7 +9,7 @@ import typing
 import types
 from pathlib import PurePosixPath
 
-from ..executor import ExecutorCapability, Environment, PathLike
+from ..executor import ExecutorCapability, CommandEnvironment, StrPath
 from ._grammar import Command
 
 _Result = typing.TypeVar("_Result", covariant=True)
@@ -57,7 +57,7 @@ class ShellTarget(str, enum.Enum):
     UNRESOLVED = "unresolved"
 
 
-def posix_cwd_operand(cwd: PathLike) -> str:
+def posix_cwd_operand(cwd: StrPath) -> str:
     """A POSIX path for `cd`, spelled so CDPATH cannot redirect it.
 
     `cd` consults CDPATH for any operand whose first component is not `.` or
@@ -131,13 +131,13 @@ ShellToken = typing.Union[Command, ShellOperator]
 #: inherits it; `None` declines the shell's defaults, leaving whatever
 #: environment the host itself provides (login profile, rc files, service
 #: environment) untouched.
-EnvironmentSelection = typing.Optional[Environment]
+EnvironmentSelection = typing.Optional[CommandEnvironment]
 
 
 #: The `env` default: an empty mapping, meaning "merge nothing, inherit the
 #: shell's environment". A module-level immutable value rather than a literal
 #: `{}` in each signature, so the default can never be mutated by a caller.
-_INHERIT_ENV: Environment = types.MappingProxyType({})
+_INHERIT_ENV: CommandEnvironment = types.MappingProxyType({})
 
 
 #: Characters a word may hold and still need no quoting under sh, bash, zsh,
@@ -183,7 +183,7 @@ class ShellCommand:
     """A transport-ready command and any environment sent out of band."""
 
     command: str
-    environment: typing.Optional[Environment]
+    environment: typing.Optional[CommandEnvironment]
     #: Text the transport must send on the command's standard input, for a
     #: flavour that delivers its script that way (`accepts_script_stdin`).
     stdin: typing.Optional[str] = None

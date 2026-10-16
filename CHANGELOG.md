@@ -25,6 +25,13 @@ Every row ships in 0.4.0. No old name is kept as an alias.
 | concrete executors, processes, path backends, `provider.transports`, `shell.posix` etc.; `LocalExecutor` from `hostctl.executor` | internal; flavour classes stay in `hostctl.shell`; `LocalExecutor` is in `hostctl` and `hostctl.transports.local` |
 | `provider.transports.READ_ONLY_PATH_OPERATIONS` | `hostctl.provider.READ_ONLY_PATH_OPERATIONS` |
 | loggers `hostctl.host.ssh`, `hostctl.host.winrm`, `hostctl.host.system`, `hostctl.provider.transports` | `hostctl.transports.ssh`, `hostctl.transports.winrm`, `hostctl.system`, `hostctl.transports.<name>` |
+| `dialect=`, `path_flavor=` (and `?dialect=`, `?path_flavor=`); `ShellFlavour.path_flavor` | `shell=`, `pathname=` (`?shell=`, `?pathname=`); `ShellFlavour.pathname` |
+| `SSHShellSelection`, `QEMUShellSelection`, `ContainerShellSelection`, `*PathSelection`, `PathnameConstructor` | `hostctl.host.ShellSelection`, `hostctl.host.PathnameSelection` |
+| `ContainerConfig(user=)` (`?user=`); `SerialConfig(port=, protocol=)`; `SerialConsoleProtocol` | `username=` (`?username=`); `device=`, `profile=`; `ConsoleProfile` |
+| `WinRMConfig(transport=, ssl=, server_cert_validation=, operation_timeout_sec=, read_timeout_sec=)` (and the same URI keys) | `auth=`, `tls=`, `verify=` (bool, `?verify=false`), `operation_timeout=`, `read_timeout=` (float s) |
+| positional config arguments after the first | keyword-only (`TypeError` otherwise) |
+| `ExecutorCommand`; `executor.PathLike`, `Input`, `Environment`, `FileHandle` | `CommandLike`; `StrPath`, `CommandInput`, `CommandEnvironment`, `StreamTarget` |
+| `pypsrp_available()`, `require_pypsrp()` | `has_psrp()` (and new `has_ssh()`); the guard is internal |
 
 ### Added
 
@@ -32,6 +39,10 @@ Every row ships in 0.4.0. No old name is kept as an alias.
   the new `hostctl.exceptions` module with `TransportError` and
   `ProtocolError` (both `ConnectionError`s) as categories; every class is
   re-exported from `hostctl`. This ships in 0.4.0.
+- `hostctl.has_ssh()` reports whether the `ssh` extra (asyncssh and sftppath)
+  is installed, and `has_psrp()` the same for `psrp`, without importing
+  either; one table of extras drives both, the install hint, and the SFTP
+  provider's availability. This ships in 0.4.0.
 - `SshConfig(ssh_config=)` reads one ssh_config on both legs (neither reads one
   by default; it is a keyword only, never a URI key), `SshConfig(connect_options=)` passes extra keywords to
   `asyncssh.connect` on both legs, and `SshConfig(path_flavor="auto")` asks the
@@ -91,6 +102,13 @@ Every row ships in 0.4.0. No old name is kept as an alias.
   are renamed (`QGA*`), `GuestAgentProtocolError` is folded into
   `QGAProtocolError`, and the exceptions leave `hostctl.provider`,
   `hostctl.executor` and `hostctl.serial` for `hostctl.exceptions`; see
+  "Migrating from 0.3".
+- **Breaking, 0.4.0: one keyword vocabulary.** Every config takes `shell=`
+  and `pathname=` (`hostctl.host.ShellSelection`/`PathnameSelection`), its
+  target positionally and everything else by keyword, and the URI query keys
+  follow the keywords; an old key raises `unknown connection parameter`. WinRM
+  takes `auth=`, `tls=`, `verify=True|False` and float-second timeouts, the
+  container `username=`, the serial config `device=` and `profile=`. See
   "Migrating from 0.3".
 - **Breaking, 0.4.0: module paths below `hostctl` moved.** Each transport is
   one package under `hostctl.transports`, the contracts are `hostctl.host`,

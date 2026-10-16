@@ -5,19 +5,18 @@ from __future__ import annotations
 
 import dataclasses
 import typing
-from pathlib import PurePath
 from urllib.parse import quote, unquote, urlencode
-
-from pathapi import Pathname
 
 
 from ._qga import GuestAgentTransport
 from ._console import QEMUSerialConsole
-from ...shell import ShellFlavourSelection, shell_flavour
+from ...shell import shell_flavour
 from ...host._config import HostConfig
+from ...host._dispatch import _keyword_only
+from ...host._selection import PathnameSelection, ShellSelection
 from ...uri._parse import (
-    path_flavor_name,
-    path_flavor_selection,
+    pathname_label,
+    pathname_selection,
     strict_uri_query,
     uri_hostname,
 )
@@ -30,13 +29,8 @@ if typing.TYPE_CHECKING:
 
 QEMUTransport = typing.Literal["libvirt", "unix", "ssh"]
 
-PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
 
-QEMUShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
-
-QEMUPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
-
-
+@_keyword_only()
 @dataclasses.dataclass
 class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
     """Guest identity, QGA transport, and guest semantic selections."""
@@ -67,8 +61,8 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
     #: could not be told to raise. A rejected reply is not recoverable: the
     #: output is already gone.
     max_reply_size: int = 48 * 1024 * 1024
-    dialect: QEMUShellSelection = "auto"
-    path_flavor: QEMUPathSelection = "auto"
+    shell: ShellSelection = "auto"
+    pathname: PathnameSelection = "auto"
     transport_factory: typing.Optional[typing.Callable[[], GuestAgentTransport]] = (
         dataclasses.field(default=None, repr=False, compare=False)
     )
@@ -101,19 +95,19 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             raise ValueError("SSH QGA transport requires an SSHConfig")
         if self.transport != "ssh" and self.ssh is not None:
             raise ValueError("ssh config requires transport='ssh'")
-        if self.dialect != "auto":
-            self.dialect = shell_flavour(self.dialect)
-        self.path_flavor = path_flavor_selection(self.path_flavor, allow_auto=True)
+        if self.shell != "auto":
+            self.shell = shell_flavour(self.shell)
+        self.pathname = pathname_selection(self.pathname, allow_auto=True)
 
     @property
     def connection_uri(self) -> str:
-        dialect = "auto" if self.dialect == "auto" else str(self.dialect)
-        path_flavor = path_flavor_name(self.path_flavor)
+        shell = "auto" if self.shell == "auto" else str(self.shell)
+        pathname = pathname_label(self.pathname)
         query: typing.Dict[str, object] = {
             "agent_timeout": self.agent_timeout,
             "max_reply_size": self.max_reply_size,
-            "dialect": dialect,
-            "path_flavor": path_flavor,
+            "shell": shell,
+            "pathname": pathname,
         }
         if self.transport == "libvirt":
             if self.connection is not None:
@@ -161,10 +155,10 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             (
                 "agent_timeout",
                 "connection",
-                "dialect",
+                "shell",
                 "domain",
                 "max_reply_size",
-                "path_flavor",
+                "pathname",
                 "socket_path",
             ),
         )
@@ -179,13 +173,13 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         common = {
             "agent_timeout": timeout,
             "max_reply_size": max_reply_size,
-            "dialect": (
+            "shell": (
                 "auto"
-                if query.get("dialect", "auto") == "auto"
-                else shell_flavour(query["dialect"])
+                if query.get("shell", "auto") == "auto"
+                else shell_flavour(query["shell"])
             ),
-            "path_flavor": path_flavor_selection(
-                query.get("path_flavor", "auto"), allow_auto=True
+            "pathname": pathname_selection(
+                query.get("pathname", "auto"), allow_auto=True
             ),
             "transport_factory": credentials.get("transport_factory"),
             "serial_console": credentials.get("serial_console"),

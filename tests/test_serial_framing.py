@@ -70,7 +70,7 @@ def _host(console, **options):
     options.setdefault("reliable_status", True)
     options.setdefault("status_parser", lambda match: int(match.group(1)))
     profile = PromptConsoleProfile(rb"> ", **options)
-    return SerialHost(SerialConfig("loop://", protocol=profile, serial_port=console))
+    return SerialHost(SerialConfig("loop://", profile=profile, serial_port=console))
 
 
 def test_a_prompt_in_the_output_does_not_end_the_read():
@@ -235,7 +235,7 @@ def test_login_timeout_bounds_a_silent_console():
     from hostctl.exceptions import ConsoleProtocolError
 
     profile = PromptConsoleProfile(rb"login: ", login_timeout=0.2)
-    host = SerialHost(SerialConfig("loop://", protocol=profile))
+    host = SerialHost(SerialConfig("loop://", profile=profile))
     started = time.monotonic()
     try:
         with pytest.raises(ConsoleProtocolError):

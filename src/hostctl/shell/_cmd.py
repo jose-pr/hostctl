@@ -5,7 +5,7 @@ from __future__ import annotations
 import typing
 from pathlib import PureWindowsPath
 
-from ..executor import Environment, PathLike
+from ..executor import CommandEnvironment, StrPath
 from ._vocabulary import (
     ShellCommand,
     ShellOperator,
@@ -135,7 +135,7 @@ class CmdShellFlavour(ShellFlavour):
     default_executable = "cmd.exe"
     argv_invocation = False
     command_separator = "&"
-    path_flavor = PureWindowsPath
+    pathname = PureWindowsPath
     info_script = (
         "echo hostname=%COMPUTERNAME%&"
         "echo os_family=windows&"
@@ -318,7 +318,7 @@ class CmdShellFlavour(ShellFlavour):
         """
         return "set " + key + "=" + _echo_argument(self._text(value))
 
-    def change_directory(self, cwd: PathLike) -> str:
+    def change_directory(self, cwd: StrPath) -> str:
         return f"cd /d {_builtin_argument(self._text(cwd))}"
 
     def command(
@@ -326,8 +326,8 @@ class CmdShellFlavour(ShellFlavour):
         cmds: typing.Iterable[ShellToken],
         *,
         executable: typing.Optional[str] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         login_shell: typing.Optional[str] = None,
     ) -> ShellCommand:
         script = self.script(cmds, cwd=cwd, env=env)

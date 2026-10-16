@@ -5,7 +5,7 @@ from __future__ import annotations
 import typing
 from pathlib import Path, PurePath, PurePosixPath
 
-from ..executor import Environment, PathLike
+from ..executor import CommandEnvironment, StrPath
 from ._vocabulary import (
     ShellCommand,
     ShellOperator,
@@ -31,7 +31,7 @@ class FishShellFlavour(ShellFlavour):
         "echo os_family=(uname -s);"
         "echo architecture=(uname -m)"
     )
-    path_flavor = PurePosixPath
+    pathname = PurePosixPath
 
     def quote(self, value: object) -> str:
         if isinstance(value, (PurePath, Path)):
@@ -69,7 +69,7 @@ class FishShellFlavour(ShellFlavour):
     def environment_assignment(self, key: str, value: object) -> str:
         return f"set -gx {key} {self.quote(value)}"
 
-    def change_directory(self, cwd: PathLike) -> str:
+    def change_directory(self, cwd: StrPath) -> str:
         return f"cd -- {self.quote(posix_cwd_operand(cwd))}"
 
     def command(
@@ -77,8 +77,8 @@ class FishShellFlavour(ShellFlavour):
         cmds: typing.Iterable[ShellToken],
         *,
         executable: typing.Optional[str] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         login_shell: typing.Optional[str] = None,
     ) -> ShellCommand:
         command = self.invocation(

@@ -53,7 +53,7 @@ class NativeWinRMSession:
         port: typing.Optional[int] = None,
         timeout: typing.Optional[float] = None,
         transport: str = "ntlm",
-        server_cert_validation: str = "validate",
+        verify: bool = True,
         message_encryption: str = "auto",
     ) -> None:
         self.host = host
@@ -71,9 +71,7 @@ class NativeWinRMSession:
                 "native WinRM cannot override WS-Man message encryption; "
                 "use message_encryption='auto' or the pywinrm provider"
             )
-        if server_cert_validation not in {"validate", "ignore"}:
-            raise ValueError("invalid server_cert_validation")
-        if ssl and server_cert_validation == "ignore":
+        if ssl and not verify:
             # PowerShell remoting can skip certificate checks, but only when
             # explicitly requested; keep this visible in the generated options.
             self._skip_ca_check = True
@@ -107,7 +105,7 @@ class NativeWinRMSession:
         if self._skip_ca_check:
             # `SkipCACheck` is a `New-PSSessionOption` parameter, not an
             # `Invoke-Command` one.  Both checks are skipped together to match
-            # pywinrm's `server_cert_validation="ignore"`.
+            # the pywinrm leg's `verify=False`.
             prelude = "$so=New-PSSessionOption -SkipCACheck -SkipCNCheck;"
             options.append("SessionOption=$so")
 

@@ -18,19 +18,20 @@ from ...provider._selector import ProviderSelector
 from ...process import Process, TerminalRequest
 from ._process import SSHProcess
 from ...shell._grammar import Command
-from ...executor import Environment, PathLike
+from ...executor import CommandEnvironment, StrPath
 from ...host._info import HostInfo, parse_host_info
 from ...shell import BASH, CMD, FISH, POWERSHELL, POSIX_SHELL, PWSH, ZSH, shell_flavour
 from ...shell._flavour import ShellFlavour
 from ...shell._invocation import render_command
 from ...shell._vocabulary import ShellCommand
-from ._config import PathnameConstructor, SSHConfig
+from ...host._selection import PathnameType
+from ._config import SSHConfig
 
 log = logging.getLogger("hostctl.transports.ssh")
 
 
 class _SSHTransport:
-    """A host reached over SSH, with an explicitly configured command dialect."""
+    """A host reached over SSH, with an explicitly configured command shell."""
 
     def __init__(self, config: SSHConfig) -> None:
         self.config = config
@@ -45,15 +46,15 @@ class _SSHTransport:
         self._sftp_backend: typing.Optional[object] = None
         #: SFTP `realpath(".")`, asked once per connection generation.
         self._login_dir: typing.Optional[str] = None
-        #: What `path_flavor="auto"` resolved to from the login directory.
-        self._resolved_flavor: typing.Optional[PathnameConstructor] = None
+        #: What `pathname="auto"` resolved to from the login directory.
+        self._resolved_flavor: typing.Optional[PathnameType] = None
 
     @property
-    def path_flavor(self) -> PathnameConstructor:
+    def pathname(self) -> PathnameType:
         """The path constructor, with `"auto"` answered by the login directory."""
-        declared = self.config.path_flavor
+        declared = self.config.pathname
         if declared != "auto":
-            return typing.cast(PathnameConstructor, declared)
+            return typing.cast(PathnameType, declared)
         with self._ssh_lock:
             if self._resolved_flavor is None:
                 answer = self._login_directory()
@@ -72,7 +73,7 @@ class _SSHTransport:
         """What parses a delivered command line first, `"auto"` resolved."""
         if self.config.login_shell != "auto":
             return self.config.login_shell
-        return "cmd" if issubclass(self.path_flavor, PureWindowsPath) else "posix"
+        return "cmd" if issubclass(self.pathname, PureWindowsPath) else "posix"
 
     @property
     def capabilities(self) -> typing.FrozenSet[str]:
@@ -80,16 +81,16 @@ class _SSHTransport:
 
     @property
     def shell_flavour(self) -> ShellFlavour:
-        selection = self.config.dialect
+        selection = self.config.shell
         if selection != "auto":
             return typing.cast(ShellFlavour, selection)
-        key = (selection, self.path_flavor, self.config.executable)
+        key = (selection, self.pathname, self.config.executable)
         with self._ssh_lock:
             if self._resolved_dialect is not None and self._resolved_dialect[0] == key:
                 return self._resolved_dialect[1]
             resolved, executable = (
                 self._detect_windows_shell()
-                if issubclass(self.path_flavor, PureWindowsPath)
+                if issubclass(self.pathname, PureWindowsPath)
                 else self._detect_posix_shell()
             )
             self._resolved_dialect = (key, resolved, executable)
@@ -177,13 +178,13 @@ class _SSHTransport:
         cmds: typing.Iterable[Command],
         *,
         executable: typing.Optional[str] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
     ) -> ShellCommand:
         """The only place this transport renders: `command()` for the login shell."""
         flavour = self.shell_flavour
         program = executable or self.config.executable
-        if program is None and self.config.dialect == "auto":
+        if program is None and self.config.shell == "auto":
             assert self._resolved_dialect is not None
             program = self._resolved_dialect[2]
         return render_command(
@@ -337,12 +338,12 @@ class _SSHTransport:
                     raise normalized from exc
             return self._login_dir
 
-    def path(self, *segments: PathLike) -> Path:
+    def path(self, *segments: StrPath) -> Path:
         from ... import _async
 
         SFTPPath = _async.sftppath().SFTPPath
 
-        pure = self.path_flavor(*segments)
+        pure = self.pathname(*segments)
         remote_path = pure.as_posix()
         if pure.anchor:
             if not remote_path.startswith("/"):
@@ -374,8 +375,8 @@ class _SSHTransport:
         self,
         *cmds: Command,
         executable: typing.Optional[str] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         terminal: TerminalRequest = None,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
@@ -394,7 +395,7 @@ class _SSHTransport:
             command = executable or self.config.executable
             if command is None:
                 flavour = self.shell_flavour
-                if self.config.dialect == "auto":
+                if self.config.shell == "auto":
                     resolved = self._resolved_dialect
                     if resolved is not None:
                         command = resolved[2]

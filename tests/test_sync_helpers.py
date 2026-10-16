@@ -527,10 +527,8 @@ def test_a_windows_shell_is_handed_a_windows_spelling_of_the_backend_path(
     from hostctl.transports.ssh._config import SSHConfig
     from hostctl.sync import _remote_checksum
 
-    dialect = {"cmd": CMD, "powershell": POWERSHELL}[dialect_name]
-    host = SSHConfig(
-        "winbox", path_flavor=PureWindowsPath, dialect=dialect
-    )._create_host()
+    shell = {"cmd": CMD, "powershell": POWERSHELL}[dialect_name]
+    host = SSHConfig("winbox", pathname=PureWindowsPath, shell=shell)._create_host()
     seen = []
 
     def fake_run(*cmds, **options):

@@ -17,7 +17,7 @@ from ._process import SerialProcess
 
 
 @typing.runtime_checkable
-class SerialConsoleProtocol(typing.Protocol):
+class ConsoleProfile(typing.Protocol):
     """Runtime contract implemented by serial console profiles."""
 
     can_run: bool
@@ -446,5 +446,5 @@ __all__ = [
     "LoginStep",
     "PromptConsoleProfile",
     "RawConsoleProfile",
-    "SerialConsoleProtocol",
+    "ConsoleProfile",
 ]

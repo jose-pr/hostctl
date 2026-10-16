@@ -4,7 +4,7 @@ from ._console import (
     LoginStep as LoginStep,
     PromptConsoleProfile as PromptConsoleProfile,
     RawConsoleProfile as RawConsoleProfile,
-    SerialConsoleProtocol as SerialConsoleProtocol,
+    ConsoleProfile as ConsoleProfile,
 )
 from ._executor import SerialFactory as SerialFactory, SerialLike as SerialLike
 from ._host import SerialConfig as SerialConfig, SerialHost as SerialHost
@@ -15,7 +15,7 @@ __all__ = [
     "PromptConsoleProfile",
     "RawConsoleProfile",
     "SerialConfig",
-    "SerialConsoleProtocol",
+    "ConsoleProfile",
     "SerialFactory",
     "SerialHost",
     "SerialLike",

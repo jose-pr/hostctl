@@ -29,7 +29,7 @@ capabilities those providers actually support.
   prompt profile can add safely framed `run()` results. Serial consoles never
   imply a filesystem or PTY and RFC 2217 has no encryption.
 - **Explicit or detected SSH shells.** Use a concrete dialect for deterministic
-  behavior or `dialect="auto"` for positive POSIX/Windows probing.
+  behavior or `shell="auto"` for positive POSIX/Windows probing.
 - **Extensible shell languages.** Select a registered string, a
   `ShellFlavour` subclass, or a configured flavour instance.
 - **Extension point, not a closed abstraction.** Override `Host.path()` in a
@@ -84,12 +84,14 @@ windows_ssh = SSHConfig(
     host="windows.example.com",
     username="admin",
     password="secret",
-    dialect=POWERSHELL,
-    path_flavor=WindowsPathname,
+    shell=POWERSHELL,
+    pathname=WindowsPathname,
 )
 
 # WinRM supports PowerShell execution and Windows filesystem paths.
-with WinRMConfig("windows.example.com", "admin", "secret", ssl=True) as windows:
+with WinRMConfig(
+    "windows.example.com", username="admin", password="secret", tls=True
+) as windows:
     windows.run(["Write-Output", "hello"])
     windows.path(r"C:\Temp\hello.txt").write_text("hello", encoding="utf-8")
 
@@ -208,7 +210,7 @@ retaining those URI/configuration objects, compose them explicitly:
 from hostctl import SSHConfig, WinRMConfig
 
 posix = SSHConfig("server.example", username="root").open()
-windows = WinRMConfig("server.example", "admin").open()
+windows = WinRMConfig("server.example", username="admin").open()
 ```
 
 SSH and WinRM transport implementations are private providers; QEMU's SSH

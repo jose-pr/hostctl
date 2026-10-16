@@ -32,10 +32,10 @@ class ContainerPathBackend:
     """Shell-independent filesystem reads and writes through archive calls."""
 
     def __init__(
-        self, container: ContainerArchiveClient, *, path_flavor: str = "posix"
+        self, container: ContainerArchiveClient, *, pathname: str = "posix"
     ) -> None:
         self.container = container
-        self.path_flavor = path_flavor
+        self.pathname = pathname
         self._closed = False
 
     def invalidate(self) -> None:
@@ -188,7 +188,7 @@ class ContainerPathBackend:
         relative link target with `/` and called `C:\app\current`'s target
         absolute only if it began with `/`.
         """
-        return ntpath if self.path_flavor == "windows" else posixpath
+        return ntpath if self.pathname == "windows" else posixpath
 
     def _link_destination(self, path: str, target: str) -> str:
         """Resolve a stored link target against the link's own parent."""

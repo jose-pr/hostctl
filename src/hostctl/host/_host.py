@@ -11,7 +11,14 @@ import types as _types
 
 from pathapi import Path
 
-from ..executor import CaptureOutput, Environment, FileHandle, Input, PathLike, Executor
+from ..executor import (
+    CaptureOutput,
+    CommandEnvironment,
+    StreamTarget,
+    CommandInput,
+    StrPath,
+    Executor,
+)
 
 # Runtime imports: `typing.get_type_hints` resolves the public annotations
 # against this module's globals. `executor`, `process` and `shell` never
@@ -211,7 +218,7 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         self.close()
         return False
 
-    def path(self, *segments: PathLike, backend: _ty.Optional[str] = None) -> Path:
+    def path(self, *segments: StrPath, backend: _ty.Optional[str] = None) -> Path:
         """Return a pathlib-compatible path for this host."""
         raise NotImplementedError(
             f"{type(self).__name__} does not provide the 'path' capability"
@@ -221,8 +228,8 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         self,
         *cmds: Command,
         executable: _ty.Optional[str] = None,
-        cwd: _ty.Optional[PathLike] = None,
-        env: _ty.Optional[Environment] = None,
+        cwd: _ty.Optional[StrPath] = None,
+        env: _ty.Optional[CommandEnvironment] = None,
         terminal: TerminalRequest = None,
         encoding: _ty.Optional[str] = None,
         errors: _ty.Optional[str] = None,
@@ -237,16 +244,16 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         *cmds: Command,
         bufsize: int = -1,
         executable: _ty.Optional[str] = None,
-        stdin: _ty.Optional[FileHandle] = None,
-        stdout: _ty.Optional[FileHandle] = None,
-        stderr: _ty.Optional[FileHandle] = None,
-        cwd: _ty.Optional[PathLike] = None,
-        env: _ty.Optional[Environment] = None,
+        stdin: _ty.Optional[StreamTarget] = None,
+        stdout: _ty.Optional[StreamTarget] = None,
+        stderr: _ty.Optional[StreamTarget] = None,
+        cwd: _ty.Optional[StrPath] = None,
+        env: _ty.Optional[CommandEnvironment] = None,
         capture_output: CaptureOutput = True,
         check: bool = True,
         encoding: _ty.Optional[str] = None,
         errors: _ty.Optional[str] = None,
-        input: Input = None,
+        input: CommandInput = None,
         timeout: _ty.Optional[float] = None,
         text: _ty.Optional[bool] = None,
     ) -> _subprocess.CompletedProcess:

@@ -7,7 +7,7 @@ import typing
 
 
 from ..shell._invocation import shell_invocation
-from ..executor import PathLike
+from ..executor import StrPath
 
 
 class _ShellContext(typing.NamedTuple):
@@ -19,7 +19,7 @@ class _ShellContext(typing.NamedTuple):
     expression of them.
     """
 
-    cwd: typing.Optional[PathLike]
+    cwd: typing.Optional[StrPath]
     env: typing.Optional[typing.Any]
     epilogue: bool
 

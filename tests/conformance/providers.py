@@ -673,12 +673,12 @@ class FakeSSHHost:
         )
         from hostctl.transports.ssh._transport import _SSHTransport
 
-        dialect = POWERSHELL if os.name == "nt" else POSIX_SHELL
+        shell = POWERSHELL if os.name == "nt" else POSIX_SHELL
         # The Windows fake hands the line straight to CreateProcess and to
         # PowerShell, so that is the login shell it stands in for.
         config = SSHConfig(
             "fake",
-            dialect=dialect,
+            shell=shell,
             known_hosts=None,
             login_shell="powershell" if os.name == "nt" else "auto",
         )
@@ -692,7 +692,7 @@ class FakeSSHHost:
             config,
             executor_providers=(SSHExecutorProvider(transport),),
             path_providers=(SFTPPathProvider(transport),),
-            shell=dialect,
+            shell=shell,
         )
         host._conformance_cleanup = backend.close
         return host
@@ -782,7 +782,7 @@ class FakeSerialHost:
 
         port = serial.serial_for_url("loop://", timeout=0.1, write_timeout=1)
         return SerialConfig(
-            "loop://", serial_port=port, protocol=RawConsoleProfile()
+            "loop://", serial_port=port, profile=RawConsoleProfile()
         )._create_host()
 
 
@@ -946,8 +946,8 @@ def _ssh_inprocess() -> tuple[object, Callable[[], None]]:
 
     server = shared_login_shell_server()
     host = server.config(
-        dialect=POWERSHELL if os.name == "nt" else POSIX_SHELL,
-        path_flavor=PosixPathname,
+        shell=POWERSHELL if os.name == "nt" else POSIX_SHELL,
+        pathname=PosixPathname,
         login_shell="cmd" if os.name == "nt" else "posix",
     )._create_host()
     host.sandbox = _ChrootSandbox(server.sftp_root)
@@ -1140,8 +1140,8 @@ def _ssh_local() -> tuple[object, Callable[[], None]]:
         ),
         client_keys=os.environ.get("HOSTCTL_TEST_SSH_KEY") or None,
         known_hosts=None,
-        dialect=CMD if windows else POSIX_SHELL,
-        path_flavor=WindowsPathname if windows else PosixPathname,
+        shell=CMD if windows else POSIX_SHELL,
+        pathname=WindowsPathname if windows else PosixPathname,
     )
     host = config._create_host()
     try:
@@ -1161,7 +1161,7 @@ def _loop_serial() -> tuple[object, Callable[[], None]]:
     config = SerialConfig(
         "loop://",
         serial_port=port,
-        protocol=RawConsoleProfile(),
+        profile=RawConsoleProfile(),
     )
     host = config._create_host()
     host.connect()

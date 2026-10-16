@@ -26,7 +26,7 @@ from hostctl.shell._grammar import Cmdlet
 from hostctl.executor import (
     Executor,
     ExecutorCapability,
-    ExecutorCommand,
+    CommandLike,
     ExecutionOptions,
 )
 from hostctl.transports.local._host import LocalConfig
@@ -543,8 +543,8 @@ def test_fish_uses_native_environment_and_boolean_syntax():
 
 
 def test_host_builds_shell_from_its_flavour_and_executor():
-    ssh = _SSHTransport(SSHConfig("host", dialect="powershell"))
-    winrm = _WinRMTransport(WinRMConfig("host", "user"))
+    ssh = _SSHTransport(SSHConfig("host", shell="powershell"))
+    winrm = _WinRMTransport(WinRMConfig("host", username="user"))
 
     assert Shell(ssh.shell_flavour, ssh.executor).flavour is POWERSHELL
     assert Shell(winrm.shell_flavour, winrm.executor).flavour is POWERSHELL
@@ -837,10 +837,10 @@ def test_a_shell_flavour_repr_names_its_type_and_name():
     "build",
     [
         lambda: SSHConfig("h"),
-        lambda: SSHConfig("h", dialect=PWSH),
-        lambda: WinRMConfig("h", "u"),
-        lambda: ContainerConfig("c", dialect=BASH),
-        lambda: QEMUConfig("d", dialect=POWERSHELL),
+        lambda: SSHConfig("h", shell=PWSH),
+        lambda: WinRMConfig("h", username="u"),
+        lambda: ContainerConfig("c", shell=BASH),
+        lambda: QEMUConfig("d", shell=POWERSHELL),
     ],
     ids=["ssh", "ssh-pwsh", "winrm", "container", "qemu"],
 )

@@ -33,18 +33,22 @@ def test_importing_hostctl_does_not_import_netimps():
 
 
 def test_a_winrm_endpoint_defaults_to_the_scheme_port():
-    assert WinRMConfig("h", "u", password="x").endpoint == "http://h:5985/wsman"
     assert (
-        WinRMConfig("h", "u", password="x", ssl=True).endpoint == "https://h:5986/wsman"
+        WinRMConfig("h", username="u", password="x").endpoint == "http://h:5985/wsman"
     )
     assert (
-        WinRMConfig("h", "u", password="x", port=1234).endpoint == "http://h:1234/wsman"
+        WinRMConfig("h", username="u", password="x", tls=True).endpoint
+        == "https://h:5986/wsman"
+    )
+    assert (
+        WinRMConfig("h", username="u", password="x", port=1234).endpoint
+        == "http://h:1234/wsman"
     )
 
 
 def test_an_ipv6_host_is_bracketed_beside_its_port():
     assert (
-        WinRMConfig("::1", "u", password="x", port=5985).endpoint
+        WinRMConfig("::1", username="u", password="x", port=5985).endpoint
         == "http://[::1]:5985/wsman"
     )
     assert SSHConfig("::1", port=2222).connection_uri.startswith("ssh://[::1]:2222?")

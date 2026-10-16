@@ -497,7 +497,7 @@ def test_a_guest_that_names_no_family_gets_no_helper():
     """A helper for the wrong family would run commands the guest lacks."""
     guest = _Guest({"stat": (0, b"41ed\n", b"")})
     transport = _QGATransport(guest)  # no osinfo, no family-exclusive command
-    host = _host(transport, path_flavor="posix")
+    host = _host(transport, pathname="posix")
 
     host.path("/srv")
 

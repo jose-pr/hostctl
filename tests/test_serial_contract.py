@@ -66,7 +66,7 @@ def _framed_host(console, **kwargs):
         status_parser=lambda match: 0,
         **kwargs,
     )
-    return SerialHost(SerialConfig("loop://", serial_port=console, protocol=profile))
+    return SerialHost(SerialConfig("loop://", serial_port=console, profile=profile))
 
 
 def test_a_structured_command_is_refused_rather_than_posix_quoted():
@@ -148,7 +148,7 @@ def test_an_echoed_password_is_redacted_from_a_timeout_transcript():
         status_marker=rb"STATUS0",
         reliable_status=True,
     )
-    host = SerialHost(SerialConfig("loop://", serial_port=console, protocol=profile))
+    host = SerialHost(SerialConfig("loop://", serial_port=console, profile=profile))
 
     with pytest.raises(ConsoleProtocolError) as caught:
         host.connect()
@@ -170,7 +170,7 @@ def test_a_negotiation_timeout_is_a_protocol_error():
         status_marker=rb"STATUS0",
         reliable_status=True,
     )
-    host = SerialHost(SerialConfig("loop://", serial_port=console, protocol=profile))
+    host = SerialHost(SerialConfig("loop://", serial_port=console, profile=profile))
 
     with pytest.raises(ConsoleProtocolError):
         host.connect()
@@ -197,7 +197,7 @@ def test_closing_the_executor_forces_a_fresh_login():
         return consoles[-1]
 
     host = SerialHost(
-        SerialConfig("loop://", serial_factory=factory, protocol=_Recording())
+        SerialConfig("loop://", serial_factory=factory, profile=_Recording())
     )
 
     host.connect()

@@ -10,23 +10,24 @@ from urllib.parse import quote, unquote, urlencode
 
 from ...executor import (
     CaptureOutput,
-    Environment,
-    FileHandle,
-    Input,
+    CommandEnvironment,
+    StreamTarget,
+    CommandInput,
     capture_streams,
     dispatch_output,
     expired,
     wants_text,
-    PathLike,
+    StrPath,
 )
 from ._executor import SerialExecutor, SerialFactory, SerialLike, SerialSettings
 from ...process import Process, terminal_options
 from ._process import SerialConsoleProcess
 from ...exceptions import ConsoleProtocolError
-from ._console import RawConsoleProfile, SerialConsoleProtocol
+from ._console import RawConsoleProfile, ConsoleProfile
 from ...shell._grammar import Command, starts_direct_command
 from ...host._host import Host
 from ...host._config import HostConfig
+from ...host._dispatch import _keyword_only
 from ...host._info import HostInfo
 from ...uri._parse import strict_uri_query
 
@@ -53,6 +54,7 @@ def _format_number(value: typing.Optional[float]) -> str:
     return str(int(value)) if float(value).is_integer() else str(value)
 
 
+@_keyword_only()
 @dataclasses.dataclass
 class SerialConfig(HostConfig, schemes=("serial",)):
     """Serial transport settings; credentials and profiles stay out of URIs."""
@@ -69,12 +71,12 @@ class SerialConfig(HostConfig, schemes=("serial",)):
     #: that had no effect. Refusing the name is what `uri_credentials`
     #: exists for.
     uri_credentials = (
-        "protocol",
+        "profile",
         "serial_factory",
         "serial_port",
     )
 
-    port: str
+    device: str
     baudrate: int = 115200
     bytesize: int = 8
     parity: str = "N"
@@ -86,7 +88,7 @@ class SerialConfig(HostConfig, schemes=("serial",)):
     write_timeout: typing.Optional[float] = 10
     inter_byte_timeout: typing.Optional[float] = None
     exclusive: typing.Optional[bool] = None
-    protocol: SerialConsoleProtocol = dataclasses.field(
+    profile: ConsoleProfile = dataclasses.field(
         default_factory=RawConsoleProfile, repr=False, compare=False
     )
     serial_factory: typing.Optional[SerialFactory] = dataclasses.field(
@@ -107,7 +109,7 @@ class SerialConfig(HostConfig, schemes=("serial",)):
         # Built ONCE, here, by keyword, and kept: `SerialHost` reads it
         # rather than building a second one from the same fields.
         settings = SerialSettings(
-            self.port,
+            self.device,
             baudrate=self.baudrate,
             bytesize=self.bytesize,
             parity=self.parity,
@@ -120,15 +122,15 @@ class SerialConfig(HostConfig, schemes=("serial",)):
             inter_byte_timeout=self.inter_byte_timeout,
             exclusive=self.exclusive,
         )
-        self.port = settings.port
+        self.device = settings.port
         self.baudrate, self.bytesize, self.parity, self.stopbits = (
             settings.baudrate,
             settings.bytesize,
             settings.parity,
             settings.stopbits,
         )
-        if not isinstance(self.protocol, SerialConsoleProtocol):
-            raise TypeError("protocol must implement SerialConsoleProtocol")
+        if not isinstance(self.profile, ConsoleProfile):
+            raise TypeError("profile must implement ConsoleProfile")
         object.__setattr__(self, "settings", settings)
 
     @property
@@ -146,15 +148,15 @@ class SerialConfig(HostConfig, schemes=("serial",)):
             "inter_byte_timeout": _format_number(self.inter_byte_timeout),
             "exclusive": "" if self.exclusive is None else str(self.exclusive).lower(),
         }
-        return f"serial:///{quote(self.port, safe='')}?{urlencode(values)}"
+        return f"serial:///{quote(self.device, safe='')}?{urlencode(values)}"
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> "SerialConfig":
-        port = unquote(parsed.path.lstrip("/"))
+        device = unquote(parsed.path.lstrip("/"))
         if parsed.netloc:
             raise ValueError("serial URI must not contain an authority")
-        if not port:
-            raise ValueError("serial URI requires a port")
+        if not device:
+            raise ValueError("serial URI requires a device")
         query = strict_uri_query(
             parsed,
             (
@@ -179,7 +181,7 @@ class SerialConfig(HostConfig, schemes=("serial",)):
                 raise ValueError(f"{name} must be an integer") from exc
 
         return cls(
-            port,
+            device,
             baudrate=integer("baudrate", 115200),
             bytesize=integer("bytesize", 8),
             parity=query.get("parity", "N"),
@@ -201,8 +203,8 @@ class SerialConfig(HostConfig, schemes=("serial",)):
                 if query.get("exclusive", "") == ""
                 else _bool(query["exclusive"], "exclusive")
             ),
-            protocol=typing.cast(
-                SerialConsoleProtocol, credentials.get("protocol", RawConsoleProfile())
+            profile=typing.cast(
+                ConsoleProfile, credentials.get("profile", RawConsoleProfile())
             ),
             serial_factory=typing.cast(
                 typing.Optional[SerialFactory], credentials.get("serial_factory")
@@ -241,7 +243,7 @@ class SerialHost(Host):
     @property
     def capabilities(self) -> typing.FrozenSet[str]:
         values = {"session"}
-        if getattr(self.config.protocol, "can_run", False):
+        if getattr(self.config.profile, "can_run", False):
             values.add("run")
         return frozenset(values)
 
@@ -259,7 +261,7 @@ class SerialHost(Host):
             return
         process = self._executor.open()
         try:
-            self.config.protocol.negotiate(process)
+            self.config.profile.negotiate(process)
         except TimeoutError as exc:
             # A negotiation timeout is a PROTOCOL failure, not a command
             # timeout: `negotiate()` has its own budget, and the raw
@@ -282,15 +284,15 @@ class SerialHost(Host):
     def info(self) -> HostInfo:
         return HostInfo()
 
-    def path(self, *segments: PathLike, backend: typing.Optional[str] = None):
+    def path(self, *segments: StrPath, backend: typing.Optional[str] = None):
         raise NotImplementedError("serial consoles do not provide filesystem paths")
 
     def spawn(
         self,
         *cmds: Command,
         executable: typing.Optional[str] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         terminal=None,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
@@ -303,14 +305,14 @@ class SerialHost(Host):
             )
         selected_terminal = terminal_options(terminal)
         if selected_terminal is not None and not callable(
-            getattr(self.config.protocol, "terminal_setup", None)
+            getattr(self.config.profile, "terminal_setup", None)
         ):
             raise NotImplementedError("serial connections cannot allocate a PTY")
         self.connect()
         raw = self._executor.open()
         if selected_terminal is not None:
             try:
-                self.config.protocol.resize(
+                self.config.profile.resize(
                     raw, selected_terminal.columns, selected_terminal.rows
                 )
             except Exception:
@@ -318,8 +320,8 @@ class SerialHost(Host):
                 raise
         return SerialConsoleProcess(
             raw,
-            self.config.protocol,
-            encoding or getattr(self.config.protocol, "encoding", "utf-8"),
+            self.config.profile,
+            encoding or getattr(self.config.profile, "encoding", "utf-8"),
             errors,
             # Text only when the caller ASKED for it. The profile's encoding
             # is a write-side default; promoting it to a read mode would
@@ -334,20 +336,20 @@ class SerialHost(Host):
         *cmds: Command,
         bufsize: int = -1,
         executable: typing.Optional[str] = None,
-        stdin: typing.Optional[FileHandle] = None,
-        stdout: typing.Optional[FileHandle] = None,
-        stderr: typing.Optional[FileHandle] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        stdin: typing.Optional[StreamTarget] = None,
+        stdout: typing.Optional[StreamTarget] = None,
+        stderr: typing.Optional[StreamTarget] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         capture_output: CaptureOutput = True,
         check: bool = True,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
-        input: Input = None,
+        input: CommandInput = None,
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
-        if not self.config.protocol.can_run:
+        if not self.config.profile.can_run:
             raise NotImplementedError(
                 "serial console profile does not provide reliable run()"
             )
@@ -402,7 +404,7 @@ class SerialHost(Host):
                     # as a single malformed command rather than two -- and a
                     # profile that frames status per exchange could only
                     # report one status for all of them.
-                    output, returncode = self.config.protocol.run(
+                    output, returncode = self.config.profile.run(
                         process, single, timeout=remaining
                     )
                 except TimeoutError as exc:

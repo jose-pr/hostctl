@@ -358,8 +358,8 @@ def strict_uri_credentials(
         raise ValueError(f"unknown credential argument: {sorted(unknown)[0]}")
 
 
-def path_flavor_selection(value: object, *, allow_auto: bool) -> _ty.Any:
-    """Normalise a config's `path_flavor` to a pure-path class (or `"auto"`).
+def pathname_selection(value: object, *, allow_auto: bool) -> _ty.Any:
+    """Normalise a config's `pathname` to a pure-path class (or `"auto"`).
 
     Accepts `"posix"`, `"windows"` (and `"auto"` where `allow_auto`), or a
     pure-path class with POSIX or Windows semantics. One vocabulary for every
@@ -380,20 +380,20 @@ def path_flavor_selection(value: object, *, allow_auto: bool) -> _ty.Any:
                 if allow_auto
                 else ("'posix' or 'windows'")
             )
-            raise ValueError(f"path_flavor must be {allowed}") from None
+            raise ValueError(f"pathname must be {allowed}") from None
     if not isinstance(value, type) or not issubclass(value, (_Pathname, _PurePath)):
         suffix = " or 'auto'" if allow_auto else ""
-        raise TypeError(f"path_flavor must be a pure-path class{suffix}")
+        raise TypeError(f"pathname must be a pure-path class{suffix}")
     if value is _PurePath:
         raise TypeError(
             "bare PurePath uses the local OS; choose a concrete path flavor"
         )
     if not issubclass(value, (_PurePosixPath, _PureWindowsPath)):
-        raise TypeError("path_flavor must use POSIX or Windows semantics")
+        raise TypeError("pathname must use POSIX or Windows semantics")
     return value
 
 
-def path_flavor_name(value: _ty.Any) -> str:
+def pathname_label(value: _ty.Any) -> str:
     """`"auto"`, `"posix"` or `"windows"`: the URI spelling of a selection."""
     if value == "auto":
         return "auto"
@@ -405,6 +405,18 @@ def _query_int(query: _ty.Mapping[str, str], name: str, default: int) -> int:
         return int(query.get(name, default))
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer") from exc
+
+
+def _query_float(query: _ty.Mapping[str, str], name: str, default: float) -> float:
+    try:
+        return float(query.get(name, default))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number of seconds") from exc
+
+
+def _seconds_text(value: float) -> str:
+    """`20` for 20.0, so a URI keeps its whole-second spelling."""
+    return str(int(value)) if float(value).is_integer() else repr(float(value))
 
 
 _TRUE = frozenset(("1", "true", "yes", "on"))

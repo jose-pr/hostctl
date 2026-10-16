@@ -119,17 +119,17 @@ def test_container_config_uri_round_trip():
     config = ContainerConfig(
         "build-target",
         engine_url="tcp://engine.example:2376",
-        user="1000:1000",
+        username="1000:1000",
         workdir="/workspace",
-        dialect=POSIX_SHELL,
+        shell=POSIX_SHELL,
     )
     restored = HostConfig(config.connection_uri)
     assert isinstance(restored, ContainerConfig)
     assert restored.container == "build-target"
     assert restored.engine_url == config.engine_url
-    assert restored.user == config.user
+    assert restored.username == config.username
     assert restored.workdir == config.workdir
-    assert restored.dialect is POSIX_SHELL
+    assert restored.shell is POSIX_SHELL
     assert str(restored) == str(config)
 
 
@@ -154,7 +154,7 @@ def test_container_auto_shell_uses_inspected_os(os_name, flavour):
 
 
 def test_container_direct_argv_preserves_arguments_and_context():
-    host, _, container = _host(user="1000", workdir="/default")
+    host, _, container = _host(username="1000", workdir="/default")
     result = host.run(
         Exec(PurePosixPath("/opt/my tool"), "value with spaces"),
         cwd="/override",
@@ -171,7 +171,7 @@ def test_container_direct_argv_preserves_arguments_and_context():
 
 
 def test_container_spawn_direct_command_builds_argv_without_a_shell():
-    host, client, _ = _host(user="1000", workdir="/default")
+    host, client, _ = _host(username="1000", workdir="/default")
     process = host.spawn(Exec(PurePosixPath("/opt/my tool"), "value with spaces"))
 
     container, options = client.api.created[0]
@@ -292,23 +292,23 @@ def test_spawn_dispatches_through_the_provider_like_run_does():
 
 
 @pytest.mark.parametrize("spelling", ("auto", "posix", "windows"))
-def test_container_path_flavor_strings_round_trip_through_the_uri(spelling):
+def test_container_pathname_strings_round_trip_through_the_uri(spelling):
     from hostctl.host._config import HostConfig
 
-    config = ContainerConfig("web", path_flavor=spelling)
+    config = ContainerConfig("web", pathname=spelling)
     restored = HostConfig(config.connection_uri)
 
     assert restored == config
-    assert f"path_flavor={spelling}" in config.connection_uri
+    assert f"pathname={spelling}" in config.connection_uri
 
 
-def test_container_path_flavor_accepts_the_strings_the_qemu_config_does():
+def test_container_pathname_accepts_the_strings_the_qemu_config_does():
     from pathapi import PosixPathname, WindowsPathname
 
-    assert ContainerConfig("web", path_flavor="posix").path_flavor is PosixPathname
-    assert ContainerConfig("web", path_flavor="windows").path_flavor is WindowsPathname
+    assert ContainerConfig("web", pathname="posix").pathname is PosixPathname
+    assert ContainerConfig("web", pathname="windows").pathname is WindowsPathname
     with pytest.raises(ValueError, match="'auto', 'posix', or 'windows'"):
-        ContainerConfig("web", path_flavor="native")
+        ContainerConfig("web", pathname="native")
 
 
 def test_a_path_taken_before_host_close_refuses_and_never_touches_the_client():

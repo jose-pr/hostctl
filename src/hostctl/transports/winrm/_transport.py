@@ -7,14 +7,22 @@ import logging
 import os
 import subprocess
 import threading
+import math
 import typing
 
 
 from ._native import NativeWinRMSession
 from ._pywinrm import WinRMExecutor, WinRMSession, _PywinrmStdinSession
-from ._psrp import PSRPExecutor, pypsrp_available, RunspaceSession
+from ..._extras import has_psrp
+from ._psrp import PSRPExecutor, RunspaceSession
 from ...provider._selector import ProviderSelector
-from ...executor import CaptureOutput, Environment, FileHandle, Input, PathLike
+from ...executor import (
+    CaptureOutput,
+    CommandEnvironment,
+    StreamTarget,
+    CommandInput,
+    StrPath,
+)
 from ...shell._grammar import Command, starts_direct_command
 from ...host._info import HostInfo, parse_host_info
 from ...shell import POWERSHELL
@@ -101,7 +109,7 @@ class _NativeLeg(_SessionLeg):
         # bound and reports the remote status on its own marker line.
         self.executor = WinRMExecutor(
             lambda: self.session,
-            lambda: float(self.config.read_timeout_sec),
+            lambda: float(self.config.read_timeout),
             manages_status=True,
             accepts_timeout=True,
         )
@@ -126,20 +134,20 @@ class _NativeLeg(_SessionLeg):
             raise ValueError(
                 "password-free native WinRM requires the current Windows user"
             )
-        if self.config.transport not in {"ntlm", "kerberos"}:
+        if self.config.auth not in {"ntlm", "kerberos"}:
             raise NotImplementedError(
                 "native current-context WinRM supports ntlm/kerberos only"
             )
         return NativeWinRMSession(
             self.config.host,
-            ssl=self.config.ssl,
+            ssl=self.config.tls,
             port=self.config.port,
             # The config's read timeout IS the deadline here: the local
             # powershell.exe relays the call, so its own wall clock is the
             # only bound available.
-            timeout=float(self.config.read_timeout_sec),
-            transport=self.config.transport,
-            server_cert_validation=self.config.server_cert_validation,
+            timeout=float(self.config.read_timeout),
+            transport=self.config.auth,
+            verify=self.config.verify,
             message_encryption=self.config.message_encryption,
         )
 
@@ -152,7 +160,7 @@ class _PywinrmLeg(_SessionLeg):
     def __init__(self, config: WinRMConfig) -> None:
         super().__init__(config)
         self.executor = WinRMExecutor(
-            lambda: self.session, lambda: float(self.config.read_timeout_sec)
+            lambda: self.session, lambda: float(self.config.read_timeout)
         )
 
     def _build(self) -> WinRMSession:
@@ -169,11 +177,17 @@ class _PywinrmLeg(_SessionLeg):
             winrm.Session(
                 self.config.endpoint,
                 auth=(self.config.username, self.config.password),
-                transport=self.config.transport,
-                server_cert_validation=self.config.server_cert_validation,
+                transport=self.config.auth,
+                # pywinrm's own keywords. Whole seconds, rounded up so a
+                # fraction never shortens a deadline; the read deadline must
+                # stay above the operation timeout after rounding.
+                server_cert_validation="validate" if self.config.verify else "ignore",
                 message_encryption=self.config.message_encryption,
-                operation_timeout_sec=self.config.operation_timeout_sec,
-                read_timeout_sec=self.config.read_timeout_sec,
+                operation_timeout_sec=math.ceil(self.config.operation_timeout),
+                read_timeout_sec=max(
+                    math.ceil(self.config.read_timeout),
+                    math.ceil(self.config.operation_timeout) + 1,
+                ),
             ).protocol
         )
 
@@ -229,11 +243,11 @@ def _select_leg(config: WinRMConfig) -> str:
     if config.password is None:
         if os.name == "nt":
             return "native"
-        if config.transport != "kerberos":
+        if config.auth != "kerberos":
             raise ValueError(
                 "current-context WinRM requires a Windows client; pass password="
             )
-    return "psrp" if pypsrp_available() else "pywinrm"
+    return "psrp" if has_psrp() else "pywinrm"
 
 
 class _WinRMTransport:
@@ -299,7 +313,7 @@ class _WinRMTransport:
         self._leg.close()
 
     def path(
-        self, *segments: PathLike, backend: typing.Optional[str] = None
+        self, *segments: StrPath, backend: typing.Optional[str] = None
     ) -> WinRMPath:
         if backend not in (None, "winrm"):
             raise ValueError("WinRM path backend must be 'winrm'")
@@ -317,16 +331,16 @@ class _WinRMTransport:
         *cmds: Command,
         bufsize: int = -1,
         executable: typing.Optional[str] = None,
-        stdin: typing.Optional[FileHandle] = None,
-        stdout: typing.Optional[FileHandle] = None,
-        stderr: typing.Optional[FileHandle] = None,
-        cwd: typing.Optional[PathLike] = None,
-        env: typing.Optional[Environment] = None,
+        stdin: typing.Optional[StreamTarget] = None,
+        stdout: typing.Optional[StreamTarget] = None,
+        stderr: typing.Optional[StreamTarget] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
         capture_output: CaptureOutput = True,
         check: bool = True,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
-        input: Input = None,
+        input: CommandInput = None,
         timeout: typing.Optional[float] = None,
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:

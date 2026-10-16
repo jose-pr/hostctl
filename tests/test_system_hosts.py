@@ -353,11 +353,9 @@ def test_a_transport_config_opens_the_system_family_its_paths_select():
 
     from pathapi import WindowsPathname
 
-    assert isinstance(
-        SSHConfig("host", path_flavor=WindowsPathname).open(), WindowsHost
-    )
+    assert isinstance(SSHConfig("host", pathname=WindowsPathname).open(), WindowsHost)
     assert isinstance(SSHConfig("host").open(), PosixHost)
-    assert isinstance(WinRMConfig("host", "user").open(), WindowsHost)
+    assert isinstance(WinRMConfig("host", username="user").open(), WindowsHost)
 
 
 def test_transport_configs_compose_system_hosts_without_uri_changes():
@@ -368,7 +366,7 @@ def test_transport_configs_compose_system_hosts_without_uri_changes():
     posix = ssh_config.open()
     assert posix.connection_uri == ssh_config.connection_uri
     assert posix.scheme == "ssh"
-    winrm_config = WinRMConfig("example", "admin", password="secret")
+    winrm_config = WinRMConfig("example", username="admin", password="secret")
     windows = winrm_config.open()
     assert windows.connection_uri == winrm_config.connection_uri
     assert windows.scheme == "winrm"

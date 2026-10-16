@@ -45,7 +45,7 @@ A transport config opens the system host its path flavour selects:
 from hostctl import SSHConfig, WinRMConfig
 
 posix = SSHConfig("server.example", username="root").open()
-windows = WinRMConfig("server.example", "admin").open()
+windows = WinRMConfig("server.example", username="admin").open()
 ```
 
 ## Configuration and URIs

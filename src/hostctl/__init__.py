@@ -36,7 +36,7 @@ from .executor import (
     ExecutionOptions as ExecutionOptions,
     Executor as Executor,
     ExecutorCapability as ExecutorCapability,
-    ExecutorCommand as ExecutorCommand,
+    CommandLike as CommandLike,
 )
 from .host import Host as Host, HostConfig as HostConfig, HostInfo as HostInfo
 from .paths import (
@@ -52,6 +52,7 @@ from .provider import (
     ProviderSelector as ProviderSelector,
     SessionInitializer as SessionInitializer,
 )
+from ._extras import has_psrp as has_psrp, has_ssh as has_ssh
 from ._registry import host_schemes as host_schemes
 from .shell import (
     BASH as BASH,
@@ -105,17 +106,13 @@ from .transports.serial import (
     PromptConsoleProfile as PromptConsoleProfile,
     RawConsoleProfile as RawConsoleProfile,
     SerialConfig as SerialConfig,
-    SerialConsoleProtocol as SerialConsoleProtocol,
+    ConsoleProfile as ConsoleProfile,
     SerialHost as SerialHost,
 )
 from .transports.ssh import SSHConfig as SSHConfig, ssh_providers as ssh_providers
 from .transports.winrm import (
     WinRMConfig as WinRMConfig,
     winrm_providers as winrm_providers,
-)
-from .transports.winrm._psrp import (
-    pypsrp_available as pypsrp_available,
-    require_pypsrp as require_pypsrp,
 )
 from .uri import (
     ConnectionString as ConnectionString,
@@ -167,10 +164,10 @@ __all__ = [
     "Executor",
     "ExecutionOptions",
     "ExecutorCapability",
-    "ExecutorCommand",
+    "CommandLike",
     "LocalExecutor",
-    "pypsrp_available",
-    "require_pypsrp",
+    "has_psrp",
+    "has_ssh",
     "Process",
     "TerminalOptions",
     # Shells and sessions
@@ -189,7 +186,7 @@ __all__ = [
     "PWSH",
     "ZSH",
     # Serial consoles
-    "SerialConsoleProtocol",
+    "ConsoleProfile",
     "RawConsoleProfile",
     "PromptConsoleProfile",
     "LoginStep",

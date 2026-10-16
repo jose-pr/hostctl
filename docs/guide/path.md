@@ -63,7 +63,7 @@ the guest agent's `guest-file-*` protocol has no symlink RPC, and emulating
 one through `guest-exec` would be a different transport with different
 permission semantics.
 
-For SSH, `SSHConfig.path_flavor` explicitly selects
+For SSH, `SSHConfig.pathname` explicitly selects
 the `PosixPathname` or `WindowsPathname` constructor; it is independent of the
 command dialect. Concrete stdlib `PurePosixPath` and `PureWindowsPath`
 constructors are accepted too. A relative SSH path names the login directory,

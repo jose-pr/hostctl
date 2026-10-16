@@ -16,7 +16,7 @@ from ...process import (
 from ._executor import SerialLike, normalize_serial_error
 
 if typing.TYPE_CHECKING:  # pragma: no cover - import cycle at runtime
-    from ._console import SerialConsoleProtocol
+    from ._console import ConsoleProfile
 
 
 class SerialProcess(_LeasedStreamProcess):
@@ -190,7 +190,7 @@ class SerialConsoleProcess(Process):
     def __init__(
         self,
         process: SerialProcess,
-        profile: "SerialConsoleProtocol",
+        profile: "ConsoleProfile",
         encoding: str = "utf-8",
         errors: typing.Optional[str] = None,
         *,
