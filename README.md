@@ -1,14 +1,17 @@
+# hostctl
+
 [![Version](https://img.shields.io/pypi/v/hostctl.svg)](https://pypi.org/project/hostctl/)
 [![Python versions](https://img.shields.io/pypi/pyversions/hostctl.svg)](https://pypi.org/project/hostctl/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jose-pr/hostctl/blob/main/LICENSE)
 [![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://jose-pr.github.io/hostctl/)
-[![CI](https://img.shields.io/github/actions/workflow/status/jose-pr/hostctl/release.yml?label=release%20gate)](https://github.com/jose-pr/hostctl/actions/workflows/release.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/jose-pr/hostctl/test.yml)](https://github.com/jose-pr/hostctl/actions/workflows/test.yml)
 
-A **protocol-agnostic way to run commands and access files on a host**.
-`Host` defines operations; `HostConfig` owns secret-safe connection identity,
-extensible URI dispatch, and lifecycle. Local and application hosts can compose
-SSH, WinRM, serial, container, and QEMU providers while exposing only the
-capabilities those providers actually support.
+A **protocol-agnostic way to run commands and access files on a host**, local
+or remote. `Host` defines the operations and `HostConfig` owns secret-safe
+connection identity, URI dispatch and lifecycle; SSH, WinRM, containers, QEMU
+guests and serial consoles plug in as providers, and a host exposes only the
+capabilities its providers support. The guide and API reference are at
+<https://jose-pr.github.io/hostctl/>.
 
 ## Features
 
@@ -33,7 +36,8 @@ capabilities those providers actually support.
 - **Extensible shell languages.** Select a registered string, a
   `ShellFlavour` subclass, or a configured flavour instance.
 - **Extension point, not a closed abstraction.** Override `Host.path()` in a
-  subclass to add a project-specific backend (see `docs/guide/extending.md`).
+  subclass to add a project-specific backend (see
+  [Extending hostctl](https://jose-pr.github.io/hostctl/guide/extending/)).
 
 ## Installation
 
@@ -51,6 +55,8 @@ Optional features/extras:
 | `container` | Docker SDK for Python | Docker Engine `run()`/`path()`/sessions |
 | `serial` | PySerial | raw native/RFC 2217/socket serial sessions |
 | `qemu-libvirt` | libvirt Python bindings | local libvirt QGA transport |
+| `winrm-credssp` | `pywinrm[credssp]` | WinRM `auth="credssp"` |
+| `winrm-kerberos` | `pywinrm[kerberos]` | WinRM `auth="kerberos"` |
 | `cli` | `duho` | the `hostctl` command |
 
 ## Quick start
@@ -164,9 +170,8 @@ it would let a URI that reads as one target resolve to another.
 `config.connection_uri`. `HostConfig(str(config), **secrets)` reconstructs the
 concrete configuration without creating or connecting a host.
 
-Install `hostctl[winrm-kerberos]` or `hostctl[winrm-credssp]` when selecting
-those WinRM authentication transports. Certificate authentication is not
-exposed until its required certificate/key configuration is part of the API.
+WinRM certificate authentication is not exposed: its certificate and key
+configuration is not part of the API.
 
 ### Composable system hosts
 
@@ -203,8 +208,9 @@ Application-specific adapters can follow the SFTP/RPC/download pattern in
 guide covers selection traces, backend pinning, per-operation capabilities,
 provider authoring, and the no-replay safety rule in full.
 
-Existing transport URIs remain compatible.  To opt into system semantics while
-retaining those URI/configuration objects, compose them explicitly:
+Opening a transport config gives the same kind of host: an `SSHConfig` opens
+as a `PosixHost` and a `WinRMConfig` as a `WindowsHost`, each composed of that
+transport's providers:
 
 ```python
 from hostctl import SSHConfig, WinRMConfig
@@ -214,7 +220,7 @@ windows = WinRMConfig("server.example", username="admin").open()
 ```
 
 SSH and WinRM transport implementations are private providers; QEMU's SSH
-tunnel continues to consume `SSHConfig` directly.
+tunnel takes an `SSHConfig` directly.
 
 ## Command line
 
@@ -258,6 +264,7 @@ program serves every subcommand as an MCP tool over stdio.
 py -3.14 -m venv .venv/3.14-nt-amd64
 .venv/3.14-nt-amd64/Scripts/python -m pip install -e ".[dev,docs]"
 .venv/3.14-nt-amd64/Scripts/python -m pytest -q
+.venv/3.14-nt-amd64/Scripts/python -m black --check src tests
 # The docs gate the release runs, locally:
 .venv/3.14-nt-amd64/Scripts/python -m mkdocs build --strict
 ```
@@ -266,18 +273,12 @@ Every extra, so the documented environment is a superset of CI's: without
 `psrp` a capability test skips silently, and without `docs` the gate that can
 block a release cannot be run at all.
 
-Python 3.14 is the default development interpreter. Python 3.9 remains the
-supported compatibility floor and should be selected explicitly with
-`py -3.9` when running floor-specific checks; name that environment
-`.venv/3.9-nt-amd64` so the two agree.
-
-The venv names carry the platform `sysconfig.get_platform()` reports, so a
-checkout on an ARM64 Windows machine still names them `amd64`: `cryptography`
-publishes no `win_arm64` wheel and building it from source needs a Rust
-toolchain, so `asyncssh` -- and with it the whole `ssh` extra -- cannot be
-installed under a native ARM64 interpreter. If that changes, the native
-interpreter is `py -V:3.14-arm64` and the environment should be named
-`.venv/3.14-nt-arm64`.
+Python 3.14 is the default development interpreter. Python 3.9 is the
+supported floor and a change passes there too; create it the same way with
+`py -3.9` as `.venv/3.9-nt-amd64`. A venv is named for its interpreter version
+and platform (`.venv/3.14-nt-arm64` under a native ARM64 interpreter, where
+`cryptography` has no wheel and the `ssh` extra builds it from source, which
+needs a Rust toolchain and OpenSSL).
 
 ### Releasing
 
