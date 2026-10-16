@@ -18,10 +18,12 @@ def test_posix_never_sets_a_flag():
     assert _windows.no_window_flags() == 0
 
 
+# Read at collection, so it must not name a Windows-only constant directly.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 @windows
-@pytest.mark.parametrize(
-    "console, expected", ((1, 0), (0, subprocess.CREATE_NO_WINDOW))
-)
+@pytest.mark.parametrize("console, expected", ((1, 0), (0, _NO_WINDOW)))
 def test_the_flag_follows_whether_this_process_has_a_console(
     monkeypatch, console, expected
 ):

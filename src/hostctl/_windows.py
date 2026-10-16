@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
+import sys
 
 
 def no_window_flags() -> int:
@@ -13,7 +13,9 @@ def no_window_flags() -> int:
     (a GUI app, `pythonw`, a service, an editor's background task) a new
     console window of its own; with the output captured it only flashes.
     """
-    if os.name != "nt":
+    # `sys.platform`, not `os.name`: tests that emulate a Windows host patch
+    # `os.name`, and the console APIs exist only on a real one.
+    if sys.platform != "win32":
         return 0
     import ctypes
 
