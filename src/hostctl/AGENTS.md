@@ -325,6 +325,11 @@ LocalExecutor.__call__(command, *args, bufsize=-1, stdin=None, stdout=None, stde
   `timeout`. On Windows a `.bat`/`.cmd` target of `Exec` is quoted with cmd's
   rules (see `ShellTarget.BATCH`): the program in plain quotes, a `"` or `%`
   in its path raising `ValueError`.
+- On Windows, when this process has no console (a GUI app, `pythonw`, a
+  service, an editor's background task), the local executor and the native
+  WinRM leg start children with `CREATE_NO_WINDOW`, so no console window
+  flashes per call. `LocalExecutor()(..., creationflags=...)` replaces that
+  with the caller's own flags (e.g. `subprocess.CREATE_NEW_CONSOLE`).
 
 ## SSH (`hostctl.transports.ssh`)
 

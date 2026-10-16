@@ -317,6 +317,9 @@ collection until pytruenas ports to these names.
 
 ### Fixed
 
+- On Windows, a process without a console no longer opens a console window
+  for every local command: the local executor starts children with
+  `CREATE_NO_WINDOW` unless the caller passes `creationflags=`.
 - WinRM, container and QEMU paths keep their backend through `with_name()`,
   `with_stem()`, `with_suffix()`, `relative_to()` and `parents` on Python 3.9 to
   3.11, where pathlib built them without one; an overwriting copy onto such a

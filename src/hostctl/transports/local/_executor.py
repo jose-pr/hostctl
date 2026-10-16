@@ -7,6 +7,7 @@ import signal
 import subprocess
 import typing
 
+from ..._windows import no_window_flags
 from ...executor import (
     expired,
     CaptureOutput,
@@ -73,6 +74,7 @@ def _kill_tree(process: "subprocess.Popen") -> None:
                 stderr=subprocess.DEVNULL,
                 timeout=_DRAIN_BUDGET,
                 check=False,
+                creationflags=no_window_flags(),
             )
         except (OSError, subprocess.SubprocessError):
             pass
@@ -116,6 +118,7 @@ def _run_bounded(
     input,
     timeout,
     text,
+    creationflags,
 ):
     """`subprocess.run` semantics with a timeout that bounds the whole tree."""
     with subprocess.Popen(
@@ -134,6 +137,7 @@ def _run_bounded(
         # it also drops the controlling terminal, so it is skipped when this
         # process has one and the child keeps `/dev/tty`.
         start_new_session=os.name != "nt" and not _has_controlling_tty(),
+        creationflags=creationflags,
     ) as process:
         try:
             out, err = process.communicate(input, timeout=timeout)
@@ -232,8 +236,14 @@ class LocalExecutor(Executor[subprocess.CompletedProcess]):
         text: typing.Optional[bool] = None,
         **options: object,
     ) -> subprocess.CompletedProcess:
+        # Windows only: the caller's own flags (a visible console, a process
+        # group); without them a child gets no window unless this process has
+        # a console to share.
+        creationflags = options.pop("creationflags", None)
         if options:
             raise TypeError(f"unsupported local executor option: {sorted(options)[0]}")
+        if creationflags is None:
+            creationflags = no_window_flags()
         reject_stdin_conflict(input, stdin)
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         if isinstance(command, CommandLine):
@@ -273,6 +283,7 @@ class LocalExecutor(Executor[subprocess.CompletedProcess]):
                 input=payload,
                 timeout=timeout,
                 text=text,
+                creationflags=creationflags,
             )
         return subprocess.run(
             argv,
@@ -297,4 +308,5 @@ class LocalExecutor(Executor[subprocess.CompletedProcess]):
             input=payload,
             timeout=timeout,
             text=text,
+            creationflags=creationflags,
         )
