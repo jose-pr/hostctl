@@ -27,7 +27,7 @@ from ...shell._vocabulary import ShellCommand
 from ...host._selection import PathnameType
 from ._config import SSHConfig
 
-log = logging.getLogger("hostctl.transports.ssh")
+log = logging.getLogger(__name__)
 
 
 class _SSHTransport:

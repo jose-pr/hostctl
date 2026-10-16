@@ -16,7 +16,7 @@ from ...provider._contracts import (
     FULL_PATH_OPERATIONS,
 )
 
-log = logging.getLogger("hostctl.transports.local")
+log = logging.getLogger(__name__)
 
 
 class LocalExecutorProvider(ExecutorProvider):

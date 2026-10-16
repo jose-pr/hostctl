@@ -37,7 +37,7 @@ from ..paths._composite import CompositePosixPath, CompositeWindowsPath
 from ._config import SystemConfig
 from ._shell_plan import _ShellContext, _shell_invocation
 
-log = logging.getLogger("hostctl.system")
+log = logging.getLogger(__name__)
 
 
 class SystemHost(Host):

@@ -357,3 +357,23 @@ def test_contracts_do_not_import_transports_or_system(module):
     ]
 
     assert hits == [], f"{_dotted(module)}: {hits}"
+
+
+@pytest.mark.parametrize("module", MODULES, ids=_dotted)
+def test_loggers_are_named_for_their_module(module):
+    """Every logger is `getLogger(__name__)`, so each is a child of `hostctl`
+    named for the module that emits through it; a spelled-out name drifts
+    from the module path the first time the module moves."""
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    literal = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "attr", getattr(node.func, "id", None)) == "getLogger"
+        and any(
+            isinstance(argument, ast.Constant) and isinstance(argument.value, str)
+            for argument in node.args
+        )
+    ]
+
+    assert literal == [], f"{_dotted(module)}: getLogger(<literal>) at {literal}"

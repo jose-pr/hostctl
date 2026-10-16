@@ -158,10 +158,11 @@ the selection trace.
 
 ### Turning on the log
 
-Every subsystem logs under the `hostctl` namespace — `hostctl.provider`,
-`hostctl.system`, and one logger per transport (`hostctl.transports.ssh`,
-`hostctl.transports.winrm`, ...). As a
-library, hostctl never installs a handler, never sets a level, and never calls
+Every module logs through `logging.getLogger(__name__)`, so every logger is a
+child of `hostctl` (`hostctl.provider._contracts`, `hostctl.system._host`,
+`hostctl.transports.ssh._transport`, ...). Configure the `hostctl` logger: the
+child names follow private module paths and are not API. As a library,
+hostctl never installs a handler, never sets a level, and never calls
 `basicConfig()`; the application owns all of that:
 
 ```python
@@ -176,10 +177,10 @@ skipped, every decline with its reason, each dispatched command, and transport
 connect/close lifecycle:
 
 ```text
-hostctl.provider DEBUG selected provider ssh (generation 0, policy ordered, pin False) after 1 candidate(s)
-hostctl.provider DEBUG provider ssh dispatching: /bin/sh -c uptime
-hostctl.provider DEBUG provider ssh declined before dispatch (generation 0): ssh refused: connection lost
-hostctl.provider DEBUG selected provider winrm (generation 0, policy ordered, pin False) after 2 candidate(s)
+hostctl.provider._contracts DEBUG selected provider ssh (generation 0, pin False) after 1 candidate(s)
+hostctl.provider._contracts DEBUG provider ssh dispatching: /bin/sh -c uptime
+hostctl.provider._contracts DEBUG provider ssh declined before dispatch (generation 0): ssh refused: connection lost
+hostctl.provider._contracts DEBUG selected provider winrm (generation 0, pin False) after 2 candidate(s)
 ```
 
 `warning` is reserved for events that are recoverable but genuinely surprising —

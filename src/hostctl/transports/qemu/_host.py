@@ -45,7 +45,7 @@ from ._backend import QGAPathBackend
 #: Sentinel: the guest helper has not been probed yet. `None` is a real
 #: answer -- this guest has no helper -- and must not trigger a re-probe on
 #: every `path()` call.
-log = logging.getLogger("hostctl.transports.qemu")
+log = logging.getLogger(__name__)
 
 
 _UNPROBED = object()

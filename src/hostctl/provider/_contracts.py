@@ -18,8 +18,9 @@ from ..executor import dispatch_display
 
 #: Selection, probe, and decline diagnostics.  Library convention: this module
 #: never configures a handler and never calls ``basicConfig``; an application
-#: opts in with ``logging.getLogger("hostctl").setLevel(logging.DEBUG)``.
-log = logging.getLogger("hostctl.provider")
+#: opts in by setting the ``hostctl`` logger, every module logger's parent, to
+#: ``logging.DEBUG``.
+log = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True)

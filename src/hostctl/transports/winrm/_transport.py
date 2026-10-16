@@ -31,7 +31,7 @@ from ...shell._vocabulary import wants_epilogue
 from ._config import WinRMConfig
 from ._path import WinRMPath, WinRMPathBackend
 
-log = logging.getLogger("hostctl.transports.winrm")
+log = logging.getLogger(__name__)
 
 
 #: Script bytes one remote call may carry. Every leg delivers the script on

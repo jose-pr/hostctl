@@ -9,7 +9,7 @@ from ...exceptions import OperationNotStartedError
 from ...provider._contracts import ExecutorProvider, PathProvider, ProviderProbe
 from ...provider._selector import ProviderSelector
 
-log = logging.getLogger("hostctl.transports.container")
+log = logging.getLogger(__name__)
 
 
 #: Content and metadata reads plus whole-file writes, with no namespace

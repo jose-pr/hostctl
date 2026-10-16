@@ -9,7 +9,7 @@ import typing
 from ...provider._contracts import PathProvider, ProviderProbe
 from ...provider._selector import ProviderSelector
 
-log = logging.getLogger("hostctl.transports.qemu")
+log = logging.getLogger(__name__)
 
 
 #: QGA file RPCs without a guest helper: content only.  ``stat``/``scandir``

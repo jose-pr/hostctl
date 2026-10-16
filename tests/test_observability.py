@@ -98,12 +98,17 @@ def test_connect_and_close_lifecycle_is_logged(caplog):
 
 def test_library_installs_no_handler_and_does_not_configure_logging():
     """A library must leave handler policy entirely to the application."""
-    for name in (
-        "hostctl.provider",
-        "hostctl.system",
-        "hostctl.transports.ssh",
-        "hostctl.transports.winrm",
-    ):
+    import hostctl.transports.ssh._transport
+    import hostctl.transports.winrm._transport
+
+    names = sorted(
+        name
+        for name in logging.Logger.manager.loggerDict
+        if name == "hostctl" or name.startswith("hostctl.")
+    )
+    assert "hostctl.provider._contracts" in names
+    assert "hostctl.transports.ssh._transport" in names
+    for name in names:
         logger = logging.getLogger(name)
         assert logger.handlers == [], f"{name} installed a handler"
         assert logger.level == logging.NOTSET, f"{name} set its own level"
@@ -119,7 +124,7 @@ def test_log_calls_are_lazy_and_skip_formatting_when_nobody_listens():
             rendered.append(True)
             return "rendered"
 
-    logger = logging.getLogger("hostctl.provider")
+    logger = logging.getLogger("hostctl.provider._contracts")
     previous = logging.getLogger("hostctl").level
     logging.getLogger("hostctl").setLevel(logging.INFO)
     try:

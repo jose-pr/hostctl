@@ -1103,10 +1103,16 @@ dependency may (asyncssh, pywinrm, docker), as documented by that package.
   `WinRMConfig(operation_timeout=, read_timeout=)` are per-request on pywinrm
   and PSRP, which refuse `timeout=`; a container's `run()` refuses `timeout=`;
   `SerialConfig(read_timeout=)` bounds one read.
+- **Loggers.** Every module logs through `logging.getLogger(__name__)`, so
+  every logger is a child of `hostctl`: configure that one (at `DEBUG` it
+  shows provider selection and dispatch, redacted). Child names follow the
+  private module paths and are not API. hostctl installs no handler and sets
+  no level.
 - **netimps on first use.** `import hostctl` does not import `netimps`; the
   first call that needs it (a `ConnectionString`, a default port, a
-  host-name check) does, and on Windows netimps then adds its `socket`/`os`
-  shims unless its own `NETIMPS_SOCKET_PATCH=0` is set.
+  host-name check) does, and on Windows netimps then installs `recvmsg`,
+  `sendmsg` and the `CMSG_*` helpers on the `socket` module unless its own
+  `NETIMPS_SOCKET_PATCH=0` was set before that import.
 - **`check=True` by default.** `run()` raises `CalledProcessError` on a
   non-zero status, unlike `subprocess.run`.
 - **Paths taken before `close()`.** A container or QGA path handed out before
