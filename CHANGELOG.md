@@ -42,6 +42,12 @@ collection until pytruenas ports to these names.
 
 ### Added
 
+- `hostctl.transports.ssh.SSHExecutorProvider` is public, with
+  `.connection` (the asyncssh connection `run()` uses, opened on first
+  access) and `.loop` (the `hostctl-asyncssh-loop` event loop it is bound
+  to; run its coroutines with `asyncio.run_coroutine_threadsafe(coro,
+  provider.loop)`), so a caller needing the raw connection no longer reads
+  the private transport. This ships in 0.4.0.
 - `hostctl.HostctlError` is the base of every exception hostctl raises, in
   the new `hostctl.exceptions` module with `TransportError` and
   `ProtocolError` (both `ConnectionError`s) as categories; every class is

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+import asyncio
 import typing
 
 
@@ -33,6 +34,25 @@ class SSHExecutorProvider(ExecutorProvider):
 
     def connect(self):
         self.transport.connect_or_decline()
+
+    @property
+    def connection(self) -> typing.Any:
+        """The `asyncssh.SSHClientConnection` this provider runs commands on.
+
+        Connects on first access and is reused after. It is bound to `loop`:
+        run its coroutines with
+        `asyncio.run_coroutine_threadsafe(coro, provider.loop).result()`.
+        `close()` closes it; an access after that opens a new one, which the
+        host does not track, so `provider.close()` is what closes it.
+        """
+        return self.transport.ssh
+
+    @property
+    def loop(self) -> asyncio.AbstractEventLoop:
+        """The event loop `connection` is bound to (`hostctl-asyncssh-loop`)."""
+        from ... import _async
+
+        return _async._ensure_loop()
 
     def close(self):
         self.transport.close()

@@ -6,11 +6,15 @@ from ._config import (
     SSHKeySource as SSHKeySource,
     SSHKnownHosts as SSHKnownHosts,
 )
-from ._providers import ssh_providers as ssh_providers
+from ._providers import (
+    SSHExecutorProvider as SSHExecutorProvider,
+    ssh_providers as ssh_providers,
+)
 
 __all__ = [
     "SSHClientKeys",
     "SSHConfig",
+    "SSHExecutorProvider",
     "SSHKeySource",
     "SSHKnownHosts",
     "ssh_providers",

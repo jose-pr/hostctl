@@ -375,6 +375,33 @@ an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
   pair sharing one transport, for a host you assemble yourself; building them
   separately would open two connections and close one.
 
+```python
+SSHExecutorProvider.connection -> asyncssh.SSHClientConnection
+SSHExecutorProvider.loop -> asyncio.AbstractEventLoop
+```
+
+`SSHExecutorProvider` is the executor provider `ssh_providers(config)[0]`
+returns and a composed SSH host holds in `executor_providers` (name `"ssh"`);
+find it with `isinstance`. Its constructor takes the private transport, so
+obtain it only through those two routes.
+
+- `connection` is the asyncssh connection `run()` and `spawn()` use, for
+  port forwarding or an SFTP client of your own. It connects on first access
+  (raising what connecting raises: `PermissionError`, `ConnectionError`,
+  `TimeoutError`, or the `OSError` of a refused or unresolvable host --
+  never `OperationNotStartedError`) and returns the same object until it
+  closes. A first access from a coroutine running on `loop` raises
+  `RuntimeError`.
+- It is bound to `loop`, the process-wide `hostctl-asyncssh-loop` thread's
+  event loop (see "Gotchas"), never the caller's. Run a coroutine of it with
+  `asyncio.run_coroutine_threadsafe(coro, provider.loop).result()`; awaiting
+  one on another loop is unsupported. Do not block that loop: every SSH host
+  in the process runs on it.
+- `host.close()` (or `provider.close()`) closes the connection and waits for
+  it. Reading `connection` afterwards opens a new one outside the host's
+  lifecycle; `provider.close()` closes that one. After `fork()` the child
+  gets a new connection on a new loop, so read both again there.
+
 Behaviour:
 
 - A composed SSH host opens two connections, each when first needed and each
