@@ -243,7 +243,10 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             # would change every existing URI's text.
             query["login_shell"] = self.login_shell
         if self.connect_timeout != 30.0:
-            query["connect_timeout"] = self.connect_timeout
+            # An empty value is `None` (asyncssh's own default), as for serial.
+            query["connect_timeout"] = (
+                "" if self.connect_timeout is None else self.connect_timeout
+            )
         from netimps import join_host
 
         return f"ssh://{user}{join_host(self.host, self.port)}?{urlencode(query)}"
@@ -282,7 +285,13 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             ),
             login_shell=query.get("login_shell", "auto"),
             connect_timeout=(
-                float(query["connect_timeout"]) if "connect_timeout" in query else 30.0
+                30.0
+                if "connect_timeout" not in query
+                else (
+                    None
+                    if query["connect_timeout"] == ""
+                    else float(query["connect_timeout"])
+                )
             ),
         )
 

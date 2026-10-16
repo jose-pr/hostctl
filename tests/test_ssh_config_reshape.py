@@ -157,3 +157,9 @@ def test_an_unresolvable_host_in_auto_mode_cleans_up(monkeypatch):
             "hostctl-alias.invalid", pathname="auto", known_hosts=None
         )._create_host()
     assert any(isinstance(c, socket.gaierror) for c in _causes(raised.value))
+
+
+@pytest.mark.parametrize("value", (None, 5.0, 30.0))
+def test_connect_timeout_round_trips_through_the_uri(value):
+    config = SSHConfig("h", connect_timeout=value)
+    assert HostConfig(config.connection_uri).connect_timeout == value
