@@ -302,3 +302,32 @@ def test_close_leaves_read_and_wait_answering_instead_of_raising_winerror():
     assert process.read() == b""
     assert process.read_stderr() == b""
     assert process.wait() == 3
+
+
+def test_close_releases_docker_pys_response_stream_and_socket():
+    # docker-py's `exec_start(socket=True)` returns a socket file carrying its
+    # HTTP response; the descriptor stays open until all three are closed.
+    closed = []
+
+    class _Closes:
+        def __init__(self, name):
+            self.name = name
+
+        def close(self):
+            closed.append(self.name)
+
+    stream = _Closes("stream")
+    stream._sock = _Closes("socket")
+    stream._response = _Closes("response")
+    process = ContainerProcess(
+        _Api([{"Running": False, "ExitCode": 0}]),
+        "exec",
+        stream,
+        tty=False,
+        command=["sh"],
+    )
+
+    process.close()
+    process.close()
+
+    assert closed == ["response", "stream", "socket"]

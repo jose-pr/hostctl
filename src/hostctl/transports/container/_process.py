@@ -46,6 +46,7 @@ class ContainerProcess(Process):
     ) -> None:
         self._api = api
         self._exec_id = exec_id
+        self._stream = stream
         self._socket = typing.cast(_Socket, getattr(stream, "_sock", stream))
         self._tty = tty
         self._command = list(command)
@@ -312,7 +313,20 @@ class ContainerProcess(Process):
             # 10038`, `EBADF`). Whatever was already buffered stays readable;
             # after that the stream reads as ended.
             self._eof = True
-            self._socket.close()
+            # docker-py's socket stream keeps its HTTP response (`_response`)
+            # and a file over the socket; the descriptor is released only once
+            # all three are closed, response first.
+            response = getattr(self._stream, "_response", None)
+            for closer in (
+                getattr(response, "close", None),
+                getattr(self._stream, "close", None),
+                self._socket.close,
+            ):
+                if closer is not None:
+                    try:
+                        closer()
+                    except (OSError, ValueError):
+                        pass
 
     def __enter__(self) -> ContainerProcess:
         return self
