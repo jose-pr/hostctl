@@ -475,10 +475,27 @@ class LocalWinRSProtocol:
         return out, err, process.returncode
 
     def cleanup_command(self, shell, command_id):
-        self._processes.pop(command_id, None)
+        process = self._processes.pop(command_id, None)
+        if process is not None:
+            _reap(process)
 
     def close_shell(self, shell):
-        pass
+        # A real server ends whatever the shell still runs.
+        while self._processes:
+            _reap(self._processes.popitem()[1])
+
+
+def _reap(process: subprocess.Popen) -> None:
+    """End `process` if it still runs, close its pipes and wait for it."""
+    if process.poll() is None:
+        process.kill()
+    for stream in (process.stdin, process.stdout, process.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
+    process.wait()
 
 
 class _ExecResult:
