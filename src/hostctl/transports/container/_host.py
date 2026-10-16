@@ -43,6 +43,33 @@ from pathapi import Path
 from ._path import ContainerPathBackend, PosixContainerPath, WindowsContainerPath
 from ...host._selection import PathnameType
 from ._config import ContainerConfig
+from ...host._verify import _ca_bundle
+
+
+def _pinned_client(verify: typing.Union[bool, str]) -> typing.Callable[..., object]:
+    """A `docker.DockerClient` factory whose every request checks with `verify`.
+
+    docker-py sends through `requests.Session.request`, which replaces the
+    session's `verify` -- a CA bundle, or `False` -- with `REQUESTS_CA_BUNDLE`
+    whenever that is set. The first request is sent from the constructor, so
+    the override has to be in the class.
+    """
+    import docker
+
+    class _API(docker.APIClient):
+        def merge_environment_settings(self, url, proxies, stream, verify, cert):
+            settings = super().merge_environment_settings(
+                url, proxies, stream, verify, cert
+            )
+            settings["verify"] = self.verify
+            return settings
+
+    class _Client(docker.DockerClient):
+        def __init__(self, **options: object) -> None:
+            # `DockerClient.__init__` builds `self.api` and nothing else.
+            self.api = _API(tls=docker.tls.TLSConfig(verify=verify), **options)
+
+    return _Client
 
 
 def _close_hijacked(stream: object) -> None:
@@ -163,6 +190,12 @@ class ContainerHost(Host):
                 # Left out at DEFAULT, so the SDK (or a client_factory) keeps
                 # its own; `None` is the SDK's "no limit".
                 options["timeout"] = connect
+            verify = self.config.verify
+            if verify is not True:
+                # The config refuses this with a client_factory.
+                factory = _pinned_client(
+                    False if verify is False else _ca_bundle(typing.cast(str, verify))
+                )
             self._client = factory(**options)
         return self._client
 

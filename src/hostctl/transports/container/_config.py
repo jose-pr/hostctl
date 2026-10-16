@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import typing
 from urllib.parse import quote, unquote, urlencode
 
@@ -11,6 +12,12 @@ from ...shell import shell_flavour
 from ...host._config import HostConfig
 from ...host._dispatch import _keyword_only
 from ...host._selection import PathnameSelection, ShellSelection
+from ...host._verify import (
+    _TLSVerify,
+    _tls_verify,
+    _verify_from_query,
+    _verify_query_text,
+)
 from ...host._timeout import (
     _URI_TIMEOUT_KEYS,
     _TimeoutField,
@@ -45,6 +52,12 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
 
     container: str
     engine_url: typing.Optional[str] = None
+    #: The Engine's certificate check on an `https://` `engine_url`: `True` is
+    #: docker-py's default (`requests`' trust), `False` checks nothing, a path
+    #: is the CA bundle trusted instead. Any other engine URL, the
+    #: environment's Docker settings and a `client_factory` own their TLS, so
+    #: there it must stay `True`.
+    verify: typing.Union[bool, str, "os.PathLike[str]"] = True
     username: typing.Optional[str] = None
     workdir: typing.Optional[str] = None
     executable: typing.Optional[str] = None
@@ -62,6 +75,19 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
         if not self.container:
             raise ValueError("container must not be empty")
         _refuse_uri("ContainerConfig", self.container)
+        self.verify = _tls_verify("ContainerConfig", self.verify)
+        if self.verify is not True:
+            if self.client_factory is not None:
+                raise ValueError(
+                    "ContainerConfig: client_factory builds the Docker client and "
+                    "owns its TLS settings; leave verify=True"
+                )
+            if not (self.engine_url or "").casefold().startswith("https://"):
+                raise ValueError(
+                    "ContainerConfig: verify applies to an https:// engine_url; "
+                    "other engine URLs carry no TLS, and without one docker-py "
+                    "reads DOCKER_TLS_VERIFY and DOCKER_CERT_PATH"
+                )
         if self.shell != "auto":
             self.shell = shell_flavour(self.shell)
         elif self.executable is not None:
@@ -78,6 +104,8 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
             value = getattr(self, name)
             if value is not None:
                 query[name] = value
+        if self.verify is not True:
+            query["verify"] = _verify_query_text(typing.cast(_TLSVerify, self.verify))
         pairs = list(query.items()) + _timeout_query(self.timeout)
         return f"docker://{quote(self.container, safe='')}?{urlencode(pairs)}"
 
@@ -87,6 +115,7 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
             parsed,
             {
                 "engine_url",
+                "verify",
                 "username",
                 "workdir",
                 "executable",
@@ -102,6 +131,7 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
         return cls(
             container=unquote(parsed.netloc),
             engine_url=query.get("engine_url") or None,
+            verify=_verify_from_query(query, bundle=True),
             username=query.get("username") or None,
             workdir=query.get("workdir") or None,
             executable=query.get("executable") or None,
