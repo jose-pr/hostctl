@@ -54,10 +54,30 @@ def test_none_means_no_limit_and_is_kept():
     assert Timeout(None, connect=None).connect is None
 
 
-@pytest.mark.parametrize("value", [0, -1, -0.5, float("inf"), float("nan")])
-def test_a_non_positive_or_infinite_value_raises_value_error(value):
-    with pytest.raises(ValueError, match="timeout.read must be a positive"):
+@pytest.mark.parametrize("value", [-1, -0.5, float("inf"), float("nan")])
+def test_a_negative_or_infinite_value_raises_value_error(value):
+    with pytest.raises(ValueError, match="timeout.read must be zero"):
         Timeout(read=value)
+
+
+@pytest.mark.parametrize("field", ["read", "write"])
+def test_zero_is_do_not_wait_for_read_and_write(field):
+    timeout = Timeout(**{field: 0})
+
+    assert getattr(timeout, field) == 0.0
+    assert isinstance(getattr(timeout, field), float)
+    assert eval(repr(timeout), {"Timeout": Timeout}) == timeout
+
+
+@pytest.mark.parametrize("field", ["total", "connect"])
+def test_zero_total_or_connect_raises_naming_the_field(field):
+    with pytest.raises(ValueError, match=f"timeout.{field} must be a positive"):
+        Timeout(**{field: 0})
+
+
+def test_false_is_not_zero():
+    with pytest.raises(TypeError):
+        Timeout(read=False)
 
 
 @pytest.mark.parametrize("value", [True, "30", b"30", object()])
@@ -92,7 +112,7 @@ def test_dataclasses_replace_validates_the_new_value():
 
     assert dataclasses.replace(timeout, connect=5) == Timeout(30, connect=5)
     with pytest.raises(ValueError):
-        dataclasses.replace(timeout, read=0)
+        dataclasses.replace(timeout, connect=0)
 
 
 def test_it_and_default_pickle_and_copy():
@@ -157,6 +177,14 @@ class TestURIKeys:
     def test_a_bad_value_names_the_key(self, text):
         with pytest.raises(ValueError, match="timeout_connect"):
             _timeout._timeout_from_query({"timeout_connect": text})
+
+    def test_zero_read_and_write_parse_and_render(self):
+        query = {"timeout_read": "0", "timeout_write": "0"}
+
+        assert _timeout._timeout_from_query(query) == Timeout(read=0, write=0)
+        assert _timeout._timeout_query(Timeout(read=0)) == [("timeout_read", "0")]
+        with pytest.raises(ValueError, match="timeout_read"):
+            _timeout._timeout_from_query({"timeout_read": "-1"})
 
     def test_only_fields_that_are_not_default_are_rendered(self):
         assert _timeout._timeout_query(Timeout()) == []

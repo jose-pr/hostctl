@@ -35,7 +35,7 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | native WinRM: `read_timeout_sec=` raised so a long command could finish (it was the command's deadline) | `timeout=600`, the total (default 30 s, `None` for none), the default for `run(timeout=)` on every leg; `timeout=Timeout(connect=...)` bounds opening the session |
 | pywinrm and PSRP commands with no deadline; `run(timeout=)` refused | the 30 s total applies; pass `timeout=None` to keep them unbounded; `run(timeout=)` is accepted, and `run(timeout=None)` lifts the total for one call |
 | `QemuConfig(agent_timeout=5)` (`?agent_timeout=5`) | `QEMUConfig(timeout=Timeout(read=5))` (`?timeout_read=5`); `timeout=5` alone is the command total, not the agent reply |
-| `SerialConfig(read_timeout=0.5, write_timeout=2)` (`?read_timeout=0.5&write_timeout=2`) | `SerialConfig(timeout=Timeout(read=0.5, write=2))` (`?timeout_read=0.5&timeout_write=2`); `read_timeout=0` (non-blocking) has no spelling, since a `Timeout` field is positive; `inter_byte_timeout` is unchanged |
+| `SerialConfig(read_timeout=0.5, write_timeout=2)` (`?read_timeout=0.5&write_timeout=2`) | `SerialConfig(timeout=Timeout(read=0.5, write=2))` (`?timeout_read=0.5&timeout_write=2`); `read_timeout=0` (non-blocking) is `Timeout(read=0)` (`?timeout_read=0`), and `write_timeout=0` is `Timeout(write=0)`; `inter_byte_timeout` is unchanged |
 | a config with no timeout of its own (`LocalConfig()`, `SshConfig`, `ContainerConfig`, the system configs) | `timeout=60` on any of them sets the default of `run(timeout=)` (a container refuses it: it has no total); `Timeout(connect=, read=, write=)` where the transport honours them, and `ValueError` where it does not |
 | positional config arguments after the first | keyword-only (`TypeError` otherwise) |
 | `ExecutorCommand`; `executor.PathLike`, `Input`, `Environment`, `FileHandle` | `CommandLike`; `StrPath`, `CommandInput`, `CommandEnvironment`, `StreamTarget` |
@@ -272,7 +272,8 @@ collection until pytruenas ports to these names.
   only. `run(timeout=None)` is no limit for that call on every host, and
   `host.shell.run(timeout=None)` passes it on; a left-out `timeout` is the
   config's total. A QEMU guest-agent reply may now be unbounded
-  (`Timeout(read=None)`); serial's non-blocking `read_timeout=0` is refused.
+  (`Timeout(read=None)`); serial's non-blocking `read_timeout=0` is
+  `Timeout(read=0)`, the one transport where a zero is accepted.
   See "Migrating from 0.3".
 
 - **Breaking, 0.4.0: `WinRMConfig` honours two timeouts, `total` and

@@ -31,6 +31,9 @@ _Seconds = typing.Union[float, None, _Default]
 
 _FIELDS = ("total", "connect", "read", "write")
 
+#: The fields where `0` means "do not wait": return at once with what is there.
+_ZERO_FIELDS = ("read", "write")
+
 
 def _seconds(name: str, value: object) -> _Seconds:
     """`value` validated as one `Timeout` field."""
@@ -41,10 +44,13 @@ def _seconds(name: str, value: object) -> _Seconds:
             f"timeout.{name} must be a number of seconds, None or DEFAULT, "
             f"not {type(value).__name__}"
         )
+    if value == 0 and name in _ZERO_FIELDS:
+        return 0.0
     if not value > 0 or math.isinf(value):
+        lowest = "zero (do not wait) or " if name in _ZERO_FIELDS else ""
         raise ValueError(
-            f"timeout.{name} must be a positive, finite number of seconds "
-            "(None for no limit, DEFAULT for the transport's own)"
+            f"timeout.{name} must be {lowest}a positive, finite number of "
+            "seconds (None for no limit, DEFAULT for the transport's own)"
         )
     return float(value)
 
@@ -56,12 +62,14 @@ class Timeout:
     `total` bounds a whole command and is the default of ``run(timeout=)``;
     `connect` bounds establishing a connection, session or port; `read` one
     reply or one read; `write` one write. Each field is `DEFAULT` (the
-    transport's own), `None` (no limit) or a positive number of seconds.
-    ``Timeout(30)`` sets `total` only. A transport that cannot honour a field
-    refuses any value but `DEFAULT` for it when the config is built.
+    transport's own), `None` (no limit) or a positive number of seconds;
+    `read` and `write` may also be `0`, "do not wait". ``Timeout(30)`` sets
+    `total` only. A transport that cannot honour a field, or its `0`,
+    refuses it when the config is built.
 
     Raises `TypeError` for a value that is not a number, `None` or `DEFAULT`,
-    and `ValueError` for zero, a negative number or infinity.
+    and `ValueError` for a negative number, infinity, or zero as `total` or
+    `connect`.
     """
 
     total: _Seconds = DEFAULT
@@ -152,11 +160,21 @@ def _supported(config_type: type) -> typing.Mapping[str, _Seconds]:
 
 
 def _refuse_unsupported(config_type: type, timeout: Timeout) -> None:
-    """Raise `ValueError` for a field `config_type` cannot honour that is set."""
+    """Raise `ValueError` for a field `config_type` cannot honour that is set.
+
+    `0` is honoured only for the fields a config lists in `_timeout_zero`.
+    """
     supported = _supported(config_type)
+    zero = getattr(config_type, "_timeout_zero", ())
     for name in _FIELDS:
-        if name not in supported and getattr(timeout, name) is not DEFAULT:
+        value = getattr(timeout, name)
+        if name not in supported and value is not DEFAULT:
             raise ValueError(f"{config_type.__name__}: timeout.{name} is not supported")
+        if value == 0 and name not in zero:
+            raise ValueError(
+                f"{config_type.__name__}: timeout.{name}=0 (do not wait) is not "
+                "supported"
+            )
 
 
 def _resolve(timeout: Timeout, defaults: typing.Mapping[str, _Seconds]) -> Timeout:
@@ -260,6 +278,8 @@ def _timeout_from_query(query: typing.Mapping[str, object]) -> Timeout:
             values[name] = float(text)
         except ValueError as exc:
             raise ValueError(f"{key} must be a number of seconds") from exc
+        if values[name] == 0 and name in _ZERO_FIELDS:
+            continue
         if not values[name] > 0:  # type: ignore[operator]
             raise ValueError(f"{key} must be greater than 0 seconds")
     return Timeout(

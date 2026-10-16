@@ -79,7 +79,8 @@ assert Timeout().read is DEFAULT
 | `write` | one write | `timeout_write` |
 
 Each field is `DEFAULT` (the transport's own), `None` (no limit) or a positive
-number of seconds. In a URI an empty value is `None` and an absent key is
+number of seconds; a serial `read` or `write` may also be `0`, pyserial's
+"do not wait" (every other transport refuses a zero). In a URI an empty value is `None` and an absent key is
 `DEFAULT`, and `str(config)` writes only the fields that are not `DEFAULT`.
 A transport supports only some fields, and setting one it cannot honour raises
 `ValueError` naming the config and the field rather than being ignored:

@@ -205,10 +205,14 @@ DEFAULT
   `write` one write. `Timeout(30)` sets `total` only; the other fields are
   keyword-only.
 - Each field is `DEFAULT` (the transport's own documented default), `None`
-  (no limit) or a positive, finite number, stored as `float`. Anything else
-  raises at construction: `TypeError` for a value that is not a number,
-  `None` or `DEFAULT` (a `bool` included), `ValueError` for zero, a negative
-  number or infinity.
+  (no limit) or a positive, finite number, stored as `float`; `read` and
+  `write` may also be `0`, "do not wait": return at once with what is there.
+  Anything else raises at construction: `TypeError` for a value that is not
+  a number, `None` or `DEFAULT` (a `bool` included), `ValueError` for a
+  negative number, infinity, or zero as `total` or `connect`. A config whose
+  transport cannot return at once refuses a `0` with `ValueError` naming the
+  field (`QEMUConfig: timeout.read=0 (do not wait) is not supported`); only
+  serial honours it.
 - `repr()` shows only the fields that are not `DEFAULT` (`Timeout(total=30.0,
   read=None)`, `Timeout()`) and evaluates back to an equal value.
   `dataclasses.replace()` validates the new value.
@@ -245,7 +249,7 @@ HostConfig.timeouts -> Timeout
 | `WinRMConfig` | 30 s, every leg | 30 s: native `-OpenTimeout`, PSRP `connection_timeout`, pywinrm the connect half of each request (`None` leaves each library's own) | -- | -- |
 | `ContainerConfig` | -- | 60 s: the Docker SDK client's request timeout, which bounds connecting to the Engine and each API reply | -- | -- |
 | `QEMUConfig` | none | the `read` value: opening the agent stream and its guest-sync (unix and ssh transports only) | 10 s: one guest-agent reply | -- |
-| `SerialConfig` | none | -- | 0.1 s: one pyserial read | 10 s: one write |
+| `SerialConfig` | none | -- | 0.1 s: one pyserial read; `0` does not wait | 10 s: one write; `0` does not wait |
 | `PosixConfig`, `WindowsConfig`, `IOSConfig` | the selected provider's own | -- | -- | -- |
 
 "--" is unsupported. "none" is no limit. A container has no `total`: an
@@ -879,9 +883,10 @@ and `serial_port` are supported injection seams: a caller that passes
 `username`/`password`; console credentials are the profile's `login=` steps.
 RFC 2217 URLs are not encrypted. `timeout` (see "Timeouts"): `read` is
 pyserial's read timeout (0.1 s), `write` its write timeout (10 s), `total`
-the default of `run(timeout=)` (none); `connect` raises. A non-blocking read
-(pyserial `timeout=0`) is not expressible: zero is not a valid `Timeout`
-value. `inter_byte_timeout` is pyserial's own, separate field.
+the default of `run(timeout=)` (none); `connect` raises.
+`Timeout(read=0)` is pyserial's non-blocking `timeout=0` (a read returns what
+is already there) and `write=0` its `write_timeout=0`. `inter_byte_timeout`
+is pyserial's own, separate field.
 
 - `run()` frames each command as its own profile exchange, only when the
   profile advertises it; it refuses a structured (argv) command (the host

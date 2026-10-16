@@ -127,6 +127,8 @@ class SerialConfig(HostConfig, schemes=("serial",)):
     )
 
     _timeout_defaults = {"total": None, "read": 0.1, "write": 10.0}
+    #: pyserial's `timeout=0`/`write_timeout=0`: return at once.
+    _timeout_zero = ("read", "write")
 
     device: str
     baudrate: int = 115200
@@ -137,7 +139,7 @@ class SerialConfig(HostConfig, schemes=("serial",)):
     rtscts: bool = False
     dsrdtr: bool = False
     #: `total` is the default of `run(timeout=)` (none); `read` and `write`
-    #: bound one pyserial read (0.1 s) and one write (10 s).
+    #: bound one pyserial read (0.1 s) and one write (10 s); `0` does not wait.
     timeout: _TimeoutField = _TimeoutField()
     #: pyserial's longest gap between two bytes of one read, a framing
     #: setting rather than an operation bound; `None` disables it.

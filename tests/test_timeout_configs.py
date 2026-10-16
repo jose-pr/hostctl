@@ -245,6 +245,50 @@ def test_serial_settings_carry_the_resolved_read_and_write():
     assert (options["timeout"], options["write_timeout"]) == (None, 2.0)
 
 
+def test_serial_zero_read_and_write_reach_pyserial_as_do_not_wait():
+    config = SerialConfig("loop://", timeout=Timeout(read=0, write=0))
+    options = config.settings.factory_options()
+
+    assert (options["timeout"], options["write_timeout"]) == (0.0, 0.0)
+    assert config.timeouts == Timeout(None, read=0, write=0)
+    again = HostConfig(config.connection_uri)
+    assert "timeout_read=0" in config.connection_uri
+    assert again.timeout == Timeout(read=0, write=0)
+
+
+def test_a_serial_read_with_a_zero_port_timeout_does_not_block():
+    """pyserial's own `loop://` port, so `timeout=0` is the driver's."""
+    pytest.importorskip("serial", reason="pyserial is not installed")
+    host = SerialHost(SerialConfig("loop://", timeout=Timeout(read=0)))
+    with host.spawn() as session:
+        started = time.monotonic()
+        assert session.read(16) == b""
+        session.write(b"ping")
+        assert session.read(16) == b"ping"
+    assert time.monotonic() - started < 1
+
+
+@pytest.mark.parametrize(
+    "name, make",
+    [
+        ("QEMUConfig", lambda: QEMUConfig("vm", **_UNIX, timeout=Timeout(read=0))),
+        (
+            "QEMUConfig",
+            lambda: HostConfig("qga+unix:///s?domain=vm&timeout_read=0"),
+        ),
+    ],
+)
+def test_a_transport_that_cannot_return_at_once_refuses_zero(name, make):
+    with pytest.raises(ValueError, match=rf"{name}: timeout.read=0"):
+        make()
+
+
+@pytest.mark.parametrize("field", ["read", "write"])
+def test_a_transport_without_the_field_still_names_it_for_zero(field):
+    with pytest.raises(ValueError, match=f"timeout.{field} is not supported"):
+        SSHConfig("h", timeout=Timeout(**{field: 0}))
+
+
 def test_ssh_connect_reaches_asyncssh_and_none_leaves_its_default():
     assert SSHConfig("h").connect_opts()["connect_timeout"] == 30.0
     assert (
