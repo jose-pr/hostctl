@@ -4,13 +4,10 @@ from __future__ import annotations
 
 
 import typing
-
-
 from urllib.parse import unquote, quote, urlencode
 
 
 from ..host._config import HostConfig
-
 from ..uri._parse import _refuse_uri, reject_control_characters, strict_uri_query
 
 if typing.TYPE_CHECKING:

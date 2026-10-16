@@ -5,7 +5,7 @@
 - **local host** → a `pathapi.Path` local implementation which is also a
   stdlib `pathlib.Path`;
 - **SSH host** → an `sftppath.SFTPPath` (the `ssh` extra);
-- **WinRM host** → a Windows-semantic `WinRMPath` backed by PowerShell.
+- **WinRM host** → a Windows-semantic `CompositeWindowsPath` backed by PowerShell.
 - **container host** → a POSIX- or Windows-semantic archive-backed
   `pathapi.Path`, selected from container inspection.
 - **QEMU guest** → a POSIX- or Windows-semantic QGA file-RPC path, selected
@@ -38,7 +38,7 @@ rename, removal, and permissions require a positively probed helper;
 unavailable operations raise `NotImplementedError` -- including the exclusive
 `x` modes, which are refused by `open()` itself rather than at close-time.
 
-`WinRMPath.open("rb")` fetches bounded binary ranges through PowerShell.
+A WinRM path's `open("rb")` fetches bounded binary ranges through PowerShell.
 Writable modes stage data for close-time chunked write-back. Write-back happens
 only on an explicit `close()` (or the context-manager exit); `flush()` does not
 commit, and an abandoned writable stream is discarded with a
@@ -47,7 +47,7 @@ commit, and an abandoned writable stream is discarded with a
 apply. Reparse points are reported as symlink-style metadata; following one
 resolves its target once and raises `OSError` when unresolved.
 
-`WinRMPath.symlink_to()` issues `New-Item -ItemType SymbolicLink`. Windows
+A WinRM path's `symlink_to()` issues `New-Item -ItemType SymbolicLink`. Windows
 only permits this from an elevated session or with Developer Mode enabled;
 otherwise the privilege failure is normalized to `PermissionError`.
 `readlink()` reports the reparse point's stored target.

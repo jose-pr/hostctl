@@ -4,48 +4,33 @@ from __future__ import annotations
 
 
 import logging
-
 import re
-
 import subprocess
-
 import threading
-
 import typing
-
-
 from pathlib import PureWindowsPath
 
 
 from ._executor import QEMUExecutor
-
 from ._qga import GuestAgentTransport
 from ._qga_transports import (
     LibvirtGuestAgentTransport,
     SSHUnixGuestAgentTransport,
     UnixSocketGuestAgentTransport,
 )
-
 from ...process import Process
-
-
 from ...shell import POWERSHELL, POSIX_SHELL, shell_flavour
-
 from ...shell._flavour import ShellFlavour
-
 from ...executor import CaptureOutput, Environment, FileHandle, Input, PathLike
-
 from ...shell._grammar import Command, starts_direct_command
-
 from ...host._host import Host
 from ...host._info import HostInfo
 
-from pathapi import Path as HostPath
+from pathapi import Path
 
 
 from ..ssh._config import SSHConfig
 from ..ssh._transport import _SSHTransport
-
 from ._config import PathnameConstructor, QEMUConfig
 from ._path import PosixQEMUPath, WindowsQEMUPath
 from ._backend import QGAPathBackend
@@ -334,9 +319,7 @@ class QEMUHost(Host):
             ),
         )
 
-    def path(
-        self, *segments: PathLike, backend: typing.Optional[str] = None
-    ) -> HostPath:
+    def path(self, *segments: PathLike, backend: typing.Optional[str] = None) -> Path:
         if "path" not in self.capabilities:
             raise NotImplementedError("guest agent does not provide file RPCs")
         if backend not in (None, "qga"):
@@ -405,7 +388,7 @@ class QEMUHost(Host):
         """The QGA path provider, once :meth:`path` has assembled it."""
         return self._path_provider
 
-    def _qga_path(self, *segments: PathLike) -> HostPath:
+    def _qga_path(self, *segments: PathLike) -> Path:
         """Build a QGA-backed guest path with the configured pathname flavour."""
         path_backend = self._path_backend
         selection = self.config.path_flavor

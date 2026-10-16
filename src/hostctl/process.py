@@ -8,9 +8,7 @@ import typing
 import types
 import codecs
 
-from .executor import LeaseToken
-from .executor import expired
-from .executor import raise_normalized as raise_normalized
+from .executor import LeaseToken, expired
 
 ProcessData = typing.Union[str, bytes]
 
@@ -237,3 +235,12 @@ class _LeasedStreamProcess(Process):
     ) -> bool:
         self.close()
         return False
+
+
+__all__ = [
+    "Process",
+    "ProcessData",
+    "TerminalOptions",
+    "TerminalRequest",
+    "terminal_options",
+]

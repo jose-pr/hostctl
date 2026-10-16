@@ -21,3 +21,8 @@ class Ls(HostCommand):
             for child in host.path(self.path).iterdir():
                 write(sys.stdout, display_name(child.name) + "\n")
         return 0
+
+
+__all__ = [
+    "Ls",
+]

@@ -3,11 +3,7 @@
 from __future__ import annotations
 
 import abc as _abc
-
-
 import inspect as _inspect
-
-
 import typing as _ty
 
 _T = _ty.TypeVar("_T")

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 
 from ..shell import POWERSHELL, POSIX_SHELL
-
-
 from ._config import SystemConfig
 from ._host import SystemHost
 

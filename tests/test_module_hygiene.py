@@ -233,3 +233,127 @@ def test_import_does_not_depend_on_netimps_environment():
     report = _probe_import({"NETIMPS_NO_SOCKET_PATCH": "1"})
 
     assert report["changed"] == []
+
+
+def _dotted(module: pathlib.Path) -> str:
+    parts = list(module.relative_to(SOURCE.parent).with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+#: Modules a caller may import: no path component starts with an underscore.
+PUBLIC = [
+    module
+    for module in MODULES
+    if not any(part.startswith("_") for part in _dotted(module).split(".")[1:])
+]
+
+
+def _declared_all(tree: ast.Module):
+    for node in tree.body:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
+                return {
+                    element.value
+                    for element in getattr(node.value, "elts", ())
+                    if isinstance(element, ast.Constant)
+                }
+    return None
+
+
+@pytest.mark.parametrize("module", PUBLIC, ids=_dotted)
+def test_every_public_module_declares_all(module):
+    """In a `py.typed` package a module without an underscore promises its
+    import path, and `__all__` is the list of names it promises."""
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+
+    assert _declared_all(tree) is not None, f"{_dotted(module)} has no __all__"
+
+
+@pytest.mark.parametrize("module", MODULES, ids=_dotted)
+def test_an_explicit_reexport_is_in_all(module):
+    """`import X as X` is the typing spec's re-export spelling: outside
+    `__all__` it publishes a name the module does not mean to."""
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    declared = _declared_all(tree) or set()
+    stray = [
+        alias.name
+        for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+        if alias.asname == alias.name and alias.asname not in declared
+    ]
+
+    assert stray == [], f"{_dotted(module)}: {stray}"
+
+
+#: Contract modules: none may import a transport or the system hosts.
+_CONTRACTS = (
+    "exceptions",
+    "host",
+    "uri",
+    "_registry",
+    "provider",
+    "executor",
+    "process",
+    "paths",
+    "shell",
+    "sync",
+)
+
+
+def _module_level_imports(module: pathlib.Path):
+    """`(target, line)` for every import a module runs when it is imported."""
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    dotted = _dotted(module)
+    package = dotted if module.name == "__init__.py" else dotted.rpartition(".")[0]
+
+    def visit(body):
+        for node in body:
+            if isinstance(node, ast.If) and "TYPE_CHECKING" in ast.dump(node.test):
+                yield from visit(node.orelse)
+            elif isinstance(node, (ast.If, ast.Try)):
+                yield from visit(node.body)
+                yield from visit(node.orelse)
+                for handler in getattr(node, "handlers", []):
+                    yield from visit(handler.body)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    base = package.split(".")
+                    base = base[: len(base) - (node.level - 1)]
+                    target = ".".join(base + ([node.module] if node.module else []))
+                else:
+                    target = node.module or ""
+                for alias in node.names:
+                    yield f"{target}.{alias.name}", node.lineno
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    yield alias.name, node.lineno
+
+    yield from visit(tree.body)
+
+
+def _component(module: pathlib.Path) -> str:
+    parts = _dotted(module).split(".")
+    return parts[1] if len(parts) > 1 else ""
+
+
+@pytest.mark.parametrize(
+    "module", [m for m in MODULES if _component(m) in _CONTRACTS], ids=_dotted
+)
+def test_contracts_do_not_import_transports_or_system(module):
+    """The contracts sit below every transport, so one importing a transport
+    at module level is a cycle waiting for the next split. The command
+    grammar in `shell/` also stays below the composite paths."""
+    forbidden = ("hostctl.transports", "hostctl.system")
+    if _component(module) == "shell":
+        forbidden += ("hostctl.paths",)
+    hits = [
+        (target, line)
+        for target, line in _module_level_imports(module)
+        if target.startswith(forbidden)
+    ]
+
+    assert hits == [], f"{_dotted(module)}: {hits}"

@@ -7,16 +7,11 @@ import typing
 
 
 from pathapi import WindowsPathname
-
-
 from pathapi.protocols import Chmod, Create, Listing, Move, Remove, Stat
-
 from pathapi.providers import notimplemented
 
 
 from ...paths._backend import PosixBackendPath, WindowsBackendPath
-
-
 from ._backend import QGAPathBackend
 
 #: The guest-helper operations each protocol's primitives need. QGA's file

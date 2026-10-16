@@ -13,7 +13,7 @@ from duho import Cmd, CommandError, LoggingArgs, running_mode
 
 from ..host._host import Host
 from ..host._config import HostConfig
-from pathapi import Path as HostPath
+from pathapi import Path
 from ..uri._parse import redact_uri
 
 _URI_OPERAND = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
@@ -173,11 +173,11 @@ class Credentialed(LoggingArgs, Cmd):
         credentials = usable_credentials(uri, self.credentials())
         return stack.enter_context(Host(uri, **credentials))
 
-    def path_operand(self, stack: contextlib.ExitStack, value: str) -> HostPath:
+    def path_operand(self, stack: contextlib.ExitStack, value: str) -> Path:
         """Resolve ``URI:PATH`` on its host, or an ordinary local path."""
         split = split_operand(value)
         if split is None:
-            return HostPath(value)
+            return Path(value)
         uri, path = split
         return self.open_host(stack, uri).path(path)
 

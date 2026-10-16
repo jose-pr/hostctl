@@ -3,24 +3,13 @@
 from __future__ import annotations
 
 import base64
-
-
 import errno
-
 import io
-
 import json
-
 import ntpath
-
-
 import stat as _stat
-
 import subprocess
-
-
 import typing
-
 import uuid
 
 
@@ -28,8 +17,6 @@ from pathapi import FileStat
 
 
 from ._pywinrm import _b64
-
-
 from ...paths._backend import WindowsBackendPath
 
 

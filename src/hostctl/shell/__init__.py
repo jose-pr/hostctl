@@ -12,7 +12,7 @@ from ._vocabulary import (
     wants_epilogue as wants_epilogue,
 )
 from ._flavour import ShellFlavour as ShellFlavour
-from ._grammar import Cmdlet as Cmdlet, PSParam as PSParam
+from ._grammar import Cmdlet as Cmdlet, Exec as Exec, PSParam as PSParam
 from ._cmd import CmdShellFlavour as CmdShellFlavour
 from ._fish import FishShellFlavour as FishShellFlavour
 from ._posix import (
@@ -122,6 +122,7 @@ __all__ = [
     "FISH",
     "CMD",
     "Cmdlet",
+    "Exec",
     "BashShellFlavour",
     "CmdShellFlavour",
     "FishShellFlavour",

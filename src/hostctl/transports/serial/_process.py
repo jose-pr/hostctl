@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import typing
 
-from ...executor import LeaseToken
+from ...executor import LeaseToken, raise_normalized
 from ...process import (
     IncrementalTextDecoder,
     Process,
@@ -13,7 +13,6 @@ from ...process import (
     ReentrantLock,
     _LeasedStreamProcess,
 )
-from ...executor import raise_normalized
 from ._executor import SerialLike, normalize_serial_error
 
 if typing.TYPE_CHECKING:  # pragma: no cover - import cycle at runtime

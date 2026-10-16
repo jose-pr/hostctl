@@ -11,7 +11,7 @@ from ._providers import LocalExecutorProvider, LocalPathProvider
 from ...system._host import SystemHost
 from ...host._config import HostConfig
 from ...host._info import HostInfo, normalize_os_family
-from pathapi import Path as HostPath
+from pathapi import Path
 from ...executor import PathLike
 from ...shell import POSIX_SHELL, POWERSHELL
 from ...shell._flavour import ShellFlavour
@@ -108,7 +108,7 @@ class LocalHost(SystemHost):
             raise NotImplementedError(f"unsupported local OS: {_os.name}")
         return super().shell_flavour
 
-    def path(self, *segments: PathLike, backend: _ty.Optional[str] = None) -> HostPath:
+    def path(self, *segments: PathLike, backend: _ty.Optional[str] = None) -> Path:
         """A plain `pathapi` path, not a composite.
 
         The composite exists to select between providers per operation and

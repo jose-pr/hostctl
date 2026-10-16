@@ -1,6 +1,6 @@
 """Run a command on the local host and print its output."""
 
-from hostctl.transports.local._host import LocalConfig
+from hostctl import LocalConfig
 
 with LocalConfig() as host:
     result = host.run("echo hello from hostctl")

@@ -63,3 +63,8 @@ class Shell(HostCommand):
         except (OSError, ValueError):
             if not stopped.is_set():
                 raise
+
+
+__all__ = [
+    "Shell",
+]

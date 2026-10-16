@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import base64
-
-
 import subprocess
-
 import uuid
-
 import typing
 
 from ...executor import POWERSHELL_STATUS, expired
-
 from ._pywinrm import _Response, _b64
 
 #: Emitted by the remote script block and consumed by the local wrapper.

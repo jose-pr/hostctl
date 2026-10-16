@@ -4,42 +4,22 @@ from __future__ import annotations
 
 
 import logging
-
 import os
-
-
 import subprocess
-
 import threading
-
 import typing
 
 
 from ._native import NativeWinRMSession
-from ._pywinrm import WinRMExecutor, WinRMSession
-
-from ._psrp import PSRPExecutor, pypsrp_available
-
-from ._pywinrm import _PywinrmStdinSession
-
-from ._psrp import RunspaceSession
-
-
+from ._pywinrm import WinRMExecutor, WinRMSession, _PywinrmStdinSession
+from ._psrp import PSRPExecutor, pypsrp_available, RunspaceSession
 from ...provider._selector import ProviderSelector
-
-
 from ...executor import CaptureOutput, Environment, FileHandle, Input, PathLike
-
 from ...shell._grammar import Command, starts_direct_command
-
 from ...host._info import HostInfo, parse_host_info
-
 from ...shell import POWERSHELL
-
 from ...shell._flavour import ShellFlavour
 from ...shell._vocabulary import wants_epilogue
-
-
 from ._config import WinRMConfig
 from ._path import WinRMPath, WinRMPathBackend
 

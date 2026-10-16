@@ -3,35 +3,24 @@
 from __future__ import annotations
 
 import abc as _abc
-
-
 import inspect as _inspect
-
 import subprocess as _subprocess
-
-
 import typing as _ty
-
 import types as _types
 
 
-from pathapi import Path as HostPath
+from pathapi import Path
 
-from ..executor import CaptureOutput, Environment, FileHandle, Input, PathLike
+from ..executor import CaptureOutput, Environment, FileHandle, Input, PathLike, Executor
 
 # Runtime imports: `typing.get_type_hints` resolves the public annotations
 # against this module's globals. `executor`, `process` and `shell` never
 # import `host`, so there is no cycle.
-from ..executor import Executor
 
 from ..process import Process, TerminalRequest
-
 from ..shell._shell import Shell
 from ..shell._flavour import ShellFlavour
-
-from ..shell._grammar import Command as Command, Exec as Exec
-
-
+from ..shell._grammar import Command, Exec
 from ._info import HostInfo
 from ._dispatch import _T, _abstract, _constructor_signature
 
@@ -222,7 +211,7 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         self.close()
         return False
 
-    def path(self, *segments: PathLike, backend: _ty.Optional[str] = None) -> HostPath:
+    def path(self, *segments: PathLike, backend: _ty.Optional[str] = None) -> Path:
         """Return a pathlib-compatible path for this host."""
         raise NotImplementedError(
             f"{type(self).__name__} does not provide the 'path' capability"

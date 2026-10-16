@@ -3,18 +3,11 @@
 from __future__ import annotations
 
 import collections.abc
-
 import dataclasses
-
 import logging
-
 import subprocess
-
 import threading
-
 import typing
-
-
 from urllib.parse import quote
 
 from pathapi import Path
@@ -24,31 +17,23 @@ from ..executor import (
     masked_environment,
     run_displayed,
     validate_environment_names,
+    CaptureOutput,
+    Environment,
+    FileHandle,
+    Input,
+    PathLike,
 )
-
 from ..exceptions import OperationNotStartedError
-
 from ..provider._selector import ProviderSelector
-
 from ..shell import shell_flavour
-
 from ..shell._flavour import ShellFlavour
-
 from ..shell._invocation import render_command
-
 from ..shell._vocabulary import wants_epilogue
-
-from ..executor import CaptureOutput, Environment, FileHandle, Input, PathLike
-
 from ..host._host import Host, _HostExecutor
 from ..host._config import HostConfig
 from ..host._info import HostInfo
-
-
 from ..shell._grammar import Command, starts_direct_command
-
 from ..paths._composite import CompositePosixPath, CompositeWindowsPath
-
 from ._config import SystemConfig
 from ._shell_plan import _ShellContext, _shell_invocation
 

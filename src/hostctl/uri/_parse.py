@@ -4,19 +4,13 @@ from __future__ import annotations
 
 
 import re as _re
-
-
 import typing as _ty
-
 import unicodedata as _unicodedata
-
-from pathlib import PurePath as _PurePath
-
-from pathlib import PurePosixPath as _PurePosixPath
-
-from pathlib import PureWindowsPath as _PureWindowsPath
-
-
+from pathlib import (
+    PurePath as _PurePath,
+    PurePosixPath as _PurePosixPath,
+    PureWindowsPath as _PureWindowsPath,
+)
 from urllib.parse import (
     SplitResult as _SplitResult,
     parse_qsl as _parse_qsl,
@@ -25,11 +19,11 @@ from urllib.parse import (
 )
 
 
-from pathapi import Pathname as _Pathname
-
-from pathapi import PosixPathname as _PosixPathname
-
-from pathapi import WindowsPathname as _WindowsPathname
+from pathapi import (
+    Pathname as _Pathname,
+    PosixPathname as _PosixPathname,
+    WindowsPathname as _WindowsPathname,
+)
 
 
 def uri_host(host: str) -> str:

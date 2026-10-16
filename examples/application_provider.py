@@ -6,7 +6,7 @@ metadata/RPC paths first and retain SFTP/download as ordered fallbacks.
 
 from __future__ import annotations
 
-from hostctl.provider._contracts import PathProvider, ProviderProbe
+from hostctl.provider import PathProvider, ProviderProbe
 
 
 class ApplicationPathProvider(PathProvider):

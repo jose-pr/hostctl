@@ -8,27 +8,68 @@ The `hostctl` command line is `hostctl.cli` and needs the `cli` extra; see
 
 `hostctl.__all__` is the stable surface: hosts and configs you construct,
 exceptions you catch, types you annotate with, and the provider/shell contracts
-you implement. Concrete backends, transport adapters, and objects the library
-only hands back (`QGAPathBackend`, `WinRMPathBackend`, `ContainerPathBackend`,
-the `Posix*`/`Windows*` path classes, the concrete `*Executor`s **other than
-`LocalExecutor`**, `*Process` classes, and `hostctl.provider.transports`) stay
-importable from their defining module but are **not** exported from `hostctl`
-and may change without notice. `LocalExecutor` is the exception and is
-deliberately exported: it is the one executor a caller constructs directly, to
+you implement. Every module whose path has no leading underscore is public and
+declares `__all__`; a name outside it, and every `_`-prefixed module, is
+internal and may change without notice. Concrete executors, process adapters,
+path backends and backend path classes are internal: a host hands them back
+typed as `pathapi.Path`, `Process` or `Executor`. `LocalExecutor` is the one
+exported executor, because it is the one a caller constructs directly, to
 compose a host out of providers without a transport.
 
-Host implementations are grouped under `hostctl.host`: shared contracts are
-re-exported from the package, with concrete implementations in private
-modules (`hostctl.host._local`, `._ssh`, and `._winrm`) plus the other provider
-modules. WinRM paths live with `_winrm`; QGA paths live with `qemu`.
-The private `hostctl.executor._qga` module owns QGA framing and its Unix,
-libvirt, and SSH transports; it is consumed by the QEMU executor and host.
-Shell construction is transport-independent under `hostctl.shell`:
-`_common.py` owns shared contracts, while `posix.py` and `powershell.py` own
-their concrete flavours. Executor code follows the same layout under
-`hostctl.executor`: `_common.py` owns contracts and option types; `ssh.py` and
-`winrm.py` own `SSHExecutor` and `WinRMExecutor`. Each package re-exports its
-own contracts; only the stable subset above reaches top-level `hostctl`.
+Where names are imported from (each is also re-exported from `hostctl` when
+the root lists it):
+
+- `hostctl.host` -- `Host`, `HostConfig`, `HostInfo`.
+- `hostctl.exceptions` -- the exception tree (see "Exceptions").
+- `hostctl.uri` -- `ConnectionString`, `parse_credentials`, `redact_uri`,
+  `strict_uri_credentials`, `strict_uri_query`, `uri_host`, `uri_hostname`.
+- `hostctl.system` -- `SystemConfig`, `SystemHost`, `PosixConfig`, `PosixHost`,
+  `WindowsConfig`, `WindowsHost`, `IOSConfig`, `IOSHost`,
+  `register_system_provider`, `system_provider_names`.
+- `hostctl.provider` -- `ExecutorProvider`, `PathProvider`, `ProviderProbe`,
+  `ProviderSelection`, `ProviderSelector`, `SessionInitializer`, and
+  `READ_ONLY_PATH_OPERATIONS`, the capability set of a content-only endpoint.
+- `hostctl.executor` -- the `Executor` protocol, `ExecutorCapability`,
+  `ExecutionOptions`, `CommandLine`, the option aliases `ExecutorCommand`,
+  `CommandArgument`, `CaptureOutput`, `FileHandle`, `Input`, `PathLike`,
+  `Environment`, and the stream helpers listed below.
+- `hostctl.process` -- `Process`, `ProcessData` (`str | bytes`),
+  `TerminalOptions`, `TerminalRequest` (what `spawn(terminal=)` accepts) and
+  `terminal_options()`, which resolves one into the other.
+- `hostctl.paths` -- `CompositePosixPath`, `CompositeWindowsPath`.
+- `hostctl.shell` -- `Shell`, `ShellSession`, `ShellFlavour`, `ShellOperator`,
+  `ShellTarget`, `ShellCommand`, `ShellToken` (one rendered token),
+  `ShellFlavourSelection` (a flavour, its class, or its registered name), the
+  command markers `Exec`, `Cmdlet`, `PSParam`, the flavour classes
+  `PosixShellFlavour`, `BashShellFlavour`, `ZshShellFlavour`,
+  `FishShellFlavour`, `CmdShellFlavour`, `PowerShellFlavour` with their
+  instances `POSIX_SHELL`, `BASH`, `ZSH`, `FISH`, `CMD`, `POWERSHELL`, `PWSH`,
+  and `register_shell_flavour`, `shell_flavour`, `shell_flavour_names`,
+  `wants_epilogue`.
+- `hostctl.sync` -- `ProgressReader`, `host_checksum`, `stat_checksum`.
+- `hostctl.transports.local` -- `LocalConfig`, `LocalHost`, `LocalExecutor`,
+  `local_providers`.
+- `hostctl.transports.ssh` -- `SSHConfig`, `ssh_providers`, and the argument
+  aliases `SSHKeySource` (a key path, bytes or text), `SSHClientKeys` and
+  `SSHKnownHosts` (one source or a sequence of them).
+- `hostctl.transports.winrm` -- `WinRMConfig`, `winrm_providers`, and the PSRP
+  results `RunspaceSession`, `PipelineResult`, `PipelineStreams`.
+- `hostctl.transports.container` -- `ContainerConfig`, `ContainerHost`.
+- `hostctl.transports.qemu` -- `QEMUConfig`, `QEMUHost`, `QEMUTransport` (the
+  guest-agent transport name), the `GuestAgentTransport` and `GuestPathHelper`
+  protocols, `PosixGuestPathHelper`, `WindowsGuestPathHelper`,
+  `QEMUSerialConsole`.
+- `hostctl.transports.serial` -- `SerialConfig`, `SerialHost`, `SerialProcess`,
+  `SerialLike` (the pyserial-shaped port protocol), `SerialFactory`, and the
+  console profiles `SerialConsoleProtocol`, `RawConsoleProfile`,
+  `PromptConsoleProfile`, `LoginStep`.
+- `hostctl.cli` -- `main`, with one subcommand class per module
+  (`hostctl.cli.cat.Cat`, `.cp.Cp`, `.info.Info`, `.ls.Ls`, `.run.Run`,
+  `.shell.Shell`).
+
+The transport packages need their extras; importing one whose dependency is
+missing works, and the first use names the extra to install.
+
 `login_shell` names what parses the command string when it ARRIVES. AsyncSSH
 sends one string and the server hands it to a login shell: on POSIX that is
 `$SHELL -c`, exactly what this package renders for, but Windows OpenSSH's stock
@@ -356,7 +397,7 @@ and `parse_credentials`.
   `local_providers()` returns the local pair: no transport to share, it is the
   pair for a local leg.
 - `input=` is normalized to the stream mode every executor is about to use, by
-  `executor/_common.normalize_input`. Under a text mode (`encoding`/`errors`/
+  `hostctl.executor.normalize_input`. Under a text mode (`encoding`/`errors`/
   `text`) bytes are decoded; under a binary mode str is encoded. This is not
   cosmetic: handing bytes to a text-mode `subprocess` stdin kills its writer
   thread, and the call then blocks forever because the child never sees EOF --
@@ -478,7 +519,7 @@ hostctl applies to whatever you return.
   command to `SSHExecutor`; WinRM provider run delegates its finalized
   PowerShell script to `WinRMExecutor`.
 - `HostInfo` fields are optional; unknown system values remain `None`.
-- A usable `path()` returns `HostPath` (`pathapi.Path`).
+- A usable `path()` returns a `pathapi.Path`.
 - A timeout raises `subprocess.TimeoutExpired` carrying the SAME payload on
   every transport: `.orphaned` (a bool -- `True` when the transport could not
   stop the command, so it is still running there), `.pid` (`None` unless the
@@ -705,7 +746,7 @@ joined with CRLF at the runspace's 120 columns; `RunspaceSession.invoke()`
 returns typed objects, and `invoke(script, *args)` renders its arguments with
 the PowerShell flavour's `structured_command`.
 
-The WinRM executor provider supports PowerShell `run()` and Windows-semantic `WinRMPath`.
+The WinRM executor provider supports PowerShell `run()` and Windows-semantic paths (a `CompositeWindowsPath` over the WinRM path backend).
 The pywinrm leg runs `powershell.exe -NoProfile -NonInteractive -Command -`
 without cmd.exe and sends the script on stdin, so scripts and `run()` commands
 have no command-line cap; every leg shares one 256,000-byte script budget.
@@ -714,7 +755,7 @@ remoting. On that native path
 `server_cert_validation="ignore"` becomes `New-PSSessionOption -SkipCACheck
 -SkipCNCheck` (both checks, matching pywinrm), and the remote exit code is
 carried back explicitly, so a native command failing only by status is
-reported as a failure rather than as success. `WinRMPath.open("rb")` fetches
+reported as a failure rather than as success. A WinRM path's `open("rb")` fetches
 bounded ranges; writable modes stage content and transfer Base64 chunks on
 close. WinRM stdin is
 unsupported. The native leg's `read_timeout_sec` is a total per-call deadline

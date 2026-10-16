@@ -3,23 +3,15 @@
 from __future__ import annotations
 
 import dataclasses
-
-
 import typing
-
 from pathlib import PurePath
-
 from urllib.parse import quote, unquote, urlencode
 
 from pathapi import Pathname
 
 
 from ...shell import ShellFlavourSelection, shell_flavour
-
-
 from ...host._config import HostConfig
-
-
 from ...uri._parse import (
     _refuse_uri,
     path_flavor_name,

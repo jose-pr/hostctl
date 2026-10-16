@@ -4,13 +4,10 @@ from __future__ import annotations
 
 
 import typing
-
 from contextvars import ContextVar
 
 
 from .._registry import entry_points_in
-
-
 from ._config import SystemConfig
 
 _SYSTEM_PROVIDER_RESOLVERS = {}

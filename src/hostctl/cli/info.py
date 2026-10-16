@@ -29,3 +29,8 @@ class Info(HostCommand):
             value = vars(info)
         write(sys.stdout, json.dumps(value, sort_keys=True) + "\n")
         return 0
+
+
+__all__ = [
+    "Info",
+]

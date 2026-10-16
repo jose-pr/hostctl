@@ -4,39 +4,24 @@ from __future__ import annotations
 
 
 import dataclasses
-
-
 import typing
-
-
 from pathlib import PurePath
-
 from urllib.parse import quote, unquote, urlencode
 
 from pathapi import Pathname
 
 
 from ._qga import GuestAgentTransport
-
-
 from ._console import QEMUSerialConsole
-
 from ...shell import ShellFlavourSelection, shell_flavour
-
-
 from ...host._config import HostConfig
-
-
 from ...uri._parse import (
     path_flavor_name,
     path_flavor_selection,
     strict_uri_query,
     uri_hostname,
 )
-
-
 from ..ssh._config import SSHConfig
-
 from ._helper import GuestPathHelper
 
 if typing.TYPE_CHECKING:

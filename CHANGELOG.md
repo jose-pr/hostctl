@@ -18,6 +18,13 @@ Every row ships in 0.4.0. No old name is kept as an alias.
 | `QgaTimeoutError`, `QgaDisconnectedError`, `QgaError` (private module) | `QGATimeoutError`, `QGADisconnectedError`; catch `HostctlError` |
 | `ConsoleProtocolError` from `hostctl.serial` | same name, `hostctl.exceptions`, under `HostctlError` |
 | `SshConfig`, `QemuConfig`, `QemuHost`, `IosConfig`, `IosHost` | `SSHConfig`, `QEMUConfig`, `QEMUHost`, `IOSConfig`, `IOSHost` |
+| `WinRMPath`, `HostPath` in `hostctl` | removed; `host.path()` returns `CompositeWindowsPath`; annotate with `pathapi.Path` |
+| `from hostctl.host import PosixHost, uri_host, ...` | `from hostctl import ...` (homes: `hostctl.system`, `hostctl.uri`; `hostctl.host` holds only `Host`, `HostConfig`, `HostInfo`) |
+| `hostctl.host.qemu`, `.container`, `.serial`, `.system`, `.composite_path` | `hostctl.transports.qemu`, `.container`, `.serial`, `hostctl.system`, `hostctl.paths` |
+| `hostctl.serial` (console profiles) | `hostctl.transports.serial` (still re-exported from `hostctl`) |
+| concrete executors, processes, path backends, `provider.transports`, `shell.posix` etc.; `LocalExecutor` from `hostctl.executor` | internal; flavour classes stay in `hostctl.shell`; `LocalExecutor` is in `hostctl` and `hostctl.transports.local` |
+| `provider.transports.READ_ONLY_PATH_OPERATIONS` | `hostctl.provider.READ_ONLY_PATH_OPERATIONS` |
+| loggers `hostctl.host.ssh`, `hostctl.host.winrm`, `hostctl.host.system`, `hostctl.provider.transports` | `hostctl.transports.ssh`, `hostctl.transports.winrm`, `hostctl.system`, `hostctl.transports.<name>` |
 
 ### Added
 
@@ -85,6 +92,12 @@ Every row ships in 0.4.0. No old name is kept as an alias.
   `QGAProtocolError`, and the exceptions leave `hostctl.provider`,
   `hostctl.executor` and `hostctl.serial` for `hostctl.exceptions`; see
   "Migrating from 0.3".
+- **Breaking, 0.4.0: module paths below `hostctl` moved.** Each transport is
+  one package under `hostctl.transports`, the contracts are `hostctl.host`,
+  `hostctl.executor`, `hostctl.process`, `hostctl.provider`, `hostctl.system`,
+  `hostctl.paths` and `hostctl.uri`, and every public module declares
+  `__all__`; every other module starts with an underscore. The root
+  `__all__` is unchanged apart from the rows in "Migrating from 0.3".
 - A Windows QGA guest's path helper starts `powershell.exe -NoProfile
   -NonInteractive -Command -` and sends the script as the call's `input-data`,
   instead of a base64 `-EncodedCommand` argument. Endpoint-protection

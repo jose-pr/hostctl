@@ -7,14 +7,13 @@ import functools
 import threading
 import typing
 
-from ...executor import LeaseToken, StreamLease
+from ...executor import LeaseToken, StreamLease, raise_normalized
 from ...process import (
     IncrementalTextDecoder,
     ProcessData,
     ReentrantLock,
     _LeasedStreamProcess,
 )
-from ...executor import raise_normalized
 
 
 class QEMUConsoleStream(typing.Protocol):

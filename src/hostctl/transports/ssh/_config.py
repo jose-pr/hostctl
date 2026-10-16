@@ -3,25 +3,16 @@
 from __future__ import annotations
 
 import dataclasses
-
-
 import os
-
-
 import typing
-
 from pathlib import PurePath, PureWindowsPath
-
 from urllib.parse import quote, unquote, urlencode
 
 from pathapi import Pathname, PosixPathname
 
 
 from ...executor import PathLike
-
 from ...host._config import HostConfig
-
-
 from ...uri._parse import (
     _refuse_uri,
     path_flavor_name,
@@ -29,7 +20,6 @@ from ...uri._parse import (
     strict_uri_query,
     uri_hostname,
 )
-
 from ...shell import POSIX_SHELL, ShellFlavourSelection, shell_flavour
 
 if typing.TYPE_CHECKING:

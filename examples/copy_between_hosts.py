@@ -4,7 +4,7 @@ import os
 
 from pathapi.sync import PathSyncer
 
-from hostctl.host._host import Host
+from hostctl import Host
 from hostctl.sync import host_checksum
 
 

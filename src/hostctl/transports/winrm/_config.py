@@ -4,11 +4,7 @@ from __future__ import annotations
 
 
 import dataclasses
-
-
 import typing
-
-
 from urllib.parse import quote, unquote, urlencode
 
 
@@ -20,8 +16,6 @@ from ...uri._parse import (
     uri_host,
     uri_hostname,
 )
-
-
 from ...host._config import HostConfig
 
 WinRMTransport = typing.Literal[

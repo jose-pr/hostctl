@@ -9,13 +9,16 @@ and is not published anywhere.
 
 | path | what lives there |
 | ---- | ---------------- |
-| `src/hostctl/host/` | `Host`, `HostConfig`, URI dispatch, per-transport hosts, composite paths |
-| `src/hostctl/executor/` | one buffered command executor per transport |
-| `src/hostctl/process/` | persistent process adapters (`spawn`, sessions, consoles) |
-| `src/hostctl/shell/` | shell flavours: quoting, script assembly, invocation |
+| `src/hostctl/host/` | the `Host`/`HostConfig` contracts and `Host(uri)`/`HostConfig(uri)` dispatch |
+| `src/hostctl/transports/` | one package per transport (`local`, `ssh`, `winrm`, `container`, `qemu`, `serial`): config, host, executor, process, path backend, providers |
+| `src/hostctl/system/` | `SystemHost` and the POSIX/Windows/IOS hosts composed from providers; system-provider resolvers |
+| `src/hostctl/paths/` | composite paths (routing over providers), staged whole-file I/O, the backend path base |
 | `src/hostctl/provider/` | the provider/selector contracts every transport plugs into |
-| `src/hostctl/serial/` | console profiles (prompt, login, status framing) |
-| `src/hostctl/sync/` | checksum and byte-progress helpers for `pathapi` |
+| `src/hostctl/uri/` | URI parsing, credentials, redaction, `ConnectionString` |
+| `src/hostctl/shell/` | shell flavours: quoting, script assembly, invocation |
+| `src/hostctl/executor.py`, `process.py` | the executor and process contracts and option types |
+| `src/hostctl/exceptions.py` | the `HostctlError` tree |
+| `src/hostctl/sync.py` | checksum and byte-progress helpers for `pathapi` |
 | `src/hostctl/cli/` | the `hostctl` command on `duho`, one module per subcommand |
 | `tests/conformance/` | the cross-transport battery: one contract, every provider |
 | `tests/conformance/inprocess_ssh.py` | an asyncssh server on 127.0.0.1 with a real login shell; backs the `ssh-inproc` leg |
@@ -75,5 +78,10 @@ all named in the CHANGELOG's upgrade notes for that release.
   primitives discards transport-native implementations.
 - **Capabilities are strings**, and a provider may declare one this package's
   enum does not know.
+- **A module without a leading underscore is public** and declares `__all__`;
+  `import X as X` appears only for names in it, and the contract modules never
+  import `transports` or `system` at module level. `tests/test_module_hygiene.py`
+  checks all three. A module stays under 600 lines unless one class alone is
+  bigger (`SystemHost`, `_CompositePathMixin`).
 - Measure before claiming. Several comments in this tree cite a measured
   number because the intuitive answer was wrong.

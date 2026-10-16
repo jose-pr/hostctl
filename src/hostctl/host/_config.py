@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 import abc as _abc
-
-
 import inspect as _inspect
-
-
 import threading as _threading
-
 import typing as _ty
-
 import types as _types
-
 from urllib.parse import (
     SplitResult as _SplitResult,
     unquote as _unquote,
@@ -29,9 +22,7 @@ from ..uri._parse import (
     parse_credentials,
     strict_uri_credentials,
 )
-
 from .._registry import _recursive_subclasses, entry_points_in
-
 from ._dispatch import _T, _abstract, _constructor_signature
 
 

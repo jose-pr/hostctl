@@ -4,9 +4,7 @@ from __future__ import annotations
 
 
 import subprocess
-
 import typing
-
 from pathlib import PureWindowsPath
 
 
@@ -16,37 +14,31 @@ from ._executor import (
     _is_not_found,
     normalize_container_error,
 )
-
-from ...executor import normalize_environment
-
-from ...executor import command_text, raise_normalized
-
+from ...executor import (
+    normalize_environment,
+    command_text,
+    raise_normalized,
+    CaptureOutput,
+    Environment,
+    FileHandle,
+    Input,
+    PathLike,
+)
 from ...exceptions import OperationNotStartedError
-
 from ...provider._selector import ProviderSelector
-
 from ._providers import ContainerArchivePathProvider, ContainerExecutorProvider
-
 from ._process import ContainerProcess
-
 from ...process import Process, TerminalRequest, terminal_options
-
 from ...shell import POWERSHELL, POSIX_SHELL, shell_flavour
-
 from ...shell._flavour import ShellFlavour
-
-from ...executor import CaptureOutput, Environment, FileHandle, Input, PathLike
-
 from ...shell._grammar import Command, starts_direct_command
-
 from ...host._host import Host
 from ...host._info import HostInfo, parse_host_info
 
-from pathapi import Path as HostPath
+from pathapi import Path
 
 
 from ._path import ContainerPathBackend, PosixContainerPath, WindowsContainerPath
-
 from ._config import ContainerConfig, PathnameConstructor
 
 
@@ -267,9 +259,7 @@ class ContainerHost(Host):
             or typing.cast(typing.Optional[str], attrs.get("Architecture")),
         )
 
-    def path(
-        self, *segments: PathLike, backend: typing.Optional[str] = None
-    ) -> HostPath:
+    def path(self, *segments: PathLike, backend: typing.Optional[str] = None) -> Path:
         names = {provider.name for provider in self._path_provider_selector.providers}
         if backend is not None and backend not in (names | {"docker"}):
             raise ValueError(f"unsupported container path backend: {backend!r}")
@@ -287,7 +277,7 @@ class ContainerHost(Host):
                 )
         return provider.path(*segments)
 
-    def _archive_path(self, *segments: PathLike) -> HostPath:
+    def _archive_path(self, *segments: PathLike) -> Path:
         """Build a Docker-archive-backed path with the configured flavour."""
         selection = self.config.path_flavor
         windows = (

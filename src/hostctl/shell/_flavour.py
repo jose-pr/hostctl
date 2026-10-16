@@ -3,27 +3,13 @@
 from __future__ import annotations
 
 import abc
-
 import collections.abc
-
-
 import os
-
-
 import typing
-
-
 from pathlib import Path, PurePath
 
-from ..executor import validate_environment_names
-
-from ..executor import command_text
-
-from ..executor import Environment, PathLike
-
+from ..executor import validate_environment_names, command_text, Environment, PathLike
 from ._grammar import Cmdlet, Command, Exec, PSParam
-
-
 from ._vocabulary import ShellCommand, ShellOperator, ShellTarget, ShellToken
 
 #: Control characters that are ordinary syntax in raw shell source.

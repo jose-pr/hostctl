@@ -4,47 +4,26 @@ from __future__ import annotations
 
 
 import logging
-
-
 import re
-
 import subprocess
-
 import threading
-
 import typing
-
 from pathlib import PureWindowsPath
 
 
-from pathapi import PosixPathname, WindowsPathname
+from pathapi import PosixPathname, WindowsPathname, Path
 
 from ._executor import SSHConnection, SSHExecutor
-
-
 from ...provider._selector import ProviderSelector
-
 from ...process import Process, TerminalRequest
-
 from ._process import SSHProcess
-
 from ...shell._grammar import Command
-
 from ...executor import Environment, PathLike
-
 from ...host._info import HostInfo, parse_host_info
-
-from pathapi import Path as HostPath
-
-
 from ...shell import BASH, CMD, FISH, POWERSHELL, POSIX_SHELL, PWSH, ZSH, shell_flavour
-
 from ...shell._flavour import ShellFlavour
-
 from ...shell._invocation import render_command
-
 from ...shell._vocabulary import ShellCommand
-
 from ._config import PathnameConstructor, SSHConfig
 
 log = logging.getLogger("hostctl.transports.ssh")
@@ -358,7 +337,7 @@ class _SSHTransport:
                     raise normalized from exc
             return self._login_dir
 
-    def path(self, *segments: PathLike) -> HostPath:
+    def path(self, *segments: PathLike) -> Path:
         from ... import _async
 
         SFTPPath = _async.sftppath().SFTPPath

@@ -4,20 +4,17 @@ from __future__ import annotations
 
 
 import pathlib
-
 import typing
 
 from pathapi import Path
 
 from ..exceptions import OperationNotStartedError
-
 from ..provider._contracts import PathProvider
 from ..provider._selector import ProviderSelector
 
 from pathapi.protocols import supports
 
 from ._staged_io import copy_from
-
 from ._forwarding import (
     PathOperation,
     _BACKEND_PROTOCOLS,

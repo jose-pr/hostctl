@@ -5,12 +5,15 @@ caller has to be able to *write*: a host or config to construct, an exception
 to catch, a type to annotate with, an argument to pass, or a contract to
 implement.
 
-Concrete backends and result types the library only ever hands back are not
-listed here and are not part of the stable surface. They remain importable from
-the module that defines them — `hostctl.host.qemu`, `hostctl.host.container_path`,
-`hostctl.host._winrm`, `hostctl.process`, `hostctl.executor`, and
-`hostctl.provider.transports` — but their names and signatures may change
-without a deprecation cycle.
+Each name also has a public home module: `hostctl.host`, `hostctl.exceptions`,
+`hostctl.uri`, `hostctl.system`, `hostctl.provider`, `hostctl.executor`,
+`hostctl.process`, `hostctl.paths`, `hostctl.shell`, `hostctl.sync`,
+`hostctl.cli` and the transport packages `hostctl.transports.local`, `.ssh`,
+`.winrm`, `.container`, `.qemu` and `.serial`. Each declares `__all__`; a name
+outside it, and every module whose name starts with an underscore, is internal
+and may change without a deprecation cycle. Concrete executors, process
+adapters and path backends are internal: a host hands them back typed as
+`pathapi.Path`, `Process` or `Executor`.
 
 ## Hosts and configuration
 
@@ -21,7 +24,6 @@ without a deprecation cycle.
 ::: hostctl.LocalHost
 ::: hostctl.SSHConfig
 ::: hostctl.WinRMConfig
-::: hostctl.WinRMPath
 ::: hostctl.ContainerConfig
 ::: hostctl.ContainerHost
 ::: hostctl.QEMUConfig
@@ -111,9 +113,7 @@ without a deprecation cycle.
 
 ## Aliases and constants
 
-`HostPath` is `pathapi.Path` — the type every usable `host.path()` returns,
-re-exported so callers can annotate against it without depending on
-`pathapi` by name.
+Every usable `host.path()` returns a `pathapi.Path`; annotate with that.
 
 `ExecutorCommand` (`str | pathlib.PurePath | pathapi.Pathname`) is the
 command type accepted by `Executor`.

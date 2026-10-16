@@ -17,6 +17,7 @@ from ...executor import (
     dispatch_output,
     expired,
     wants_text,
+    PathLike,
 )
 from ._executor import SerialExecutor, SerialFactory, SerialLike, SerialSettings
 from ...process import Process, terminal_options
@@ -27,7 +28,6 @@ from ...shell._grammar import Command, starts_direct_command
 from ...host._host import Host
 from ...host._config import HostConfig
 from ...host._info import HostInfo
-from ...executor import PathLike
 from ...uri._parse import strict_uri_query
 
 

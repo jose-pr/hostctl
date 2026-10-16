@@ -159,7 +159,8 @@ the selection trace.
 ### Turning on the log
 
 Every subsystem logs under the `hostctl` namespace — `hostctl.provider`,
-`hostctl.provider.transports`, `hostctl.host.ssh`, `hostctl.host.winrm`. As a
+`hostctl.system`, and one logger per transport (`hostctl.transports.ssh`,
+`hostctl.transports.winrm`, ...). As a
 library, hostctl never installs a handler, never sets a level, and never calls
 `basicConfig()`; the application owns all of that:
 
@@ -344,16 +345,15 @@ selection and pinning, see [`examples/application_provider.py`](https://github.c
 fallback, `OperationNotStartedError`, lives in `hostctl.exceptions`. All of
 them are also re-exported from top-level `hostctl`, so the spellings agree.
 
-`hostctl.provider.transports` holds the adapters the built-in hosts assemble
-themselves from — `LocalExecutorProvider`, `LocalPathProvider`,
-`ContainerExecutorProvider`, `ContainerArchivePathProvider`, `QGAPathProvider`
-— plus the capability frozensets describing what each built-in backend can do.
-`READ_ONLY_PATH_OPERATIONS` is the capability set of a content-only endpoint
--- pass it as `PathProvider(name, factory, capabilities=...)`. They are importable, and reading
-them is the fastest way to see a complete provider, but they are implementation
-detail: nothing outside hostctl constructs them, and they carry no stability
-promise. Write your own `ExecutorProvider`/`PathProvider` instead of
-subclassing one.
+The adapters the built-in hosts assemble themselves from live in the private
+modules of their transport package (`hostctl.transports.local._providers`, and
+so on), with the capability sets describing what each built-in backend can do.
+Reading them is the fastest way to see a complete provider, but they are
+implementation detail: nothing outside hostctl constructs them, and they carry
+no stability promise. Write your own `ExecutorProvider`/`PathProvider` instead
+of subclassing one. `hostctl.provider.READ_ONLY_PATH_OPERATIONS` is the
+capability set of a content-only endpoint -- pass it as
+`PathProvider(name, factory, capabilities=...)`.
 
 ### Upgrading a provider to 0.4
 

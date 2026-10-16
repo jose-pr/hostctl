@@ -3,27 +3,18 @@
 from __future__ import annotations
 
 import datetime
-
 import errno
-
 import io
-
 import ntpath
-
 import posixpath
-
-
 import tarfile
-
 import typing
 
 from pathapi import FileStat
-
 from pathapi.providers import notimplemented
 
 
 from ...paths._backend import PosixBackendPath, WindowsBackendPath
-
 from ._archive import (
     ContainerArchiveClient,
     _ArchiveReadStream,

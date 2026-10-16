@@ -4,16 +4,12 @@ from __future__ import annotations
 
 
 import re
-
 import threading
-
 import typing
 
 
 from ..exceptions import OperationNotStartedError
-
 from ..executor import MASK
-
 from ._contracts import ProviderProbe, ProviderSelection, _LazyName, log
 
 

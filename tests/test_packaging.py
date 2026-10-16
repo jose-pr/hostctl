@@ -107,11 +107,25 @@ def test_the_shipped_header_names_every_public_export():
     no-replay rule included, so a consuming agent reading the header instead
     of the source could not write a provider at all.
     """
+    import importlib
+    import pkgutil
+
     import hostctl
 
     header = (ROOT / "src" / "hostctl" / "AGENTS.md").read_text(encoding="utf-8")
 
-    missing = [name for name in hostctl.__all__ if name not in header]
+    # Every public module's `__all__`, not only the root's: each is a promise.
+    public = ["hostctl"] + [
+        info.name
+        for info in pkgutil.walk_packages(hostctl.__path__, "hostctl.")
+        if not any(part.startswith("_") for part in info.name.split(".")[1:])
+    ]
+    missing = [
+        f"{module}.{name}"
+        for module in public
+        for name in importlib.import_module(module).__all__
+        if name not in header
+    ]
 
     assert missing == []
 

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 
 import subprocess
-
-
 import typing
 
 
@@ -16,12 +14,8 @@ from ._qga import guest_oserror
 
 
 import errno
-
 import os
-
 import stat as _stat
-
-from ._qga import guest_oserror
 
 
 class GuestPathHelper(typing.Protocol):

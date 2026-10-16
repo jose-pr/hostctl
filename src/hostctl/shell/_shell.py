@@ -4,25 +4,22 @@ from __future__ import annotations
 
 
 import copy
-
-
 import inspect
-
-
 import typing
-
 import types
 
 
-from ..executor import ExecutorCapability
-
-from ..executor import masked_environment, run_displayed
-
-from ..executor import CaptureOutput, Environment, FileHandle, Input, PathLike
-
-
+from ..executor import (
+    ExecutorCapability,
+    masked_environment,
+    run_displayed,
+    CaptureOutput,
+    Environment,
+    FileHandle,
+    Input,
+    PathLike,
+)
 from ..process import Process, TerminalRequest
-
 from ._vocabulary import (
     EnvironmentSelection,
     ShellToken,

@@ -36,3 +36,8 @@ class Cp(Credentialed):
                 recursive=self.recursive,
             )
         return 0
+
+
+__all__ = [
+    "Cp",
+]

@@ -4,21 +4,12 @@ from __future__ import annotations
 
 
 import dataclasses
-
 import enum
-
-
 import typing
-
 import types
-
 from pathlib import PurePosixPath
 
-from ..executor import ExecutorCapability
-
-
-from ..executor import Environment, PathLike
-
+from ..executor import ExecutorCapability, Environment, PathLike
 from ._grammar import Command
 
 _Result = typing.TypeVar("_Result", covariant=True)

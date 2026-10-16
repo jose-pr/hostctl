@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 import base64
-
 import binascii
-
-
 import io
-
-
 import typing
-
 import warnings
-
 import uuid
 
 
@@ -21,11 +14,7 @@ from pathapi import FileStat
 
 
 from ...exceptions import QGAProtocolError
-
-
 from ._qga import GuestAgentTransport, guest_oserror
-
-
 from ._helper import GuestPathHelper
 
 

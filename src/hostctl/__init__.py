@@ -1,16 +1,15 @@
 """hostctl -- run commands and access files on a host, local or remote.
 
 Protocol-agnostic host management: concrete hosts expose only the operations
-their providers support. Shell dialect and path flavor remain explicit where
+their providers support. The shell and the path grammar stay explicit where
 the transport cannot identify them.
 
 ``__all__`` is the package's promise: every name here is one a caller must be
 able to *write* -- to construct a host or config, to catch an exception, to
 annotate its own code, to pass as an argument, or to implement at a documented
-extension point. Concrete backends, transport adapters, and result types the
-library only ever hands back are reachable from their defining submodules
-(``hostctl.host.qemu``, ``hostctl.provider.transports``, ``hostctl.process``,
-and so on) but are not part of the stable surface.
+extension point. Each name also has a public home module (``hostctl.host``,
+``hostctl.transports.ssh``, ``hostctl.exceptions``, ...); every other module
+starts with an underscore and is internal.
 """
 
 from __future__ import annotations
@@ -22,76 +21,6 @@ try:
 except PackageNotFoundError:  # not installed (e.g. running from a bare checkout)
     __version__ = "0.0.0.dev0"
 
-from .executor import (
-    Executor as Executor,
-    ExecutorCapability as ExecutorCapability,
-    ExecutorCommand as ExecutorCommand,
-    ExecutionOptions as ExecutionOptions,
-)
-from .transports.local._executor import LocalExecutor as LocalExecutor
-from .transports.winrm._psrp import (
-    pypsrp_available as pypsrp_available,
-    require_pypsrp as require_pypsrp,
-)
-from .transports.container._config import ContainerConfig as ContainerConfig
-from .transports.container._host import ContainerHost as ContainerHost
-from .uri._connection import ConnectionString as ConnectionString
-from .shell._grammar import Cmdlet as Cmdlet, Exec as Exec, PSParam as PSParam
-from .host._host import Host as Host
-from .host._config import HostConfig as HostConfig
-from .host._info import HostInfo as HostInfo
-from pathapi import Path as HostPath
-from .transports.local._host import (
-    LocalConfig as LocalConfig,
-    LocalHost as LocalHost,
-    local_providers as local_providers,
-)
-from .uri._parse import (
-    parse_credentials as parse_credentials,
-    redact_uri as redact_uri,
-    strict_uri_credentials as strict_uri_credentials,
-    strict_uri_query as strict_uri_query,
-    uri_host as uri_host,
-    uri_hostname as uri_hostname,
-)
-from .transports.ssh._providers import ssh_providers as ssh_providers
-from .transports.ssh._config import SSHConfig as SSHConfig
-from .transports.winrm._providers import winrm_providers as winrm_providers
-from .transports.winrm._config import WinRMConfig as WinRMConfig
-from .transports.winrm._path import WinRMPath as WinRMPath
-from .transports.qemu._config import QEMUConfig as QEMUConfig
-from .transports.qemu._host import QEMUHost as QEMUHost
-from .transports.serial._host import (
-    SerialConfig as SerialConfig,
-    SerialHost as SerialHost,
-)
-from .system._config import SystemConfig as SystemConfig
-from .system._host import SystemHost as SystemHost
-from .system._kinds import (
-    PosixConfig as PosixConfig,
-    PosixHost as PosixHost,
-    WindowsConfig as WindowsConfig,
-    WindowsHost as WindowsHost,
-    IOSConfig as IOSConfig,
-    IOSHost as IOSHost,
-)
-from .system._resolvers import (
-    register_system_provider as register_system_provider,
-    system_provider_names as system_provider_names,
-)
-from ._registry import host_schemes as host_schemes
-from .paths._composite import (
-    CompositePosixPath as CompositePosixPath,
-    CompositeWindowsPath as CompositeWindowsPath,
-)
-from .provider._contracts import (
-    ExecutorProvider as ExecutorProvider,
-    PathProvider as PathProvider,
-    ProviderProbe as ProviderProbe,
-    ProviderSelection as ProviderSelection,
-    SessionInitializer as SessionInitializer,
-)
-from .provider._selector import ProviderSelector as ProviderSelector
 from .exceptions import (
     ConsoleProtocolError as ConsoleProtocolError,
     HostctlError as HostctlError,
@@ -103,40 +32,106 @@ from .exceptions import (
     QGATimeoutError as QGATimeoutError,
     TransportError as TransportError,
 )
+from .executor import (
+    ExecutionOptions as ExecutionOptions,
+    Executor as Executor,
+    ExecutorCapability as ExecutorCapability,
+    ExecutorCommand as ExecutorCommand,
+)
+from .host import Host as Host, HostConfig as HostConfig, HostInfo as HostInfo
+from .paths import (
+    CompositePosixPath as CompositePosixPath,
+    CompositeWindowsPath as CompositeWindowsPath,
+)
 from .process import Process as Process, TerminalOptions as TerminalOptions
-from .transports.serial._console import (
-    LoginStep as LoginStep,
-    PromptConsoleProfile as PromptConsoleProfile,
-    RawConsoleProfile as RawConsoleProfile,
-    SerialConsoleProtocol as SerialConsoleProtocol,
+from .provider import (
+    ExecutorProvider as ExecutorProvider,
+    PathProvider as PathProvider,
+    ProviderProbe as ProviderProbe,
+    ProviderSelection as ProviderSelection,
+    ProviderSelector as ProviderSelector,
+    SessionInitializer as SessionInitializer,
+)
+from ._registry import host_schemes as host_schemes
+from .shell import (
+    BASH as BASH,
+    CMD as CMD,
+    FISH as FISH,
+    POSIX_SHELL as POSIX_SHELL,
+    POWERSHELL as POWERSHELL,
+    PWSH as PWSH,
+    ZSH as ZSH,
+    Cmdlet as Cmdlet,
+    Exec as Exec,
+    PSParam as PSParam,
+    Shell as Shell,
+    ShellFlavour as ShellFlavour,
+    ShellOperator as ShellOperator,
+    ShellSession as ShellSession,
+    register_shell_flavour as register_shell_flavour,
+    shell_flavour as shell_flavour,
+    shell_flavour_names as shell_flavour_names,
 )
 from .sync import (
     ProgressReader as ProgressReader,
     host_checksum as host_checksum,
     stat_checksum as stat_checksum,
 )
-from .shell import (
-    BASH as BASH,
-    CMD as CMD,
-    FISH as FISH,
-    POWERSHELL as POWERSHELL,
-    POSIX_SHELL as POSIX_SHELL,
-    PWSH as PWSH,
-    ZSH as ZSH,
-    register_shell_flavour as register_shell_flavour,
-    shell_flavour as shell_flavour,
-    shell_flavour_names as shell_flavour_names,
+from .system import (
+    IOSConfig as IOSConfig,
+    IOSHost as IOSHost,
+    PosixConfig as PosixConfig,
+    PosixHost as PosixHost,
+    SystemConfig as SystemConfig,
+    SystemHost as SystemHost,
+    WindowsConfig as WindowsConfig,
+    WindowsHost as WindowsHost,
+    register_system_provider as register_system_provider,
+    system_provider_names as system_provider_names,
 )
-from .shell._shell import Shell as Shell, ShellSession as ShellSession
-from .shell._flavour import ShellFlavour as ShellFlavour
-from .shell._vocabulary import ShellOperator as ShellOperator
+from .transports.container import (
+    ContainerConfig as ContainerConfig,
+    ContainerHost as ContainerHost,
+)
+from .transports.local import (
+    LocalConfig as LocalConfig,
+    LocalExecutor as LocalExecutor,
+    LocalHost as LocalHost,
+    local_providers as local_providers,
+)
+from .transports.qemu import QEMUConfig as QEMUConfig, QEMUHost as QEMUHost
+from .transports.serial import (
+    LoginStep as LoginStep,
+    PromptConsoleProfile as PromptConsoleProfile,
+    RawConsoleProfile as RawConsoleProfile,
+    SerialConfig as SerialConfig,
+    SerialConsoleProtocol as SerialConsoleProtocol,
+    SerialHost as SerialHost,
+)
+from .transports.ssh import SSHConfig as SSHConfig, ssh_providers as ssh_providers
+from .transports.winrm import (
+    WinRMConfig as WinRMConfig,
+    winrm_providers as winrm_providers,
+)
+from .transports.winrm._psrp import (
+    pypsrp_available as pypsrp_available,
+    require_pypsrp as require_pypsrp,
+)
+from .uri import (
+    ConnectionString as ConnectionString,
+    parse_credentials as parse_credentials,
+    redact_uri as redact_uri,
+    strict_uri_credentials as strict_uri_credentials,
+    strict_uri_query as strict_uri_query,
+    uri_host as uri_host,
+    uri_hostname as uri_hostname,
+)
 
 __all__ = [
     # Hosts and configuration
     "Host",
     "HostConfig",
     "HostInfo",
-    "HostPath",
     "LocalConfig",
     "LocalHost",
     "local_providers",
@@ -151,7 +146,6 @@ __all__ = [
     "winrm_providers",
     "SSHConfig",
     "WinRMConfig",
-    "WinRMPath",
     "ContainerConfig",
     "ContainerHost",
     "QEMUConfig",

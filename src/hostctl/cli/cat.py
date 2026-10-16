@@ -20,3 +20,8 @@ class Cat(HostCommand):
         with self.connect() as host:
             write(sys.stdout, host.path(self.path).read_bytes())
         return 0
+
+
+__all__ = [
+    "Cat",
+]

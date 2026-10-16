@@ -7,12 +7,8 @@ safety."""
 from __future__ import annotations
 
 import dataclasses
-
 import inspect
-
 import logging
-
-
 import typing
 
 from pathapi import Path

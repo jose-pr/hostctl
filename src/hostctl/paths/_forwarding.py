@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import inspect
-
 import itertools
-
 import os
-
-
 import typing
 
 from pathapi import Path

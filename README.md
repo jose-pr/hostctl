@@ -181,13 +181,15 @@ Paths retain their selected provider and expose it through `.provider` and
 `.via(name)`:
 
 ```python
-from hostctl import ExecutorProvider, PathProvider, PosixHost, LocalExecutor, HostPath
+from pathapi import Path
+
+from hostctl import ExecutorProvider, PathProvider, PosixHost, LocalExecutor
 
 host = PosixHost(
     executor_providers=(ExecutorProvider("ssh", ssh_executor),
                         ExecutorProvider("local", LocalExecutor())),
     path_providers=(PathProvider("sftp", sftp_path),
-                    PathProvider("rpc", lambda *p: HostPath(*p))),
+                    PathProvider("rpc", lambda *p: Path(*p))),
 )
 path = host.path("etc", "hosts")
 print(path.provider.name)
@@ -234,14 +236,18 @@ program serves every subcommand as an MCP tool over stdio.
 
 | Module | Purpose |
 | --- | --- |
-| `hostctl.host` | Shared contracts and built-in host providers |
-| `hostctl.host.container` | `ContainerConfig`, `ContainerHost` |
-| `hostctl.host.qemu` | `QEMUConfig`, `QEMUHost` |
-| `hostctl.host.serial` | `SerialConfig`, `SerialHost` |
-| `hostctl.provider` | Ordered executor/path provider composition |
-| `hostctl.executor` | Transport-specific command executors |
-| `hostctl.shell` | Shell flavours and persistent sessions |
+| `hostctl` | Everything a common task needs, re-exported from the modules below |
+| `hostctl.host` | `Host`, `HostConfig`, `HostInfo`: the contracts every transport implements |
+| `hostctl.exceptions` | `HostctlError` and the exception tree |
+| `hostctl.uri` | `ConnectionString` and the URI/credential helpers |
+| `hostctl.system` | Hosts composed from ordered providers: `PosixHost`, `WindowsHost`, ... |
+| `hostctl.provider` | Executor/path provider contracts and selection |
+| `hostctl.executor` | The `Executor` protocol, option types and stream helpers |
+| `hostctl.process` | Persistent process and terminal contracts |
+| `hostctl.paths` | `CompositePosixPath`, `CompositeWindowsPath` |
+| `hostctl.shell` | Shell flavours, command markers and persistent sessions |
 | `hostctl.sync` | Remote checksum and byte-progress helpers for `pathapi` |
+| `hostctl.transports.local`, `.ssh`, `.winrm`, `.container`, `.qemu`, `.serial` | One package per transport: its config, host and providers |
 | `hostctl.cli` | The `hostctl` command line (`main`); needs the `cli` extra |
 
 ## Development

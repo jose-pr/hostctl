@@ -7,11 +7,8 @@ import typing
 
 
 from ...exceptions import OperationNotStartedError
-
 from ...provider._contracts import ExecutorProvider, PathProvider, ProviderProbe
 from ...provider._selector import ProviderSelector
-
-
 from ._config import SSHConfig
 from ._transport import _SSHTransport, log
 

@@ -3,26 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-
 import contextlib
-
-
 import itertools
-
 import json
-
 import math
-
 import re
-
-
 import socket
-
 import subprocess
-
 import threading
-
-
 import typing
 
 from ...exceptions import (
@@ -32,7 +20,6 @@ from ...exceptions import (
     QGAProtocolError,
     QGATimeoutError,
 )
-
 from ._qga import _QGAFramedSession, _QGARequestNotSerializable
 
 #: libvirt's own error codes, so a `libvirtError` can be classified without

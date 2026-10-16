@@ -34,3 +34,8 @@ class Run(HostCommand):
         write(sys.stdout, result.stdout)
         write(sys.stderr, result.stderr)
         return int(result.returncode)
+
+
+__all__ = [
+    "Run",
+]

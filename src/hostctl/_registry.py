@@ -4,8 +4,6 @@ from __future__ import annotations
 
 
 import importlib.metadata as _metadata
-
-
 import typing as _ty
 
 if _ty.TYPE_CHECKING:

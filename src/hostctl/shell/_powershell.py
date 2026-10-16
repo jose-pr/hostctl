@@ -7,8 +7,7 @@ import subprocess
 import typing
 from pathlib import PureWindowsPath
 
-from ..executor import Environment, PathLike
-from ..executor import POWERSHELL_STATUS
+from ..executor import Environment, PathLike, POWERSHELL_STATUS
 from ._vocabulary import (
     ShellCommand,
     ShellOperator,
