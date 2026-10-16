@@ -12,7 +12,7 @@ A config declares its scheme and overrides two hooks:
 
 - `@classmethod _from_parsed_uri(cls, parsed, **credentials) -> MyConfig` builds
   the config from a `urlsplit` result. Use `strict_uri_query`,
-  `strict_uri_credentials` and `uri_host`.
+  `strict_uri_credentials`, `uri_host` and `uri_hostname`.
 - `_create_host(self) -> Host` returns the host. Callers reach it through
   `config.open()` or `with config as host`, never directly.
 
@@ -81,6 +81,130 @@ point after the scheme users will reach for most; the rest still resolve.
 A subclass that defines its own `__init__` need not call `super().__init__()`
 -- `with config as host:` works either way -- but calling it is cheaper and
 keeps the lifecycle state on the instance.
+
+## A worked application host
+
+An application that manages one kind of machine usually wants both halves: a
+config with its own URI scheme, and a host that is a `PosixHost` (so `run()`,
+`path()`, `spawn()` and provider failover are inherited) plus the operations
+only that machine has. This is the shape of an appliance reached over SSH,
+with a second, application-specific path provider behind SFTP:
+
+```python
+from hostctl import (
+    HostConfig,
+    PathProvider,
+    PosixHost,
+    SSHConfig,
+    ssh_providers,
+    strict_uri_query,
+    uri_host,
+    uri_hostname,
+)
+
+
+class ApplianceConfig(HostConfig, schemes=("appliance",)):
+    """`appliance://user@host:port`: an appliance reached over SSH."""
+
+    uri_credentials = ("password",)
+
+    def __init__(self, host, *, port=22, username="admin", password=None):
+        super().__init__()
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+
+    @property
+    def connection_uri(self):
+        port = "" if self.port == 22 else f":{self.port}"
+        return f"appliance://{self.username}@{uri_host(self.host)}{port}"
+
+    def __repr__(self):
+        return f"ApplianceConfig({self.connection_uri!r})"
+
+    @classmethod
+    def _from_parsed_uri(cls, parsed, **credentials):
+        strict_uri_query(parsed, ())
+        return cls(
+            uri_hostname(parsed),
+            port=parsed.port or 22,
+            username=parsed.username or "admin",
+            password=credentials.get("password"),
+        )
+
+    def _create_host(self):
+        return ApplianceHost(self)
+
+
+class ApplianceHost(PosixHost):
+    """POSIX semantics over SSH, plus what only this appliance has."""
+
+    config_type = ApplianceConfig
+
+    def __init__(self, config, **options):
+        ssh = SSHConfig(
+            config.host,
+            port=config.port,
+            username=config.username,
+            password=config.password,
+        )
+        # One call, so both providers share one SSH transport.
+        executor, sftp = ssh_providers(ssh)
+        api = PathProvider("api", self._api_path, capabilities={"open_read", "read"})
+        super().__init__(
+            config,
+            executor_providers=(executor,),
+            path_providers=(sftp, api),
+            **options,
+        )
+
+    def _api_path(self, *segments):
+        raise NotImplementedError("the appliance's file API")
+
+    def firmware(self):
+        return self.run(["cat", "/etc/version"], encoding="utf-8").stdout.strip()
+
+
+config = HostConfig("appliance://admin:secret@nas.example:2222")
+assert isinstance(config, ApplianceConfig)
+assert str(config) == "appliance://admin@nas.example:2222"
+
+host = config.open()  # nothing connects until the first operation
+assert isinstance(host, PosixHost)
+assert [provider.name for provider in host.path_providers] == ["sftp", "api"]
+host.close()
+```
+
+`host.firmware()` would then open the SSH connection and run the command.
+
+What each piece does:
+
+- `schemes=("appliance",)` registers the scheme when the class is defined, so
+  `HostConfig("appliance://...")` and `Host("appliance://...")` dispatch to it
+  in this process; an entry point (above) makes it work in a fresh one.
+- `uri_credentials` is the list of secrets dispatch lets through: the URI's
+  password arrives as `credentials["password"]`, and `HostConfig(uri,
+  passwrd=...)` raises instead of building a config without one.
+- `connection_uri` renders the config with no secret, and `str(config)` is the
+  same string; `repr` is overridden so the password stays out of logs.
+- `_from_parsed_uri` gets the `urlsplit` result. `strict_uri_query` refuses a
+  query key the scheme does not define, and `uri_hostname` keeps the host's
+  case where `parsed.hostname` would fold it.
+- `_create_host` is what `config.open()` and `with config as host` call.
+- `config_type` names the config class the host belongs to.
+- `ssh_providers()` returns the executor and SFTP path providers sharing one
+  transport; building them separately would open two connections. Further
+  providers follow in order: a path operation the SFTP provider declines
+  before dispatch goes to `api`, and nothing that may have started is ever
+  retried. `host.path_providers` and `host.last_selection` show what was
+  composed and chosen.
+- `firmware()` is the application's own operation, built on the inherited
+  `run()`.
+
+A host built this way is a `PosixHost`, so it can be handed to anything
+written against `hostctl` -- `host_checksum()`, `Path.copy()` between hosts,
+the command line's `hostctl run appliance://...` once the scheme is installed.
 
 An API client and a transport are usually different objects. Prefer composition:
 

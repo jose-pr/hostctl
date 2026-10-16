@@ -44,6 +44,8 @@ installed, importing nothing.
 ## Hosts and configs (`hostctl.host`)
 
 A config is the target and how to reach it; a host is the open connection.
+The URI form, keywords and credentials of every transport's config are in the
+Connecting guide, <https://jose-pr.github.io/hostctl/guide/connecting/>.
 Every config takes its target positionally and everything else by keyword: a
 second positional argument raises `TypeError`, so an SSH port is always
 `port=2222` (a static type checker still reads each dataclass's generated
@@ -102,7 +104,9 @@ Implementing a config: `class MyConfig(HostConfig, schemes=("mine",))` with
 using `strict_uri_query`, `strict_uri_credentials`, `uri_host` and
 `uri_hostname`; `_create_host` returns the host that `config.open()` and
 `with config as host` hand out. The single underscore means "override in a
-subclass, never call"; there is no `from_uri`.
+subclass, never call"; there is no `from_uri`. A worked application config
+and `PosixHost` subclass is in
+<https://jose-pr.github.io/hostctl/guide/extending/>.
 
 - `uri_credentials` makes dispatch reject any other credential before
   construction, so `passwrd=` fails loudly; `None` (the default) skips the
@@ -266,8 +270,10 @@ SystemHost.runspace()
 ```
 
 - A system host takes a `HostConfig`, never a connection string, and the
-  providers to compose; each subclass names its `config_type`. `IOSHost` is
-  session/command-only: it has no path grammar, so `path()` raises.
+  providers to compose. `config_type` names the config class a host belongs
+  to; constructed with no config, a host builds `config_type()` (`PosixHost()`
+  a `PosixConfig()`). `IOSHost` is session/command-only: it has no path
+  grammar, so `path()` raises.
 - `executor_providers` and `path_providers` are the ordered tuples the host
   was composed from; `provider_details` reports availability without
   dispatching.

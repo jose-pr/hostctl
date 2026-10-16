@@ -4,8 +4,10 @@
 
 - **local host** → a `pathapi.Path` local implementation which is also a
   stdlib `pathlib.Path`;
-- **SSH host** → an `sftppath.SFTPPath` (the `ssh` extra);
-- **WinRM host** → a Windows-semantic `CompositeWindowsPath` backed by PowerShell.
+- **SSH host** → a `CompositePosixPath` over an `sftppath.SFTPPath` backend
+  (the `ssh` extra), or a `CompositeWindowsPath` for a Windows path flavour;
+- **WinRM host** → a `CompositeWindowsPath` over the WinRM backend, which
+  drives PowerShell;
 - **container host** → a POSIX- or Windows-semantic archive-backed
   `pathapi.Path`, selected from container inspection.
 - **QEMU guest** → a POSIX- or Windows-semantic QGA file-RPC path, selected
@@ -17,6 +19,10 @@ for entry in host.path("/etc").iterdir():
 
 host.path("/tmp/example.txt").write_text("hello")
 ```
+
+A composite path keeps the logical path and picks a provider per operation;
+`path.provider` is the one selected and `path.via(name)` pins one. The
+[Systems and providers](providers.md) guide covers selection and pinning.
 
 Container archive paths support metadata, traversal, streaming reads, and
 buffered write/append/exclusive-create without requiring a shell in the image.
@@ -38,7 +44,7 @@ rename, removal, and permissions require a positively probed helper;
 unavailable operations raise `NotImplementedError` -- including the exclusive
 `x` modes, which are refused by `open()` itself rather than at close-time.
 
-A WinRM path's `open("rb")` fetches bounded binary ranges through PowerShell.
+On a WinRM host's path, `open("rb")` fetches bounded binary ranges through PowerShell.
 Writable modes stage data for close-time chunked write-back. Write-back happens
 only on an explicit `close()` (or the context-manager exit); `flush()` does not
 commit, and an abandoned writable stream is discarded with a
@@ -47,7 +53,7 @@ commit, and an abandoned writable stream is discarded with a
 apply. Reparse points are reported as symlink-style metadata; following one
 resolves its target once and raises `OSError` when unresolved.
 
-A WinRM path's `symlink_to()` issues `New-Item -ItemType SymbolicLink`. Windows
+On a WinRM host's path, `symlink_to()` issues `New-Item -ItemType SymbolicLink`. Windows
 only permits this from an elevated session or with Developer Mode enabled;
 otherwise the privilege failure is normalized to `PermissionError`.
 `readlink()` reports the reparse point's stored target.
