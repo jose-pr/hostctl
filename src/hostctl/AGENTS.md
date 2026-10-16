@@ -495,6 +495,9 @@ Behaviour:
   (tables as on the other legs, CRLF-joined, 120 columns).
 - A WinRM path's `open("rb")` fetches bounded ranges; writable modes stage
   content and transfer Base64 chunks on close (see "Paths").
+- A WinRM path supports pathapi's `Utime`: `_utime()` sets the UTC last-write
+  and last-access times to NTFS's 100 ns tick (truncated), on a read-only
+  file too; `stat()` reports whole seconds.
 
 ```python
 RunspaceSession(config=None, *, pool=None)
@@ -531,6 +534,13 @@ Windows paths. `client_factory` builds the Docker client (default:
   exclusive-create, `symlink_to()` and `readlink()`; `mkdir`, remove, rename
   and `chmod` raise `NotImplementedError`. `iterdir()`/`walk()` pull one
   archive per directory, so list a large tree through `run()`.
+- `_utime()` (pathapi's `Utime`) is not an archive call: it execs
+  `touch -c -d @SECONDS.NANOSECONDS` as uid 0 in a Linux container (whole
+  seconds on busybox) and the WinRM PowerShell script through `powershell.exe`
+  in a Windows one. One probe per path backend decides
+  `supports(path, Utime)`; a container without the program, or a client
+  without `exec_run`, answers False and `_utime()` raises
+  `NotImplementedError`.
 - An overwrite keeps the existing file's owner and mode; a new file is uid/gid
   0, mode 0644, and `username=` applies to exec only. `exists()` and
   `open("x")` read one member header. A path taken before
@@ -575,6 +585,10 @@ its enabled command list.
   listing skips any name that is not one path component; `open("rb")` is
   seekable where `guest-file-seek` is advertised. A path handed out before
   `QEMUHost.close()` refuses instead of reconnecting.
+- `_utime()` (pathapi's `Utime`) needs the helper too, and
+  `supports(path, Utime)` is False without one. Times are kept to the
+  nanosecond on a GNU guest, whole seconds on busybox, 100 ns on Windows;
+  `stat()` reports whole seconds.
 - A guest-agent error reply raises `QGACommandError`, which path operations
   translate into the matching `OSError`; a malformed or oversized reply
   raises `QGAProtocolError` (see "Exceptions").
@@ -590,6 +604,7 @@ GuestPathHelper.unlink(path, *, missing_ok=False)
 GuestPathHelper.rmdir(path)
 GuestPathHelper.rename(path, target, *, replace=False)
 GuestPathHelper.chmod(path, mode, *, follow_symlinks=True)
+GuestPathHelper.utime(path, *, atime=None, mtime=None)
 PosixGuestPathHelper(run)
 PosixGuestPathHelper.probe(run)
 WindowsGuestPathHelper.probe(run)
@@ -599,13 +614,16 @@ WindowsGuestPathHelper.probe(run)
 one, discovery probes a built-in. `run(program, *args, **options)` returns a
 `subprocess.CompletedProcess` (a QEMU host's `executor` is one). `probe(run)`
 returns a helper, or `None` when the guest cannot support it, and the guest
-keeps its read/write-only paths.
+keeps its read/write-only paths. `utime` is optional on a supplied helper:
+without it the paths do not support `Utime`.
 
 - `PosixGuestPathHelper` drives GNU `stat -c` and `find -printf` (proven by
   `stat -c %f -- /` answering hex). Every path is an argv element after `--`,
   so a leading `-` is data and nothing is interpolated into shell text;
   `find` takes no `--`, so it gets an absolute path or one anchored with `./`.
-  Of a regular file, `scandir` lists nothing.
+  Of a regular file, `scandir` lists nothing. `utime` runs `stat -L`, then
+  `touch -c -d @SECONDS.NANOSECONDS` (`-a`/`-m` for one time); a busybox
+  `invalid date` for the fraction switches it to whole seconds, floored.
 - `WindowsGuestPathHelper` sends the WinRM path backend's PowerShell scripts
   over `guest-exec` as `powershell.exe -Command -` with the script as input,
   so no script is on the command line; it refuses what Windows cannot express.
@@ -1008,7 +1026,9 @@ copies but cannot be pickled: it is bound to a live host.
   implement them. No provider is probed, and the answer is advisory.
 - WinRM, container and QGA backend paths share one base. `rename()` onto a
   path of another host raises `OSError(EXDEV)`, which `move()` takes as the
-  cue to copy and delete; `chmod()` takes a mode int or an octal string. A
+  cue to copy and delete; `chmod()` takes a mode int or an octal string;
+  `_utime()` hands both times to the backend, so `touch()` of an existing
+  file moves its time where the backend can set one. A
   write stream (`open("w")`, `"r+"`, `"a"`) uploads once on `close()` and is
   closed even when the upload fails, so write again to retry.
   `pathlib.Path(src).copy(dest)` onto such a path raises `FileExistsError`
@@ -1028,8 +1048,9 @@ has no transfer engine of its own.
 
 - `stat_checksum(entry)` is rsync's quick check: the cached `(size, mtime)`,
   reading no content. It misses a change that keeps both, and settles only on
-  a target that takes a modification time (local and SSH paths do; WinRM,
-  container and QGA paths do not, so every sync there copies again).
+  a target that takes a modification time: local, SSH and WinRM paths do, a
+  QGA path with a guest helper and a container path with `touch` (or
+  `powershell.exe`) do; elsewhere every sync copies again.
 - `host_checksum(*hosts, ...)` returns a `PathSyncer` checksum that hashes a
   path on the host owning it (`<algorithm>sum` under a POSIX-family shell,
   `Get-FileHash` or `certutil` under PowerShell or cmd) rather than streaming

@@ -44,10 +44,12 @@ def stat_checksum(entry: PathAndStat) -> tuple[int, float]:
 
     It settles only where the target can take a modification time.
     ``PathSyncer`` copies the source's modification time onto a target that
-    supports pathapi's ``Utime``: local paths and an SSH host's paths do, so a
-    repeated sync there is a no-op.  WinRM, container and QEMU guest paths do
-    not, so a file copied there lands with a fresh modification time and
-    compares unequal on the next run -- the sync re-copies it.
+    supports pathapi's ``Utime``, so a repeated sync there is a no-op: local,
+    SSH and WinRM paths do, a QEMU guest path with a guest helper does, and a
+    container path does when the container has ``touch`` or
+    ``powershell.exe``.  Elsewhere a file copied lands with a fresh
+    modification time and compares unequal on the next run -- the sync
+    re-copies it.
 
     Where the target cannot hold the time, use :func:`host_checksum` when
     hostctl's own copies must converge to a no-op.

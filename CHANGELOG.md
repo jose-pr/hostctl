@@ -111,6 +111,16 @@ collection until pytruenas ports to these names.
   in "Extending hostctl": a `HostConfig` subclass with its own scheme
   composing a `PosixHost` subclass from SSH providers and an application
   path provider. This ships in 0.4.0.
+- WinRM, container and QEMU guest paths set modification times (pathapi's
+  `Utime`), so `PathSyncer` carries the source's mtime across and a
+  `stat_checksum` sync into them converges instead of re-copying every file.
+  WinRM paths and Windows guests use PowerShell (100 ns, a read-only file
+  included); a POSIX guest with a path helper uses `touch -c -d @EPOCH`
+  (nanoseconds on GNU, whole seconds on busybox); a container path execs
+  `touch` as uid 0 or `powershell.exe`, since the archive API has no time
+  call. `supports(path, Utime)` is False for a guest without a helper and a
+  container without the program. `GuestPathHelper` gains an optional
+  `utime(path, *, atime=None, mtime=None)`.
 
 ### Changed
 

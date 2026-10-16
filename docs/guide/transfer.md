@@ -69,11 +69,12 @@ PathSyncer(stat_checksum).sync(source.path("/src"), target.path("/dst"))
 Two caveats decide whether it fits. It can **miss** a content change which
 preserves both size and modification time. And it settles only where the
 target can take a modification time: `PathSyncer` copies the source's
-modification time onto a target that supports pathapi's `Utime`, which local
-paths and an SSH host's paths do, so a repeated `stat_checksum` sync there is
-a no-op. WinRM, container and QEMU guest paths do not support `Utime`, so a
-file copied there lands with a fresh modification time, compares unequal on
-the next run, and is copied again.
+modification time onto a target that supports pathapi's `Utime`, so a
+repeated `stat_checksum` sync there is a no-op. Local, SSH and WinRM paths do;
+a QEMU guest path does when the guest has a path helper, and a container path
+when the container has `touch` (Linux) or `powershell.exe` (Windows). Where a
+target does not, a file copied there lands with a fresh modification time,
+compares unequal on the next run, and is copied again.
 
 Choose `host_checksum` where the target cannot hold the time and hostctl's own
 copies must converge.
