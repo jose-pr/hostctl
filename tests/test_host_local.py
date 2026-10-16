@@ -300,6 +300,10 @@ def test_a_non_payload_input_fails_at_once_instead_of_hanging():
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="needs a POSIX terminal")
+@pytest.mark.skipif(
+    sys.platform == "darwin" and sys.version_info < (3, 10),
+    reason="pty.spawn never sees EOF on macOS before Python 3.10 (bpo-26228)",
+)
 def test_a_timeout_keeps_the_controlling_terminal(monkeypatch):
     """`timeout=` started a new session, so a child that opens /dev/tty
     failed ENXIO where the same call without a timeout worked."""
