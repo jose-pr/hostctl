@@ -9,6 +9,7 @@ import typing
 import types
 
 from ..._extras import _require
+from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT
 from ...executor import (
     CaptureOutput,
     command_text,
@@ -239,11 +240,12 @@ class RunspaceSession:
             "auth": auth,
             "cert_validation": bool(getattr(config, "verify", True)),
             "encryption": encryption,
-            "connection_timeout": getattr(config, "read_timeout", 30),
-            # Whole seconds for the WS-Man header, rounded up.
-            "operation_timeout": math.ceil(getattr(config, "operation_timeout", 20)),
-            "read_timeout": getattr(config, "read_timeout", 30),
+            "operation_timeout": _OPERATION_TIMEOUT,
+            "read_timeout": _READ_TIMEOUT,
         }
+        connect_timeout = getattr(config, "connect_timeout", None)
+        if connect_timeout is not None:
+            kwargs["connection_timeout"] = connect_timeout
         return RunspacePool(WSMan(**kwargs))
 
     def connect(self) -> None:
@@ -289,9 +291,9 @@ class RunspaceSession:
     def _invoke_within(self, pipeline: typing.Any, timeout: float) -> object:
         """Run `pipeline` for at most `timeout` seconds, then stop it."""
         started = time.monotonic()
-        # Each Receive asks the server for an answer within this many whole
-        # seconds, shortened to what is left of the deadline.
-        longest = math.ceil(getattr(self._config, "operation_timeout", 20))
+        # Each Receive asks the server for an answer within the operation
+        # timeout (whole seconds), shortened to what is left of the deadline.
+        longest = _OPERATION_TIMEOUT
         pipeline.begin_invoke()
         while _pipeline_state_name(pipeline.state) == "Running":
             remaining = timeout - (time.monotonic() - started)

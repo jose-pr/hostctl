@@ -7,7 +7,6 @@ import logging
 import os
 import subprocess
 import threading
-import math
 import typing
 
 
@@ -28,7 +27,7 @@ from ...host._info import HostInfo, parse_host_info
 from ...shell import POWERSHELL
 from ...shell._flavour import ShellFlavour
 from ...shell._vocabulary import wants_epilogue
-from ._config import WinRMConfig
+from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT, WinRMConfig
 from ._path import WinRMPath, WinRMPathBackend
 
 log = logging.getLogger(__name__)
@@ -143,11 +142,10 @@ class _NativeLeg(_SessionLeg):
             ssl=self.config.tls,
             port=self.config.port,
             timeout=self.config.timeout,
-            # The per-request bound PowerShell remoting has. Against a host
-            # that accepts TCP and never answers (Windows PowerShell 5.1),
-            # -OpenTimeout 5 s / 60 s / 180 s (the default) ended the call
-            # after 18.5 / 70.5 / 190.4 s; -OperationTimeout 5 s alone did not.
-            open_timeout=self.config.read_timeout,
+            # Against a host that accepts TCP and never answers (Windows
+            # PowerShell 5.1), -OpenTimeout 5 s / 60 s / 180 s (the default)
+            # ended the call after 18.5 / 70.5 / 190.4 s.
+            open_timeout=self.config.connect_timeout,
             transport=self.config.auth,
             verify=self.config.verify,
             message_encryption=self.config.message_encryption,
@@ -161,11 +159,11 @@ class _PywinrmLeg(_SessionLeg):
 
     def __init__(self, config: WinRMConfig) -> None:
         super().__init__(config)
-        # `transport_timeout` is the read timeout: a timeout pywinrm
-        # raises itself is one HTTP request outliving it.
+        # `transport_timeout` is the read limit: a timeout pywinrm raises
+        # itself is one HTTP request outliving it.
         self.executor = WinRMExecutor(
             lambda: self.session,
-            lambda: float(self.config.read_timeout),
+            lambda: float(_READ_TIMEOUT),
             accepts_timeout=True,
         )
 
@@ -179,24 +177,24 @@ class _PywinrmLeg(_SessionLeg):
             ) from exc
         # `winrm.Session` still owns endpoint and auth handling; only its
         # protocol is used, because `run_ps` goes through cmd.exe.
-        return _PywinrmStdinSession(
-            winrm.Session(
-                self.config.endpoint,
-                auth=(self.config.username, self.config.password),
-                transport=self.config.auth,
-                # pywinrm's own keywords. Whole seconds, rounded up so a
-                # fraction never shortens a deadline; the read deadline must
-                # stay above the operation timeout after rounding.
-                server_cert_validation="validate" if self.config.verify else "ignore",
-                message_encryption=self.config.message_encryption,
-                operation_timeout_sec=math.ceil(self.config.operation_timeout),
-                read_timeout_sec=max(
-                    math.ceil(self.config.read_timeout),
-                    math.ceil(self.config.operation_timeout) + 1,
-                ),
-            ).protocol,
-            timeout=self.config.timeout,
-        )
+        protocol = winrm.Session(
+            self.config.endpoint,
+            auth=(self.config.username, self.config.password),
+            transport=self.config.auth,
+            # pywinrm's own keywords.
+            server_cert_validation="validate" if self.config.verify else "ignore",
+            message_encryption=self.config.message_encryption,
+            operation_timeout_sec=_OPERATION_TIMEOUT,
+            read_timeout_sec=_READ_TIMEOUT,
+        ).protocol
+        if self.config.connect_timeout is not None:
+            # pywinrm hands this attribute to `requests` as the `timeout=` of
+            # every request, so a `(connect, read)` pair splits the two.
+            protocol.transport.read_timeout_sec = (
+                self.config.connect_timeout,
+                _READ_TIMEOUT,
+            )
+        return _PywinrmStdinSession(protocol, timeout=self.config.timeout)
 
 
 class _PSRPLeg(_Leg):

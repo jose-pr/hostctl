@@ -172,8 +172,7 @@ def test_winrm_config_exposes_secure_transport_settings():
         tls=True,
         verify=True,
         message_encryption="always",
-        operation_timeout=40,
-        read_timeout=50,
+        connect_timeout=10,
     )
     assert config.endpoint == "https://host:5986/wsman"
     assert config.verify is True
@@ -748,13 +747,12 @@ def test_the_native_session_gets_the_configured_deadline(monkeypatch):
     monkeypatch.setenv("USERNAME", "admin")
     monkeypatch.delenv("USERDOMAIN", raising=False)
     transport = winrm_module._WinRMTransport(
-        WinRMConfig("server", username="admin", read_timeout=45, timeout=90)
+        WinRMConfig("server", username="admin", connect_timeout=45, timeout=90)
     )
     transport._leg.session
     del _os
 
-    # `read_timeout` keeps its per-request meaning: it bounds opening the
-    # remote session, never the command.
+    # `connect_timeout` bounds opening the remote session, never the command.
     assert built["timeout"] == 90
     assert built["open_timeout"] == 45
 

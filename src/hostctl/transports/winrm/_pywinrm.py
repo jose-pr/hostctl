@@ -142,8 +142,8 @@ class _PywinrmStdinSession:
         """Collect output until the command ends or `limit` seconds pass.
 
         Checked between Receives: a server holds each one for up to the
-        operation timeout when the command prints nothing, so the deadline is
-        noticed within `operation_timeout` of passing.
+        WS-Man operation timeout when the command prints nothing, so the
+        deadline is noticed within that long (20 s) of passing.
         """
         retry = _receive_timeouts()
         stdout, stderr = [], []
@@ -287,6 +287,10 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
             return exc
         if isinstance(exc, winrm.exceptions.AuthenticationError):
             return PermissionError(str(exc))
+        if isinstance(exc, requests.exceptions.ConnectTimeout):
+            # Also a `Timeout`, but this request never reached the server: a
+            # failure to connect, as the native leg reports its `-OpenTimeout`.
+            return ConnectionError(str(exc))
         if isinstance(
             exc,
             (

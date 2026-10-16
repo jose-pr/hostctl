@@ -136,8 +136,8 @@ def test_winrms_uri_round_trip_keeps_secrets_separate():
         tls=True,
         auth="kerberos",
         message_encryption="always",
-        operation_timeout=40,
-        read_timeout=50,
+        connect_timeout=12.5,
+        timeout=None,
     ).open()
     uri = source.connection_uri
     assert "top-secret" not in uri
