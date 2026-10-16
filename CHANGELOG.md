@@ -257,7 +257,7 @@ collection until pytruenas ports to these names.
   building one. Change `pathlib_next` imports as
   pathapi's changelog says: `pathlib_next.utils.sync` is `pathapi.sync`,
   `pathlib_next.utils.stat.FileStat` is `pathapi.FileStat`.
-  - The `ssh` extra is `asyncssh>=2.20,<3` and `sftppath[asyncssh]>=0.1.0,<0.2`,
+  - The `ssh` extra is `asyncssh>=2.20,<3` and `sftppath[asyncssh]>=0.1.1,<0.2`,
     in place of `pathlib_next[sftp-async]`. An SSH host's path is an
     `sftppath.SFTPPath`, and its `str()` is the path on the server where it
     was `sftp://host:22/...`.
@@ -342,6 +342,11 @@ collection until pytruenas ports to these names.
 
 ### Fixed
 
+- Reading a directory as a file over SSH raises `IsADirectoryError` against
+  OpenSSH too (sftppath 0.1.1, now the floor of the `ssh` extra); it returned
+  `b""` from a Windows server and a bare `OSError("Failure")` from Linux.
+- `SSHConfig(connect_timeout=None)` round-trips through `connection_uri` (an
+  empty `connect_timeout=`); the URI it rendered could not be parsed.
 - On Windows, a process without a console no longer opens a console window
   for every local command: the local executor starts children with
   `CREATE_NO_WINDOW` unless the caller passes `creationflags=`, and so does

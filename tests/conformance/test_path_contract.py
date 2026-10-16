@@ -87,27 +87,7 @@ def test_path_names_containing_uri_syntax_address_the_right_file(
         assert path.read_bytes() == b"addressed"
 
 
-def _error_type_legs():
-    for provider in contract_providers():
-        windows_server = os.environ.get("HOSTCTL_TEST_SSH_FLAVOUR") == "windows"
-        if provider.name == "ssh-local":
-            # OpenSSH's sftp-server opens a directory for reading on both
-            # platforms; the read then fails or comes back empty.
-            reason = (
-                "Windows OpenSSH: an unsized read of a directory returns b'' "
-                "(asyncssh reads fstat's st_size, 0)"
-                if windows_server
-                else "OpenSSH reports EISDIR on read as SSH_FX_FAILURE, which "
-                "arrives as a bare OSError('Failure')"
-            )
-            yield pytest.param(
-                provider, marks=pytest.mark.xfail(strict=True, reason=reason)
-            )
-        else:
-            yield provider
-
-
-@pytest.mark.parametrize("provider", tuple(_error_type_legs()), ids=lambda p: p.name)
+@pytest.mark.parametrize("provider", contract_providers(), ids=lambda p: p.name)
 def test_path_error_types(provider, tmp_path):
     if "path" not in provider.capabilities:
         pytest.skip(f"{provider.name} has no path capability")

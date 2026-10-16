@@ -46,8 +46,9 @@ dependencies = ["pathapi>=0.1.0,<0.2", "netimps>=0.4.0,<0.5"]
 # SSH-backed run()/path(): asyncssh for shell exec, sftppath's SFTPPath for
 # the remote path backend. The asyncssh floor is sftppath's own: its
 # connection cache calls `SSHClientConnection.is_closed()`, absent before
-# 2.20, so an older asyncssh could not serve the path leg.
-ssh = ["asyncssh>=2.20,<3", "sftppath[asyncssh]>=0.1.0,<0.2"]
+# 2.20, so an older asyncssh could not serve the path leg. sftppath 0.1.1 is
+# the first that raises IsADirectoryError for a directory OpenSSH opens.
+ssh = ["asyncssh>=2.20,<3", "sftppath[asyncssh]>=0.1.1,<0.2"]
 # Windows Remote Management command execution.
 winrm = ["pywinrm>=0.5.0,<0.6"]
 # PowerShell Remoting Protocol runspaces (Python 3.10+ only).  The marker
