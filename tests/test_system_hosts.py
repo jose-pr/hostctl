@@ -355,7 +355,9 @@ def test_a_transport_config_opens_the_system_family_its_paths_select():
 
     assert isinstance(SSHConfig("host", pathname=WindowsPathname).open(), WindowsHost)
     assert isinstance(SSHConfig("host").open(), PosixHost)
-    assert isinstance(WinRMConfig("host", username="user").open(), WindowsHost)
+    assert isinstance(
+        WinRMConfig("host", username="user", password="x").open(), WindowsHost
+    )
 
 
 def test_transport_configs_compose_system_hosts_without_uri_changes():

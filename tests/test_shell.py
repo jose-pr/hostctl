@@ -544,7 +544,7 @@ def test_fish_uses_native_environment_and_boolean_syntax():
 
 def test_host_builds_shell_from_its_flavour_and_executor():
     ssh = _SSHTransport(SSHConfig("host", shell="powershell"))
-    winrm = _WinRMTransport(WinRMConfig("host", username="user"))
+    winrm = _WinRMTransport(WinRMConfig("host", username="user", password="x"))
 
     assert Shell(ssh.shell_flavour, ssh.executor).flavour is POWERSHELL
     assert Shell(winrm.shell_flavour, winrm.executor).flavour is POWERSHELL

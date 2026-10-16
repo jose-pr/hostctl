@@ -870,7 +870,15 @@ def fake_providers() -> tuple[Provider, ...]:
         Provider(
             "winrm",
             lambda: _fake(FakeWinRMHost),
-            frozenset(("run", "path", "args", "cwd", "env", "symlink", "local-python")),
+            # Its commands run in this machine's PowerShell as a Windows
+            # server's would: pwsh on POSIX is not that (an unsuffixed
+            # program, terminal mode sequences on stdout), so paths only.
+            frozenset(
+                ("run", "path", "args", "cwd", "env", "symlink", "local-python")
+                if os.name == "nt"
+                else ("path", "symlink", "local-python")
+            ),
+            unexercised=frozenset() if os.name == "nt" else frozenset(("run",)),
         ),
         Provider(
             "container",

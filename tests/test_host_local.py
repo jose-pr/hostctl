@@ -310,7 +310,7 @@ def test_a_timeout_keeps_the_controlling_terminal(monkeypatch):
 
     child = (
         "import os, sys\n"
-        "from hostctl.executor import LocalExecutor\n"
+        "from hostctl.transports.local import LocalExecutor\n"
         'code = \'import os\\ntry:\\n open("/dev/tty").close(); print("tty ok")\\n'
         'except OSError as e:\\n print("tty FAIL", e.errno)\\n\'\n'
         "r = LocalExecutor()(sys.executable, '-c', code, timeout=30)\n"

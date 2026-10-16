@@ -185,7 +185,7 @@ def test_transport_system_hosts_have_safe_info_fallback_without_connection(
     monkeypatch.setattr(_winrm._WinRMTransport, "connect", refuse)
 
     ssh = Host("ssh://root@example.com")
-    winrm = Host("winrm://user@example.com")
+    winrm = Host("winrm://user@example.com", password="x")
 
     assert ssh.info().hostname == "example.com"
     assert winrm.info().hostname == "example.com"
