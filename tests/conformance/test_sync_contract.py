@@ -241,13 +241,23 @@ def test_path_syncer_converges_where_the_target_sets_mtimes(provider, tmp_path):
 
     with provider_context(provider) as host:
         if provider.name == "container":
-            pytest.skip("container archive paths cannot create directories")
-        source = conformance_path(host, provider, tmp_path, "mtime-source")
-        target = conformance_path(host, provider, tmp_path, "mtime-target")
-        source.mkdir(parents=True, exist_ok=True)
-        (source / "one.txt").write_bytes(b"one payload")
+            # Archive paths cannot create a directory: sync one file.
+            source = conformance_path(host, provider, tmp_path, "mtime-source.txt")
+            target = conformance_path(host, provider, tmp_path, "mtime-target.txt")
+            file = source
+        else:
+            source = conformance_path(host, provider, tmp_path, "mtime-source")
+            target = conformance_path(host, provider, tmp_path, "mtime-target")
+            source.mkdir(parents=True, exist_ok=True)
+            file = source / "one.txt"
+        file.write_bytes(b"one payload")
         if not supports(target, Utime):
             pytest.skip(f"{provider.name} paths cannot set an mtime (no Utime)")
+        # An hour back, so a copy written in the same second as its source
+        # cannot match it by coincidence.
+        aged = int(file.stat().st_mtime) - 3600
+        if not conformance_utime(host, provider, file, (aged, aged)):
+            pytest.skip(f"{provider.name} source cannot be backdated for this check")
 
         copied = []
 
@@ -257,6 +267,9 @@ def test_path_syncer_converges_where_the_target_sets_mtimes(provider, tmp_path):
 
         PathSyncer(stat_checksum, hook=hook).sync(source, target)
         assert len(copied) == 1
+        copied_file = target if file is source else target / file.name
+        # Every target here reports whole seconds.
+        assert int(copied_file.stat().st_mtime) == aged
         copied.clear()
         PathSyncer(stat_checksum, hook=hook).sync(source, target)
 
