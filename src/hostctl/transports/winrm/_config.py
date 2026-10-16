@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import dataclasses
+import os
 import typing
 from urllib.parse import quote, unquote, urlencode
 
@@ -17,6 +18,12 @@ from ...uri._parse import (
 )
 from ...host._config import HostConfig
 from ...host._dispatch import _keyword_only
+from ...host._verify import (
+    _TLSVerify,
+    _tls_verify,
+    _verify_from_query,
+    _verify_query_text,
+)
 from ...host._timeout import (
     _URI_TIMEOUT_KEYS,
     _TimeoutField,
@@ -53,6 +60,14 @@ _REMOVED_QUERY_KEYS = (
     "read_timeout_sec",
 )
 
+#: Why the native leg refuses a CA bundle: PowerShell remoting's session
+#: options can skip certificate checks but cannot name a trust source.
+_NATIVE_BUNDLE = (
+    "WinRMConfig: native WinRM trusts the Windows certificate store and takes "
+    "no CA bundle; import the CA there, or use provider='pywinrm' or 'psrp' "
+    "(with password= or auth='kerberos')"
+)
+
 
 @_keyword_only()
 @dataclasses.dataclass
@@ -73,7 +88,11 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     auth: WinRMAuth = "ntlm"
     port: typing.Optional[int] = None
     tls: bool = False
-    verify: bool = True
+    #: `True` checks the server certificate with each leg's default trust
+    #: (native: the Windows certificate store; pywinrm and PSRP: `requests`'
+    #: default), `False` checks nothing, a path is the CA bundle trusted
+    #: instead (pywinrm and PSRP only). Stored as `bool` or `str`.
+    verify: typing.Union[bool, str, "os.PathLike[str]"] = True
     message_encryption: MessageEncryption = "auto"
     #: `total` is the default of `run(timeout=)` on every leg (30 s);
     #: `connect` bounds establishing the connection or session (30 s), and
@@ -94,8 +113,15 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             raise ValueError("port must be between 1 and 65535")
         if self.auth not in typing.get_args(WinRMAuth):
             raise ValueError(f"unsupported WinRM auth: {self.auth}")
-        if not isinstance(self.verify, bool):
-            raise TypeError("verify must be True or False")
+        self.verify = _tls_verify("WinRMConfig", self.verify)
+        if isinstance(self.verify, str):
+            if not self.tls:
+                raise ValueError(
+                    "WinRMConfig: a CA bundle (verify=path) needs tls=True "
+                    "(winrms://); plain HTTP has no certificate to check"
+                )
+            if self.provider == "native":
+                raise ValueError(_NATIVE_BUNDLE)
         if self.message_encryption not in typing.get_args(MessageEncryption):
             raise ValueError("message_encryption must be 'auto', 'always', or 'never'")
         if self.provider not in typing.get_args(WinRMProviderName):
@@ -142,7 +168,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
         query = urlencode(
             {
                 "auth": self.auth,
-                "verify": str(self.verify).lower(),
+                "verify": _verify_query_text(typing.cast(_TLSVerify, self.verify)),
                 "message_encryption": self.message_encryption,
             }
         )
@@ -192,7 +218,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             port=parsed.port,
             tls=parsed.scheme.casefold() == "winrms",
             auth=typing.cast(WinRMAuth, query.get("auth", "ntlm")),
-            verify=_query_bool(query, "verify", True),
+            verify=_verify_from_query(query, bundle=True),
             message_encryption=typing.cast(
                 MessageEncryption,
                 query.get("message_encryption", "auto"),

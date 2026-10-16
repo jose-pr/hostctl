@@ -10,6 +10,7 @@ import types
 from ..._extras import _require
 from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT
 from ...host._timeout import DEFAULT, _config_timeouts
+from ...host._verify import _ca_bundle
 from ...executor import (
     BufferedExecutor,
     ExecutorCapability,
@@ -137,6 +138,17 @@ _PSRP_AUTH = {
 }
 
 
+def _cert_validation(verify: object) -> typing.Union[bool, str]:
+    """pypsrp's `cert_validation`: a bool, or the CA bundle trusted instead.
+
+    pypsrp gives a path to `requests` as `verify=`, which then trusts neither
+    certifi nor `REQUESTS_CA_BUNDLE`.
+    """
+    if isinstance(verify, str):
+        return _ca_bundle(verify)
+    return verify is not False
+
+
 class RunspaceSession:
     """A persistent PSRP runspace with typed PowerShell pipeline streams.
 
@@ -186,7 +198,7 @@ class RunspaceSession:
             "password": getattr(config, "password", None),
             "ssl": ssl,
             "auth": auth,
-            "cert_validation": bool(getattr(config, "verify", True)),
+            "cert_validation": _cert_validation(getattr(config, "verify", True)),
             "encryption": encryption,
             "operation_timeout": _OPERATION_TIMEOUT,
             "read_timeout": _READ_TIMEOUT,

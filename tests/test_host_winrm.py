@@ -653,11 +653,17 @@ def test_winrm_config_rejects_invalid_transport_settings(kwargs):
         WinRMConfig("host", username="user", password="password", **kwargs)
 
 
-def test_winrm_verify_is_a_boolean():
+def test_winrm_verify_is_a_boolean_or_a_bundle():
     from hostctl import HostConfig
 
     with pytest.raises(TypeError, match="verify"):
-        WinRMConfig("host", username="user", password="password", verify="ignore")
+        WinRMConfig("host", username="user", password="password", verify=None)
+    assert (
+        WinRMConfig(
+            "host", username="user", password="password", tls=True, verify="ignore"
+        ).verify
+        == "ignore"
+    )
     config = HostConfig("winrms://user@host?verify=false")
     assert config.verify is False
     assert "verify=false" in config.connection_uri

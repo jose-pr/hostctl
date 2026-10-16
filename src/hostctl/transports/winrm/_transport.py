@@ -28,6 +28,7 @@ from ...shell import POWERSHELL
 from ...shell._flavour import ShellFlavour
 from ...shell._vocabulary import wants_epilogue
 from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT, WinRMConfig
+from ...host._verify import _ca_bundle
 from ...executor import _OMITTED, _Omitted
 from ._path import WinRMPath, WinRMPathBackend
 
@@ -176,6 +177,12 @@ class _PywinrmLeg(_SessionLeg):
                 "WinRM support requires the 'winrm' extra: "
                 "pip install hostctl[winrm]"
             ) from exc
+        verify = self.config.verify
+        trust: typing.Dict[str, object] = {}
+        if isinstance(verify, str):
+            # A given `ca_trust_path` replaces both `REQUESTS_CA_BUNDLE` and
+            # certifi; pywinrm hands it to `requests` as `verify=`.
+            trust["ca_trust_path"] = _ca_bundle(verify)
         # `winrm.Session` still owns endpoint and auth handling; only its
         # protocol is used, because `run_ps` goes through cmd.exe.
         protocol = winrm.Session(
@@ -183,10 +190,11 @@ class _PywinrmLeg(_SessionLeg):
             auth=(self.config.username, self.config.password),
             transport=self.config.auth,
             # pywinrm's own keywords.
-            server_cert_validation="validate" if self.config.verify else "ignore",
+            server_cert_validation="ignore" if verify is False else "validate",
             message_encryption=self.config.message_encryption,
             operation_timeout_sec=_OPERATION_TIMEOUT,
             read_timeout_sec=_READ_TIMEOUT,
+            **trust,
         ).protocol
         connect = self.config.timeouts.connect
         if connect is not None:

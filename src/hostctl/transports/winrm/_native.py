@@ -11,6 +11,7 @@ import typing
 from ..._windows import no_window_flags
 from ...executor import POWERSHELL_STATUS, expired
 from ...executor import _OMITTED, _Omitted
+from ._config import _NATIVE_BUNDLE
 from ._pywinrm import _Response, _b64
 
 #: Emitted by the remote script block and consumed by the local wrapper.
@@ -66,7 +67,7 @@ class NativeWinRMSession:
         timeout: typing.Optional[float] = None,
         open_timeout: typing.Optional[float] = None,
         transport: str = "ntlm",
-        verify: bool = True,
+        verify: typing.Union[bool, str] = True,
         message_encryption: str = "auto",
     ) -> None:
         self.host = host
@@ -85,12 +86,11 @@ class NativeWinRMSession:
                 "native WinRM cannot override WS-Man message encryption; "
                 "use message_encryption='auto' or the pywinrm provider"
             )
-        if ssl and not verify:
-            # PowerShell remoting can skip certificate checks, but only when
-            # explicitly requested; keep this visible in the generated options.
-            self._skip_ca_check = True
-        else:
-            self._skip_ca_check = False
+        if isinstance(verify, str):
+            raise ValueError(_NATIVE_BUNDLE)
+        # PowerShell remoting can skip certificate checks, but only when
+        # explicitly requested; keep this visible in the generated options.
+        self._skip_ca_check = ssl and verify is False
 
     def _wrapper(self, script: str, marker: typing.Optional[str] = None) -> str:
         """Build the local PowerShell program that performs one remote call.
