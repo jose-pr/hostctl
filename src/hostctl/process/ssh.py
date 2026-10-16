@@ -48,7 +48,7 @@ class _AsyncsshProcess(typing.Protocol):
     def wait_closed(self) -> typing.Awaitable[None]: ...
 
 
-class SshProcess(Process):
+class SSHProcess(Process):
     """Synchronous facade over a process owned by hostctl's AsyncSSH loop."""
 
     def __init__(
@@ -206,7 +206,7 @@ class SshProcess(Process):
         self._call(lambda: self._process.wait_closed())
         self._closed = True
 
-    def __enter__(self) -> SshProcess:
+    def __enter__(self) -> SSHProcess:
         return self
 
     def __exit__(

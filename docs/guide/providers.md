@@ -2,18 +2,18 @@
 
 A **system** is what you are talking to; a **provider** is how you reach it.
 Keeping those separate is the point of `PosixHost`, `WindowsHost`, and
-`IosHost`: the operating-system semantics stay put when the access mechanism
+`IOSHost`: the operating-system semantics stay put when the access mechanism
 changes.
 
-`IosHost` is deliberately session- and command-only: it configures no shell
+`IOSHost` is deliberately session- and command-only: it configures no shell
 flavour and no path grammar, so commands must be `Exec(...)` (or raw text the
 device understands) and `path()` raises `NotImplementedError` until an IOS
 path grammar exists.
 
 ## System versus transport
 
-Historically a host was named for its transport — `SshHost`, `WinRMHost`. But a
-transport does not identify the target. SSH reaches Linux, BSD, network
+A host is not named for its transport: there is no SSH host class or WinRM host
+class, because a transport does not identify the target. SSH reaches Linux, BSD, network
 appliances, and application command environments alike, and execution and file
 access often travel over different channels (SSH plus SFTP, WinRM plus
 PowerShell file helpers, container exec plus archive).
@@ -42,9 +42,9 @@ There is no second priority number to reconcile.
 A transport config opens the system host its path flavour selects:
 
 ```python
-from hostctl import SshConfig, WinRMConfig
+from hostctl import SSHConfig, WinRMConfig
 
-posix = SshConfig("server.example", username="root").open()
+posix = SSHConfig("server.example", username="root").open()
 windows = WinRMConfig("server.example", "admin").open()
 ```
 
@@ -55,7 +55,7 @@ ordered, percent-encoded, secret-free provider descriptors in repeated
 `executor=` and `path=` queries:
 
 ```python
-from hostctl import HostConfig, PathProvider, SshConfig, register_system_provider
+from hostctl import HostConfig, PathProvider, SSHConfig, register_system_provider
 
 # `sftp` is built in; `rpc` resolves only once something registers it.
 def rpc(config, kind):
@@ -65,7 +65,7 @@ register_system_provider("rpc", rpc)
 
 config = HostConfig(
     "posix://node?executor=ssh&path=sftp&path=rpc",
-    provider_options={"ssh": SshConfig("node", username="root")},
+    provider_options={"ssh": SSHConfig("node", username="root")},
 )
 ```
 
@@ -209,7 +209,7 @@ winrm available    True
 ```
 
 `last_selection` is `()` before the first `run()`, and `()` for a host whose
-`run()` does not choose between providers (`QemuHost`, `SerialHost`). Each call
+`run()` does not choose between providers (`QEMUHost`, `SerialHost`). Each call
 returns a fresh copy, so mutating it cannot disturb selector state.
 
 ### The redaction guarantee, and its limits
@@ -346,7 +346,7 @@ them are also re-exported from top-level `hostctl`, so the spellings agree.
 
 `hostctl.provider.transports` holds the adapters the built-in hosts assemble
 themselves from — `LocalExecutorProvider`, `LocalPathProvider`,
-`ContainerExecutorProvider`, `ContainerArchivePathProvider`, `QgaPathProvider`
+`ContainerExecutorProvider`, `ContainerArchivePathProvider`, `QGAPathProvider`
 — plus the capability frozensets describing what each built-in backend can do.
 `READ_ONLY_PATH_OPERATIONS` is the capability set of a content-only endpoint
 -- pass it as `PathProvider(name, factory, capabilities=...)`. They are importable, and reading

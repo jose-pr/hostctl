@@ -14,7 +14,7 @@ from hostctl import (
     ContainerConfig,
     HostConfig,
     PosixConfig,
-    SshConfig,
+    SSHConfig,
     WinRMConfig,
     redact_uri,
 )
@@ -96,7 +96,7 @@ def test_an_encoded_c0_or_c1_control_character_is_refused(uri):
 @pytest.mark.parametrize(
     "build",
     (
-        lambda uri: SshConfig(uri),
+        lambda uri: SSHConfig(uri),
         lambda uri: WinRMConfig(uri, "u"),
         lambda uri: ContainerConfig(uri),
         lambda uri: PosixConfig(uri),

@@ -22,15 +22,15 @@ from pathapi.protocols import Chmod, Create, Listing, Move, Remove, Stat
 from pathapi.providers import notimplemented
 
 from ..exceptions import QGAProtocolError
-from ..executor import QemuExecutor
+from ..executor import QEMUExecutor
 from ..executor._qga import (
     GuestAgentTransport,
     LibvirtGuestAgentTransport,
     guest_oserror,
-    SshUnixGuestAgentTransport,
+    SSHUnixGuestAgentTransport,
     UnixSocketGuestAgentTransport,
 )
-from ..process import Process, QemuSerialConsole
+from ..process import Process, QEMUSerialConsole
 from ..shell import (
     POWERSHELL,
     POSIX_SHELL,
@@ -56,16 +56,16 @@ from ._common import (
     uri_hostname,
 )
 from ._backend_path import PosixBackendPath, WindowsBackendPath
-from ._ssh import SshConfig, _SshTransport
+from ._ssh import SSHConfig, _SSHTransport
 
-QemuTransport = typing.Literal["libvirt", "unix", "ssh"]
+QEMUTransport = typing.Literal["libvirt", "unix", "ssh"]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
-QemuShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
-QemuPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
+QEMUShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
+QEMUPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
 
 
 @dataclasses.dataclass
-class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
+class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
     """Guest identity, QGA transport, and guest semantic selections."""
 
     #: Declared rather than enforced inside `_from_parsed_uri`, so the
@@ -82,10 +82,10 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
     )
 
     domain: str
-    transport: QemuTransport = "libvirt"
+    transport: QEMUTransport = "libvirt"
     connection: typing.Optional[str] = None
     socket_path: typing.Optional[str] = None
-    ssh: typing.Optional[SshConfig] = dataclasses.field(default=None, repr=False)
+    ssh: typing.Optional[SSHConfig] = dataclasses.field(default=None, repr=False)
     agent_timeout: float = 10.0
     #: Largest QGA reply this host will accept, in bytes. qemu-ga caps its
     #: own captured output at 16 MiB per stream and sends it Base64-encoded
@@ -94,12 +94,12 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
     #: could not be told to raise. A rejected reply is not recoverable: the
     #: output is already gone.
     max_reply_size: int = 48 * 1024 * 1024
-    dialect: QemuShellSelection = "auto"
-    path_flavor: QemuPathSelection = "auto"
+    dialect: QEMUShellSelection = "auto"
+    path_flavor: QEMUPathSelection = "auto"
     transport_factory: typing.Optional[typing.Callable[[], GuestAgentTransport]] = (
         dataclasses.field(default=None, repr=False, compare=False)
     )
-    serial_console: typing.Optional[QemuSerialConsole] = dataclasses.field(
+    serial_console: typing.Optional[QEMUSerialConsole] = dataclasses.field(
         default=None, repr=False, compare=False
     )
     #: Guest-side helper supplying the metadata and namespace operations QGA
@@ -116,7 +116,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         HostConfig.__init__(self)
         if not self.domain or "\x00" in self.domain:
             raise ValueError("domain must not be empty or contain NUL")
-        if self.transport not in typing.get_args(QemuTransport):
+        if self.transport not in typing.get_args(QEMUTransport):
             raise ValueError(f"unsupported QEMU transport: {self.transport}")
         if self.agent_timeout <= 0:
             raise ValueError("agent_timeout must be positive")
@@ -125,7 +125,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         if self.transport == "unix" and not self.socket_path:
             raise ValueError("unix QGA transport requires socket_path")
         if self.transport == "ssh" and self.ssh is None:
-            raise ValueError("SSH QGA transport requires an SshConfig")
+            raise ValueError("SSH QGA transport requires an SSHConfig")
         if self.transport != "ssh" and self.ssh is not None:
             raise ValueError("ssh config requires transport='ssh'")
         if self.dialect != "auto":
@@ -154,7 +154,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
                 f"qga+unix:///{quote(self.socket_path or '', safe='')}?"
                 f"{urlencode(query)}"
             )
-        ssh = typing.cast(SshConfig, self.ssh)
+        ssh = typing.cast(SSHConfig, self.ssh)
         query["socket_path"] = self.socket_path or (
             f"/run/qemu-server/{self.domain}.qga"
         )
@@ -181,7 +181,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         return cls.uri_credentials
 
     @classmethod
-    def _from_parsed_uri(cls, parsed, **credentials: object) -> QemuConfig:
+    def _from_parsed_uri(cls, parsed, **credentials: object) -> QEMUConfig:
         scheme = parsed.scheme.casefold()
         query = strict_uri_query(
             parsed,
@@ -244,7 +244,7 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             raise ValueError("SSH QGA URI requires user, host, and domain")
         from netimps import get_default_port
 
-        ssh = SshConfig(
+        ssh = SSHConfig(
             uri_hostname(parsed),
             port=parsed.port or get_default_port("ssh"),
             username=unquote(parsed.username),
@@ -260,8 +260,8 @@ class QemuConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             **common,
         )
 
-    def _create_host(self) -> QemuHost:
-        return QemuHost(self)
+    def _create_host(self) -> QEMUHost:
+        return QEMUHost(self)
 
 
 #: Sentinel: the guest helper has not been probed yet. `None` is a real
@@ -272,10 +272,10 @@ log = logging.getLogger(__name__)
 _UNPROBED = object()
 
 
-class QemuHost(Host):
+class QEMUHost(Host):
     """A guest OS reached through QEMU Guest Agent."""
 
-    def __init__(self, config: QemuConfig) -> None:
+    def __init__(self, config: QEMUConfig) -> None:
         self.config = config
         # Lazy initialisation is racy without this. Two threads reaching
         # `transport` first each built a transport, each opened its own SSH
@@ -283,18 +283,18 @@ class QemuHost(Host):
         # a connection nobody owned and `close()` could not reach.
         self._lock = threading.RLock()
         self._transport: typing.Optional[GuestAgentTransport] = None
-        self._ssh_transport: typing.Optional[_SshTransport] = None
+        self._ssh_transport: typing.Optional[_SSHTransport] = None
         self._commands: typing.Optional[typing.FrozenSet[str]] = None
         self._os_info: typing.Mapping[str, object] = {}
         self._hostname: typing.Optional[str] = None
         #: qemu-ga's `guest-info` version string, once discovered.
         self._agent_version: typing.Optional[str] = None
-        self._executor = QemuExecutor(
+        self._executor = QEMUExecutor(
             lambda: self.transport,
             agent_timeout=config.agent_timeout,
             merged_capture=self._merges_output,
         )
-        self._path_backend: typing.Optional[QgaPathBackend] = None
+        self._path_backend: typing.Optional[QGAPathBackend] = None
         #: The probed guest helper, or `None` once probing has failed.
         #: `_UNPROBED` distinguishes "not asked yet" from "asked, no helper".
         self._path_helper: object = _UNPROBED
@@ -325,7 +325,7 @@ class QemuHost(Host):
                 )
             else:
                 ssh_transport = typing.cast(
-                    SshConfig, self.config.ssh
+                    SSHConfig, self.config.ssh
                 )._create_transport()
                 try:
                     ssh_transport.connect()
@@ -339,7 +339,7 @@ class QemuHost(Host):
                 socket_path = self.config.socket_path or (
                     f"/run/qemu-server/{self.config.domain}.qga"
                 )
-                self._transport = SshUnixGuestAgentTransport(
+                self._transport = SSHUnixGuestAgentTransport(
                     socket_path,
                     lambda: ssh_transport.ssh,
                     timeout=self.config.agent_timeout,
@@ -348,7 +348,7 @@ class QemuHost(Host):
         return self._transport
 
     @property
-    def executor(self) -> QemuExecutor:
+    def executor(self) -> QEMUExecutor:
         return self._executor
 
     @property
@@ -555,7 +555,7 @@ class QemuHost(Host):
         if backend not in (None, "qga"):
             raise ValueError(f"unsupported QEMU path backend: {backend!r}")
         if self._path_backend is None:
-            self._path_backend = QgaPathBackend(
+            self._path_backend = QGAPathBackend(
                 self.transport,
                 supported_commands=self.supported_commands,
                 helper=self.config.path_helper or self._guest_path_helper(),
@@ -566,12 +566,12 @@ class QemuHost(Host):
             self._path_provider is None
             or self._path_provider.backend is not path_backend
         ):
-            from ..provider.transports import QgaPathProvider
+            from ..provider.transports import QGAPathProvider
 
             # The provider declares exactly the operations the probed guest
             # agent supports, so an unavailable metadata/mutation RPC is
             # rejected rather than routed to a different backend.
-            self._path_provider = QgaPathProvider(self._qga_path, path_backend)
+            self._path_provider = QGAPathProvider(self._qga_path, path_backend)
         if not self._path_provider.probe().usable:
             raise NotImplementedError("guest agent does not provide usable file RPCs")
         return self._path_provider.path(*segments)
@@ -589,7 +589,7 @@ class QemuHost(Host):
         working, and only the operations that genuinely need a helper are
         unavailable.
 
-        `QemuConfig(path_helper=...)` overrides this entirely.
+        `QEMUConfig(path_helper=...)` overrides this entirely.
         """
         if self._path_helper is not _UNPROBED:
             return self._path_helper
@@ -630,8 +630,8 @@ class QemuHost(Host):
             )
         )
         if windows:
-            return WindowsQemuPath(*(segments or ("C:\\",)), backend=path_backend)
-        return PosixQemuPath(*(segments or ("/",)), backend=path_backend)
+            return WindowsQEMUPath(*(segments or ("C:\\",)), backend=path_backend)
+        return PosixQEMUPath(*(segments or ("/",)), backend=path_backend)
 
     def run(
         self,
@@ -726,7 +726,7 @@ class GuestPathHelper(typing.Protocol):
     def chmod(self, path: str, mode: int, *, follow_symlinks: bool = True) -> None: ...
 
 
-class QgaPathBackend:
+class QGAPathBackend:
     """Bounded file transfer plus capability-gated guest path helpers."""
 
     chunk_size = 48 * 1024
@@ -891,7 +891,7 @@ class QgaPathBackend:
 
     def open_read(self, path: str) -> io.BufferedReader:
         self._require(self._READ_COMMANDS)
-        return io.BufferedReader(_QgaReadStream(self, path))
+        return io.BufferedReader(_QGAReadStream(self, path))
 
     def _write_direct(self, path: str, value: bytes) -> None:
         self._require(self._WRITE_COMMANDS)
@@ -1035,10 +1035,10 @@ class QgaPathBackend:
         )
 
 
-class _QgaReadStream(io.RawIOBase):
+class _QGAReadStream(io.RawIOBase):
     """Lazy QGA guest-file-read stream with one bounded request per fill."""
 
-    def __init__(self, backend: QgaPathBackend, path: str) -> None:
+    def __init__(self, backend: QGAPathBackend, path: str) -> None:
         self._backend = backend
         self._path = path
         self._handle: typing.Optional[int] = None
@@ -1129,7 +1129,7 @@ _HELPER_OPERATIONS = {
 }
 
 
-class _QgaPathMixin:
+class _QGAPathMixin:
     __slots__ = ()
 
     def _supports(self, protocol) -> typing.Optional[bool]:
@@ -1191,15 +1191,15 @@ class _QgaPathMixin:
         )
 
 
-class PosixQemuPath(_QgaPathMixin, PosixBackendPath):
+class PosixQEMUPath(_QGAPathMixin, PosixBackendPath):
     """A POSIX guest path backed by QEMU Guest Agent."""
 
     __slots__ = ()
-    _backend_type = QgaPathBackend
+    _backend_type = QGAPathBackend
 
 
-class WindowsQemuPath(_QgaPathMixin, WindowsBackendPath):
+class WindowsQEMUPath(_QGAPathMixin, WindowsBackendPath):
     """A Windows guest path backed by QEMU Guest Agent."""
 
     __slots__ = ()
-    _backend_type = QgaPathBackend
+    _backend_type = QGAPathBackend

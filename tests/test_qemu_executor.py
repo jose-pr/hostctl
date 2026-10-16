@@ -12,7 +12,7 @@ import pytest
 
 from hostctl.executor._qga import QGACommandError
 from hostctl.exceptions import QGAProtocolError
-from hostctl.executor.qemu import QemuExecutor
+from hostctl.executor.qemu import QEMUExecutor
 
 
 def _encoded(value):
@@ -50,7 +50,7 @@ def test_qemu_executor_builds_guest_exec_argv_env_and_binary_input(command, expe
             },
         ]
     )
-    executor = QemuExecutor(lambda: transport, sleep=lambda _: None)
+    executor = QEMUExecutor(lambda: transport, sleep=lambda _: None)
 
     result = executor(
         command,
@@ -91,7 +91,7 @@ def test_qemu_executor_text_capture_merge_and_output_targets():
         ]
     )
     target = io.StringIO()
-    executor = QemuExecutor(lambda: transport)
+    executor = QEMUExecutor(lambda: transport)
 
     with pytest.warns(RuntimeWarning, match="truncated captured stdout"):
         result = executor(
@@ -113,7 +113,7 @@ def test_qemu_executor_reads_stdin_without_closing_it():
     stream = io.BytesIO(b"payload")
     transport = _Transport([{"exited": True, "exitcode": 0}])
 
-    QemuExecutor(lambda: transport)("program", stdin=stream)
+    QEMUExecutor(lambda: transport)("program", stdin=stream)
 
     assert not stream.closed
     assert transport.calls[0][0]["arguments"]["input-data"] == _encoded(b"payload")
@@ -123,7 +123,7 @@ def test_qemu_executor_nonzero_check_and_missing_output():
     transport = _Transport([{"exited": True, "exitcode": 7}])
 
     with pytest.raises(subprocess.CalledProcessError) as raised:
-        QemuExecutor(lambda: transport)("program")
+        QEMUExecutor(lambda: transport)("program")
 
     assert raised.value.returncode == 7
     assert raised.value.stdout == b""
@@ -131,7 +131,7 @@ def test_qemu_executor_nonzero_check_and_missing_output():
 
 
 def test_qemu_executor_rejects_native_cwd_and_conflicting_input():
-    executor = QemuExecutor(lambda: _Transport([]))
+    executor = QEMUExecutor(lambda: _Transport([]))
     with pytest.raises(NotImplementedError, match="working-directory"):
         executor("program", cwd="/tmp")
     with pytest.raises(ValueError, match="stdin"):
@@ -161,7 +161,7 @@ def test_qemu_executor_timeout_retains_orphan_pid_and_partial_deadline():
     def sleep(delay):
         now[0] += delay
 
-    executor = QemuExecutor(
+    executor = QEMUExecutor(
         lambda: transport,
         poll_interval=0.06,
         max_poll_interval=0.06,
@@ -186,21 +186,21 @@ def test_qemu_executor_normalizes_transport_timeout_and_bad_replies():
             raise TimeoutError("agent")
 
     with pytest.raises(subprocess.TimeoutExpired) as raised:
-        QemuExecutor(lambda: _Timeout())("program", timeout=1)
+        QEMUExecutor(lambda: _Timeout())("program", timeout=1)
     assert raised.value.orphaned is True
 
     bad_pid = _Transport([])
     bad_pid.execute = lambda request, timeout=None: {"pid": "bad"}
     with pytest.raises(QGAProtocolError, match="PID"):
-        QemuExecutor(lambda: bad_pid)("program")
+        QEMUExecutor(lambda: bad_pid)("program")
 
     invalid_output = _Transport([{"exited": True, "exitcode": 0, "out-data": "!"}])
     with pytest.raises(QGAProtocolError, match="Base64"):
-        QemuExecutor(lambda: invalid_output)("program")
+        QEMUExecutor(lambda: invalid_output)("program")
 
     invalid_status = _Transport([{"exitcode": 0}])
     with pytest.raises(QGAProtocolError, match="boolean exited"):
-        QemuExecutor(lambda: invalid_status)("program")
+        QEMUExecutor(lambda: invalid_status)("program")
 
 
 class _RefusingTransport:
@@ -221,7 +221,7 @@ def test_a_missing_guest_program_is_a_filenotfounderror():
     as QGACommandError, that guard simply did not fire, and the failure
     escaped as an exception the caller had no reason to expect.
     """
-    executor = QemuExecutor(
+    executor = QEMUExecutor(
         lambda: _RefusingTransport(
             'Failed to execute child process "/usr/bin/absent": '
             "No such file or directory"
@@ -237,7 +237,7 @@ def test_a_missing_guest_program_is_a_filenotfounderror():
 
 
 def test_a_refused_guest_program_is_a_permissionerror():
-    executor = QemuExecutor(
+    executor = QEMUExecutor(
         lambda: _RefusingTransport(
             'Failed to execute child process "/root/tool": Permission denied'
         ),

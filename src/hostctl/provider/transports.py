@@ -9,7 +9,7 @@ RPCs.  Each one declares the operations its backend can genuinely perform.
 Those declarations gate a **composed** host: when one of these providers is
 assembled into a `SystemHost`, `_CompositePathMixin` rejects an unsupported
 mutation outright instead of falling through to another provider.  They gate
-nothing on `LocalHost`, `ContainerHost` and `QemuHost`, which return their
+nothing on `LocalHost`, `ContainerHost` and `QEMUHost`, which return their
 backend's own path type -- there the backend itself refuses, with its own
 message.  The sets are still the single source of truth for what a backend
 does, which is why the composed case can trust them.
@@ -217,7 +217,7 @@ class ContainerArchivePathProvider(PathProvider):
         )
 
 
-class QgaPathProvider(PathProvider):
+class QGAPathProvider(PathProvider):
     """QEMU Guest Agent path provider gated on genuinely probed RPCs.
 
     QGA file RPCs give content access.  Metadata and namespace mutations exist
@@ -266,7 +266,7 @@ class QgaPathProvider(PathProvider):
     def probe(self) -> ProviderProbe:
         # Memoized on the one thing the answer depends on. The verdict is a
         # property of the backend, not of the call, and recomputing it per
-        # `QemuHost.path()` meant a loop over 500 guest files emitted 500
+        # `QEMUHost.path()` meant a loop over 500 guest files emitted 500
         # identical degraded-provider warnings.
         helper_missing = getattr(self.backend, "helper", None) is None
         cached = self._probed
@@ -308,6 +308,6 @@ __all__ = [
     "LocalPathProvider",
     "QGA_FILE_OPERATIONS",
     "QGA_HELPER_OPERATIONS",
-    "QgaPathProvider",
+    "QGAPathProvider",
     "READ_ONLY_PATH_OPERATIONS",
 ]

@@ -356,7 +356,7 @@ def unreachable_ssh(monkeypatch):
     def refuse(self, *args, **kwargs):
         raise OSError("no route to host")
 
-    monkeypatch.setattr("hostctl.host._ssh._SshTransport.connect", refuse)
+    monkeypatch.setattr("hostctl.host._ssh._SSHTransport.connect", refuse)
 
 
 def test_run_on_an_unreachable_host_exits_125_with_one_line(unreachable_ssh, capsys):

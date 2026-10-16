@@ -62,7 +62,7 @@ class DownloadProvider(ApplicationPathProvider):
         )
 
 
-class SftpProvider(ApplicationPathProvider):
+class SFTPProvider(ApplicationPathProvider):
     """Ordered SFTP fallback provider."""
 
     def __init__(self, factory, *, available=True):

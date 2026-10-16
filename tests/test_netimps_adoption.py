@@ -8,8 +8,8 @@ import sys
 import pytest
 
 import hostctl
-from hostctl import ConnectionString, HostConfig, PosixConfig, SshConfig, WinRMConfig
-from hostctl.host.qemu import QemuConfig
+from hostctl import ConnectionString, HostConfig, PosixConfig, SSHConfig, WinRMConfig
+from hostctl.host.qemu import QEMUConfig
 
 
 def test_importing_hostctl_does_not_import_netimps():
@@ -43,7 +43,7 @@ def test_an_ipv6_host_is_bracketed_beside_its_port():
         WinRMConfig("::1", "u", password="x", port=5985).endpoint
         == "http://[::1]:5985/wsman"
     )
-    assert SshConfig("::1", port=2222).connection_uri.startswith("ssh://[::1]:2222?")
+    assert SSHConfig("::1", port=2222).connection_uri.startswith("ssh://[::1]:2222?")
 
 
 def test_an_ssh_uri_without_a_port_gets_the_ssh_port():
@@ -55,7 +55,7 @@ def test_an_ssh_uri_without_a_port_gets_the_ssh_port():
 def test_the_qga_ssh_uri_gets_the_ssh_port_too():
     config = HostConfig("qga+ssh://u@nas/vm")
 
-    assert isinstance(config, QemuConfig)
+    assert isinstance(config, QEMUConfig)
     assert config.ssh.port == 22
 
 

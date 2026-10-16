@@ -85,7 +85,7 @@ keeps the lifecycle state on the instance.
 An API client and a transport are usually different objects. Prefer composition:
 
 ```python
-from hostctl import SshConfig
+from hostctl import SSHConfig
 
 
 class ManagementClient:
@@ -99,14 +99,14 @@ class ManagementClient:
             return host.run(["install", "/tmp/payload"], check=True)
 
 
-client = ManagementClient(api=management_api, host_config=SshConfig("server"))
+client = ManagementClient(api=management_api, host_config=SSHConfig("server"))
 ```
 
 Subclass a concrete host only when the machine itself has additional transport
 behavior—for example, a management WebSocket filesystem fallback:
 
 ```python
-from hostctl import PosixHost, SshConfig
+from hostctl import PosixHost, SSHConfig
 
 
 class ManagedHost(PosixHost):

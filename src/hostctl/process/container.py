@@ -14,7 +14,7 @@ from ..executor import expired
 from ._common import Process, ProcessData
 
 
-class ContainerExecApi(typing.Protocol):
+class ContainerExecAPI(typing.Protocol):
     def exec_inspect(self, exec_id: str) -> typing.Mapping[str, object]: ...
 
     def exec_resize(self, exec_id: str, *, height: int, width: int) -> object: ...
@@ -35,7 +35,7 @@ class ContainerProcess(Process):
 
     def __init__(
         self,
-        api: ContainerExecApi,
+        api: ContainerExecAPI,
         exec_id: str,
         stream: object,
         *,

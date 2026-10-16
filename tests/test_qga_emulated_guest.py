@@ -1,8 +1,8 @@
 """QGA paths through the shipped helpers, over emulated guests.
 
-`conformance.path_fakes.LocalQgaTransport` answers `guest-exec` by
+`conformance.path_fakes.LocalQGATransport` answers `guest-exec` by
 interpreting the GNU commands (or the PowerShell scripts) the helpers send, so
-`QemuHost` probes and runs the real `PosixGuestPathHelper` /
+`QEMUHost` probes and runs the real `PosixGuestPathHelper` /
 `WindowsGuestPathHelper` instead of a stand-in.
 """
 
@@ -11,16 +11,16 @@ from __future__ import annotations
 import os
 
 import pytest
-from conformance.path_fakes import LocalQgaTransport
+from conformance.path_fakes import LocalQGATransport
 
-from hostctl import QemuConfig, QemuHost
+from hostctl import QEMUConfig, QEMUHost
 from hostctl.host._qga_helper import PosixGuestPathHelper, WindowsGuestPathHelper
 
 
 @pytest.fixture
 def posix():
-    transport = LocalQgaTransport()
-    host = QemuHost(QemuConfig("fake", transport_factory=lambda: transport))
+    transport = LocalQGATransport()
+    host = QEMUHost(QEMUConfig("fake", transport_factory=lambda: transport))
     host.connect()
     yield host, transport
     host.close()
@@ -28,8 +28,8 @@ def posix():
 
 @pytest.fixture
 def windows():
-    transport = LocalQgaTransport("windows")
-    host = QemuHost(QemuConfig("fake", transport_factory=lambda: transport))
+    transport = LocalQGATransport("windows")
+    host = QEMUHost(QEMUConfig("fake", transport_factory=lambda: transport))
     host.connect()
     yield host, transport
     host.close()

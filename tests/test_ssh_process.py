@@ -7,8 +7,8 @@ import subprocess
 
 import pytest
 
-from hostctl.executor.ssh import SshExecutor
-from hostctl.process.ssh import SshProcess
+from hostctl.executor.ssh import SSHExecutor
+from hostctl.process.ssh import SSHProcess
 
 
 class _Result:
@@ -58,7 +58,7 @@ class _Connection:
 
 def test_executor_sends_eof_when_stdin_is_omitted():
     connection = _Connection()
-    result = SshExecutor(lambda: connection)("wc -l")
+    result = SSHExecutor(lambda: connection)("wc -l")
     assert result.returncode == 0
     stream = connection.calls[0][1]["stdin"]
     assert isinstance(stream, io.BytesIO)
@@ -67,15 +67,15 @@ def test_executor_sends_eof_when_stdin_is_omitted():
 
 def test_executor_rejects_zero_buffering():
     with pytest.raises(ValueError, match="bufsize=0"):
-        SshExecutor(lambda: _Connection())("echo", bufsize=0)
+        SSHExecutor(lambda: _Connection())("echo", bufsize=0)
 
 
 def test_executor_maps_missing_exit_status_to_failure():
     connection = _Connection(_Result(returncode=None))
-    result = SshExecutor(lambda: connection)("echo", check=False)
+    result = SSHExecutor(lambda: connection)("echo", check=False)
     assert result.returncode == -1
     with pytest.raises(subprocess.CalledProcessError) as raised:
-        SshExecutor(lambda: connection)("echo")
+        SSHExecutor(lambda: connection)("echo")
     assert raised.value.returncode == -1
 
 
@@ -93,7 +93,7 @@ def test_a_timeout_terminates_the_remote_process():
     connection = _TimeoutConnection()
 
     with pytest.raises(subprocess.TimeoutExpired) as raised:
-        SshExecutor(lambda: connection)("sleep 60", timeout=0.01)
+        SSHExecutor(lambda: connection)("sleep 60", timeout=0.01)
 
     assert connection.process.terminated is True
     assert raised.value.orphaned is False
@@ -117,7 +117,7 @@ def test_orphaned_still_reports_a_process_that_cannot_be_terminated():
     connection = _UnterminableConnection()
 
     with pytest.raises(subprocess.TimeoutExpired) as raised:
-        SshExecutor(lambda: connection)("sleep 60", timeout=0.01)
+        SSHExecutor(lambda: connection)("sleep 60", timeout=0.01)
 
     assert raised.value.orphaned is True
 
@@ -155,7 +155,7 @@ class _Process:
 
 
 def test_process_maps_io_failures_and_missing_returncode():
-    process = SshProcess(_Process(), "echo")
+    process = SSHProcess(_Process(), "echo")
     with pytest.raises(ConnectionError):
         process.read()
     with pytest.raises(ConnectionError):
@@ -164,7 +164,7 @@ def test_process_maps_io_failures_and_missing_returncode():
 
 
 def test_process_close_failure_is_retryable():
-    process = SshProcess(_Process(), "echo")
+    process = SSHProcess(_Process(), "echo")
     with pytest.raises(ConnectionError):
         process.close()
     assert process._closed is False

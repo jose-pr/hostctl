@@ -34,15 +34,15 @@ from .container_path import (
     WindowsContainerPath as WindowsContainerPath,
 )
 from .qemu import (
-    QemuConfig as QemuConfig,
-    QemuHost as QemuHost,
-    PosixQemuPath as PosixQemuPath,
-    QgaPathBackend as QgaPathBackend,
-    WindowsQemuPath as WindowsQemuPath,
+    QEMUConfig as QEMUConfig,
+    QEMUHost as QEMUHost,
+    PosixQEMUPath as PosixQEMUPath,
+    QGAPathBackend as QGAPathBackend,
+    WindowsQEMUPath as WindowsQEMUPath,
 )
 from ._ssh import (
     PathnameConstructor as PathnameConstructor,
-    SshConfig as SshConfig,
+    SSHConfig as SSHConfig,
 )
 from ._winrm import (
     WinRMConfig as WinRMConfig,
@@ -50,8 +50,8 @@ from ._winrm import (
     WinRMPathBackend as WinRMPathBackend,
 )
 from .system import (
-    IosConfig as IosConfig,
-    IosHost as IosHost,
+    IOSConfig as IOSConfig,
+    IOSHost as IOSHost,
     PosixConfig as PosixConfig,
     PosixHost as PosixHost,
     SystemConfig as SystemConfig,
@@ -89,9 +89,9 @@ __all__ = [
     "LocalConfig",
     "LocalHost",
     "local_providers",
-    "QemuConfig",
-    "QemuHost",
-    "SshConfig",
+    "QEMUConfig",
+    "QEMUHost",
+    "SSHConfig",
     "SerialConfig",
     "SerialHost",
     "WinRMConfig",
@@ -105,8 +105,8 @@ __all__ = [
     "register_system_provider",
     "host_schemes",
     "system_provider_names",
-    "IosConfig",
-    "IosHost",
+    "IOSConfig",
+    "IOSHost",
     "CompositePosixPath",
     "CompositeWindowsPath",
 ]

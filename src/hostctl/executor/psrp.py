@@ -53,7 +53,7 @@ def require_pypsrp() -> types.ModuleType:
         ) from exc
 
 
-class PsrpExecutor(Executor[subprocess.CompletedProcess]):
+class PSRPExecutor(Executor[subprocess.CompletedProcess]):
     """Execute finalized PowerShell scripts in fresh PSRP pipelines."""
 
     # PSRP receives a finalized PowerShell script; cwd/env are embedded by

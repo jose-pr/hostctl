@@ -9,7 +9,7 @@ The `hostctl` command line is `hostctl.cli` and needs the `cli` extra; see
 `hostctl.__all__` is the stable surface: hosts and configs you construct,
 exceptions you catch, types you annotate with, and the provider/shell contracts
 you implement. Concrete backends, transport adapters, and objects the library
-only hands back (`QgaPathBackend`, `WinRMPathBackend`, `ContainerPathBackend`,
+only hands back (`QGAPathBackend`, `WinRMPathBackend`, `ContainerPathBackend`,
 the `Posix*`/`Windows*` path classes, the concrete `*Executor`s **other than
 `LocalExecutor`**, `*Process` classes, and `hostctl.provider.transports`) stay
 importable from their defining module but are **not** exported from `hostctl`
@@ -27,7 +27,7 @@ Shell construction is transport-independent under `hostctl.shell`:
 `_common.py` owns shared contracts, while `posix.py` and `powershell.py` own
 their concrete flavours. Executor code follows the same layout under
 `hostctl.executor`: `_common.py` owns contracts and option types; `ssh.py` and
-`winrm.py` own `SshExecutor` and `WinRMExecutor`. Each package re-exports its
+`winrm.py` own `SSHExecutor` and `WinRMExecutor`. Each package re-exports its
 own contracts; only the stable subset above reaches top-level `hostctl`.
 `login_shell` names what parses the command string when it ARRIVES. AsyncSSH
 sends one string and the server hands it to a login shell: on POSIX that is
@@ -116,7 +116,7 @@ algorithm="md5", chunk_size=1048576)`, and `ProgressReader`; these plug into
 `pathapi.sync.PathSyncer` and the existing path copy machinery.
 
 `SystemHost`, `PosixHost`, and `WindowsHost` compose ordered executor/path
-providers. Opening an `SshConfig` or `WinRMConfig` (`config.open()`) returns a
+providers. Opening an `SSHConfig` or `WinRMConfig` (`config.open()`) returns a
 `PosixHost` or `WindowsHost` that retains the original connection URI
 and lifecycle while exposing transport operations through provider adapters;
 transport implementations remain private.
@@ -142,7 +142,7 @@ executor-specific extensions remain keyword options.
 `ExecutorCommand` is `str | pathlib.PurePath | pathapi.Pathname`; paths
 remain path objects until the concrete executor converts them for transport.
 `ExecutorCapability.ARGS`, `.CWD`, and `.ENV` declare native executor support.
-`SshExecutor` and `WinRMExecutor` inherit the `Executor` protocol so shared
+`SSHExecutor` and `WinRMExecutor` inherit the `Executor` protocol so shared
 protocol implementations can be added once. `Shell` is NOT an `Executor`:
 calling a `Shell` configures it (`shell(cwd=..., env=...)`), and a positional
 argument raises `TypeError` -- run a program with argv through
@@ -230,7 +230,7 @@ renders `start ""` and a structured `call` raises `ValueError`.
   the host, which callers reach through `config.open()` or `with config as
   host`. The single underscore means "override in a subclass, never call";
   there is no `from_uri`. A narrowed parse is `config = HostConfig(uri);
-  isinstance(config, SshConfig)`. Registry state (`_uri_schemes`, caches) stays
+  isinstance(config, SSHConfig)`. Registry state (`_uri_schemes`, caches) stays
   private.
 - External config implementations declare `schemes=(...)`. A scheme another live config
   already claims raises `ValueError("host scheme 'x' is already registered by
@@ -239,10 +239,10 @@ renders `start ""` and a structured `call` raises `ValueError`.
   to import is warned about and skipped, so it does not break dispatch of
   other schemes; its own scheme raises `RuntimeError` from the import error.
 
-`LocalConfig`, `SshConfig`, `WinRMConfig`, and `ContainerConfig` produce their
-corresponding hosts. `PosixConfig`, `WindowsConfig` and `IosConfig` compose a
+`LocalConfig`, `SSHConfig`, `WinRMConfig`, and `ContainerConfig` produce their
+corresponding hosts. `PosixConfig`, `WindowsConfig` and `IOSConfig` compose a
 system host from provider descriptors instead of owning a transport;
-`IosConfig` produces an `IosHost`, which is session/command-only -- it has no
+`IOSConfig` produces an `IOSHost`, which is session/command-only -- it has no
 path grammar, so `path()` raises.
 
 `ConnectionString(value, *, scheme=None, port=None, ...)` is the parsed form
@@ -347,7 +347,7 @@ and `parse_credentials`.
   password. `None` (default) skips the check for configs that validate
   themselves. `strict_uri_credentials`, `strict_uri_query`, and `uri_host`
   are public for configs writing `_from_parsed_uri` by hand.
-- `ssh_providers(SshConfig)` and `winrm_providers(WinRMConfig)` return an
+- `ssh_providers(SSHConfig)` and `winrm_providers(WinRMConfig)` return an
   `(executor_provider, path_provider)` pair sharing ONE transport, for
   composing a transport into a host you assemble yourself rather than taking
   the finished host `_create_host()` builds. They return a pair instead of
@@ -475,7 +475,7 @@ hostctl applies to whatever you return.
   or positively detected flavour, WinRM uses PowerShell, and local execution
   selects POSIX sh or Windows PowerShell from the local platform.
 - SSH provider run renders through its shell flavour and delegates the finalized
-  command to `SshExecutor`; WinRM provider run delegates its finalized
+  command to `SSHExecutor`; WinRM provider run delegates its finalized
   PowerShell script to `WinRMExecutor`.
 - `HostInfo` fields are optional; unknown system values remain `None`.
 - A usable `path()` returns `HostPath` (`pathapi.Path`).
@@ -498,7 +498,7 @@ hostctl applies to whatever you return.
 
 ## SSH
 
-`SshConfig(host, port=22, username=None, password=None, client_keys=None,
+`SSHConfig(host, port=22, username=None, password=None, client_keys=None,
 executable=None, known_hosts=(), dialect=POSIX_SHELL,
 path_flavor=pathapi.PosixPathname, login_shell="auto", connect_timeout=30.0,
 ssh_config=None, connect_options={})`.
@@ -534,11 +534,11 @@ options. Without `ssh_config` neither leg reads one: both receive
 `ProxyCommand` in `~/.ssh/config` is ignored; pass the host, key and
 known_hosts explicitly.
 Both legs therefore reach the same server and verify its key the same way.
-`SftpPathProvider.probe()` reports `unavailable` (naming `hostctl[ssh]`) when
+`SFTPPathProvider.probe()` reports `unavailable` (naming `hostctl[ssh]`) when
 sftppath is missing, so selection routes around it; `dialect="auto"` accepts
 sh, dash, ash, ksh, ksh93, mksh, lksh, oksh, yash, posh, bash, zsh and fish
 (csh and tcsh are refused); `ssh://h:0` is a `ValueError`, not port 22.
-`SshConfig(connect_timeout=30.0)` bounds establishing the connection in
+`SSHConfig(connect_timeout=30.0)` bounds establishing the connection in
 seconds (`None` leaves asyncssh's own default; otherwise it must be > 0) and is
 the URI key `connect_timeout`, omitted from `connection_uri` at 30. `connect()`
 and `with host:` raise `OperationNotStartedError("no provider connected: ...")`
@@ -555,12 +555,12 @@ the extra parse) and a POSIX one (always); a script with a `#` goes on the
 channel's stdin (`-Command -`, `ShellCommand.stdin`) when `stdin_free`, which
 `SystemHost` sets only for a login-shell provider whose call has no `input=`/
 `stdin=`; a multi-line script or taken stdin falls back to `-EncodedCommand`
-(CLIXML stderr, decoded by `SshExecutor` for `run()`; endpoint protection flags
+(CLIXML stderr, decoded by `SSHExecutor` for `run()`; endpoint protection flags
 it). Every form starts with `$ProgressPreference='SilentlyContinue'`. `PWSH`
 (major version 7+) adds `if ($PSStyle) { $PSStyle.OutputRendering =
 'PlainText' }` there and at the start of `invocation()`'s script, so captured
 output carries no ANSI colour when `TERM` names a colour terminal.
-A timed-out `SshProcess.wait()` keeps the output it drained for `read()`;
+A timed-out `SSHProcess.wait()` keeps the output it drained for `read()`;
 the exception carries a copy.
 `host` and `username` are refused where OpenSSH would refuse them (a leading
 `-`, whitespace, shell metacharacters; `${` in a username); the host must be
@@ -577,7 +577,7 @@ each authenticating once: the exec connection on the first command (or the
 first relative path), hostctl's own; the SFTP connection on the first path
 operation, `sftppath`'s backend, which takes connect options rather than a live
 connection. A host used only for absolute paths never opens the exec one.
-`_SshTransport` renders in one place (`_render`) for `spawn()` and `info()`;
+`_SSHTransport` renders in one place (`_render`) for `spawn()` and `info()`;
 `SystemHost` renders `run()` itself. `bufsize` is
 asyncssh's stdin CHUNK size here, not `subprocess`'s buffering policy, so
 values below 512 are refused rather than obeyed. `run()` buffers the whole
@@ -615,22 +615,22 @@ not the archive. A path taken before `ContainerHost.close()` refuses
 
 ## QEMU Guest Agent
 
-`QemuConfig(domain, transport="libvirt", connection=None, socket_path=None,
+`QEMUConfig(domain, transport="libvirt", connection=None, socket_path=None,
 ssh=None, agent_timeout=10.0, max_reply_size=48*1024*1024, dialect="auto",
 path_flavor="auto", transport_factory=None, serial_console=None,
 path_helper=None)` creates a
-`QemuHost`. Transports are local libvirt (`qemu-libvirt` extra), direct Unix
+`QEMUHost`. Transports are local libvirt (`qemu-libvirt` extra), direct Unix
 socket, or an AsyncSSH-tunneled remote Unix socket. Discovery positively probes
 QGA and its enabled command list.
 
-`QemuExecutor` uses buffered `guest-exec`/`guest-exec-status`. It declares
+`QEMUExecutor` uses buffered `guest-exec`/`guest-exec-status`. It declares
 argv only: `guest-exec`'s `env` list is applied as the guest's whole
 environment rather than added to it, so the host embeds assignments in the
 rendered script and a direct `Exec` refuses `cwd=`/`env=`. QGA cannot cancel
 timed-out processes; `TimeoutExpired.orphaned` is true and `.pid` is retained
-when known. `QgaPathBackend` uses bounded file-handle RPCs; `exists()` is
+when known. `QGAPathBackend` uses bounded file-handle RPCs; `exists()` is
 answered from those RPCs alone, while metadata and namespace mutations need a
-guest helper (`QemuConfig(path_helper=...)`) and raise `NotImplementedError`
+guest helper (`QEMUConfig(path_helper=...)`) and raise `NotImplementedError`
 without one. `write_bytes()` and `open("w")` write in place, not atomically, so
 the file keeps its inode, mode, owner and links; only the exclusive `x` modes
 need the helper (a temporary file and a rename that does not replace).
@@ -660,20 +660,20 @@ discovery: `PosixGuestPathHelper` for a POSIX guest (GNU `stat -c` and
 with the script as `input-data`, so no script is on the command line). A
 guest that fails the probe keeps the degraded mode it had before -- reads and
 writes never needed a helper -- rather than losing `path()`.
-`QemuConfig(path_helper=...)` overrides the probe entirely. Every path is an
+`QEMUConfig(path_helper=...)` overrides the probe entirely. Every path is an
 argv element after a `--`, so a leading `-` is data and nothing is interpolated
 into shell text; `find` takes no `--`, so it gets an absolute path or one
 anchored with `./`.
 
-`QemuConfig.max_reply_size` (default 48 MiB) bounds one QGA reply, and
+`QEMUConfig.max_reply_size` (default 48 MiB) bounds one QGA reply, and
 `agent_timeout` bounds one round trip independently of a command's `timeout=`:
 an agent that stops answering raises `ConnectionError`, not a command timeout.
 `run()` results carry `stdout_truncated`/`stderr_truncated` and warn when set.
 `dialect="auto"`/`path_flavor="auto"` require positive evidence of the guest
 family (`guest-get-osinfo`, or a family-exclusive command in `guest-info`) and
 raise rather than defaulting to POSIX. `info().os_family` is a family from
-`kernel-name`, not the os-release `id`. A `QgaPathBackend` is invalidated by
-`QemuHost.close()`, so a path handed out earlier refuses instead of
+`kernel-name`, not the os-release `id`. A `QGAPathBackend` is invalidated by
+`QEMUHost.close()`, so a path handed out earlier refuses instead of
 reconnecting. `open("rb")` is seekable where `guest-file-seek` is advertised;
 the exclusive `x` modes are refused by `open()` without a guest helper.
 
@@ -682,8 +682,8 @@ the exclusive `x` modes are refused by `open()` without a guest helper.
 (`FileNotFoundError`, `PermissionError`, ...). `QGAProtocolError` is a
 malformed or oversized reply and is itself a `ConnectionError` (see
 "Exceptions").
-An injected `QemuSerialConsole` adds the `serial` capability and
-`QemuHost.open_serial(*, encoding=None, errors=None)`. It is raw, exclusive,
+An injected `QEMUSerialConsole` adds the `serial` capability and
+`QEMUHost.open_serial(*, encoding=None, errors=None)`. It is raw, exclusive,
 and makes no shell/status claim; `encoding=` makes the console read and write
 `str`.
 

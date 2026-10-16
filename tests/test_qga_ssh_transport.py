@@ -9,7 +9,7 @@ import threading
 import pytest
 
 from hostctl.exceptions import QGACommandError, QGAProtocolError
-from hostctl.executor._qga import SshUnixGuestAgentTransport
+from hostctl.executor._qga import SSHUnixGuestAgentTransport
 
 
 def _frame(value):
@@ -84,7 +84,7 @@ class _Connection:
 
 def test_ssh_unix_qga_synchronizes_correlates_and_preserves_connection():
     connection = _Connection()
-    transport = SshUnixGuestAgentTransport(
+    transport = SSHUnixGuestAgentTransport(
         "/run/qemu-server/guest.qga", lambda: connection
     )
 
@@ -97,7 +97,7 @@ def test_ssh_unix_qga_synchronizes_correlates_and_preserves_connection():
 
 def test_ssh_unix_qga_bounds_and_structured_errors():
     oversized = _Connection(oversized=True)
-    transport = SshUnixGuestAgentTransport(
+    transport = SSHUnixGuestAgentTransport(
         "/run/qga.sock",
         lambda: oversized,
         max_reply_size=32,
@@ -107,7 +107,7 @@ def test_ssh_unix_qga_bounds_and_structured_errors():
     assert oversized.writer.closed
 
     failed = _Connection(command_error=True)
-    transport = SshUnixGuestAgentTransport("/run/qga.sock", lambda: failed)
+    transport = SSHUnixGuestAgentTransport("/run/qga.sock", lambda: failed)
     with pytest.raises(QGACommandError) as raised:
         transport.execute({"execute": "guest-file-open"})
     assert raised.value.error_class == "CommandDisabled"
@@ -116,10 +116,10 @@ def test_ssh_unix_qga_bounds_and_structured_errors():
 def test_ssh_unix_qga_rejects_invalid_requests_and_settings():
     connection = _Connection()
     with pytest.raises(ValueError, match="path"):
-        SshUnixGuestAgentTransport("", lambda: connection)
+        SSHUnixGuestAgentTransport("", lambda: connection)
     with pytest.raises(ValueError, match="timeout"):
-        SshUnixGuestAgentTransport("/run/qga.sock", lambda: connection, timeout=0)
-    transport = SshUnixGuestAgentTransport("/run/qga.sock", lambda: connection)
+        SSHUnixGuestAgentTransport("/run/qga.sock", lambda: connection, timeout=0)
+    transport = SSHUnixGuestAgentTransport("/run/qga.sock", lambda: connection)
     with pytest.raises(ValueError, match="execute"):
         transport.execute({})
 
@@ -147,7 +147,7 @@ def test_closing_a_partitioned_ssh_stream_is_bounded():
     `close()` -- and therefore every `execute(timeout=...)` that fails -- into
     an unbounded wait while the session lock is held."""
     connection = _HangingConnection()
-    transport = SshUnixGuestAgentTransport("/run/qga.sock", lambda: connection)
+    transport = SSHUnixGuestAgentTransport("/run/qga.sock", lambda: connection)
     transport.close_timeout = 0.05
     transport.execute({"execute": "guest-ping"})
 

@@ -196,7 +196,7 @@ def test_the_wheel_never_ships_an_assistant_file(wheel):
 
 @pytest.mark.parametrize(
     "name",
-    ("SshConfig", "WinRMConfig", "ContainerConfig", "QemuConfig", "SerialConfig"),
+    ("SSHConfig", "WinRMConfig", "ContainerConfig", "QEMUConfig", "SerialConfig"),
 )
 def test_the_header_names_every_constructor_parameter(name):
     """The header is what a consuming agent reads instead of the source.

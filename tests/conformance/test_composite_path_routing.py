@@ -190,9 +190,9 @@ def test_a_uri_backed_path_reports_a_filesystem_logical_path():
     """An SSH host's logical paths are paths on the target, never a URI:
     used as the logical path, `sftp://host:22/...` sent I/O to
     `/sftp:/host:22/...`."""
-    from hostctl import SshConfig
+    from hostctl import SSHConfig
 
-    host = SshConfig("h", username="root").open()
+    host = SSHConfig("h", username="root").open()
 
     # Absolute spellings only: a relative one asks the server for its login
     # directory, which needs a connection this test does not have.

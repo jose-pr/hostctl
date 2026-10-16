@@ -121,7 +121,7 @@ def guest_oserror(exc: Exception, path: str) -> OSError:
     return OSError(message)
 
 
-class _QgaFramedSession:
+class _QGAFramedSession:
     """Shared QGA JSON-line framing and request lifecycle.
 
     Concrete transports only provide raw byte-stream operations.  Keeping the
@@ -579,10 +579,10 @@ class LibvirtGuestAgentTransport:
             raise QGAProtocolError("QGA reply must be a JSON object")
         if reply.get("id") not in (None, request_id):
             raise QGAProtocolError("libvirt returned a mismatched QGA reply")
-        return _QgaFramedSession._unwrap(reply)
+        return _QGAFramedSession._unwrap(reply)
 
 
-class UnixSocketGuestAgentTransport(_QgaFramedSession):
+class UnixSocketGuestAgentTransport(_QGAFramedSession):
     """Persistent QGA connection over a Unix-domain socket."""
 
     def __init__(
@@ -692,7 +692,7 @@ class _Writer(typing.Protocol):
     def close(self) -> None: ...
 
 
-class _SshConnection(typing.Protocol):
+class _SSHConnection(typing.Protocol):
     def open_unix_connection(
         self, path: str, *, encoding: typing.Optional[str] = None
     ) -> typing.Awaitable[typing.Tuple[_Reader, _Writer]]: ...
@@ -724,7 +724,7 @@ async def _close_writer(writer: _Writer, timeout: float = _CLOSE_BUDGET) -> None
                 pass
 
 
-class SshUnixGuestAgentTransport(_QgaFramedSession):
+class SSHUnixGuestAgentTransport(_QGAFramedSession):
     """Persistent QGA stream opened on a remote Unix socket over SSH."""
 
     #: Seconds the teardown waits for the peer to acknowledge the close.
@@ -733,7 +733,7 @@ class SshUnixGuestAgentTransport(_QgaFramedSession):
     def __init__(
         self,
         path: str,
-        connection: typing.Callable[[], _SshConnection],
+        connection: typing.Callable[[], _SSHConnection],
         *,
         timeout: float = 10.0,
         max_reply_size: int = 8 * 1024 * 1024,
@@ -746,7 +746,7 @@ class SshUnixGuestAgentTransport(_QgaFramedSession):
         self._writer: typing.Optional[_Writer] = None
         super().__init__(timeout=timeout, max_reply_size=max_reply_size)
 
-    def __enter__(self) -> SshUnixGuestAgentTransport:
+    def __enter__(self) -> SSHUnixGuestAgentTransport:
         self.connect()
         return self
 

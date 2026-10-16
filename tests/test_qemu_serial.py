@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from hostctl.process.qemu_serial import QemuSerialProcess
+from hostctl.process.qemu_serial import QEMUSerialProcess
 
 
 class _Stream:
@@ -28,7 +28,7 @@ class _Stream:
 def test_qemu_serial_partial_io_and_ownership_release():
     stream = _Stream()
     released = []
-    process = QemuSerialProcess(stream, release=lambda: released.append(True))
+    process = QEMUSerialProcess(stream, release=lambda: released.append(True))
 
     process.write(b"hello")
     assert b"".join(stream.writes) == b"hello"
@@ -46,7 +46,7 @@ def test_qemu_serial_partial_io_and_ownership_release():
 
 def test_qemu_serial_optional_text_and_explicit_unsupported_operations():
     stream = _Stream()
-    process = QemuSerialProcess(stream, release=lambda: None, encoding="utf-8")
+    process = QEMUSerialProcess(stream, release=lambda: None, encoding="utf-8")
     process.write("hello")
     assert process.read() == "reply"
     with pytest.raises(NotImplementedError, match="half-close"):
@@ -62,7 +62,7 @@ def test_qemu_serial_optional_text_and_explicit_unsupported_operations():
 def test_qemu_serial_incremental_decoder_preserves_split_utf8():
     stream = _Stream()
     stream.reads = [b"\xc3", b"\xa9"]
-    process = QemuSerialProcess(stream, release=lambda: None, encoding="utf-8")
+    process = QEMUSerialProcess(stream, release=lambda: None, encoding="utf-8")
     assert process.read() == ""
     assert process.read() == "é"
     process.close()

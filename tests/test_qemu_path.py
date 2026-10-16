@@ -6,7 +6,7 @@ import pytest
 from pathapi import Path
 from pathapi import FileStat
 
-from hostctl.host.qemu import PosixQemuPath, QgaPathBackend, WindowsQemuPath
+from hostctl.host.qemu import PosixQEMUPath, QGAPathBackend, WindowsQEMUPath
 from hostctl.executor._qga import QGACommandError
 
 FILE_COMMANDS = {
@@ -19,7 +19,7 @@ FILE_COMMANDS = {
 }
 
 
-class _QgaError(Exception):
+class _QGAError(Exception):
     def __init__(self, name, message):
         super().__init__(message)
         self.name = name
@@ -41,7 +41,7 @@ class _Transport:
             path = arguments["path"]
             mode = arguments["mode"]
             if "r" in mode and path not in self.files:
-                raise _QgaError("GenericErrorNotFound", path)
+                raise _QGAError("GenericErrorNotFound", path)
             if "w" in mode:
                 self.files[path] = bytearray()
             handle = self.next_handle
@@ -52,7 +52,7 @@ class _Transport:
         path, offset = self.handles[handle]
         if command == "guest-file-read":
             if self.fail_read:
-                raise _QgaError("PermissionDenied", path)
+                raise _QGAError("PermissionDenied", path)
             data = bytes(self.files[path][offset : offset + arguments["count"]])
             self.handles[handle][1] += len(data)
             return {
@@ -126,8 +126,8 @@ class _Helper:
 
 def test_bounded_binary_transfer_retries_partial_writes_and_closes_handles():
     transport = _Transport()
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS, chunk_size=3)
-    path = PosixQemuPath("/data/snow \N{SNOWMAN}.bin", backend=backend)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS, chunk_size=3)
+    path = PosixQEMUPath("/data/snow \N{SNOWMAN}.bin", backend=backend)
 
     path.write_bytes(b"\x00abcdef\xff")
 
@@ -142,12 +142,12 @@ def test_bounded_binary_transfer_retries_partial_writes_and_closes_handles():
 def test_qga_open_read_fetches_incrementally():
     transport = _Transport()
     transport.files["/large"] = bytearray(b"x" * 64)
-    backend = QgaPathBackend(
+    backend = QGAPathBackend(
         transport,
         supported_commands=FILE_COMMANDS,
         chunk_size=4,
     )
-    path = PosixQemuPath("/large", backend=backend)
+    path = PosixQEMUPath("/large", backend=backend)
     with path.open("rb") as stream:
         assert stream.read(1) == b"x"
         reads = [
@@ -161,12 +161,12 @@ def test_read_error_is_normalized_and_handle_is_closed():
     transport = _Transport()
     transport.files["/secret"] = bytearray(b"value")
     transport.fail_read = True
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS)
 
     with pytest.raises(PermissionError) as caught:
         backend.read_bytes("/secret")
 
-    assert isinstance(caught.value.__cause__, _QgaError)
+    assert isinstance(caught.value.__cause__, _QGAError)
     assert transport.handles == {}
 
 
@@ -186,7 +186,7 @@ def test_structured_qga_error_is_normalized(error_class, description, expected):
         def execute(self, request, timeout=None):
             raise QGACommandError(error_class, description)
 
-    backend = QgaPathBackend(_DeniedTransport(), supported_commands=FILE_COMMANDS)
+    backend = QGAPathBackend(_DeniedTransport(), supported_commands=FILE_COMMANDS)
 
     with pytest.raises(expected, match=description) as caught:
         backend.read_bytes("/secret")
@@ -196,8 +196,8 @@ def test_structured_qga_error_is_normalized(error_class, description, expected):
 
 def test_commands_and_helpers_are_capability_gated():
     transport = _Transport()
-    backend = QgaPathBackend(transport, supported_commands={"guest-file-open"})
-    path = PosixQemuPath("/value", backend=backend)
+    backend = QGAPathBackend(transport, supported_commands={"guest-file-open"})
+    path = PosixQEMUPath("/value", backend=backend)
 
     with pytest.raises(NotImplementedError, match="guest-file-read"):
         path.read_bytes()
@@ -208,7 +208,7 @@ def test_commands_and_helpers_are_capability_gated():
     transport.files["/value"] = bytearray(b"x")
     with pytest.raises(NotImplementedError, match="positively probed"):
         path.stat()
-    absent = PosixQemuPath("/absent", backend=backend)
+    absent = PosixQEMUPath("/absent", backend=backend)
     with pytest.raises(NotImplementedError, match="exclusive"):
         with absent.open("xb") as stream:
             stream.write(b"value")
@@ -217,8 +217,8 @@ def test_commands_and_helpers_are_capability_gated():
 def test_transactional_write_cleanup_and_exclusive_mode():
     transport = _Transport()
     helper = _Helper(transport)
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
-    path = PosixQemuPath("/value", backend=backend)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
+    path = PosixQEMUPath("/value", backend=backend)
 
     path.write_text("first")
     with pytest.raises(FileExistsError):
@@ -234,7 +234,7 @@ def test_transactional_write_cleanup_and_exclusive_mode():
 def test_exclusive_write_losing_the_race_leaves_no_temporary_file():
     transport = _Transport()
     helper = _Helper(transport)
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
     transport.files["/value"] = bytearray(b"first")
 
     with pytest.raises(FileExistsError):
@@ -247,7 +247,7 @@ def test_exclusive_write_losing_the_race_leaves_no_temporary_file():
 
 def test_a_nonexclusive_write_is_in_place_with_or_without_a_helper():
     transport = _Transport()
-    backend = QgaPathBackend(
+    backend = QGAPathBackend(
         transport, supported_commands=FILE_COMMANDS, helper=_Helper(transport)
     )
 
@@ -264,9 +264,9 @@ def test_a_nonexclusive_write_is_in_place_with_or_without_a_helper():
 def test_path_flavours_and_backend_survive_derivation():
     transport = _Transport()
     helper = _Helper(transport)
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
-    posix = PosixQemuPath("/srv", backend=backend)
-    windows = WindowsQemuPath(r"C:\Temp", backend=backend)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
+    posix = PosixQEMUPath("/srv", backend=backend)
+    windows = WindowsQEMUPath(r"C:\Temp", backend=backend)
 
     assert isinstance(posix, Path)
     assert isinstance(windows, Path)
@@ -278,8 +278,8 @@ def test_path_flavours_and_backend_survive_derivation():
 
 def test_append_and_plus_modes_buffer_content():
     transport = _Transport()
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
-    path = PosixQemuPath("/value", backend=backend)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS)
+    path = PosixQEMUPath("/value", backend=backend)
 
     path.write_bytes(b"one")
     with path.open("ab") as stream:
@@ -295,7 +295,7 @@ def test_append_and_plus_modes_buffer_content():
 def test_seek_rpc_uses_symbolic_origin_and_validates_it():
     transport = _Transport()
     transport.files["/value"] = bytearray(b"abcdef")
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS)
     handle = backend._open("/value", "rb")
     try:
         assert backend.seek(handle, -2, "end", path="/value") == 4
@@ -312,12 +312,12 @@ def test_invalid_base64_is_mapped_and_close_does_not_mask_read_error():
                 return {"count": 1, "buf-b64": "%", "eof": True}
             if request["execute"] == "guest-file-close":
                 super().execute(request, timeout)
-                raise _QgaError("CloseFailed", "close failed")
+                raise _QGAError("CloseFailed", "close failed")
             return super().execute(request, timeout)
 
     transport = _BrokenTransport()
     transport.files["/value"] = bytearray(b"x")
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS)
 
     with pytest.raises(OSError, match="invalid Base64"):
         backend.read_bytes("/value")
@@ -330,10 +330,10 @@ def test_partial_helper_reports_unsupported_operation_explicitly():
         def stat(self, path, *, follow_symlinks=True):
             return FileStat(st_mode=stat.S_IFREG | 0o444)
 
-    backend = QgaPathBackend(
+    backend = QGAPathBackend(
         _Transport(), supported_commands=FILE_COMMANDS, helper=_StatOnly()
     )
-    path = PosixQemuPath("/value", backend=backend)
+    path = PosixQEMUPath("/value", backend=backend)
 
     assert path.is_file()
     with pytest.raises(NotImplementedError, match="does not support unlink"):
@@ -342,9 +342,9 @@ def test_partial_helper_reports_unsupported_operation_explicitly():
 
 @pytest.mark.parametrize("mode", ("", "rr", "rw", "ra", "wx", "++", "r++"))
 def test_open_modes_are_strict(mode):
-    path = PosixQemuPath(
+    path = PosixQEMUPath(
         "/value",
-        backend=QgaPathBackend(_Transport(), supported_commands=FILE_COMMANDS),
+        backend=QGAPathBackend(_Transport(), supported_commands=FILE_COMMANDS),
     )
 
     # What matters here is that the mode is refused, not which layer refuses
@@ -360,23 +360,23 @@ def test_helperless_guest_paths_answer_exists_with_the_file_rpcs(tmp_path):
     RPCs can answer it -- a guest helper is only needed for metadata."""
     transport = _Transport()
     transport.files["/etc/motd"] = bytearray(b"welcome\n")
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS)
 
-    assert PosixQemuPath("/etc/motd", backend=backend).exists() is True
-    assert PosixQemuPath("/etc/nope", backend=backend).exists() is False
+    assert PosixQEMUPath("/etc/motd", backend=backend).exists() is True
+    assert PosixQEMUPath("/etc/nope", backend=backend).exists() is False
 
 
 def test_copying_a_local_file_into_a_helperless_guest_works(tmp_path):
     """The documented way to push a file into a VM. It raised
-    NotImplementedError on every QemuHost hostctl can actually build, because
+    NotImplementedError on every QEMUHost hostctl can actually build, because
     a helper-less `stat()` could not say "absent" -- so the generic copy
     could not tell "create it" from "this backend is crippled"."""
     transport = _Transport()
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS)
     source = tmp_path / "report.csv"
     source.write_bytes(b"id,value\n1,2\n")
 
-    target = PosixQemuPath("/srv/report.csv", backend=backend)
+    target = PosixQEMUPath("/srv/report.csv", backend=backend)
     Path(source).copy(target)
 
     assert bytes(transport.files["/srv/report.csv"]) == b"id,value\n1,2\n"
@@ -391,10 +391,10 @@ def test_copying_a_local_file_into_a_helperless_guest_works(tmp_path):
 def test_copy_into_a_guest_with_a_helper_replaces_the_target(tmp_path):
     transport = _Transport()
     helper = _Helper(transport)
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
     source = tmp_path / "report.csv"
     source.write_bytes(b"id,value\n1,2\n")
-    target = PosixQemuPath("/srv/report.csv", backend=backend)
+    target = PosixQEMUPath("/srv/report.csv", backend=backend)
 
     Path(source).copy(target)
     source.write_bytes(b"id,value\n3,4\n")
@@ -424,13 +424,13 @@ def test_supports_answers_from_the_probed_helper():
         def stat(self, path, *, follow_symlinks=True):
             return FileStat(st_mode=stat.S_IFREG | 0o444)
 
-    bare = PosixQemuPath(
+    bare = PosixQEMUPath(
         "/value",
-        backend=QgaPathBackend(_Transport(), supported_commands=FILE_COMMANDS),
+        backend=QGAPathBackend(_Transport(), supported_commands=FILE_COMMANDS),
     )
-    partial = PosixQemuPath(
+    partial = PosixQEMUPath(
         "/value",
-        backend=QgaPathBackend(
+        backend=QGAPathBackend(
             _Transport(), supported_commands=FILE_COMMANDS, helper=_StatOnly()
         ),
     )
@@ -464,8 +464,8 @@ def test_an_oversized_read_reply_is_a_protocol_error_on_both_read_paths():
 
     transport = _OversizedReads()
     transport.files["/f"] = bytearray(b"data")
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
-    path = PosixQemuPath("/f", backend=backend)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS)
+    path = PosixQEMUPath("/f", backend=backend)
 
     with pytest.raises(QGAProtocolError, match="more bytes"):
         with path.open("rb") as stream:
@@ -484,9 +484,9 @@ def test_a_listing_drops_names_that_are_not_one_path_component():
     transport = _Transport()
     helper = _Hostile(transport)
     helper.names = ("..", "../../etc/shadow", "a/b", ".", "ok.txt")
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS, helper=helper)
 
-    listed = list(PosixQemuPath("/srv/drop", backend=backend).iterdir())
+    listed = list(PosixQEMUPath("/srv/drop", backend=backend).iterdir())
 
     assert [str(item) for item in listed] == ["/srv/drop/ok.txt"]
 
@@ -498,24 +498,24 @@ def test_a_windows_listing_drops_names_windows_would_misread():
             return [(name, entry) for name in ("D:x", "nul.txt", "a\\b", "ok.txt")]
 
     transport = _Transport()
-    backend = QgaPathBackend(
+    backend = QGAPathBackend(
         transport, supported_commands=FILE_COMMANDS, helper=_Hostile(transport)
     )
 
-    listed = [item.name for item in WindowsQemuPath("C:\\d", backend=backend).iterdir()]
+    listed = [item.name for item in WindowsQEMUPath("C:\\d", backend=backend).iterdir()]
 
     assert listed == ["ok.txt"]
 
 
 def test_a_helperless_provider_still_answers_exists_through_the_composite():
     from hostctl import PosixHost
-    from hostctl.provider.transports import QgaPathProvider
+    from hostctl.provider.transports import QGAPathProvider
 
     transport = _Transport()
     transport.files["/etc/hostname"] = bytearray(b"vm\n")
-    backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
-    provider = QgaPathProvider(
-        lambda *segments: PosixQemuPath(*(segments or ("/",)), backend=backend),
+    backend = QGAPathBackend(transport, supported_commands=FILE_COMMANDS)
+    provider = QGAPathProvider(
+        lambda *segments: PosixQEMUPath(*(segments or ("/",)), backend=backend),
         backend,
     )
 

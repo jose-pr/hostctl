@@ -12,7 +12,7 @@ from hostctl import (
     WinRMConfig,
     WindowsHost,
 )
-from hostctl.executor.psrp import PsrpExecutor, pypsrp_available
+from hostctl.executor.psrp import PSRPExecutor, pypsrp_available
 from hostctl.process import RunspaceSession
 from hostctl.process.psrp import PipelineResult, PipelineStreams
 
@@ -193,7 +193,7 @@ def test_psrp_executor_asks_for_formatted_text_and_joins_with_crlf():
                 1,
             )
 
-    result = PsrpExecutor(lambda: Session())("dir", check=False, text=True)
+    result = PSRPExecutor(lambda: Session())("dir", check=False, text=True)
 
     assert seen == {"capture_exit": True, "format_text": True}
     assert result.stdout == "Mode  Name\r\n----  ----\r\n"
@@ -212,7 +212,7 @@ def test_psrp_executor_projects_objects_and_error_streams():
                 1,
             )
 
-    result = PsrpExecutor(lambda: Session())("Write-Output x", check=False, text=True)
+    result = PSRPExecutor(lambda: Session())("Write-Output x", check=False, text=True)
     assert result.stdout == "one\r\ntwo\r\n"
     assert result.stderr == "bad"
     assert result.returncode == 1
@@ -237,7 +237,7 @@ def test_psrp_executor_projects_native_last_exit_code():
                 7,
             )
 
-    result = PsrpExecutor(lambda: Session())("cmd", check=False, text=True)
+    result = PSRPExecutor(lambda: Session())("cmd", check=False, text=True)
     assert result.stdout == "ok\r\n"
     assert result.returncode == 7
 
@@ -455,7 +455,7 @@ def test_runspace_closes_a_pool_it_created(monkeypatch):
 
 
 def test_psrp_executor_rejects_byte_stream_options():
-    executor = PsrpExecutor(lambda: object())
+    executor = PSRPExecutor(lambda: object())
     with pytest.raises(NotImplementedError, match="stdin"):
         executor("x", input=b"x")
     with pytest.raises(NotImplementedError, match="timeout"):
@@ -476,7 +476,7 @@ def test_windows_host_dispatches_psrp_as_a_script_without_nested_powershell():
                 0,
             )
 
-    executor = PsrpExecutor(lambda: Session())
+    executor = PSRPExecutor(lambda: Session())
     host = WindowsHost(
         executor_providers=(ExecutorProvider("psrp", executor),),
     )

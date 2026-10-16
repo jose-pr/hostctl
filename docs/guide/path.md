@@ -27,7 +27,7 @@ QGA paths take their metadata and namespace operations from a guest-side
 helper, probed during discovery: GNU `stat`/`find` on a POSIX guest, PowerShell
 on a Windows one. A guest that fails the probe keeps content access and loses
 only the operations that genuinely need a helper, and
-`QemuConfig(path_helper=...)` replaces the probe with your own.
+`QEMUConfig(path_helper=...)` replaces the probe with your own.
 
 QGA paths use bounded `guest-file-open/read/write/seek/flush/close` requests and
 always close remote handles. Content access needs no in-guest shell. A reader
@@ -63,7 +63,7 @@ the guest agent's `guest-file-*` protocol has no symlink RPC, and emulating
 one through `guest-exec` would be a different transport with different
 permission semantics.
 
-For SSH, `SshConfig.path_flavor` explicitly selects
+For SSH, `SSHConfig.path_flavor` explicitly selects
 the `PosixPathname` or `WindowsPathname` constructor; it is independent of the
 command dialect. Concrete stdlib `PurePosixPath` and `PureWindowsPath`
 constructors are accepted too. A relative SSH path names the login directory,

@@ -18,10 +18,10 @@ from hostctl import (
     PWSH,
     HostConfig,
     Shell,
-    SshConfig,
+    SSHConfig,
 )
 from hostctl.shell import PowerShellFlavour
-from hostctl.host._ssh import _SshTransport
+from hostctl.host._ssh import _SSHTransport
 
 
 class _Result:
@@ -147,7 +147,7 @@ def _compose(config, stub):
 
 
 def _host(shell=None, result=None):
-    config = shell or SshConfig("nas.example.com", username="admin", password="secret")
+    config = shell or SSHConfig("nas.example.com", username="admin", password="secret")
     stub = _StubSSH(result)
     return _compose(config, stub), stub
 
@@ -211,7 +211,7 @@ def test_ssh_host_context_closes_connection_on_exception():
 
 
 def test_ssh_config_uses_explicit_authentication_fields():
-    config = SshConfig(
+    config = SSHConfig(
         "host",
         username="admin",
         password="secret",
@@ -236,19 +236,19 @@ def test_default_config_still_verifies_the_host_key_on_every_leg():
     not given would accept any server key, including a substituted one, and
     send it the password.
     """
-    options = SshConfig("host", password="secret").connect_opts()
+    options = SSHConfig("host", password="secret").connect_opts()
 
     assert "known_hosts" in options
     assert options["known_hosts"] == ()
 
 
 def test_opting_out_of_host_key_verification_stays_explicit():
-    assert SshConfig("host", known_hosts=None).connect_opts()["known_hosts"] is None
+    assert SSHConfig("host", known_hosts=None).connect_opts()["known_hosts"] is None
 
 
 def test_ssh_key_path_is_not_reencoded():
     key = Path("id_ed25519")
-    assert SshConfig("host", client_keys=key).connect_opts()["client_keys"] == [key]
+    assert SSHConfig("host", client_keys=key).connect_opts()["client_keys"] == [key]
 
 
 def test_ssh_check_is_applied_after_completed_process_conversion():
@@ -260,7 +260,7 @@ def test_ssh_check_is_applied_after_completed_process_conversion():
 
 
 def test_ssh_timeout_uses_subprocess_exception_contract():
-    host = _compose(SshConfig("host"), _TimeoutSSH())
+    host = _compose(SSHConfig("host"), _TimeoutSSH())
 
     with pytest.raises(subprocess.TimeoutExpired) as raised:
         host.run("sleep", timeout=0.25)
@@ -329,7 +329,7 @@ def test_ssh_input_stream_remains_owned_by_caller():
 
 
 def test_powershell_dialect_uses_powershell_quoting_cwd_and_environment():
-    shell = SshConfig("windows.example.com", dialect="powershell")
+    shell = SSHConfig("windows.example.com", dialect="powershell")
     host, stub = _host(shell)
     host.run(
         ["Write-Output", "a'b"],
@@ -347,13 +347,13 @@ def test_powershell_dialect_uses_powershell_quoting_cwd_and_environment():
 
 def test_shell_validates_dialect_and_path_style():
     with pytest.raises(ValueError):
-        SshConfig("host", dialect="csh")
+        SSHConfig("host", dialect="csh")
     with pytest.raises(ValueError, match="'auto', 'posix', or 'windows'"):
-        SshConfig("host", path_flavor="native")
+        SSHConfig("host", path_flavor="native")
 
 
 def test_ssh_string_options_normalize_to_shell_flavours():
-    config = SshConfig("host", dialect="powershell", path_flavor=WindowsPathname)
+    config = SSHConfig("host", dialect="powershell", path_flavor=WindowsPathname)
     assert config.dialect is POWERSHELL
     assert isinstance(config.dialect, PowerShellFlavour)
     assert config.path_flavor is WindowsPathname
@@ -361,7 +361,7 @@ def test_ssh_string_options_normalize_to_shell_flavours():
 
 
 def test_ssh_auto_selection_round_trips_and_detects_posix_shell():
-    config = SshConfig("host", dialect="auto")
+    config = SSHConfig("host", dialect="auto")
     restored = HostConfig(config.connection_uri)
     host, stub = _host(config, result=_Result(stdout="/bin/bash\n", stderr=""))
 
@@ -373,7 +373,7 @@ def test_ssh_auto_selection_round_trips_and_detects_posix_shell():
 
 def test_ssh_auto_rejects_executable_override():
     with pytest.raises(ValueError, match="executable"):
-        SshConfig("host", dialect="auto", executable="/bin/custom")
+        SSHConfig("host", dialect="auto", executable="/bin/custom")
 
 
 @pytest.mark.parametrize(
@@ -393,7 +393,7 @@ def test_ssh_auto_detects_windows_shell_in_probe_order(responses, expected):
                 _Result(returncode=returncode, stdout=stdout, stderr="")
             )
 
-    host = _SshTransport(SshConfig("host", dialect="auto", path_flavor=PureWindowsPath))
+    host = _SSHTransport(SSHConfig("host", dialect="auto", path_flavor=PureWindowsPath))
     stub = _ProbeSSH()
     host._ssh = stub
 
@@ -402,28 +402,28 @@ def test_ssh_auto_detects_windows_shell_in_probe_order(responses, expected):
 
 
 def test_ssh_path_flavor_requires_a_concrete_pure_path_constructor():
-    assert SshConfig("host").path_flavor is PosixPathname
-    config = SshConfig("host", path_flavor=PureWindowsPath)
+    assert SSHConfig("host").path_flavor is PosixPathname
+    config = SSHConfig("host", path_flavor=PureWindowsPath)
     assert config.path_flavor is PureWindowsPath
     with pytest.raises(TypeError, match="pure-path class"):
-        SshConfig("host", path_flavor=42)
+        SSHConfig("host", path_flavor=42)
     with pytest.raises(TypeError, match="local OS"):
-        SshConfig("host", path_flavor=PurePath)
+        SSHConfig("host", path_flavor=PurePath)
 
 
 def test_ssh_path_flavor_takes_the_same_strings_as_the_other_configs():
-    assert SshConfig("host", path_flavor="windows").path_flavor is WindowsPathname
-    assert SshConfig("host", path_flavor="posix").path_flavor is PosixPathname
+    assert SSHConfig("host", path_flavor="windows").path_flavor is WindowsPathname
+    assert SSHConfig("host", path_flavor="posix").path_flavor is PosixPathname
     # `auto` asks the server for its login directory when the host is created.
-    assert SshConfig("host", path_flavor="auto").path_flavor == "auto"
+    assert SSHConfig("host", path_flavor="auto").path_flavor == "auto"
     with pytest.raises(ValueError, match="path_flavor"):
-        SshConfig("host", path_flavor="native")
+        SSHConfig("host", path_flavor="native")
 
 
 def test_sftp_path_styles_when_ssh_extra_is_available():
     pytest.importorskip("asyncssh")
-    posix = _SshTransport(SshConfig("host")).path("/etc")
-    windows = _SshTransport(SshConfig("host", path_flavor=WindowsPathname)).path(
+    posix = _SSHTransport(SSHConfig("host")).path("/etc")
+    windows = _SSHTransport(SSHConfig("host", path_flavor=WindowsPathname)).path(
         r"C:\Temp"
     )
     # The text is the path on the server; a Windows drive keeps its colon.
@@ -448,7 +448,7 @@ def test_sftp_path_survives_uri_syntax_in_a_filename(remote):
     """A name that would be syntax in a URI -- `?`, `#`, `%xx` -- reaches the
     server as written: the remote path is never parsed as a URI."""
     pytest.importorskip("asyncssh")
-    path = _SshTransport(SshConfig("host")).path(remote)
+    path = _SSHTransport(SSHConfig("host")).path(remote)
     assert str(path) == remote
     assert path.name == remote.rsplit("/", 1)[1]
 
@@ -469,7 +469,7 @@ def test_sftp_backend_is_reused_and_invalidated_on_close():
 
 def test_auto_posix_probe_preserves_shell_executable():
     host, stub = _host(
-        SshConfig("host", dialect="auto"),
+        SSHConfig("host", dialect="auto"),
         result=_Result(stdout="/usr/local/bin/bash\n", stderr=""),
     )
     host.run("echo hello")
@@ -481,16 +481,16 @@ def test_a_session_starts_the_configured_shell_not_the_login_shell():
     """`spawn()` with no command resolves the program as `run()` does.
 
     The per-call executable alone would start the account's login shell and
-    ignore SshConfig.executable, the flavour's default and the executable
+    ignore SSHConfig.executable, the flavour's default and the executable
     recovered by dialect="auto", while send() renders in the configured
     dialect.
     """
     for config, expected in (
-        (SshConfig("h", username="root"), "/bin/sh"),
-        (SshConfig("h", username="root", executable="/bin/zsh"), "/bin/zsh"),
-        (SshConfig("h", username="root", dialect="powershell"), "powershell.exe"),
+        (SSHConfig("h", username="root"), "/bin/sh"),
+        (SSHConfig("h", username="root", executable="/bin/zsh"), "/bin/zsh"),
+        (SSHConfig("h", username="root", dialect="powershell"), "powershell.exe"),
     ):
-        transport = _SshTransport(config)
+        transport = _SSHTransport(config)
         stub = _StubSSH()
         transport._ssh = stub
 
@@ -502,7 +502,7 @@ def test_a_session_starts_the_configured_shell_not_the_login_shell():
 def test_a_session_write_encodes_for_a_binary_channel():
     """asyncssh does `bytearray(data)` on a str, so the documented
     `session.send("echo hi")` raised TypeError from inside a third party."""
-    transport = _SshTransport(SshConfig("h", username="root"))
+    transport = _SSHTransport(SSHConfig("h", username="root"))
     stub = _StubSSH()
     transport._ssh = stub
 
@@ -515,7 +515,7 @@ def test_a_session_write_encodes_for_a_binary_channel():
 def test_wait_keeps_output_the_caller_had_not_read():
     """asyncssh's wait() clears the receive buffers into its result; only the
     return code was kept, so a later read() returned b"" -- EOF, apparently."""
-    transport = _SshTransport(SshConfig("h", username="root"))
+    transport = _SSHTransport(SSHConfig("h", username="root"))
     stub = _StubSSH()
     stub.wait_result = _Result(returncode=0, stdout=b"late output", stderr=b"")
     transport._ssh = stub
@@ -604,7 +604,7 @@ def test_a_forked_child_does_not_reuse_the_parents_connection(monkeypatch):
 def test_the_default_verifies_the_host_key_on_both_legs():
     """The SFTP leg's library default is the opposite of the exec leg's, so
     both are pinned: `path()` must not accept a host key `run()` rejects."""
-    options = SshConfig("h").connect_opts()
+    options = SSHConfig("h").connect_opts()
 
     assert options == {
         "known_hosts": (),
@@ -614,7 +614,7 @@ def test_the_default_verifies_the_host_key_on_both_legs():
 
     # The SFTP leg gets the same dict, and reads no ssh_config, so it
     # verifies the host key and resolves the host as the exec leg does.
-    transport = _SshTransport(SshConfig("h"))
+    transport = _SSHTransport(SSHConfig("h"))
     transport.path("/tmp/x")
     backend = transport._sftp_backend
 
@@ -628,7 +628,7 @@ def test_ssh_auto_accepts_the_other_posix_shells(shell):
     from hostctl.shell import POSIX_SHELL
 
     host, _ = _host(
-        SshConfig("host", dialect="auto"), result=_Result(stdout=shell + "\n")
+        SSHConfig("host", dialect="auto"), result=_Result(stdout=shell + "\n")
     )
 
     assert host.shell_flavour is POSIX_SHELL
@@ -636,7 +636,7 @@ def test_ssh_auto_accepts_the_other_posix_shells(shell):
 
 def test_ssh_auto_still_refuses_csh_and_says_so():
     host, _ = _host(
-        SshConfig("host", dialect="auto"), result=_Result(stdout="/bin/tcsh\n")
+        SSHConfig("host", dialect="auto"), result=_Result(stdout="/bin/tcsh\n")
     )
 
     with pytest.raises(RuntimeError, match="tcsh.*not supported"):

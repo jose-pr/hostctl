@@ -10,7 +10,7 @@ import pytest
 
 from hostctl.exceptions import QGACommandError, QGATimeoutError
 from hostctl.executor._qga import (
-    SshUnixGuestAgentTransport,
+    SSHUnixGuestAgentTransport,
     UnixSocketGuestAgentTransport,
     guest_oserror,
     normalize_libvirt_error,
@@ -219,7 +219,7 @@ def test_an_ssh_connect_deadline_is_a_qga_timeout_on_every_python():
     legs now share one ladder that says so directly; this test pins the
     behaviour to the contract rather than to that chain.
     """
-    transport = SshUnixGuestAgentTransport(
+    transport = SSHUnixGuestAgentTransport(
         "/run/qga.sock", lambda: _SlowConnection(), timeout=0.05
     )
 

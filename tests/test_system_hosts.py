@@ -119,13 +119,13 @@ def test_system_config_rejects_unknown_provider_descriptor():
 
 
 def test_system_config_resolves_transport_descriptors_with_explicit_options():
-    from hostctl import SshConfig
+    from hostctl import SSHConfig
 
     config = PosixConfig(
         "node",
         executor=("ssh",),
         path=("sftp",),
-        provider_options={"ssh": SshConfig("node", username="root")},
+        provider_options={"ssh": SSHConfig("node", username="root")},
     )
     host = config._create_host()
     # The SSH provider implements spawn(), and now says so.
@@ -234,9 +234,9 @@ def test_executor_fallback_replans_capabilities_before_retrying():
 
 
 def test_ios_host_without_shell_requires_direct_provider():
-    from hostctl import IosHost
+    from hostctl import IOSHost
 
-    host = IosHost(executor_providers=(ExecutorProvider("raw", lambda *a, **k: None),))
+    host = IOSHost(executor_providers=(ExecutorProvider("raw", lambda *a, **k: None),))
     with pytest.raises(NotImplementedError):
         host.run("show version")
 
@@ -350,21 +350,21 @@ def test_system_host_close_attempts_all_targets_and_reraises_first_error():
 
 
 def test_a_transport_config_opens_the_system_family_its_paths_select():
-    from hostctl import SshConfig, WindowsHost
+    from hostctl import SSHConfig, WindowsHost
 
     from pathapi import WindowsPathname
 
     assert isinstance(
-        SshConfig("host", path_flavor=WindowsPathname).open(), WindowsHost
+        SSHConfig("host", path_flavor=WindowsPathname).open(), WindowsHost
     )
-    assert isinstance(SshConfig("host").open(), PosixHost)
+    assert isinstance(SSHConfig("host").open(), PosixHost)
     assert isinstance(WinRMConfig("host", "user").open(), WindowsHost)
 
 
 def test_transport_configs_compose_system_hosts_without_uri_changes():
-    from hostctl import SshConfig, WinRMConfig
+    from hostctl import SSHConfig, WinRMConfig
 
-    ssh_config = SshConfig("example", username="root")
+    ssh_config = SSHConfig("example", username="root")
     posix = ssh_config.open()
     assert posix.connection_uri == ssh_config.connection_uri
     assert posix.scheme == "ssh"
@@ -629,9 +629,9 @@ def test_an_args_provider_without_cwd_gets_the_context_in_the_script():
 def test_a_shell_less_host_refuses_context_it_cannot_apply():
     """Better a clear refusal than a command that runs somewhere else.
 
-    `IosHost` configures no shell, so there is nowhere to embed cwd/env.
+    `IOSHost` configures no shell, so there is nowhere to embed cwd/env.
     """
-    from hostctl.host.system import IosHost
+    from hostctl.host.system import IOSHost
 
     provider = ExecutorProvider(
         "bare",
@@ -640,7 +640,7 @@ def test_a_shell_less_host_refuses_context_it_cannot_apply():
         ),
         capabilities=(),
     )
-    host = IosHost(executor_providers=(provider,))
+    host = IOSHost(executor_providers=(provider,))
 
     with pytest.raises(NotImplementedError, match="cannot apply cwd or env"):
         host.run(Exec("/bin/true"), cwd="/srv", check=False)
@@ -758,13 +758,13 @@ def test_two_hosts_from_one_config_do_not_share_a_transport():
     descriptors because they are what the cache serves; `local` providers
     build no transport at all.
     """
-    from hostctl import SshConfig
+    from hostctl import SSHConfig
 
     config = PosixConfig(
         "node",
         executor=("ssh",),
         path=("sftp",),
-        provider_options={"ssh": SshConfig("node", username="root")},
+        provider_options={"ssh": SSHConfig("node", username="root")},
     )
 
     first, second = config._create_host(), config._create_host()
@@ -911,13 +911,13 @@ def test_a_provider_that_cannot_carry_it_refuses_rather_than_losing_it():
 
 
 def test_a_family_with_no_path_grammar_says_so():
-    """Everything non-Windows fell through to POSIX, so an `IosHost` --
+    """Everything non-Windows fell through to POSIX, so an `IOSHost` --
     documented as command-only until an IOS path grammar is designed --
     advertised `path` and applied POSIX rules to `flash:/config.text`."""
-    from hostctl import IosHost
+    from hostctl import IOSHost
     from pathapi import Path as LocalPath
 
-    host = IosHost(path_providers=(PathProvider("local", lambda *p: LocalPath(*p)),))
+    host = IOSHost(path_providers=(PathProvider("local", lambda *p: LocalPath(*p)),))
 
     with pytest.raises(NotImplementedError, match="command-only"):
         host.path("flash:/config.text")
@@ -992,7 +992,7 @@ def test_concurrent_hosts_from_one_config_do_not_share_a_transport(monkeypatch):
     import threading
     import time
 
-    from hostctl import SshConfig
+    from hostctl import SSHConfig
     from hostctl.host import system as system_module
 
     real = system_module._ssh_provider
@@ -1006,7 +1006,7 @@ def test_concurrent_hosts_from_one_config_do_not_share_a_transport(monkeypatch):
         "node",
         executor=("ssh",),
         path=("sftp",),
-        provider_options={"ssh": SshConfig("example.invalid")},
+        provider_options={"ssh": SSHConfig("example.invalid")},
     )
     hosts = [None, None]
 

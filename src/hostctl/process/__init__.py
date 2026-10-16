@@ -7,7 +7,7 @@ from ._common import (
     TerminalRequest as TerminalRequest,
     terminal_options as terminal_options,
 )
-from .ssh import SshProcess as SshProcess
+from .ssh import SSHProcess as SSHProcess
 from .container import ContainerProcess as ContainerProcess
 from .serial import (
     SerialConsoleProcess as SerialConsoleProcess,
@@ -16,9 +16,9 @@ from .serial import (
 from .qemu_serial import (
     ConsoleResize as ConsoleResize,
     ConsoleStreamFactory as ConsoleStreamFactory,
-    QemuConsoleStream as QemuConsoleStream,
-    QemuSerialConsole as QemuSerialConsole,
-    QemuSerialProcess as QemuSerialProcess,
+    QEMUConsoleStream as QEMUConsoleStream,
+    QEMUSerialConsole as QEMUSerialConsole,
+    QEMUSerialProcess as QEMUSerialProcess,
     normalize_qemu_console_error as normalize_qemu_console_error,
 )
 from .psrp import (
@@ -32,11 +32,11 @@ __all__ = (
     "ProcessData",
     "ConsoleResize",
     "ConsoleStreamFactory",
-    "QemuConsoleStream",
-    "QemuSerialConsole",
-    "QemuSerialProcess",
+    "QEMUConsoleStream",
+    "QEMUSerialConsole",
+    "QEMUSerialProcess",
     "ContainerProcess",
-    "SshProcess",
+    "SSHProcess",
     "SerialProcess",
     "SerialConsoleProcess",
     "TerminalOptions",

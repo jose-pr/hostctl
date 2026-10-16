@@ -14,7 +14,7 @@ from urllib.parse import quote, unquote, urlencode
 
 from pathapi import Pathname, PosixPathname, WindowsPathname
 
-from ..executor import SshConnection, SshExecutor
+from ..executor import SSHConnection, SSHExecutor
 from ..exceptions import OperationNotStartedError
 from ..provider import (
     ExecutorProvider,
@@ -24,7 +24,7 @@ from ..provider import (
 )
 
 log = logging.getLogger("hostctl.host.ssh")
-from ..process import Process, SshProcess, TerminalRequest
+from ..process import Process, SSHProcess, TerminalRequest
 from ._common import (
     Command,
     Environment,
@@ -54,16 +54,16 @@ from ..shell import (
 from ..shell._invocation import render_command
 from ..shell._common import ShellCommand
 
-SshKeySource = typing.Union[str, bytes, os.PathLike[str]]
-SshClientKeys = typing.Optional[
-    typing.Union[SshKeySource, typing.Sequence[SshKeySource]]
+SSHKeySource = typing.Union[str, bytes, os.PathLike[str]]
+SSHClientKeys = typing.Optional[
+    typing.Union[SSHKeySource, typing.Sequence[SSHKeySource]]
 ]
-SshKnownHosts = typing.Optional[
-    typing.Union[SshKeySource, typing.Sequence[SshKeySource]]
+SSHKnownHosts = typing.Optional[
+    typing.Union[SSHKeySource, typing.Sequence[SSHKeySource]]
 ]
 PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
-SshShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
-SshPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
+SSHShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
+SSHPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
 
 #: `connect_options` keys hostctl owns, and the field to use instead.
 _OWNED_CONNECT_OPTIONS = {
@@ -131,7 +131,7 @@ def _refuse_unsafe_target(host: str, username: typing.Optional[str]) -> None:
 
 
 @dataclasses.dataclass
-class SshConfig(HostConfig, schemes=("ssh",)):
+class SSHConfig(HostConfig, schemes=("ssh",)):
     """Explicit SSH transport, authentication, and target-shell settings."""
 
     #: Declared rather than enforced inside `_from_parsed_uri`, so the
@@ -144,11 +144,11 @@ class SshConfig(HostConfig, schemes=("ssh",)):
     port: int = 22
     username: typing.Optional[str] = None
     password: typing.Optional[str] = dataclasses.field(default=None, repr=False)
-    client_keys: SshClientKeys = dataclasses.field(default=None, repr=False)
+    client_keys: SSHClientKeys = dataclasses.field(default=None, repr=False)
     executable: typing.Optional[str] = None
-    known_hosts: SshKnownHosts = ()
-    dialect: SshShellSelection = POSIX_SHELL
-    path_flavor: SshPathSelection = PosixPathname
+    known_hosts: SSHKnownHosts = ()
+    dialect: SSHShellSelection = POSIX_SHELL
+    path_flavor: SSHPathSelection = PosixPathname
     #: What parses the command string when it ARRIVES, before the command
     #: line's own shell runs.
     #:
@@ -186,7 +186,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         if not self.host:
             raise ValueError("host must not be empty")
         # The constructor takes a HOST; the dispatcher takes a URI.
-        _refuse_uri("SshConfig", self.host)
+        _refuse_uri("SSHConfig", self.host)
         _refuse_unsafe_target(self.host, self.username)
         if not 1 <= self.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
@@ -200,7 +200,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             if key in _OWNED_CONNECT_OPTIONS:
                 raise ValueError(
                     f"connect_options cannot set {key!r}; "
-                    f"use SshConfig({_OWNED_CONNECT_OPTIONS[key]}=...)"
+                    f"use SSHConfig({_OWNED_CONNECT_OPTIONS[key]}=...)"
                 )
         if self.connect_timeout is not None and not self.connect_timeout > 0:
             raise ValueError("connect_timeout must be greater than 0 seconds")
@@ -274,7 +274,7 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         return f"ssh://{user}{join_host(self.host, self.port)}?{urlencode(query)}"
 
     @classmethod
-    def _from_parsed_uri(cls, parsed, **credentials: object) -> SshConfig:
+    def _from_parsed_uri(cls, parsed, **credentials: object) -> SSHConfig:
         query = strict_uri_query(
             parsed,
             {
@@ -294,9 +294,9 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             port=get_default_port("ssh") if parsed.port is None else parsed.port,
             username=unquote(parsed.username or "") or None,
             password=typing.cast(typing.Optional[str], credentials.get("password")),
-            client_keys=typing.cast(SshClientKeys, credentials.get("client_keys")),
+            client_keys=typing.cast(SSHClientKeys, credentials.get("client_keys")),
             executable=query.get("executable") or None,
-            known_hosts=typing.cast(SshKnownHosts, credentials.get("known_hosts", ())),
+            known_hosts=typing.cast(SSHKnownHosts, credentials.get("known_hosts", ())),
             dialect=(
                 "auto"
                 if query.get("dialect") == "auto"
@@ -325,8 +325,8 @@ class SshConfig(HostConfig, schemes=("ssh",)):
         host_type = WindowsHost if issubclass(flavor, PureWindowsPath) else PosixHost
         return host_type(
             self,
-            executor_providers=(SshExecutorProvider(transport),),
-            path_providers=(SftpPathProvider(transport),),
+            executor_providers=(SSHExecutorProvider(transport),),
+            path_providers=(SFTPPathProvider(transport),),
             shell=(
                 self.dialect
                 if self.dialect != "auto"
@@ -334,21 +334,21 @@ class SshConfig(HostConfig, schemes=("ssh",)):
             ),
         )
 
-    def _create_transport(self) -> _SshTransport:
+    def _create_transport(self) -> _SSHTransport:
         """Create the private SSH service shared by executor/path providers."""
-        return _SshTransport(self)
+        return _SSHTransport(self)
 
 
-class _SshTransport:
+class _SSHTransport:
     """A host reached over SSH, with an explicitly configured command dialect."""
 
-    def __init__(self, config: SshConfig) -> None:
+    def __init__(self, config: SSHConfig) -> None:
         self.config = config
-        self._ssh: typing.Optional[SshConnection] = None
+        self._ssh: typing.Optional[SSHConnection] = None
         self._ssh_lock = threading.RLock()
         #: The process the cached connection belongs to; see `ssh`.
         self._loop_generation: typing.Optional[int] = None
-        self._executor = SshExecutor(lambda: self.ssh)
+        self._executor = SSHExecutor(lambda: self.ssh)
         self._resolved_dialect: typing.Optional[
             typing.Tuple[typing.Tuple[object, ...], ShellFlavour, typing.Optional[str]]
         ] = None
@@ -474,7 +474,7 @@ class _SshTransport:
         raise RuntimeError("unable to detect a supported remote Windows shell")
 
     @property
-    def executor(self) -> SshExecutor:
+    def executor(self) -> SSHExecutor:
         return self._executor
 
     def info(self) -> HostInfo:
@@ -529,7 +529,7 @@ class _SshTransport:
         return True
 
     @property
-    def ssh(self) -> SshConnection:
+    def ssh(self) -> SSHConnection:
         """The lazily opened and reused asyncssh connection."""
         with self._ssh_lock:
             from .. import _async
@@ -736,7 +736,7 @@ class _SshTransport:
             if normalized is exc:
                 raise
             raise normalized from exc
-        return SshProcess(
+        return SSHProcess(
             typing.cast(typing.Any, process),
             command,
             encoding=typing.cast(typing.Optional[str], options.get("encoding")),
@@ -744,10 +744,10 @@ class _SshTransport:
         )
 
 
-class SshExecutorProvider(ExecutorProvider):
+class SSHExecutorProvider(ExecutorProvider):
     """Lifecycle-owning SSH command provider used by :class:`PosixHost`."""
 
-    def __init__(self, transport: _SshTransport):
+    def __init__(self, transport: _SSHTransport):
         self.transport = transport
         # SSH receives one finalized command string; argv arguments are
         # rendered by the host shell before dispatch.
@@ -806,10 +806,10 @@ class SshExecutorProvider(ExecutorProvider):
         return self.transport.spawn(*args, **options)
 
 
-class SftpPathProvider(PathProvider):
+class SFTPPathProvider(PathProvider):
     """SFTP path provider sharing the SSH transport lifecycle."""
 
-    def __init__(self, transport: _SshTransport):
+    def __init__(self, transport: _SSHTransport):
         self.transport = transport
         super().__init__(
             "sftp", lambda *segments: transport.path(*segments), capabilities=("path",)
@@ -830,7 +830,7 @@ class SftpPathProvider(PathProvider):
             )
         return ProviderProbe("available", capabilities=self.capabilities)
 
-    # Closing is owned by SshExecutorProvider for the shared transport.
+    # Closing is owned by SSHExecutorProvider for the shared transport.
     #
     # Composite paths call this before EVERY dispatch, so it stays cheap: the
     # client is cached after the first call. Opening it here keeps a failed
@@ -861,13 +861,13 @@ class SftpPathProvider(PathProvider):
 
 
 def ssh_providers(
-    config: SshConfig,
-) -> typing.Tuple[SshExecutorProvider, SftpPathProvider]:
+    config: SSHConfig,
+) -> typing.Tuple[SSHExecutorProvider, SFTPPathProvider]:
     """Build an executor and path provider sharing one SSH transport.
 
     This is the supported way to compose SSH into a host you assemble
     yourself, rather than taking the finished `PosixHost` that
-    `SshConfig._create_host()` returns:
+    `SSHConfig._create_host()` returns:
 
         executors, paths = [], []
         run_provider, path_provider = ssh_providers(config.ssh)
@@ -875,10 +875,10 @@ def ssh_providers(
         paths.append(path_provider)
 
     Both providers **must** share one transport: that is what makes them share
-    a connection and a lifecycle, and `SshExecutorProvider` is the one that
+    a connection and a lifecycle, and `SSHExecutorProvider` is the one that
     owns close. Assembling them by hand from two transports type-checks and
     silently opens two connections, only one of which is ever closed -- which
     is precisely why this returns a pair instead of exposing the transport.
     """
-    transport = _SshTransport(config)
-    return SshExecutorProvider(transport), SftpPathProvider(transport)
+    transport = _SSHTransport(config)
+    return SSHExecutorProvider(transport), SFTPPathProvider(transport)

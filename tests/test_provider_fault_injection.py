@@ -664,10 +664,10 @@ def test_a_dns_failure_declines_to_the_next_provider():
     """
     import socket
 
-    from hostctl import SshConfig
-    from hostctl.host._ssh import SshExecutorProvider, _SshTransport
+    from hostctl import SSHConfig
+    from hostctl.host._ssh import SSHExecutorProvider, _SSHTransport
 
-    transport = _SshTransport(SshConfig("no-such-host.invalid", username="root"))
+    transport = _SSHTransport(SSHConfig("no-such-host.invalid", username="root"))
 
     def unresolvable():
         raise socket.gaierror(11001, "getaddrinfo failed")
@@ -679,7 +679,7 @@ def test_a_dns_failure_declines_to_the_next_provider():
             (command,), 0, b"ok", b""
         ),
     )
-    host = PosixHost(executor_providers=(SshExecutorProvider(transport), fallback))
+    host = PosixHost(executor_providers=(SSHExecutorProvider(transport), fallback))
 
     assert host.run("uptime", check=False).stdout == b"ok"
 
@@ -687,10 +687,10 @@ def test_a_dns_failure_declines_to_the_next_provider():
 def test_a_routing_failure_declines_to_the_next_provider():
     import errno
 
-    from hostctl import SshConfig
-    from hostctl.host._ssh import SshExecutorProvider, _SshTransport
+    from hostctl import SSHConfig
+    from hostctl.host._ssh import SSHExecutorProvider, _SSHTransport
 
-    transport = _SshTransport(SshConfig("10.0.0.1", username="root"))
+    transport = _SSHTransport(SSHConfig("10.0.0.1", username="root"))
 
     def unreachable():
         raise OSError(errno.EHOSTUNREACH, "No route to host")
@@ -702,7 +702,7 @@ def test_a_routing_failure_declines_to_the_next_provider():
             (command,), 0, b"ok", b""
         ),
     )
-    host = PosixHost(executor_providers=(SshExecutorProvider(transport), fallback))
+    host = PosixHost(executor_providers=(SSHExecutorProvider(transport), fallback))
 
     assert host.run("uptime", check=False).stdout == b"ok"
 
@@ -716,10 +716,10 @@ def test_a_connect_timeout_declines_to_the_next_provider():
     fallback never ran."""
     import asyncio
 
-    from hostctl import SshConfig
-    from hostctl.host._ssh import SshExecutorProvider, _SshTransport
+    from hostctl import SSHConfig
+    from hostctl.host._ssh import SSHExecutorProvider, _SSHTransport
 
-    transport = _SshTransport(SshConfig("firewalled.example", username="root"))
+    transport = _SSHTransport(SSHConfig("firewalled.example", username="root"))
 
     def timed_out():
         raise _async.normalize_asyncssh_error(asyncio.TimeoutError("timed out"))
@@ -731,7 +731,7 @@ def test_a_connect_timeout_declines_to_the_next_provider():
             (command,), 0, b"ok", b""
         ),
     )
-    host = PosixHost(executor_providers=(SshExecutorProvider(transport), fallback))
+    host = PosixHost(executor_providers=(SSHExecutorProvider(transport), fallback))
 
     assert host.run("uptime", check=False).stdout == b"ok"
 
@@ -820,10 +820,10 @@ def _served_by_memory(text="served"):
 
 
 def _sftp_that_cannot_connect(*, connect=None, warm=None):
-    from hostctl import SshConfig
-    from hostctl.host._ssh import SftpPathProvider, _SshTransport
+    from hostctl import SSHConfig
+    from hostctl.host._ssh import SFTPPathProvider, _SSHTransport
 
-    transport = _SshTransport(SshConfig("nas.example", username="root"))
+    transport = _SSHTransport(SSHConfig("nas.example", username="root"))
     refuse = connect or warm or (lambda: None)
 
     class _Backend:
@@ -831,13 +831,13 @@ def _sftp_that_cannot_connect(*, connect=None, warm=None):
             refuse()
 
     transport._backend = lambda: _Backend()
-    return SftpPathProvider(transport)
+    return SFTPPathProvider(transport)
 
 
 @pytest.mark.parametrize(
     "error",
     (
-        # What `_SshTransport.connect()` makes of each: an untrusted host key
+        # What `_SSHTransport.connect()` makes of each: an untrusted host key
         # (`HostKeyNotVerifiable`) and a refused or firewalled port.
         ConnectionError("Host key is not trusted for host nas.example"),
         ConnectionRefusedError(10061, "connection refused"),
@@ -848,7 +848,7 @@ def _sftp_that_cannot_connect(*, connect=None, warm=None):
 def test_a_path_falls_back_when_sftp_cannot_connect(error):
     """`run()` connects before dispatch and fell back; `path()` did not.
 
-    Nothing on the composite-path route called `SftpPathProvider.connect()`:
+    Nothing on the composite-path route called `SFTPPathProvider.connect()`:
     the SFTP library dials lazily inside the operation, so the transport
     error escaped `_dispatch` and the working next provider was never tried.
     """

@@ -17,7 +17,7 @@ from hostctl import (
     LocalHost,
     PosixHost,
     WindowsHost,
-    SshConfig,
+    SSHConfig,
     WinRMConfig,
     parse_credentials,
     redact_uri,
@@ -109,7 +109,7 @@ def test_config_reentry_is_guarded_and_connect_failure_cleans_up():
 
 
 def test_ssh_uri_round_trip_keeps_secrets_separate():
-    source = SshConfig(
+    source = SSHConfig(
         "windows.example.com",
         port=2222,
         username="admin",
@@ -130,7 +130,7 @@ def test_ssh_uri_round_trip_keeps_secrets_separate():
     assert restored.config.executable == "C:/Program Files/PowerShell/7/pwsh.exe"
     assert restored.connection_uri == uri
     restored_config = HostConfig(uri, password="top-secret", known_hosts=None)
-    assert isinstance(restored_config, SshConfig)
+    assert isinstance(restored_config, SSHConfig)
     assert str(restored_config) == uri
 
 
@@ -161,14 +161,14 @@ def test_winrms_uri_round_trip_keeps_secrets_separate():
 def test_ssh_path_flavor_selects_system_semantics_without_changing_dialect():
     windows = Host(
         str(
-            SshConfig(
+            SSHConfig(
                 "windows.example", path_flavor=WindowsPathname, dialect="powershell"
             )
         )
     )
     assert isinstance(windows, WindowsHost)
     assert windows.shell_flavour is POWERSHELL
-    posix_pwsh = Host(str(SshConfig("posix.example", dialect="powershell")))
+    posix_pwsh = Host(str(SSHConfig("posix.example", dialect="powershell")))
     assert isinstance(posix_pwsh, PosixHost)
     assert posix_pwsh.shell_flavour is POWERSHELL
 
@@ -190,7 +190,7 @@ def test_transport_system_hosts_have_safe_info_fallback_without_connection(
         dialled.append(type(self).__name__)
         raise ConnectionError("no network in a unit test")
 
-    monkeypatch.setattr(_ssh._SshTransport, "connect", refuse)
+    monkeypatch.setattr(_ssh._SSHTransport, "connect", refuse)
     monkeypatch.setattr(_winrm._WinRMTransport, "connect", refuse)
 
     ssh = Host("ssh://root@example.com")
@@ -206,7 +206,7 @@ def test_transport_system_hosts_have_safe_info_fallback_without_connection(
     "host",
     [
         LocalHost(),
-        SshConfig("host").open(),
+        SSHConfig("host").open(),
         WinRMConfig("host", "user").open(),
         WinRMConfig("host", "user", ssl=True).open(),
     ],
@@ -449,7 +449,7 @@ def test_ssh_providers_share_one_transport_for_composition():
     from hostctl import ssh_providers
     from hostctl.provider import ExecutorProvider, PathProvider
 
-    executor, path = ssh_providers(SshConfig("nas.example.com", username="root"))
+    executor, path = ssh_providers(SSHConfig("nas.example.com", username="root"))
 
     assert isinstance(executor, ExecutorProvider)
     assert isinstance(path, PathProvider)
@@ -476,7 +476,7 @@ def test_uri_password_field_carries_credential_extras():
     quoted = quote("hunter2\notp:123456", safe="")
 
     with pytest.raises(ValueError, match="otp"):
-        # SshConfig declares no `otp` credential, so the extra is rejected by
+        # SSHConfig declares no `otp` credential, so the extra is rejected by
         # name rather than silently dropped.
         HostConfig(f"ssh://admin:{quoted}@nas.example.com")
 
@@ -542,7 +542,7 @@ def test_entry_point_loading_is_lazy_and_cache_can_be_refreshed(monkeypatch):
 
 
 def test_repr_redacts_credentials():
-    assert "top-secret" not in repr(SshConfig("host", password="top-secret"))
+    assert "top-secret" not in repr(SSHConfig("host", password="top-secret"))
     assert "top-secret" not in repr(WinRMConfig("host", "user", "top-secret"))
 
 
@@ -550,7 +550,7 @@ def test_capabilities_are_explicit():
     # `spawn`/`tty` are reported because the SSH provider implements sessions:
     # a tool gating on `capabilities`, as contracts.md tells callers to do,
     # must offer a shell on an SSH host.
-    assert SshConfig("host").open().capabilities == frozenset(
+    assert SSHConfig("host").open().capabilities == frozenset(
         ("run", "path", "spawn", "tty")
     )
     windows_capabilities = WinRMConfig("host", "user", "secret").open().capabilities
@@ -663,9 +663,9 @@ def test_an_unsupported_session_raises_not_implemented_not_a_runtime_error():
     is available" is an `OperationNotStartedError` -- a RuntimeError -- so a caller
     catching NotImplementedError to fall back to `run()` crashed instead.
     """
-    from hostctl.host.system import IosHost
+    from hostctl.host.system import IOSHost
 
-    host = IosHost()
+    host = IOSHost()
 
     with pytest.raises(NotImplementedError, match="spawn"):
         host.spawn("bash")

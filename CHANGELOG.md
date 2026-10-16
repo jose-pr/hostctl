@@ -17,6 +17,7 @@ Every row ships in 0.4.0. No old name is kept as an alias.
 | `QgaCommandError`, `QgaProtocolError`, `executor.GuestAgentProtocolError` | `QGACommandError`, `QGAProtocolError` |
 | `QgaTimeoutError`, `QgaDisconnectedError`, `QgaError` (private module) | `QGATimeoutError`, `QGADisconnectedError`; catch `HostctlError` |
 | `ConsoleProtocolError` from `hostctl.serial` | same name, `hostctl.exceptions`, under `HostctlError` |
+| `SshConfig`, `QemuConfig`, `QemuHost`, `IosConfig`, `IosHost` | `SSHConfig`, `QEMUConfig`, `QEMUHost`, `IOSConfig`, `IOSHost` |
 
 ### Added
 

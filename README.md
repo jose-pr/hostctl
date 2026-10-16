@@ -60,10 +60,10 @@ from hostctl import (
     Host,
     HostConfig,
     ContainerConfig,
-    QemuConfig,
+    QEMUConfig,
     LocalConfig,
     POWERSHELL,
-    SshConfig,
+    SSHConfig,
     WinRMConfig,
 )
 from pathapi import WindowsPathname
@@ -74,13 +74,13 @@ with LocalConfig() as host:
     print(result.stdout)
 
 # SSH to a POSIX target (needs the `ssh` extra)
-with SshConfig(host="nas.example.com", username="admin", password="secret") as host:
+with SSHConfig(host="nas.example.com", username="admin", password="secret") as host:
     result = host.run("df -h")
     for line in host.path("/etc").iterdir():
         print(line)
 
 # SSH to Windows is explicit, not inferred from the transport.
-windows_ssh = SshConfig(
+windows_ssh = SSHConfig(
     host="windows.example.com",
     username="admin",
     password="secret",
@@ -102,10 +102,10 @@ with ContainerConfig("application") as container:
         print(session.read())
 
 # A QEMU guest through its QGA Unix socket tunneled over SSH.
-with QemuConfig(
+with QEMUConfig(
     "vm-id",
     transport="ssh",
-    ssh=SshConfig("hypervisor.example", username="root"),
+    ssh=SSHConfig("hypervisor.example", username="root"),
 ) as guest:
     print(guest.info())
     print(guest.run(["echo", "hello"], encoding="utf-8").stdout)
@@ -168,11 +168,11 @@ exposed until its required certificate/key configuration is part of the API.
 
 ### Composable system hosts
 
-Use `PosixHost`, `WindowsHost`, or `IosHost` when system semantics should be
+Use `PosixHost`, `WindowsHost`, or `IOSHost` when system semantics should be
 independent of the transport. Providers are tried in declaration order during
 preflight; a provider may be retried only when it raises
 `OperationNotStartedError`, which guarantees that no remote operation was sent.
-`IosHost` is deliberately session- and command-only: it configures no shell
+`IOSHost` is deliberately session- and command-only: it configures no shell
 flavour and no path grammar, so commands must be `Exec(...)` (or raw text the
 device understands) and `path()` raises `NotImplementedError` until an IOS
 path grammar exists.
@@ -203,14 +203,14 @@ Existing transport URIs remain compatible.  To opt into system semantics while
 retaining those URI/configuration objects, compose them explicitly:
 
 ```python
-from hostctl import SshConfig, WinRMConfig
+from hostctl import SSHConfig, WinRMConfig
 
-posix = SshConfig("server.example", username="root").open()
+posix = SSHConfig("server.example", username="root").open()
 windows = WinRMConfig("server.example", "admin").open()
 ```
 
 SSH and WinRM transport implementations are private providers; QEMU's SSH
-tunnel continues to consume `SshConfig` directly.
+tunnel continues to consume `SSHConfig` directly.
 
 ## Command line
 
@@ -236,7 +236,7 @@ program serves every subcommand as an MCP tool over stdio.
 | --- | --- |
 | `hostctl.host` | Shared contracts and built-in host providers |
 | `hostctl.host.container` | `ContainerConfig`, `ContainerHost` |
-| `hostctl.host.qemu` | `QemuConfig`, `QemuHost` |
+| `hostctl.host.qemu` | `QEMUConfig`, `QEMUHost` |
 | `hostctl.host.serial` | `SerialConfig`, `SerialHost` |
 | `hostctl.provider` | Ordered executor/path provider composition |
 | `hostctl.executor` | Transport-specific command executors |

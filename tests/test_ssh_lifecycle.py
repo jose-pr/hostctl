@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("asyncssh")
 
-from hostctl import HostConfig, SshConfig
+from hostctl import HostConfig, SSHConfig
 from hostctl import _async
 from hostctl.exceptions import OperationNotStartedError
 
@@ -45,7 +45,7 @@ def test_connect_timeout_bounds_a_silent_server():
     thread = threading.Thread(target=accept, daemon=True)
     thread.start()
     try:
-        host = SshConfig(
+        host = SSHConfig(
             "127.0.0.1",
             port=listener.getsockname()[1],
             connect_timeout=0.5,
@@ -67,7 +67,7 @@ def test_connect_timeout_bounds_a_silent_server():
 
 
 def test_connect_with_nothing_connected_raises():
-    host = SshConfig("127.0.0.1", port=_closed_port(), known_hosts=None).open()
+    host = SSHConfig("127.0.0.1", port=_closed_port(), known_hosts=None).open()
 
     with pytest.raises(OperationNotStartedError, match="no provider connected"):
         host.connect()
@@ -81,7 +81,7 @@ def test_connect_with_nothing_connected_raises():
 
 
 def test_close_in_a_forked_child_leaves_the_parent_connection(monkeypatch):
-    from hostctl.host._ssh import _SshTransport
+    from hostctl.host._ssh import _SSHTransport
 
     class _Connection:
         closed = False
@@ -95,7 +95,7 @@ def test_close_in_a_forked_child_leaves_the_parent_connection(monkeypatch):
         async def wait_closed(self):
             return None
 
-    transport = _SshTransport(SshConfig("h"))
+    transport = _SSHTransport(SSHConfig("h"))
     connection = _Connection()
     transport._ssh = connection
     transport._loop_generation = _async.loop_generation()
@@ -108,14 +108,14 @@ def test_close_in_a_forked_child_leaves_the_parent_connection(monkeypatch):
 
 
 def test_connect_timeout_round_trips_the_uri_and_is_validated():
-    config = SshConfig("h", connect_timeout=5)
+    config = SSHConfig("h", connect_timeout=5)
     restored = HostConfig(config.connection_uri)
     assert restored.connect_timeout == 5.0
-    assert "connect_timeout" not in SshConfig("h").connection_uri
-    assert SshConfig("h").connect_opts()["connect_timeout"] == 30.0
-    assert "connect_timeout" not in SshConfig("h", connect_timeout=None).connect_opts()
+    assert "connect_timeout" not in SSHConfig("h").connection_uri
+    assert SSHConfig("h").connect_opts()["connect_timeout"] == 30.0
+    assert "connect_timeout" not in SSHConfig("h", connect_timeout=None).connect_opts()
     with pytest.raises(ValueError, match="connect_timeout"):
-        SshConfig("h", connect_timeout=0)
+        SSHConfig("h", connect_timeout=0)
 
 
 async def _no_command(process):

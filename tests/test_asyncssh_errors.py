@@ -88,7 +88,7 @@ def test_an_asyncio_connect_timeout_crosses_as_a_builtin_timeout():
     default 120s `login_timeout`). It matched neither arm of the mapping, so
     it escaped `host.run()` verbatim: the documented
     `except (ConnectionError, TimeoutError)` did not catch it, and
-    `SshExecutorProvider.connect()` could not turn it into
+    `SSHExecutorProvider.connect()` could not turn it into
     `OperationNotStartedError` for the next provider."""
     import asyncio
 

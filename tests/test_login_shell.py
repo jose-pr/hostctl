@@ -17,7 +17,7 @@ import sys
 import pytest
 from pathapi import PosixPathname, WindowsPathname
 
-from hostctl import SshConfig
+from hostctl import SSHConfig
 from hostctl.shell import CMD, FISH, POSIX_SHELL, POWERSHELL
 
 #: The values that separate a working rule from a plausible one. Measured
@@ -28,22 +28,22 @@ ADVERSARIAL = ("a b", "%OS%", "a&b", 'say "hi"', "c^d", "(x)", "100%", "x|y")
 
 
 def test_auto_reads_the_dialect():
-    assert SshConfig("h").resolved_login_shell == "posix"
-    assert SshConfig("h", path_flavor=WindowsPathname).resolved_login_shell == "cmd"
+    assert SSHConfig("h").resolved_login_shell == "posix"
+    assert SSHConfig("h", path_flavor=WindowsPathname).resolved_login_shell == "cmd"
     # Explicit wins: the server's DefaultShell is configurable, so guessing
     # is wrong in both directions.
     assert (
-        SshConfig(
+        SSHConfig(
             "h", path_flavor=WindowsPathname, login_shell="powershell"
         ).resolved_login_shell
         == "powershell"
     )
-    assert SshConfig("h", login_shell="posix").resolved_login_shell == "posix"
+    assert SSHConfig("h", login_shell="posix").resolved_login_shell == "posix"
 
 
 def test_an_unknown_login_shell_is_refused():
     with pytest.raises(ValueError, match="login_shell"):
-        SshConfig("h", login_shell="fish")
+        SSHConfig("h", login_shell="fish")
 
 
 def test_only_a_flavour_with_an_outer_rule_claims_one():
@@ -142,9 +142,9 @@ class _Recording:
 
 def _transport(**config):
     from hostctl import _async
-    from hostctl.host._ssh import _SshTransport
+    from hostctl.host._ssh import _SSHTransport
 
-    transport = _SshTransport(SshConfig("h", **config))
+    transport = _SSHTransport(SSHConfig("h", **config))
     transport._ssh = _Recording()
     transport._loop_generation = _async.loop_generation()
     return transport
@@ -256,15 +256,15 @@ def test_the_portable_join_quotes_what_fish_and_sh_read_differently():
 def test_the_uri_carries_the_setting():
     from hostctl.host import HostConfig
 
-    config = SshConfig("h", path_flavor=WindowsPathname, login_shell="powershell")
+    config = SSHConfig("h", path_flavor=WindowsPathname, login_shell="powershell")
     restored = HostConfig(config.connection_uri)
-    assert isinstance(restored, SshConfig)
+    assert isinstance(restored, SSHConfig)
     assert restored.login_shell == "powershell"
     assert restored.path_flavor is WindowsPathname
 
     # `auto` is the default and is left out, so an existing URI's text is
     # unchanged by this field existing.
-    default = SshConfig("h", path_flavor=PosixPathname)
+    default = SSHConfig("h", path_flavor=PosixPathname)
     assert "login_shell" not in default.connection_uri
     assert HostConfig(default.connection_uri).login_shell == "auto"
 
@@ -277,4 +277,4 @@ def test_the_constructor_takes_a_host_and_the_dispatcher_takes_a_uri():
     later, as an unresolvable name.
     """
     with pytest.raises(ValueError, match="takes a host, not a URI"):
-        SshConfig("ssh://root@h:22")
+        SSHConfig("ssh://root@h:22")

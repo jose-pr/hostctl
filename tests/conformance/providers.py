@@ -24,8 +24,8 @@ from hostctl.shell import POSIX_SHELL, POWERSHELL
 import pytest
 
 from .path_fakes import (
-    LocalQgaTransport,
-    LocalSftpBackend,
+    LocalQGATransport,
+    LocalSFTPBackend,
     WinRMFilesystemRunner,
 )
 
@@ -231,17 +231,17 @@ def _run_like_a_channel(
     return subprocess.CompletedProcess(invocation, popen.returncode, stdout, stderr)
 
 
-class _FakeSshChannel:
+class _FakeSSHChannel:
     """AsyncSSH ``create_process`` stand-in backed by a local subprocess.
 
-    This is a real bidirectional byte channel, so ``SshProcess`` -- the
+    This is a real bidirectional byte channel, so ``SSHProcess`` -- the
     production adapter, driven through hostctl's real ``_async`` bridge --
     is genuinely exercised.  The child is a local shell; nothing here opens a
     socket, resolves a name, or reaches the network.
     """
 
     def __init__(self, command):
-        # The Windows fake speaks PowerShell, because `FakeSshHost` renders
+        # The Windows fake speaks PowerShell, because `FakeSSHHost` renders
         # with the PowerShell flavour there. Running that text through
         # `cmd.exe` was a double narrower than reality: it silently accepted
         # a script no real target would have run, and reported a status for
@@ -332,7 +332,7 @@ class _FakeSshChannel:
         return None
 
 
-class FakeSshSession(_FakeTransport):
+class FakeSSHSession(_FakeTransport):
     def is_closed(self):
         return not self.connected
 
@@ -348,8 +348,8 @@ class FakeSshSession(_FakeTransport):
         """
         self.connect()
         if "stdout" in options:
-            return _FakeSshRunProcess(command, options)
-        return _FakeSshChannel(command)
+            return _FakeSSHRunProcess(command, options)
+        return _FakeSSHChannel(command)
 
     async def run(self, command, **options):
         """Kept for direct callers; production goes through create_process."""
@@ -359,7 +359,7 @@ class FakeSshSession(_FakeTransport):
         )
 
 
-class _FakeSshRunProcess:
+class _FakeSSHRunProcess:
     """A one-shot process whose `wait()` runs the command and collects output."""
 
     def __init__(self, command, options):
@@ -612,7 +612,7 @@ class _FakeExecSocket:
         self.closed = True
 
 
-class _FakeDockerApi:
+class _FakeDockerAPI:
     """Minimal `docker.APIClient` surface used by ContainerHost.spawn."""
 
     def __init__(self):
@@ -650,7 +650,7 @@ class _FakeDockerClient:
         # Real `docker.DockerClient` exposes the low-level API here; spawn
         # goes through it, so a fake without it made ContainerHost.spawn fail
         # with AttributeError while looking "covered".
-        self.api = _FakeDockerApi()
+        self.api = _FakeDockerAPI()
 
     def get(self, name):
         return self.container
@@ -659,36 +659,36 @@ class _FakeDockerClient:
         return None
 
 
-class FakeSshHost:
+class FakeSSHHost:
     transport = "ssh"
 
     def __new__(cls):
-        from hostctl import PosixHost, SshConfig
+        from hostctl import PosixHost, SSHConfig
         from hostctl.host._ssh import (
-            SftpPathProvider,
-            SshExecutorProvider,
-            _SshTransport,
+            SFTPPathProvider,
+            SSHExecutorProvider,
+            _SSHTransport,
         )
 
         dialect = POWERSHELL if os.name == "nt" else POSIX_SHELL
         # The Windows fake hands the line straight to CreateProcess and to
         # PowerShell, so that is the login shell it stands in for.
-        config = SshConfig(
+        config = SSHConfig(
             "fake",
             dialect=dialect,
             known_hosts=None,
             login_shell="powershell" if os.name == "nt" else "auto",
         )
-        transport = _SshTransport(config)
-        session = FakeSshSession("ssh", LocalExecutor())
+        transport = _SSHTransport(config)
+        session = FakeSSHSession("ssh", LocalExecutor())
         session.connect()
         transport._ssh = session
-        backend = LocalSftpBackend()
+        backend = LocalSFTPBackend()
         transport._sftp_backend = backend
         host = PosixHost(
             config,
-            executor_providers=(SshExecutorProvider(transport),),
-            path_providers=(SftpPathProvider(transport),),
+            executor_providers=(SSHExecutorProvider(transport),),
+            path_providers=(SFTPPathProvider(transport),),
             shell=dialect,
         )
         host._conformance_cleanup = backend.close
@@ -741,18 +741,18 @@ class FakeContainerHost:
         return host
 
 
-class FakeQemuHost:
+class FakeQEMUHost:
     transport = "qemu"
     flavour = "posix"
 
     def __new__(cls):
-        from hostctl import QemuConfig, QemuHost
+        from hostctl import QEMUConfig, QEMUHost
 
         # The shipped helper is probed through `guest-exec`, which the
         # transport answers by interpreting GNU or PowerShell commands over
         # its sandbox.
-        transport = LocalQgaTransport(cls.flavour)
-        host = QemuHost(QemuConfig("fake", transport_factory=lambda: transport))
+        transport = LocalQGATransport(cls.flavour)
+        host = QEMUHost(QEMUConfig("fake", transport_factory=lambda: transport))
         host.connect()
         # Without this the fake's sandbox was never closed, so its temporary
         # directory was collected instead of removed -- a `ResourceWarning`
@@ -761,7 +761,7 @@ class FakeQemuHost:
         return host
 
 
-class FakeQemuWindowsHost(FakeQemuHost):
+class FakeQEMUWindowsHost(FakeQEMUHost):
     flavour = "windows"
 
 
@@ -840,7 +840,7 @@ def fake_providers() -> tuple[Provider, ...]:
         ),
         Provider(
             "ssh",
-            lambda: _fake(FakeSshHost),
+            lambda: _fake(FakeSSHHost),
             frozenset(
                 (
                     "run",
@@ -851,8 +851,8 @@ def fake_providers() -> tuple[Provider, ...]:
                     "input",
                     "timeout",
                     "symlink",
-                    # Backed by _FakeSshChannel: a local subprocess presenting
-                    # the asyncssh channel shape, so the production SshProcess
+                    # Backed by _FakeSSHChannel: a local subprocess presenting
+                    # the asyncssh channel shape, so the production SSHProcess
                     # adapter really runs.  Never touches the network.
                     "spawn",
                     "local-python",
@@ -867,7 +867,7 @@ def fake_providers() -> tuple[Provider, ...]:
         Provider(
             "container",
             lambda: _fake(FakeContainerHost),
-            # `spawn` is backed by _FakeDockerApi/_FakeExecSocket: a local
+            # `spawn` is backed by _FakeDockerAPI/_FakeExecSocket: a local
             # subprocess wrapped in Docker's exec stream framing, so
             # ContainerProcess's real demultiplexing runs.  No daemon, no
             # socket, no network.
@@ -886,7 +886,7 @@ def fake_providers() -> tuple[Provider, ...]:
         ),
         Provider(
             "qemu",
-            lambda: _fake(FakeQemuHost),
+            lambda: _fake(FakeQEMUHost),
             # No "cwd" and no "env": guest-exec has neither. It carries an
             # `env` list, but the guest agent applies it as envp, which
             # REPLACES the environment -- so hostctl embeds assignments in a
@@ -900,7 +900,7 @@ def fake_providers() -> tuple[Provider, ...]:
         ),
         Provider(
             "qemu-windows",
-            lambda: _fake(FakeQemuWindowsHost),
+            lambda: _fake(FakeQEMUWindowsHost),
             # Paths only: the shipped Windows helper runs the WinRM scripts
             # through guest-exec, which the transport interprets.
             frozenset(("path", "local-python")),
@@ -1120,11 +1120,11 @@ def _ssh_local() -> tuple[object, Callable[[], None]]:
     """
     from pathapi import PosixPathname, WindowsPathname
 
-    from hostctl import SshConfig
+    from hostctl import SSHConfig
     from hostctl.shell import CMD, POSIX_SHELL
 
     windows = os.environ.get("HOSTCTL_TEST_SSH_FLAVOUR", "posix") == "windows"
-    config = SshConfig(
+    config = SSHConfig(
         "127.0.0.1",
         port=int(os.environ.get("HOSTCTL_TEST_SSH_PORT", "22")),
         username=os.environ.get(

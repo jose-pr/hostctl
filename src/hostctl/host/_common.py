@@ -992,7 +992,7 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         the very call that suffered them.
 
         Empty for a host whose ``run()`` does not select between providers
-        (``QemuHost``, ``SerialHost``), and empty before the first ``run()``.
+        (``QEMUHost``, ``SerialHost``), and empty before the first ``run()``.
         Values are redacted on the way in; see
         :meth:`~hostctl.provider.ProviderSelector.redact` for the limits of
         that guarantee.

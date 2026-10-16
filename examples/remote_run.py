@@ -5,9 +5,9 @@ Needs the `ssh` extra: pip install hostctl[ssh]
 
 import os
 
-from hostctl import SshConfig
+from hostctl import SSHConfig
 
-config = SshConfig(
+config = SSHConfig(
     host=os.environ.get("HOSTCTL_EXAMPLE_HOST", "example.com"),
     username=os.environ.get("HOSTCTL_EXAMPLE_USER", "root"),
     password=os.environ.get("HOSTCTL_EXAMPLE_PASSWORD"),

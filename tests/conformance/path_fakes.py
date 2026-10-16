@@ -101,7 +101,7 @@ class _Sandbox:
         return FileStat.from_stat(value)
 
 
-class LocalSftpClient:
+class LocalSFTPClient:
     """Paramiko-shaped client consumed by sftppath's real SFTPPath."""
 
     def __init__(self) -> None:
@@ -176,11 +176,11 @@ class LocalSftpClient:
         return self.sandbox.readlink(path)
 
 
-class LocalSftpBackend(BaseSFTPBackend):
+class LocalSFTPBackend(BaseSFTPBackend):
     """Backend instance which keeps one cached fake SFTP client."""
 
     def __init__(self) -> None:
-        self._client = LocalSftpClient()
+        self._client = LocalSFTPClient()
 
     def client(self):
         return self._client
@@ -396,7 +396,7 @@ QGA_FILE_COMMANDS = frozenset(
 )
 
 
-class LocalQgaTransport:
+class LocalQGATransport:
     """QGA wire adapter with real handles over an isolated guest filesystem."""
 
     def __init__(

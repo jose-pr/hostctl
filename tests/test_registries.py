@@ -106,12 +106,12 @@ def test_the_entry_point_named_for_a_scheme_loads_first(registry):
 
 
 def test_a_scheme_another_config_claims_is_refused_at_definition():
-    with pytest.raises(ValueError, match="'ssh' is already registered by SshConfig"):
+    with pytest.raises(ValueError, match="'ssh' is already registered by SSHConfig"):
 
         class _Imposter(HostConfig, schemes=("ssh",)):
             pass
 
-    assert type(HostConfig("ssh://u@nas")).__name__ == "SshConfig"
+    assert type(HostConfig("ssh://u@nas")).__name__ == "SSHConfig"
 
 
 def test_redefining_a_config_is_not_a_duplicate(registry):

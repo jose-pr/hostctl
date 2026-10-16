@@ -63,7 +63,7 @@ def _decode_output(value: object, field: str) -> bytes:
         raise QGAProtocolError(f"{field} is not valid Base64") from exc
 
 
-class QemuExecutor(Executor[subprocess.CompletedProcess]):
+class QEMUExecutor(Executor[subprocess.CompletedProcess]):
     """Execute direct argv through QGA's buffered ``guest-exec`` RPC.
 
     ``ENV`` is deliberately **not** declared. ``guest-exec`` does carry an

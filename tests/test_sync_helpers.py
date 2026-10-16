@@ -522,11 +522,11 @@ def test_a_windows_shell_is_handed_a_windows_spelling_of_the_backend_path(
     reads a `/`-led argument as an option."""
     from pathlib import PureWindowsPath
 
-    from hostctl import CMD, POWERSHELL, SshConfig
+    from hostctl import CMD, POWERSHELL, SSHConfig
     from hostctl.sync import _remote_checksum
 
     dialect = {"cmd": CMD, "powershell": POWERSHELL}[dialect_name]
-    host = SshConfig(
+    host = SSHConfig(
         "winbox", path_flavor=PureWindowsPath, dialect=dialect
     )._create_host()
     seen = []

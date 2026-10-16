@@ -233,8 +233,8 @@ def test_path_contract_uses_real_transport_backend(provider, tmp_path):
         "ssh-local": ("SFTPPath",),
         "winrm": ("WinRMPath",),
         "container": ("PosixContainerPath", "WindowsContainerPath"),
-        "qemu": ("PosixQemuPath", "WindowsQemuPath"),
-        "qemu-windows": ("WindowsQemuPath",),
+        "qemu": ("PosixQEMUPath", "WindowsQEMUPath"),
+        "qemu-windows": ("WindowsQEMUPath",),
     }
     with provider_context(provider) as host:
         path = conformance_path(host, provider, tmp_path, "identity")

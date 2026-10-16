@@ -5,7 +5,7 @@ from pathapi.mempath import MemPath, MemPathBackend
 from examples.application_provider import (
     DownloadProvider,
     MetadataProvider,
-    SftpProvider,
+    SFTPProvider,
 )
 
 
@@ -44,7 +44,7 @@ def test_application_provider_operation_selection_and_pinning():
         path_providers=(
             MetadataProvider(lambda *parts: MemPath(*parts, backend=metadata_backend)),
             DownloadProvider(download),
-            SftpProvider(sftp),
+            SFTPProvider(sftp),
         )
     )
     path = host.path("payload")
@@ -55,7 +55,7 @@ def test_application_provider_operation_selection_and_pinning():
     host = PosixHost(
         path_providers=(
             MetadataProvider(lambda *parts: MemPath(*parts, backend=metadata_backend)),
-            SftpProvider(sftp),
+            SFTPProvider(sftp),
             DownloadProvider(download),
         )
     )
@@ -65,7 +65,7 @@ def test_application_provider_operation_selection_and_pinning():
     available = PosixHost(
         path_providers=(
             MetadataProvider(lambda *parts: MemPath(*parts, backend=metadata_backend)),
-            SftpProvider(lambda *parts: MemPath(*parts, backend=sftp_backend)),
+            SFTPProvider(lambda *parts: MemPath(*parts, backend=sftp_backend)),
             DownloadProvider(download),
         )
     )
@@ -90,7 +90,7 @@ def test_application_provider_does_not_replay_a_started_failure():
     host = PosixHost(
         path_providers=(
             MetadataProvider(lambda *parts: MemPath(*parts, backend=MemPathBackend())),
-            SftpProvider(started),
+            SFTPProvider(started),
             DownloadProvider(fallback),
         )
     )

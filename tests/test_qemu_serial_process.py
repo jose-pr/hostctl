@@ -9,8 +9,8 @@ import pytest
 
 from hostctl.process import Process
 from hostctl.process.qemu_serial import (
-    QemuSerialConsole,
-    QemuSerialProcess,
+    QEMUSerialConsole,
+    QEMUSerialProcess,
     normalize_qemu_console_error,
 )
 
@@ -47,7 +47,7 @@ def test_qemu_console_factory_is_lazy_and_lease_is_exclusive():
         calls.append(True)
         return stream
 
-    console = QemuSerialConsole(stream_factory=factory)
+    console = QEMUSerialConsole(stream_factory=factory)
     process = console.open()
     assert isinstance(process, Process)
     assert len(calls) == 1
@@ -62,7 +62,7 @@ def test_qemu_console_factory_is_lazy_and_lease_is_exclusive():
 
 def test_qemu_console_partial_write_read_and_merged_stream():
     stream = _Stream((b"reply",))
-    process = QemuSerialConsole(stream=stream).open()
+    process = QEMUSerialConsole(stream=stream).open()
 
     process.write(b"hello")
     assert b"".join(stream.sent) == b"hello"
@@ -75,11 +75,11 @@ def test_qemu_console_partial_write_read_and_merged_stream():
 
 def test_injected_stream_is_not_closed_implicitly_and_eof_is_unsupported():
     stream = _Stream()
-    process = QemuSerialConsole(stream=stream).open()
+    process = QEMUSerialConsole(stream=stream).open()
     process.close()
     assert stream.finished == 0
 
-    process = QemuSerialConsole(stream=stream).open()
+    process = QEMUSerialConsole(stream=stream).open()
     with pytest.raises(NotImplementedError, match="half-close"):
         process.send_eof()
     process.close()
@@ -88,7 +88,7 @@ def test_injected_stream_is_not_closed_implicitly_and_eof_is_unsupported():
 
 def test_remote_eof_closes_session_and_releases_lease():
     stream = _Stream((b"",))
-    console = QemuSerialConsole(stream=stream)
+    console = QEMUSerialConsole(stream=stream)
     process = console.open()
     assert process.read() == b""
     assert process.returncode == 0
@@ -97,13 +97,13 @@ def test_remote_eof_closes_session_and_releases_lease():
 
 def test_resize_is_capability_gated_and_validated():
     stream = _Stream()
-    process = QemuSerialConsole(stream=stream).open()
+    process = QEMUSerialConsole(stream=stream).open()
     with pytest.raises(NotImplementedError, match="resize"):
         process.resize(80, 24)
     process.close()
 
     sizes = []
-    process = QemuSerialConsole(
+    process = QEMUSerialConsole(
         stream=stream, resize=lambda *size: sizes.append(size)
     ).open()
     process.resize(100, 30, 800, 600)
@@ -113,7 +113,7 @@ def test_resize_is_capability_gated_and_validated():
 
 
 def test_qemu_console_wait_signals_and_close_are_explicit():
-    process = QemuSerialConsole(stream=_Stream()).open()
+    process = QEMUSerialConsole(stream=_Stream()).open()
     with pytest.raises(subprocess.TimeoutExpired):
         process.wait(0)
     with pytest.raises(NotImplementedError, match="signal"):
@@ -149,7 +149,7 @@ def test_stream_error_retains_cause_and_failed_finish_aborts():
             raise failure
 
     stream = _Failing()
-    process = QemuSerialConsole(stream=stream, owns_stream=True).open()
+    process = QEMUSerialConsole(stream=stream, owns_stream=True).open()
     with pytest.raises(ConnectionError) as raised:
         process.write(b"x")
     assert raised.value.__cause__ is failure
@@ -187,7 +187,7 @@ def test_read_after_eof_reads_eof_again_instead_of_raising():
     the next read made an ordinary drain loop -- one that reads once more
     after a falsy chunk -- crash instead of finishing.
     """
-    console = QemuSerialConsole(stream=_EndingStream(b"hello"), owns_stream=True)
+    console = QEMUSerialConsole(stream=_EndingStream(b"hello"), owns_stream=True)
     process = console.open()
 
     assert process.read() == b"hello"
@@ -197,7 +197,7 @@ def test_read_after_eof_reads_eof_again_instead_of_raising():
 
 def test_read_zero_answers_in_the_process_mode():
     """`b""` even with a decoder attached made `buffer += read(0)` a TypeError."""
-    process = QemuSerialProcess(
+    process = QEMUSerialProcess(
         _EndingStream(b"hi"),
         release=lambda: None,
         encoding="utf-8",
@@ -209,7 +209,7 @@ def test_read_zero_answers_in_the_process_mode():
 
 def test_reopening_a_consumed_injected_stream_says_why():
     """A bare AssertionError named nothing, and vanished under -O."""
-    console = QemuSerialConsole(stream=_EndingStream(b""), owns_stream=True)
+    console = QEMUSerialConsole(stream=_EndingStream(b""), owns_stream=True)
     process = console.open()
     process.close()
 
@@ -224,7 +224,7 @@ def test_a_stale_close_does_not_free_the_lease_of_its_successor():
         calls.append(True)
         return _Stream()
 
-    console = QemuSerialConsole(stream_factory=factory)
+    console = QEMUSerialConsole(stream_factory=factory)
     first = console.open()
     first.close()
     second = console.open()
@@ -236,7 +236,7 @@ def test_a_stale_close_does_not_free_the_lease_of_its_successor():
 
 def test_console_text_mode_reads_str_and_reassembles_a_split_character():
     stream = _Stream((b"\xc3", b"\xa9"))
-    process = QemuSerialConsole(stream=stream).open(encoding="utf-8")
+    process = QEMUSerialConsole(stream=stream).open(encoding="utf-8")
     assert process.read() + process.read() == "é"
     process.write("hi")
     assert b"".join(stream.sent) == b"hi"

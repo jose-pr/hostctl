@@ -1,7 +1,7 @@
 """Guest-side metadata and namespace operations for QGA paths.
 
 QGA's file RPCs move bytes and nothing else: there is no `guest-file-stat`,
-no listing, no rename. `QgaPathBackend` therefore gates `stat`, `scandir`
+no listing, no rename. `QGAPathBackend` therefore gates `stat`, `scandir`
 and every mutation on a `GuestPathHelper`, and without one the path
 provider reports `degraded`. This module supplies that helper by running
 ordinary programs in the guest through `guest-exec`.

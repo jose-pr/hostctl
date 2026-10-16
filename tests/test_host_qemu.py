@@ -1,11 +1,11 @@
-"""QemuHost discovery and integration with an injected QGA transport."""
+"""QEMUHost discovery and integration with an injected QGA transport."""
 
 import base64
 
 import pytest
 
-from hostctl import HostConfig, QemuConfig, QemuHost, SshConfig
-from hostctl.host.qemu import PosixQemuPath, WindowsQemuPath
+from hostctl import HostConfig, QEMUConfig, QEMUHost, SSHConfig
+from hostctl.host.qemu import PosixQEMUPath, WindowsQEMUPath
 
 
 class _Transport:
@@ -70,12 +70,12 @@ class _Transport:
 
 def _host(*, windows=False):
     transport = _Transport(windows=windows)
-    config = QemuConfig(
+    config = QEMUConfig(
         "guest",
         transport="libvirt",
         transport_factory=lambda: transport,
     )
-    return QemuHost(config), transport
+    return QEMUHost(config), transport
 
 
 def test_qemu_host_discovers_capabilities_info_and_posix_path():
@@ -86,7 +86,7 @@ def test_qemu_host_discovers_capabilities_info_and_posix_path():
     assert host.info().hostname == "guest"
     assert host.info().os_family == "linux"
     assert host.info().os_name == "Ubuntu 24.04.1 LTS"
-    assert isinstance(host.path("/tmp/file"), PosixQemuPath)
+    assert isinstance(host.path("/tmp/file"), PosixQEMUPath)
     host.close()
     assert transport.closed
 
@@ -95,7 +95,7 @@ def test_qemu_host_selects_windows_shell_and_path():
     host, _ = _host(windows=True)
 
     assert host.shell_flavour.name == "powershell"
-    assert isinstance(host.path(r"C:\Temp"), WindowsQemuPath)
+    assert isinstance(host.path(r"C:\Temp"), WindowsQEMUPath)
 
 
 def test_qemu_host_shell_run_embeds_cwd_and_uses_guest_exec():
@@ -137,10 +137,10 @@ def test_direct_qga_argv_refuses_env_rather_than_replacing_it():
 
 
 def test_qemu_ssh_uri_round_trip_is_secret_safe():
-    config = QemuConfig(
+    config = QEMUConfig(
         "102",
         transport="ssh",
-        ssh=SshConfig(
+        ssh=SSHConfig(
             "hypervisor.example",
             username="root",
             password="secret",
@@ -150,7 +150,7 @@ def test_qemu_ssh_uri_round_trip_is_secret_safe():
     uri = str(config)
     assert "secret" not in uri
     rebuilt = HostConfig(uri, password="secret")
-    assert isinstance(rebuilt, QemuConfig)
+    assert isinstance(rebuilt, QEMUConfig)
     assert rebuilt.domain == "102"
     assert rebuilt.ssh.host == "hypervisor.example"
     assert str(rebuilt) == uri
@@ -191,8 +191,8 @@ def test_a_failed_probe_does_not_freeze_the_guest_family(monkeypatch):
             return {}
 
     transport = _Transport()
-    host = QemuHost(
-        QemuConfig("vm", transport="libvirt", transport_factory=lambda: transport)
+    host = QEMUHost(
+        QEMUConfig("vm", transport="libvirt", transport_factory=lambda: transport)
     )
 
     with pytest.raises(ConnectionError, match="agent busy"):
@@ -223,7 +223,7 @@ def test_degraded_provider_is_probed_once_not_once_per_path(caplog):
 
 def test_a_supplied_path_helper_reaches_the_backend_and_lifts_the_degradation():
     """The helper surface existed on the backend and nothing could supply
-    one, so every real QemuHost path was metadata-less."""
+    one, so every real QEMUHost path was metadata-less."""
     import stat as stat_module
 
     from pathapi import FileStat
@@ -236,8 +236,8 @@ def test_a_supplied_path_helper_reaches_the_backend_and_lifts_the_degradation():
             return []
 
     transport = _Transport()
-    host = QemuHost(
-        QemuConfig(
+    host = QEMUHost(
+        QEMUConfig(
             "guest",
             transport="libvirt",
             transport_factory=lambda: transport,
@@ -253,7 +253,7 @@ def test_a_supplied_path_helper_reaches_the_backend_and_lifts_the_degradation():
 
 
 def test_open_serial_forwards_text_mode_to_the_console():
-    from hostctl.process.qemu_serial import QemuSerialConsole
+    from hostctl.process.qemu_serial import QEMUSerialConsole
 
     class _Stream:
         def __init__(self):
@@ -271,12 +271,12 @@ def test_open_serial_forwards_text_mode_to_the_console():
         def abort(self):
             pass
 
-    host = QemuHost(
-        QemuConfig(
+    host = QEMUHost(
+        QEMUConfig(
             "vm",
             transport="libvirt",
             transport_factory=lambda: None,
-            serial_console=QemuSerialConsole(stream=_Stream()),
+            serial_console=QEMUSerialConsole(stream=_Stream()),
         )
     )
     with host.open_serial(encoding="utf-8") as console:
@@ -287,7 +287,7 @@ def _capture_mode(version, *, windows=False):
     import subprocess
 
     transport = _Transport(windows=windows, version=version)
-    host = QemuHost(QemuConfig("guest", transport_factory=lambda: transport))
+    host = QEMUHost(QEMUConfig("guest", transport_factory=lambda: transport))
 
     host._executor("echo", stderr=subprocess.STDOUT)
     started = [r for r, _ in transport.requests if r["execute"] == "guest-exec"]
@@ -308,7 +308,7 @@ def test_stderr_into_stdout_falls_back_where_the_agent_cannot_merge(version, win
 
 @pytest.mark.parametrize("spelling", ("auto", "posix", "windows"))
 def test_qemu_path_flavor_strings_round_trip_through_the_uri(spelling):
-    config = QemuConfig("guest", path_flavor=spelling)
+    config = QEMUConfig("guest", path_flavor=spelling)
 
     assert HostConfig(config.connection_uri) == config
 

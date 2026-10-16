@@ -19,13 +19,13 @@ without a deprecation cycle.
 ::: hostctl.HostInfo
 ::: hostctl.LocalConfig
 ::: hostctl.LocalHost
-::: hostctl.SshConfig
+::: hostctl.SSHConfig
 ::: hostctl.WinRMConfig
 ::: hostctl.WinRMPath
 ::: hostctl.ContainerConfig
 ::: hostctl.ContainerHost
-::: hostctl.QemuConfig
-::: hostctl.QemuHost
+::: hostctl.QEMUConfig
+::: hostctl.QEMUHost
 ::: hostctl.SerialConfig
 ::: hostctl.SerialHost
 ::: hostctl.SystemConfig
@@ -34,8 +34,8 @@ without a deprecation cycle.
 ::: hostctl.PosixHost
 ::: hostctl.WindowsConfig
 ::: hostctl.WindowsHost
-::: hostctl.IosConfig
-::: hostctl.IosHost
+::: hostctl.IOSConfig
+::: hostctl.IOSHost
 
 ## Executors and processes
 

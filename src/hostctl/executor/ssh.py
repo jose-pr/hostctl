@@ -30,20 +30,20 @@ from ._common import (
 )
 
 
-class _SshResult(typing.Protocol):
+class _SSHResult(typing.Protocol):
     returncode: int
     stdout: typing.Optional[typing.Union[str, bytes]]
     stderr: typing.Optional[typing.Union[str, bytes]]
 
 
-class SshConnection(typing.Protocol):
+class SSHConnection(typing.Protocol):
     def is_closed(self) -> bool: ...
 
     def close(self) -> None: ...
 
     def wait_closed(self) -> typing.Awaitable[None]: ...
 
-    def run(self, command: str, **options: object) -> typing.Awaitable[_SshResult]: ...
+    def run(self, command: str, **options: object) -> typing.Awaitable[_SSHResult]: ...
 
     def create_process(
         self, command: typing.Optional[str] = None, **options: object
@@ -130,12 +130,12 @@ def _clixml_text(
     return decoded.encode("utf-8") if isinstance(value, bytes) else decoded
 
 
-class SshExecutor(Executor[subprocess.CompletedProcess]):
+class SSHExecutor(Executor[subprocess.CompletedProcess]):
     """Execute finalized command strings through an AsyncSSH connection."""
 
     executor_capabilities: typing.FrozenSet[ExecutorCapability] = frozenset()
 
-    def __init__(self, connection: typing.Callable[[], SshConnection]) -> None:
+    def __init__(self, connection: typing.Callable[[], SSHConnection]) -> None:
         self._connection = connection
 
     @staticmethod
@@ -173,7 +173,7 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
         if options:
             raise TypeError(f"unsupported SSH executor option: {sorted(options)[0]}")
         if args:
-            raise NotImplementedError("SshExecutor does not support native arguments")
+            raise NotImplementedError("SSHExecutor does not support native arguments")
         if bufsize == 0:
             raise ValueError("bufsize=0 is unsupported by the buffered SSH executor")
         if 0 < bufsize < 512:
@@ -249,7 +249,7 @@ class SshExecutor(Executor[subprocess.CompletedProcess]):
             try:
                 return await process.wait(check=False, timeout=timeout)
             except BaseException:
-                orphaned = await SshExecutor._abandon(process)
+                orphaned = await SSHExecutor._abandon(process)
                 raise
 
         try:

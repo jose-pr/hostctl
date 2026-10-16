@@ -13,7 +13,7 @@ import typing
 
 import asyncssh
 
-from hostctl import SshConfig
+from hostctl import SSHConfig
 
 
 class _Server(asyncssh.SSHServer):
@@ -124,8 +124,8 @@ class InProcessSSHServer:
             handle.write(f"[127.0.0.1]:{self.port} {public[0]} {public[1]}\n")
         return self
 
-    def config(self, **overrides: typing.Any) -> SshConfig:
-        """An `SshConfig` for this server; keywords override its defaults."""
+    def config(self, **overrides: typing.Any) -> SSHConfig:
+        """An `SSHConfig` for this server; keywords override its defaults."""
         options: typing.Dict[str, typing.Any] = dict(
             host="127.0.0.1",
             port=self.port,
@@ -134,7 +134,7 @@ class InProcessSSHServer:
             known_hosts=self.known_hosts_path,
         )
         options.update(overrides)
-        return SshConfig(**options)
+        return SSHConfig(**options)
 
     def __exit__(self, *exc: object) -> None:
         self._cleanup()

@@ -24,21 +24,21 @@ from hostctl import (
     POSIX_SHELL,
     POWERSHELL,
     PWSH,
-    QemuConfig,
+    QEMUConfig,
     Shell,
     ShellOperator,
     ShellSession,
-    SshConfig,
+    SSHConfig,
     WinRMConfig,
     ZSH,
     register_shell_flavour,
     shell_flavour,
 )
-from hostctl.host._ssh import _SshTransport
+from hostctl.host._ssh import _SSHTransport
 from hostctl.host._winrm import _WinRMTransport
-from hostctl.executor.psrp import PsrpExecutor
+from hostctl.executor.psrp import PSRPExecutor
 from hostctl.executor import Executor as ModuleExecutor
-from hostctl.executor import SshExecutor, WinRMExecutor
+from hostctl.executor import SSHExecutor, WinRMExecutor
 
 
 def test_shell_callable_executor_receives_one_script():
@@ -62,7 +62,7 @@ def test_shell_callable_executor_receives_one_script():
 def test_executor_contracts_are_direct_hostctl_api():
     assert Executor is ModuleExecutor
     assert Executor not in Shell.__mro__
-    assert Executor in SshExecutor.__mro__
+    assert Executor in SSHExecutor.__mro__
     assert Executor in WinRMExecutor.__mro__
 
 
@@ -541,13 +541,13 @@ def test_fish_uses_native_environment_and_boolean_syntax():
 
 
 def test_host_builds_shell_from_its_flavour_and_executor():
-    ssh = _SshTransport(SshConfig("host", dialect="powershell"))
+    ssh = _SSHTransport(SSHConfig("host", dialect="powershell"))
     winrm = _WinRMTransport(WinRMConfig("host", "user"))
 
     assert Shell(ssh.shell_flavour, ssh.executor).flavour is POWERSHELL
     assert Shell(winrm.shell_flavour, winrm.executor).flavour is POWERSHELL
-    assert isinstance(ssh.executor, SshExecutor)
-    assert isinstance(winrm.executor, (WinRMExecutor, PsrpExecutor))
+    assert isinstance(ssh.executor, SSHExecutor)
+    assert isinstance(winrm.executor, (WinRMExecutor, PSRPExecutor))
 
 
 def test_shell_session_uses_flavour_wrapper_and_provider_spawn():
@@ -834,11 +834,11 @@ def test_a_shell_flavour_repr_names_its_type_and_name():
 @pytest.mark.parametrize(
     "build",
     [
-        lambda: SshConfig("h"),
-        lambda: SshConfig("h", dialect=PWSH),
+        lambda: SSHConfig("h"),
+        lambda: SSHConfig("h", dialect=PWSH),
         lambda: WinRMConfig("h", "u"),
         lambda: ContainerConfig("c", dialect=BASH),
-        lambda: QemuConfig("d", dialect=POWERSHELL),
+        lambda: QEMUConfig("d", dialect=POWERSHELL),
     ],
     ids=["ssh", "ssh-pwsh", "winrm", "container", "qemu"],
 )

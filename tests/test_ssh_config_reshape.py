@@ -1,4 +1,4 @@
-"""SshConfig: no root default, an opt-in ssh_config, connect_options, path_flavor="auto"."""
+"""SSHConfig: no root default, an opt-in ssh_config, connect_options, path_flavor="auto"."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("asyncssh")
 
-from hostctl import HostConfig, SshConfig
+from hostctl import HostConfig, SSHConfig
 from hostctl.host import PosixHost, WindowsHost
 from conformance.inprocess_ssh import InProcessSSHServer
 
@@ -26,7 +26,7 @@ def _causes(exc):
 
 
 def test_without_a_username_the_local_account_is_used():
-    config = SshConfig("h")
+    config = SSHConfig("h")
     assert config.username is None
     assert "username" not in config.connect_opts()
     assert "root@" not in config.connection_uri
@@ -47,7 +47,7 @@ def test_the_server_sees_the_local_user_when_none_is_given():
 
 
 def test_the_default_options_read_no_ssh_config():
-    assert sorted(SshConfig("h").connect_opts()) == [
+    assert sorted(SSHConfig("h").connect_opts()) == [
         "config",
         "connect_timeout",
         "known_hosts",
@@ -86,24 +86,24 @@ def test_a_uri_cannot_name_an_ssh_config():
 )
 def test_connect_options_cannot_override_what_hostctl_owns(key):
     with pytest.raises(ValueError, match=key):
-        SshConfig("h", connect_options={key: "x"})
+        SSHConfig("h", connect_options={key: "x"})
     with pytest.raises(ValueError, match="ssh_config"):
-        SshConfig("h", connect_options={"config": None})
+        SSHConfig("h", connect_options={"config": None})
     with pytest.raises(ValueError, match="connect_timeout"):
-        SshConfig("h", connect_options={"connect_timeout": 1})
+        SSHConfig("h", connect_options={"connect_timeout": 1})
 
 
 def test_connect_options_reach_both_legs_and_stay_out_of_the_repr_and_uri():
-    config = SshConfig(
+    config = SSHConfig(
         "h", connect_options={"keepalive_interval": 5, "passphrase": "s3"}
     )
 
     options = config.connect_opts()
     assert options["keepalive_interval"] == 5
 
-    from hostctl.host._ssh import _SshTransport
+    from hostctl.host._ssh import _SSHTransport
 
-    transport = _SshTransport(config)
+    transport = _SSHTransport(config)
     transport.path("/x")
     assert transport._sftp_backend.connect_opts["keepalive_interval"] == 5
     assert "s3" not in repr(config) and "s3" not in config.connection_uri
@@ -152,7 +152,7 @@ def test_a_root_default_is_gone_from_the_source():
 
 def test_an_unresolvable_host_in_auto_mode_cleans_up(monkeypatch):
     with pytest.raises(Exception) as raised:
-        SshConfig(
+        SSHConfig(
             "hostctl-alias.invalid", path_flavor="auto", known_hosts=None
         )._create_host()
     assert any(isinstance(c, socket.gaierror) for c in _causes(raised.value))

@@ -3,12 +3,12 @@
 Run commands and access files on a host, local or remote, protocol-agnostic.
 
 ```python
-from hostctl import LocalConfig, SshConfig
+from hostctl import LocalConfig, SSHConfig
 
 with LocalConfig() as host:
     host.run("echo hello")
 
-with SshConfig(host="nas.example.com", username="admin", password="secret") as host:
+with SSHConfig(host="nas.example.com", username="admin", password="secret") as host:
     host.run("df -h")
     for entry in host.path("/etc").iterdir():
         print(entry)

@@ -281,7 +281,7 @@ def test_a_failing_guest_command_becomes_a_filesystem_error():
 
 def test_exists_below_a_regular_file_is_false_not_an_error():
     """GNU stat answers ENOTDIR for `/etc/passwd/child`; pathlib says False."""
-    from hostctl.host.qemu import PosixQemuPath, QgaPathBackend
+    from hostctl.host.qemu import PosixQEMUPath, QGAPathBackend
 
     guest = _Guest(
         {
@@ -292,11 +292,11 @@ def test_exists_below_a_regular_file_is_false_not_an_error():
             )
         }
     )
-    backend = QgaPathBackend(
+    backend = QGAPathBackend(
         object(), supported_commands=(), helper=PosixGuestPathHelper(guest)
     )
 
-    assert PosixQemuPath("/etc/passwd/child", backend=backend).exists() is False
+    assert PosixQEMUPath("/etc/passwd/child", backend=backend).exists() is False
 
 
 def test_a_symlinks_own_mode_is_refused_rather_than_redirected():
@@ -352,7 +352,7 @@ def test_the_windows_helper_refuses_what_windows_cannot_express():
 # -- wiring ---------------------------------------------------------------
 
 
-class _QgaTransport:
+class _QGATransport:
     """A guest agent that runs `guest-exec` against a scripted guest."""
 
     def __init__(self, guest, *, osinfo=None, commands=()):
@@ -402,16 +402,16 @@ class _QgaTransport:
 
 
 def _host(transport, **options):
-    from hostctl.host.qemu import QemuConfig, QemuHost
+    from hostctl.host.qemu import QEMUConfig, QEMUHost
 
-    return QemuHost(QemuConfig("guest", transport_factory=lambda: transport, **options))
+    return QEMUHost(QEMUConfig("guest", transport_factory=lambda: transport, **options))
 
 
 def test_a_probed_guest_gets_a_real_path_surface():
     """The helper is built during discovery, so `path()` has one by default.
 
     Before this, hostctl shipped no helper at all: a caller had to write one
-    and pass `QemuConfig(path_helper=...)`, and every QGA path reported
+    and pass `QEMUConfig(path_helper=...)`, and every QGA path reported
     `degraded`.
     """
     guest = _Guest(
@@ -425,7 +425,7 @@ def test_a_probed_guest_gets_a_real_path_surface():
             ),
         }
     )
-    transport = _QgaTransport(
+    transport = _QGATransport(
         guest,
         osinfo={"id": "ubuntu", "kernel-name": "Linux"},
         commands=("guest-get-osinfo",),
@@ -444,7 +444,7 @@ def test_a_guest_that_fails_the_probe_keeps_working_without_a_helper():
     busybox guest that has it today.
     """
     guest = _Guest({"stat": (1, b"", b"stat: invalid option -- 'c'")})
-    transport = _QgaTransport(
+    transport = _QGATransport(
         guest,
         osinfo={"id": "alpine", "kernel-name": "Linux"},
         commands=("guest-get-osinfo",),
@@ -460,7 +460,7 @@ def test_a_guest_that_fails_the_probe_keeps_working_without_a_helper():
 def test_the_probe_runs_once_however_many_paths_are_built():
     """`None` is a real answer, not "ask again next time"."""
     guest = _Guest({"stat": (1, b"", b"nope")})
-    transport = _QgaTransport(
+    transport = _QGATransport(
         guest,
         osinfo={"id": "alpine", "kernel-name": "Linux"},
         commands=("guest-get-osinfo",),
@@ -474,9 +474,9 @@ def test_the_probe_runs_once_however_many_paths_are_built():
 
 
 def test_an_explicit_helper_is_not_second_guessed():
-    """`QemuConfig(path_helper=...)` overrides the probe entirely."""
+    """`QEMUConfig(path_helper=...)` overrides the probe entirely."""
     guest = _Guest({"stat": (0, b"41ed\n", b"")})
-    transport = _QgaTransport(
+    transport = _QGATransport(
         guest,
         osinfo={"id": "ubuntu", "kernel-name": "Linux"},
         commands=("guest-get-osinfo",),
@@ -494,7 +494,7 @@ def test_an_explicit_helper_is_not_second_guessed():
 def test_a_guest_that_names_no_family_gets_no_helper():
     """A helper for the wrong family would run commands the guest lacks."""
     guest = _Guest({"stat": (0, b"41ed\n", b"")})
-    transport = _QgaTransport(guest)  # no osinfo, no family-exclusive command
+    transport = _QGATransport(guest)  # no osinfo, no family-exclusive command
     host = _host(transport, path_flavor="posix")
 
     host.path("/srv")

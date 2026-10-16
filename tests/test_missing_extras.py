@@ -38,16 +38,16 @@ def hide(monkeypatch):
 
 
 def _ssh_run():
-    from hostctl import SshConfig
+    from hostctl import SSHConfig
 
-    SshConfig("nas.example", known_hosts=None).open().run("true")
+    SSHConfig("nas.example", known_hosts=None).open().run("true")
 
 
 def _ssh_path():
-    from hostctl import SshConfig
+    from hostctl import SSHConfig
     from hostctl.host._ssh import ssh_providers
 
-    ssh_providers(SshConfig("nas.example", known_hosts=None))[1].path("/")
+    ssh_providers(SSHConfig("nas.example", known_hosts=None))[1].path("/")
 
 
 def _winrm_run():
@@ -112,17 +112,17 @@ def test_a_missing_dependency_names_the_extra_to_install(hide, extra, modules, c
 
 
 def test_a_probe_reports_an_incomplete_ssh_extra(hide):
-    from hostctl.host._ssh import SftpPathProvider, ssh_providers
-    from hostctl import SshConfig
+    from hostctl.host._ssh import SFTPPathProvider, ssh_providers
+    from hostctl import SSHConfig
 
     hide("sftppath")
-    _, paths = ssh_providers(SshConfig("nas.example"))
+    _, paths = ssh_providers(SSHConfig("nas.example"))
 
     probe = paths.probe()
 
     assert probe.availability == "unavailable"
     assert "sftppath" in probe.reason and "hostctl[ssh]" in probe.reason
-    assert isinstance(paths, SftpPathProvider)
+    assert isinstance(paths, SFTPPathProvider)
 
 
 def test_without_duho_the_cli_names_the_extra(hide):

@@ -17,7 +17,7 @@ from ._common import (
 )
 
 
-class QemuConsoleStream(typing.Protocol):
+class QEMUConsoleStream(typing.Protocol):
     """Minimal libvirt-stream-like console channel."""
 
     def send(self, data: bytes) -> int: ...
@@ -29,7 +29,7 @@ class QemuConsoleStream(typing.Protocol):
     def abort(self) -> object: ...
 
 
-ConsoleStreamFactory = typing.Callable[[], QemuConsoleStream]
+ConsoleStreamFactory = typing.Callable[[], QEMUConsoleStream]
 ConsoleResize = typing.Callable[[int, int, int, int], object]
 
 
@@ -54,14 +54,14 @@ def normalize_qemu_console_error(exc: Exception) -> Exception:
     return exc
 
 
-class QemuSerialConsole:
+class QEMUSerialConsole:
     """Grant one exclusive raw process lease over a console stream."""
 
     def __init__(
         self,
         *,
         stream_factory: typing.Optional[ConsoleStreamFactory] = None,
-        stream: typing.Optional[QemuConsoleStream] = None,
+        stream: typing.Optional[QEMUConsoleStream] = None,
         owns_stream: bool = False,
         resize: typing.Optional[ConsoleResize] = None,
     ) -> None:
@@ -81,7 +81,7 @@ class QemuSerialConsole:
         *,
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
-    ) -> QemuSerialProcess:
+    ) -> QEMUSerialProcess:
         """Lease the stream; `encoding`/`errors` make the process read `str`."""
         token = self._lease.acquire()
         try:
@@ -100,7 +100,7 @@ class QemuSerialConsole:
         except Exception as exc:
             self._lease.release(token)
             raise_normalized(exc, normalize_qemu_console_error)
-        return QemuSerialProcess(
+        return QEMUSerialProcess(
             stream,
             io_lock=self._io_lock,
             token=token,
@@ -116,7 +116,7 @@ class QemuSerialConsole:
             self._stream = None
 
 
-class QemuSerialProcess(_LeasedStreamProcess):
+class QEMUSerialProcess(_LeasedStreamProcess):
     """Raw merged byte I/O over one libvirt console/channel stream."""
 
     _closed_message = "QEMU console process is closed"
@@ -128,7 +128,7 @@ class QemuSerialProcess(_LeasedStreamProcess):
 
     def __init__(
         self,
-        stream: QemuConsoleStream,
+        stream: QEMUConsoleStream,
         *,
         io_lock: typing.Optional[ReentrantLock] = None,
         token: typing.Optional[LeaseToken] = None,

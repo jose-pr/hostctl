@@ -22,7 +22,7 @@ from pathapi.providers import CommitOnClose
 from hostctl.host._staged_io import staged_open, validate_open_mode
 from hostctl.host._winrm import WinRMPath
 from hostctl.host.container_path import PosixContainerPath
-from hostctl.host.qemu import PosixQemuPath
+from hostctl.host.qemu import PosixQEMUPath
 
 
 class _RecordingBackend:
@@ -53,7 +53,7 @@ def _paths():
     return {
         "winrm": lambda backend: WinRMPath(r"C:\data.bin", backend=backend),
         "container": lambda backend: PosixContainerPath("/data.bin", backend=backend),
-        "qga": lambda backend: PosixQemuPath("/data.bin", backend=backend),
+        "qga": lambda backend: PosixQEMUPath("/data.bin", backend=backend),
     }
 
 

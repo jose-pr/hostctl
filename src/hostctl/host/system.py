@@ -148,9 +148,9 @@ def _transport_provider(config, kind, option, label, load):
 
 
 def _load_ssh():
-    from ._ssh import SftpPathProvider, SshConfig, SshExecutorProvider, _SshTransport
+    from ._ssh import SFTPPathProvider, SSHConfig, SSHExecutorProvider, _SSHTransport
 
-    return SshConfig, _SshTransport, SshExecutorProvider, SftpPathProvider
+    return SSHConfig, _SSHTransport, SSHExecutorProvider, SFTPPathProvider
 
 
 def _load_winrm():
@@ -209,7 +209,7 @@ class SystemConfig(HostConfig):
     """Base configuration for a logical system with one or more providers.
 
     Abstract: concrete system families are :class:`PosixConfig`,
-    :class:`WindowsConfig`, and :class:`IosConfig`.  Each binds ``host_type``
+    :class:`WindowsConfig`, and :class:`IOSConfig`.  Each binds ``host_type``
     and ``uri_scheme``; this class binds neither and cannot be instantiated
     into a host on its own.
     """
@@ -329,7 +329,7 @@ class SystemConfig(HostConfig):
     def _create_host(self):
         if self.host_type is None:
             names = ", ".join(
-                item.__name__ for item in (PosixConfig, WindowsConfig, IosConfig)
+                item.__name__ for item in (PosixConfig, WindowsConfig, IOSConfig)
             )
             raise TypeError(
                 f"{type(self).__name__} is abstract and creates no host; "
@@ -437,7 +437,7 @@ class SystemHost(Host):
         # lock around it would reintroduce the very race it exists to close --
         # two callers would both observe "not connected" and both dial out.
         # Providers already own the slow part behind their own locks
-        # (`_SshTransport._ssh_lock`), and a `SystemHost` is one logical
+        # (`_SSHTransport._ssh_lock`), and a `SystemHost` is one logical
         # target whose providers are ordered fallbacks for that same target,
         # not independent endpoints to be dialed in parallel.  Command
         # dispatch itself -- `run()`, `path()`, `spawn()` -- stays outside the
@@ -837,7 +837,7 @@ class SystemHost(Host):
     def _composite_path_type(self):
         """The path grammar this system family actually has.
 
-        Any other family raises: an `IosHost` is session/command-only until
+        Any other family raises: an `IOSHost` is session/command-only until
         an IOS path grammar is designed, and POSIX rules would misread
         `flash:/config.text`, where `:` is a device separator rather than part
         of a name.
@@ -913,7 +913,7 @@ class SystemHost(Host):
         """Carry a flavour's out-of-band environment, or refuse to lose it.
 
         `ShellCommand.environment` means "the environment is NOT embedded in
-        this command; send it separately" -- which is what `_SshTransport.run`
+        this command; send it separately" -- which is what `_SSHTransport.run`
         does. `SystemHost` passed only `.command`, so a registered flavour
         for a shell that cannot export variables lost every one of them in
         silence. Latent for the four built-in flavours, which all return
@@ -1248,7 +1248,7 @@ class SystemHost(Host):
 class PosixHost(SystemHost):
     """A POSIX system: POSIX-shell command construction and POSIX paths.
 
-    Compose it from providers directly, or open an :class:`SshConfig`.
+    Compose it from providers directly, or open an :class:`SSHConfig`.
     """
 
     system_family = "posix"
@@ -1265,7 +1265,7 @@ class WindowsHost(SystemHost):
     default_shell = POWERSHELL
 
 
-class IosHost(SystemHost):
+class IOSHost(SystemHost):
     """A Cisco IOS-style device: session and command only, by design.
 
     It configures **no shell flavour and no path grammar**, which is a
@@ -1295,11 +1295,11 @@ class WindowsConfig(SystemConfig, schemes=("windows", "windows+winrm")):
     uri_scheme = "windows"
 
 
-class IosConfig(SystemConfig, schemes=("ios",)):
-    """Connection identity for an :class:`IosHost` (`ios:`), which is
+class IOSConfig(SystemConfig, schemes=("ios",)):
+    """Connection identity for an :class:`IOSHost` (`ios:`), which is
     session- and command-only."""
 
-    host_type = IosHost
+    host_type = IOSHost
     uri_scheme = "ios"
 
 
@@ -1307,4 +1307,4 @@ class IosConfig(SystemConfig, schemes=("ios",)):
 # host -> config direction is bound here, once both sides are defined.
 PosixHost.config_type = PosixConfig
 WindowsHost.config_type = WindowsConfig
-IosHost.config_type = IosConfig
+IOSHost.config_type = IOSConfig

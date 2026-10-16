@@ -21,7 +21,7 @@ from pathapi import FileStat
 
 from ..executor import (
     NativeWinRMSession,
-    PsrpExecutor,
+    PSRPExecutor,
     WinRMExecutor,
     WinRMSession,
     pypsrp_available,
@@ -240,7 +240,7 @@ class _Leg:
     """
 
     name: str
-    executor: typing.Union[WinRMExecutor, PsrpExecutor]
+    executor: typing.Union[WinRMExecutor, PSRPExecutor]
 
     def __init__(self, config: WinRMConfig) -> None:
         self.config = config
@@ -379,7 +379,7 @@ class _PywinrmLeg(_SessionLeg):
         )
 
 
-class _PsrpLeg(_Leg):
+class _PSRPLeg(_Leg):
     """A persistent PSRP runspace; the executor opens a pipeline in it."""
 
     name = "psrp"
@@ -387,7 +387,7 @@ class _PsrpLeg(_Leg):
     def __init__(self, config: WinRMConfig) -> None:
         super().__init__(config)
         self._runspace: typing.Optional[RunspaceSession] = None
-        self.executor = PsrpExecutor(lambda: self.runspace())
+        self.executor = PSRPExecutor(lambda: self.runspace())
 
     def runspace(self) -> RunspaceSession:
         with self._lock:
@@ -414,7 +414,7 @@ class _PsrpLeg(_Leg):
 _LEGS: typing.Dict[str, typing.Callable[[WinRMConfig], _Leg]] = {
     "native": _NativeLeg,
     "pywinrm": _PywinrmLeg,
-    "psrp": _PsrpLeg,
+    "psrp": _PSRPLeg,
 }
 
 
@@ -464,7 +464,7 @@ class _WinRMTransport:
         return POWERSHELL
 
     @property
-    def executor(self) -> typing.Union[WinRMExecutor, PsrpExecutor]:
+    def executor(self) -> typing.Union[WinRMExecutor, PSRPExecutor]:
         return self._leg.executor
 
     def info(self) -> HostInfo:
@@ -478,7 +478,7 @@ class _WinRMTransport:
 
     def runspace(self) -> RunspaceSession:
         """Return a persistent typed PSRP runspace session."""
-        if not isinstance(self._leg, _PsrpLeg):
+        if not isinstance(self._leg, _PSRPLeg):
             raise NotImplementedError(
                 "PSRP runspaces are unavailable; install hostctl[psrp] on Python 3.10+"
             )

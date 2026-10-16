@@ -123,7 +123,7 @@ def test_provider_spawn_runs_a_real_process(provider):
     """A provider advertising ``spawn`` must actually start and reap one.
 
     This drives the production Process adapter for each transport --
-    ``SshProcess``, ``ContainerProcess``, ``SerialConsoleProcess`` -- over a
+    ``SSHProcess``, ``ContainerProcess``, ``SerialConsoleProcess`` -- over a
     real bidirectional channel, so an adapter that cannot start, read, or
     reap a process fails here rather than being skipped.
     """

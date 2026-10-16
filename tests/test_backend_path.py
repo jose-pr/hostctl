@@ -9,14 +9,14 @@ import pytest
 from hostctl.host._backend_path import BackendPathMixin
 from hostctl.host._winrm import _SCRIPT_BUDGET, WinRMPath, WinRMPathBackend
 from hostctl.host.container_path import ContainerPathBackend, PosixContainerPath
-from hostctl.host.qemu import PosixQemuPath
+from hostctl.host.qemu import PosixQEMUPath
 from tests.conformance.path_fakes import WinRMFilesystemRunner
-from tests.conformance.providers import FakeQemuHost
+from tests.conformance.providers import FakeQEMUHost
 
 
 @pytest.fixture
 def qga_pair():
-    hosts = [FakeQemuHost(), FakeQemuHost()]
+    hosts = [FakeQEMUHost(), FakeQEMUHost()]
     for host in hosts:
         host.path("/")
     yield [host.path_provider.backend for host in hosts]
@@ -35,7 +35,7 @@ def winrm_pair():
 
 
 def _qga(backend, name):
-    return PosixQemuPath(f"/{name}", backend=backend)
+    return PosixQEMUPath(f"/{name}", backend=backend)
 
 
 def _winrm(backend, name):
@@ -96,15 +96,15 @@ def test_chmod_takes_a_mode_string(request, fixture, make):
 def test_a_foreign_segment_lends_no_backend(qga_pair):
     container = PosixContainerPath("/x", backend=ContainerPathBackend(object()))
     with pytest.raises(TypeError, match="requires a backend"):
-        PosixQemuPath(container)
-    assert PosixQemuPath(_qga(qga_pair[0], "x")).backend is qga_pair[0]
+        PosixQEMUPath(container)
+    assert PosixQEMUPath(_qga(qga_pair[0], "x")).backend is qga_pair[0]
 
 
 def test_iterdir_drops_unsafe_names(qga_pair):
     backend = qga_pair[0]
     listing = [("..", None), ("ok", None), ("a/b", None)]
     backend.scandir = lambda path: listing
-    assert [p.name for p in PosixQemuPath("/", backend=backend).iterdir()] == ["ok"]
+    assert [p.name for p in PosixQEMUPath("/", backend=backend).iterdir()] == ["ok"]
 
     runner = WinRMFilesystemRunner()
     try:
@@ -124,7 +124,7 @@ def test_iterdir_drops_unsafe_names_in_containers():
 
 
 def test_the_base_is_shared():
-    for cls in (PosixQemuPath, WinRMPath, PosixContainerPath):
+    for cls in (PosixQEMUPath, WinRMPath, PosixContainerPath):
         assert issubclass(cls, BackendPathMixin)
         for name in ("copy", "move", "_symlink_target"):
             assert name not in vars(cls)

@@ -202,7 +202,7 @@ class SerialConsoleProcess(Process):
         self.encoding = encoding
         # `SerialHost.spawn` accepted `errors=` and dropped it here, so a
         # console with a non-UTF-8 device answered `errors="replace"` with a
-        # `UnicodeEncodeError`. `QemuSerialProcess` already carried both.
+        # `UnicodeEncodeError`. `QEMUSerialProcess` already carried both.
         self.errors = errors or "strict"
         #: Set when the caller asked for text, so `read()` returns `str`
         #: here as it does from SSH and a QEMU console.

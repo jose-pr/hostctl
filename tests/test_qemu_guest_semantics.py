@@ -8,7 +8,7 @@ import zipfile
 import pytest
 
 from hostctl.host import HostConfig
-from hostctl.host.qemu import QemuConfig, QemuHost
+from hostctl.host.qemu import QEMUConfig, QEMUHost
 
 _FILE_COMMANDS = (
     "guest-file-open",
@@ -82,7 +82,7 @@ class _Transport:
 def _host(**kwargs):
     transport = _Transport(**kwargs)
     return (
-        QemuHost(QemuConfig("guest", transport_factory=lambda: transport)),
+        QEMUHost(QEMUConfig("guest", transport_factory=lambda: transport)),
         transport,
     )
 
@@ -116,13 +116,13 @@ def test_a_family_exclusive_command_is_positive_evidence():
 def test_an_explicit_selection_needs_no_probe():
     """The settings the error names really do resolve it."""
     transport = _Transport()
-    config = QemuConfig(
+    config = QEMUConfig(
         "guest",
         transport_factory=lambda: transport,
         path_flavor="posix",
         dialect="posix",
     )
-    host = QemuHost(config)
+    host = QEMUHost(config)
 
     assert host.shell_flavour.name == "posix"
     assert str(host.path("/tmp/x")) == "/tmp/x"

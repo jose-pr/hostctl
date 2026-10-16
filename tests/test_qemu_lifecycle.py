@@ -9,9 +9,9 @@ import threading
 import pytest
 
 from hostctl.exceptions import QGAProtocolError
-from hostctl.executor.qemu import QemuExecutor
+from hostctl.executor.qemu import QEMUExecutor
 from hostctl.host import HostConfig
-from hostctl.host.qemu import QemuConfig, QemuHost
+from hostctl.host.qemu import QEMUConfig, QEMUHost
 
 
 class _Transport:
@@ -66,8 +66,8 @@ def _host(*, building_takes=0.0, **kwargs):
     # `path_flavor` is explicit because this agent advertises no
     # `guest-get-osinfo`: the host refuses to guess a family, which is the
     # subject of its own test.
-    config = QemuConfig("guest", transport_factory=factory, path_flavor="posix")
-    return QemuHost(config), made
+    config = QEMUConfig("guest", transport_factory=factory, path_flavor="posix")
+    return QEMUHost(config), made
 
 
 def test_concurrent_first_use_builds_one_transport():
@@ -112,15 +112,15 @@ def test_a_path_from_a_closed_host_refuses_instead_of_reconnecting():
 
 def test_the_reply_cap_is_configurable_and_round_trips():
     """8 MiB was hard-wired, below what qemu-ga itself will capture."""
-    config = QemuConfig("guest", max_reply_size=64 * 1024 * 1024)
+    config = QEMUConfig("guest", max_reply_size=64 * 1024 * 1024)
     assert config.max_reply_size == 64 * 1024 * 1024
 
     restored = HostConfig(config.connection_uri)
-    assert isinstance(restored, QemuConfig)
+    assert isinstance(restored, QEMUConfig)
     assert restored.max_reply_size == 64 * 1024 * 1024
 
     with pytest.raises(ValueError, match="max_reply_size"):
-        QemuConfig("guest", max_reply_size=0)
+        QEMUConfig("guest", max_reply_size=0)
 
 
 class _WedgedTransport:
@@ -145,7 +145,7 @@ def test_a_wedged_agent_is_not_reported_as_a_command_timeout():
     it a command timeout.
     """
     transport = _WedgedTransport()
-    executor = QemuExecutor(lambda: transport, agent_timeout=0.25, sleep=lambda _: None)
+    executor = QEMUExecutor(lambda: transport, agent_timeout=0.25, sleep=lambda _: None)
 
     with pytest.raises(ConnectionError, match="stopped responding"):
         executor("/bin/true", timeout=600)
@@ -169,7 +169,7 @@ class _SlowCommandTransport:
 def test_a_long_command_still_times_out_as_a_command():
     clock = iter([0.0, 0.0, 0.0, 0.2, 5.0, 5.0, 5.0])
     transport = _SlowCommandTransport()
-    executor = QemuExecutor(
+    executor = QEMUExecutor(
         lambda: transport,
         agent_timeout=30.0,
         clock=lambda: next(clock),
@@ -189,7 +189,7 @@ class _OversizedTransport:
 
 def test_a_rejected_status_reply_names_the_process_and_the_setting():
     """The output is already gone; the bare protocol error said nothing."""
-    executor = QemuExecutor(lambda: _OversizedTransport(), sleep=lambda _: None)
+    executor = QEMUExecutor(lambda: _OversizedTransport(), sleep=lambda _: None)
 
     with pytest.raises(QGAProtocolError) as caught:
         executor("/bin/cat", "/dev/urandom")

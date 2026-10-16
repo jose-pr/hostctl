@@ -27,7 +27,7 @@ from .container import (
     ContainerLike as ContainerLike,
     normalize_container_error as normalize_container_error,
 )
-from .ssh import SshConnection as SshConnection, SshExecutor as SshExecutor
+from .ssh import SSHConnection as SSHConnection, SSHExecutor as SSHExecutor
 from .local import LocalExecutor as LocalExecutor
 from .serial import (
     SerialExecutor as SerialExecutor,
@@ -36,14 +36,14 @@ from .serial import (
     SerialSettings as SerialSettings,
     normalize_serial_error as normalize_serial_error,
 )
-from .qemu import QemuExecutor as QemuExecutor
+from .qemu import QEMUExecutor as QEMUExecutor
 from .winrm import (
     NativeWinRMSession as NativeWinRMSession,
     WinRMExecutor as WinRMExecutor,
     WinRMSession as WinRMSession,
 )
 from .psrp import (
-    PsrpExecutor as PsrpExecutor,
+    PSRPExecutor as PSRPExecutor,
     pypsrp_available as pypsrp_available,
     require_pypsrp as require_pypsrp,
 )
@@ -63,7 +63,7 @@ __all__ = [
     "Input",
     "LocalExecutor",
     "PathLike",
-    "QemuExecutor",
+    "QEMUExecutor",
     "NativeWinRMSession",
     "normalize_container_error",
     "normalize_environment",
@@ -80,11 +80,11 @@ __all__ = [
     "SerialFactory",
     "SerialLike",
     "SerialSettings",
-    "SshConnection",
-    "SshExecutor",
+    "SSHConnection",
+    "SSHExecutor",
     "WinRMExecutor",
     "WinRMSession",
-    "PsrpExecutor",
+    "PSRPExecutor",
     "pypsrp_available",
     "require_pypsrp",
 ]

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from hostctl import SshConfig
-from hostctl.host._ssh import _SshTransport
-from hostctl.process import Process, SshProcess, TerminalOptions
+from hostctl import SSHConfig
+from hostctl.host._ssh import _SSHTransport
+from hostctl.process import Process, SSHProcess, TerminalOptions
 
 
 class _Reader:
@@ -100,7 +100,7 @@ def test_terminal_options_validate_and_publish_asyncssh_size():
 
 
 def test_ssh_spawn_renders_command_and_requests_terminal():
-    host = _SshTransport(SshConfig("host"))
+    host = _SSHTransport(SSHConfig("host"))
     ssh = _SSH()
     host._ssh = ssh
 
@@ -130,11 +130,11 @@ def test_ssh_spawn_renders_command_and_requests_terminal():
 def test_ssh_spawn_without_command_opens_the_configured_shell():
     """Not None, which starts the account's *login* shell.
 
-    The configured dialect, `SshConfig.executable`, and the executable
+    The configured dialect, `SSHConfig.executable`, and the executable
     recovered by `dialect="auto"` pick the program, since `send()` renders
     in the configured flavour.
     """
-    host = _SshTransport(SshConfig("host"))
+    host = _SSHTransport(SSHConfig("host"))
     ssh = _SSH()
     host._ssh = ssh
 
@@ -145,7 +145,7 @@ def test_ssh_spawn_without_command_opens_the_configured_shell():
 
 def test_ssh_process_controls_streams_lifecycle_and_terminal():
     remote = _Process()
-    process = SshProcess(remote, "command")
+    process = SSHProcess(remote, "command")
 
     process.write(b"input")
     assert remote.stdin.values == [b"input"]
@@ -176,7 +176,7 @@ def test_a_binary_session_takes_the_str_a_shell_renders():
     from hostctl.shell import POSIX_SHELL, ShellSession
 
     remote = _Process()
-    session = ShellSession(POSIX_SHELL, SshProcess(remote, "command"))
+    session = ShellSession(POSIX_SHELL, SSHProcess(remote, "command"))
 
     session.send("uptime")
 
