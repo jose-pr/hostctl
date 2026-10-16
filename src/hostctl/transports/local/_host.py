@@ -41,6 +41,9 @@ class LocalConfig(HostConfig, schemes=("local",)):
     def __init__(self) -> None:
         super().__init__()
 
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}()"
+
     @property
     def connection_uri(self) -> str:
         return "local:"

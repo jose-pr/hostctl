@@ -65,6 +65,16 @@ class SystemConfig(HostConfig):
             if value is not None
         }
 
+    def __repr__(self) -> str:
+        # `provider_options` and `initializer` stay out, as the dataclass
+        # configs keep their credential and injection fields out: provider
+        # options carry a transport's password.
+        return (
+            f"{type(self).__name__}(authority={self.authority!r}, "
+            f"shell={self.shell!r}, executor={self.executors!r}, "
+            f"path={self.paths!r})"
+        )
+
     def _build_providers(self, kind: str):
         from ._resolvers import _SYSTEM_PROVIDER_RESOLVERS, _load_system_provider
 

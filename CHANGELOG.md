@@ -574,6 +574,13 @@ collection until pytruenas ports to these names.
   three-slash spelling. `str(SerialConfig("/dev/ttyUSB0"))` renders
   `serial:///dev/ttyUSB0`, percent-encoding only what a URI path cannot hold.
   This ships in 0.4.0.
+- `LocalConfig` and the system configs (`PosixConfig`, `WindowsConfig`,
+  `IOSConfig`, `SystemConfig`) print as values, in the dataclass configs'
+  style: `LocalConfig()`, `PosixConfig(authority='nas.example', shell=None,
+  executor=('ssh',), path=('sftp',))`, where they printed
+  `<... object at 0x...>`. `provider_options` and `initializer` are left out,
+  so a transport password passed there never reaches a log. This ships in
+  0.4.0.
 
 ### Security
 
