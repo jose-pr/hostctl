@@ -195,7 +195,10 @@ mode, because a password may contain `@` and `:` and nothing can recover where
 an unescaped one ended (`@` and `:` do parse: last `@`, first `:`, per the URI
 grammar). The error for an unencoded `/`, `?` or `#` in a password (from
 `HostConfig(uri)`, `Host(uri)` and `ConnectionString`) is a fixed message that
-never echoes the URI or any part of the password.
+never echoes the URI or any part of the password. Only an authority that does
+not parse gets it: a URI whose port is valid is taken at face value, so
+`ssh://nas:22/mail/user@example.com` and `ssh://root:123/rest@nas` name host
+`nas`/`root` with an `@` in the path, as `redact_uri` reads them too.
 
 ```python
 redact_uri(uri) -> str

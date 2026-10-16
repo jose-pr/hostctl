@@ -102,17 +102,25 @@ def _refuse_cut_short_userinfo(parsed: _SplitResult) -> None:
     An unencoded `/`, `?` or `#` in a password ends the authority there, so
     `ssh://user:se?cret@host` reads as the netloc `user:se` and a query
     `cret@host`. The message never quotes the input: it holds password text.
+
+    Only an authority that does not parse is refused: `user:se` has no valid
+    port. `ssh://nas:22/mail/user@example.com` parses, so it is taken at face
+    value -- the same test `redact_uri` uses to decide "well formed".
     """
-    netloc = _re.sub(r"\[[^\]]*\]", "", parsed.netloc)
-    if (
-        "@" not in netloc
-        and ":" in netloc
-        and "@" in parsed.path + parsed.query + parsed.fragment
-    ):
-        raise ValueError(
-            "connection URI has userinfo cut short: percent-encode '/', '?' "
-            "and '#' in the password"
-        )
+    if "@" in parsed.netloc or "@" not in parsed.path + parsed.query + parsed.fragment:
+        return
+    try:
+        parsed.port  # noqa: B018 -- the property raises for an invalid port
+    except ValueError:
+        pass
+    else:
+        return
+    # Raised outside the handler: the port error, as `__context__`, quotes
+    # the password text after the colon.
+    raise ValueError(
+        "connection URI has userinfo cut short: percent-encode '/', '?' "
+        "and '#' in the password"
+    )
 
 
 _PARAMETER_NAME = _re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")

@@ -111,7 +111,7 @@ def test_a_config_refuses_a_uri_as_its_host_without_echoing_the_password(build):
 _CUT_SHORT = (
     ("ssh://user:Pw9?cret@host", ("Pw9", "cret")),
     ("winrm://u:Pw9?cret@h", ("Pw9", "cret")),
-    ("ssh://user:123?a=b@host", ("123", "a=b")),
+    ("ssh://user:Pw9?a=b@host", ("Pw9", "a=b")),
     ("ssh://user:Pw9/cret@host", ("Pw9", "cret")),
     ("qga+ssh://user:Pw9/cret@host?domain=d", ("Pw9", "cret")),
     ("ssh://user:Pw9#cret@host", ("Pw9", "cret")),
@@ -133,6 +133,79 @@ def test_a_password_cut_short_is_never_echoed(uri, fragments):
         assert fragment not in shown
     with pytest.raises(ValueError, match="percent-encode"):
         HostConfig.supported_credentials(uri)
+
+
+class _FaceValueConfig(HostConfig, schemes=("facevalue",)):
+    """Takes any authority and path, so a test can read what was parsed."""
+
+    def __init__(self, parsed, credentials):
+        self.parsed = parsed
+        self.credentials = credentials
+
+    @property
+    def connection_uri(self):
+        return self.parsed.geturl()
+
+    @classmethod
+    def _from_parsed_uri(cls, parsed, **credentials):
+        return cls(parsed, credentials)
+
+    def _create_host(self):
+        raise NotImplementedError
+
+
+@pytest.mark.parametrize(
+    "uri, host, port, path",
+    (
+        (
+            "facevalue://nas:22/mail/user@example.com",
+            "nas",
+            22,
+            "/mail/user@example.com",
+        ),
+        ("facevalue://root:123/rest@nas", "root", 123, "/rest@nas"),
+        ("facevalue://[::1]:22/a@b", "::1", 22, "/a@b"),
+    ),
+)
+def test_a_uri_whose_authority_parses_is_taken_at_face_value(uri, host, port, path):
+    """A valid port means the authority parsed, so an `@` after it is a path:
+    it cannot be told from a cut-short password, and is not guessed at.
+    `redact_uri` reads the same URI the same way."""
+    config = HostConfig(uri)
+
+    assert (config.parsed.hostname, config.parsed.port) == (host, port)
+    assert config.parsed.path == path
+    assert config.credentials == {}
+    assert HostConfig.supported_credentials(uri) is None
+    assert redact_uri(uri) == uri
+
+
+def test_a_numeric_password_cut_short_is_a_port_and_still_not_echoed():
+    """`user:123?a=b@host` is a valid URI naming port 123; the query that
+    follows is refused without being shown."""
+    with pytest.raises(ValueError, match="not shown") as caught:
+        HostConfig("ssh://user:123?a=b@host")
+
+    assert "a=b" not in str(caught.value)
+    assert redact_uri("ssh://user:123?a=b@host") == "ssh://user:123?a=b@host"
+
+
+@pytest.mark.parametrize(
+    "uri",
+    (
+        "ssh://user:se/cret@host",
+        "ssh://user:99999/cret@host",
+        "ssh://[::1]:se/cret@host",
+    ),
+)
+def test_an_authority_that_does_not_parse_is_refused_and_redacted(uri):
+    """`redact_uri` falls back to stripping the userinfo exactly where parsing
+    refuses, so neither path shows the password."""
+    with pytest.raises(ValueError, match="cut short") as caught:
+        HostConfig(uri)
+
+    assert caught.value.__context__ is None
+    assert "cret" not in redact_uri(uri)
 
 
 @pytest.mark.parametrize(

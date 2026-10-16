@@ -328,7 +328,9 @@ collection until pytruenas ports to these names.
 - A URI whose password holds an unencoded `/`, `?` or `#` no longer has part
   of the password echoed in the `ValueError` from `HostConfig(uri)`,
   `Host(uri)` or `ConnectionString(uri)`; the message now says to
-  percent-encode it.
+  percent-encode it. Only an authority that does not parse is refused: a URI
+  with a valid port and an `@` later (`ssh://nas:22/mail/user@example.com`,
+  `ssh://root:123/rest@nas`) is taken at face value, as in 0.3.
 - Values passed in `env=` no longer appear in `CalledProcessError` or
   `TimeoutExpired` text, `repr()`, `CompletedProcess.args` or the DEBUG
   dispatch log on transports that embed them in the command. Each shows as
