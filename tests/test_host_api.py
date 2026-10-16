@@ -198,8 +198,8 @@ def test_transport_system_hosts_have_safe_info_fallback_without_connection(
     [
         LocalHost(),
         SSHConfig("host").open(),
-        WinRMConfig("host", username="user").open(),
-        WinRMConfig("host", username="user", tls=True).open(),
+        WinRMConfig("host", username="user", password="x").open(),
+        WinRMConfig("host", username="user", password="x", tls=True).open(),
     ],
 )
 def test_scheme_matches_connection_uri_and_registered_scheme(host):
