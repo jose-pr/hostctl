@@ -25,7 +25,7 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `hostctl.serial` (console profiles) | `hostctl.transports.serial` (still re-exported from `hostctl`) |
 | concrete executors, processes, path backends, `provider.transports`, `shell.posix` etc.; `LocalExecutor` from `hostctl.executor` | internal; flavour classes stay in `hostctl.shell`; `LocalExecutor` is in `hostctl` and `hostctl.transports.local` |
 | `provider.transports.READ_ONLY_PATH_OPERATIONS` | `hostctl.provider.READ_ONLY_PATH_OPERATIONS` |
-| loggers `hostctl.host.ssh`, `hostctl.host.winrm`, `hostctl.host.system`, `hostctl.provider.transports` | `hostctl.transports.ssh`, `hostctl.transports.winrm`, `hostctl.system`, `hostctl.transports.<name>` |
+| loggers `hostctl.host.ssh`, `hostctl.host.winrm`, `hostctl.host.system`, `hostctl.host.qemu`, `hostctl.provider`, `hostctl.provider.transports` | one per module, named for it (`hostctl.transports.ssh._transport`, `hostctl.system._host`, `hostctl.provider._contracts`, ...); configure `hostctl` |
 | `dialect=`, `path_flavor=` (and `?dialect=`, `?path_flavor=`); `ShellFlavour.path_flavor` | `shell=`, `pathname=` (`?shell=`, `?pathname=`); `ShellFlavour.pathname` |
 | `SSHShellSelection`, `QEMUShellSelection`, `ContainerShellSelection`, `*PathSelection`, `PathnameConstructor` | `hostctl.host.ShellSelection`, `hostctl.host.PathnameSelection` |
 | `ContainerConfig(user=)` (`?user=`); `SerialConfig(port=, protocol=)`; `SerialConsoleProtocol` | `username=` (`?username=`); `device=`, `profile=`; `ConsoleProfile` |
@@ -33,6 +33,11 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | positional config arguments after the first | keyword-only (`TypeError` otherwise) |
 | `ExecutorCommand`; `executor.PathLike`, `Input`, `Environment`, `FileHandle` | `CommandLike`; `StrPath`, `CommandInput`, `CommandEnvironment`, `StreamTarget` |
 | `pypsrp_available()`, `require_pypsrp()` | `has_psrp()` (and new `has_ssh()`); the guard is internal |
+
+pytruenas 0.5.4 and earlier pin `hostctl<0.4` and import the 0.3 paths
+(`from hostctl.host import PosixHost, SshConfig, ...`), so they do not import
+against 0.4.0; `test.yml`'s informative `downstream-pytruenas` job fails at
+collection until pytruenas ports to these names.
 
 ### Added
 
@@ -93,8 +98,18 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 - `ShellFlavour.redirect(value, target, operand)` renders a `REDIRECT`/`APPEND`
   together with its target, for a flavour whose spelling depends on the
   target; the default is `operator(value) + operand`.
+- A Connecting guide (one section per transport: URI form, query keys,
+  credentials, host-key or TLS policy, extra) and a worked application host
+  in "Extending hostctl": a `HostConfig` subclass with its own scheme
+  composing a `PosixHost` subclass from SSH providers and an application
+  path provider. This ships in 0.4.0.
 
 ### Changed
+
+- **Logger names follow module paths under `hostctl`**, which ships in
+  0.4.0: every module logs through `logging.getLogger(__name__)`
+  (`hostctl.transports.ssh._transport`, `hostctl.provider._contracts`, ...).
+  Configure the `hostctl` logger; the child names are not API.
 
 - **Breaking, 0.4.0: `OperationNotStartedError` is a `ConnectionError`, not
   a `RuntimeError`.** It is raised only before anything was sent, so an
@@ -285,6 +300,9 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 
 ### Fixed
 
+- A shell flavour's `repr()` names it (`<PosixShellFlavour 'posix'>`), so a
+  config's `repr()` no longer embeds `<... object at 0x...>`. This ships in
+  0.4.0.
 - Config and host constructors report their real parameters to type
   checkers, `help()` and `inspect.signature()`: `SshConfig("h")` is an
   `SshConfig` to a checker, which flags a misspelled keyword, and
