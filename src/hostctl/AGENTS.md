@@ -450,7 +450,7 @@ Behaviour:
 ## WinRM (`hostctl.transports.winrm`)
 
 ```python
-WinRMConfig(host, *, username, password=None, auth='ntlm', port=None, tls=False, verify=True, message_encryption='auto', operation_timeout=20.0, read_timeout=30.0, provider='auto', cleartext_auth=False)
+WinRMConfig(host, *, username, password=None, auth='ntlm', port=None, tls=False, verify=True, message_encryption='auto', operation_timeout=20.0, read_timeout=30.0, timeout=30.0, provider='auto', cleartext_auth=False)
 winrm_providers(config) -> tuple[ExecutorProvider, PathProvider]
 ```
 
@@ -466,6 +466,10 @@ are a `CompositeWindowsPath` over the WinRM path backend.
 - `tls=True` is HTTPS; `verify=False` (`?verify=false`) skips the server
   certificate check. `str(config)` omits an unset port.
 - The timeouts are float seconds, rounded up where a leg needs whole seconds.
+  `timeout` is the default for `run(timeout=)`: the same total deadline per
+  command, which a per-call `timeout=` overrides, on every leg; `None` sets
+  no default. `operation_timeout` and `read_timeout` bound one request each
+  (URI `?timeout=`, empty for `None`; `?read_timeout=`, `?operation_timeout=`).
 - `provider` is `auto`, `native`, `pywinrm` or `psrp`. `auto` picks a
   password-free config on a Windows client as `native` (current-context
   PowerShell remoting, see "Environment variables"); otherwise PSRP when
@@ -485,12 +489,19 @@ Behaviour:
   without cmd.exe and sends the script on stdin, so scripts have no
   command-line cap; every leg shares one 256,000-byte script budget. WinRM
   stdin is unsupported.
-- The native leg's `read_timeout` is a total per-call deadline that
-  `run(timeout=)` overrides; the remote command keeps running
-  (`orphaned=True`). pywinrm and PSRP have no total deadline and refuse
-  `timeout=`. On the native leg `verify=False` becomes `New-PSSessionOption
-  -SkipCACheck -SkipCNCheck`, and the remote exit code is carried back
-  explicitly.
+- A deadline raises `subprocess.TimeoutExpired` with `orphaned=True`.
+  native: the local `powershell.exe` relay is killed and the remote command
+  keeps running; `read_timeout` is `New-PSSessionOption -OpenTimeout`, which
+  bounds opening the remote session. pywinrm: the deadline is checked between
+  WinRS Receives, so it is noticed up to `operation_timeout` late; the command
+  is sent the WinRS terminate signal and its shell deleted. PSRP: each Receive
+  is shortened to the time left, then the pipeline is sent PSRP's stop
+  signal. Termination is requested, never confirmed.
+- `timeout=None` with no `run(timeout=)` waits for the command however long
+  it takes, and on the native leg a host that stops answering after the
+  session opened can block the call indefinitely.
+- On the native leg `verify=False` becomes `New-PSSessionOption -SkipCACheck
+  -SkipCNCheck`, and the remote exit code is carried back explicitly.
 - PSRP `run()` text is rendered by `Out-String -Stream` in the runspace
   (tables as on the other legs, CRLF-joined, 120 columns).
 - A WinRM path's `open("rb")` fetches bounded ranges; writable modes stage
@@ -501,7 +512,7 @@ Behaviour:
 
 ```python
 RunspaceSession(config=None, *, pool=None)
-RunspaceSession.invoke(script, *args, raw=False, capture_exit=False, format_text=False) -> PipelineResult
+RunspaceSession.invoke(script, *args, raw=False, capture_exit=False, format_text=False, timeout=None) -> PipelineResult
 RunspaceSession.connect()
 RunspaceSession.close()
 PipelineResult(output, streams, state, had_errors, returncode)
@@ -511,7 +522,10 @@ PipelineStreams(error=(), warning=(), verbose=(), debug=(), information=(), prog
 A PSRP runspace with typed PowerShell streams and state, reached through
 `host.runspace()`; it is not a byte-oriented `spawn`/TTY process.
 `invoke(script, *args)` renders its arguments with the PowerShell flavour's
-`structured_command` and returns typed objects in `PipelineResult.output`. An
+`structured_command` and returns typed objects in `PipelineResult.output`.
+`invoke(timeout=)` is a total deadline in seconds; it has no default (the
+config's `timeout` applies to `run()`), and on expiry the pipeline is sent
+the stop signal and `TimeoutExpired` (`orphaned=True`) is raised. An
 injected `pool` is caller-owned: `close()` leaves it open and the session stays
 reopenable.
 
@@ -1175,11 +1189,13 @@ dependency may (asyncssh, pywinrm, docker), as documented by that package.
   started is never retried on another provider, so a `ConnectionError`
   mid-command means its effect on the target is unknown.
 - **Timeouts are not all total deadlines.** `run(timeout=)` bounds the call on
-  local, SSH, QEMU and native WinRM. `SSHConfig(connect_timeout=)` bounds only
-  connecting; `QEMUConfig(agent_timeout=)` one agent round trip;
-  `WinRMConfig(operation_timeout=, read_timeout=)` are per-request on pywinrm
-  and PSRP, which refuse `timeout=`; a container's `run()` refuses `timeout=`;
-  `SerialConfig(read_timeout=)` bounds one read.
+  local, SSH, QEMU and every WinRM leg, and `WinRMConfig(timeout=)` is its
+  default there (30 s; `None` for none). `SSHConfig(connect_timeout=)` bounds
+  only connecting; `QEMUConfig(agent_timeout=)` one agent round trip;
+  `WinRMConfig(operation_timeout=, read_timeout=)` one WS-Man request each
+  (on the native leg `read_timeout` bounds opening the session); a
+  container's `run()` refuses `timeout=`; `SerialConfig(read_timeout=)` bounds
+  one read.
 - **Loggers.** Every module logs through `logging.getLogger(__name__)`, so
   every logger is a child of `hostctl`: configure that one (at `DEBUG` it
   shows provider selection and dispatch, redacted). Child names follow the

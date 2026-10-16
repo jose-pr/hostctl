@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import subprocess
+import time
 import typing
 import types
 
@@ -19,6 +20,7 @@ from ...executor import (
     CommandInput,
     capture_streams,
     dispatch_output,
+    expired,
     wants_text,
 )
 
@@ -27,7 +29,11 @@ import threading
 
 
 class PSRPExecutor(Executor[subprocess.CompletedProcess]):
-    """Execute finalized PowerShell scripts in fresh PSRP pipelines."""
+    """Execute finalized PowerShell scripts in fresh PSRP pipelines.
+
+    `default_timeout` supplies the deadline of a call made without
+    `timeout=`; it returns `None` for no deadline.
+    """
 
     # PSRP receives a finalized PowerShell script; cwd/env are embedded by
     # the host shell rather than forwarded as unsupported executor options.
@@ -35,8 +41,15 @@ class PSRPExecutor(Executor[subprocess.CompletedProcess]):
         (ExecutorCapability.SCRIPT, ExecutorCapability.MANAGES_STATUS)
     )
 
-    def __init__(self, session: typing.Callable[[], RunspaceSession]) -> None:
+    def __init__(
+        self,
+        session: typing.Callable[[], RunspaceSession],
+        default_timeout: typing.Optional[
+            typing.Callable[[], typing.Optional[float]]
+        ] = None,
+    ) -> None:
         self._session = session
+        self._default_timeout = default_timeout
 
     def __call__(
         self,
@@ -62,14 +75,19 @@ class PSRPExecutor(Executor[subprocess.CompletedProcess]):
             raise NotImplementedError("PSRP executor receives a finalized script")
         if stdin is not None or input is not None:
             raise NotImplementedError("PSRP does not provide raw stdin for run()")
-        if timeout is not None:
-            raise NotImplementedError(
-                "PSRP pipeline timeout is unsupported; configure WinRM timeouts"
-            )
+        if timeout is None and self._default_timeout is not None:
+            timeout = self._default_timeout()
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
-        result = self._session().invoke(
-            command_text(command), raw=False, capture_exit=True, format_text=True
-        )
+        try:
+            result = self._session().invoke(
+                command_text(command),
+                raw=False,
+                capture_exit=True,
+                format_text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise expired(command_text(command), exc.timeout, orphaned=True) from exc
         codec = encoding or "utf-8"
         # `invoke(capture_exit=True)` already consumed the
         # `__HOSTCTL_LASTEXITCODE__` line and folded it into `returncode`;
@@ -268,6 +286,30 @@ class RunspaceSession:
             if close is not None:
                 close()
 
+    def _invoke_within(self, pipeline: typing.Any, timeout: float) -> object:
+        """Run `pipeline` for at most `timeout` seconds, then stop it."""
+        started = time.monotonic()
+        # Each Receive asks the server for an answer within this many whole
+        # seconds, shortened to what is left of the deadline.
+        longest = math.ceil(getattr(self._config, "operation_timeout", 20))
+        pipeline.begin_invoke()
+        while _pipeline_state_name(pipeline.state) == "Running":
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+                try:
+                    pipeline.stop()
+                except Exception:
+                    # The deadline is the error to report; a host that cannot
+                    # take the stop signal cannot be asked again.
+                    pass
+                raise expired(
+                    getattr(self._config, "host", "PSRP pipeline"),
+                    timeout,
+                    orphaned=True,
+                )
+            pipeline.poll_invoke(timeout=max(1, min(longest, math.ceil(remaining))))
+        return pipeline.output
+
     def __enter__(self) -> RunspaceSession:
         self.connect()
         return self
@@ -288,12 +330,18 @@ class RunspaceSession:
         raw: bool = False,
         capture_exit: bool = False,
         format_text: bool = False,
+        timeout: typing.Optional[float] = None,
     ) -> PipelineResult:
         """Invoke a script or executable with persistent runspace state.
 
         `format_text` renders the output through `Out-String -Stream` inside
         the runspace, so it is the text a console would show (tables
         included) rather than each object's `ToString()`.
+
+        `timeout` is a total deadline in seconds (`None`: none). When it
+        passes the pipeline is sent PSRP's stop signal and
+        `subprocess.TimeoutExpired` is raised with `orphaned=True`: the stop
+        is requested, not confirmed.
         """
         self.connect()
         from ...shell import POWERSHELL
@@ -331,7 +379,10 @@ class RunspaceSession:
 
         pipeline = PowerShell(self._pool)
         pipeline.add_script(script_text)
-        output = pipeline.invoke()
+        if timeout is None:
+            output = pipeline.invoke()
+        else:
+            output = self._invoke_within(pipeline, timeout)
         streams_obj = getattr(pipeline, "streams", object())
         streams = PipelineStreams(
             error=_stream_values(streams_obj, "error"),

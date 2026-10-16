@@ -32,10 +32,12 @@ class _Session:
     def __init__(self, response=None):
         self.response = response or _Response()
         self.scripts = []
+        self.timeouts = []
         self.closed = False
 
-    def run_ps(self, script):
+    def run_ps(self, script, timeout=None):
         self.scripts.append(script)
+        self.timeouts.append(timeout)
         return self.response
 
     def close(self):
@@ -110,7 +112,6 @@ def test_winrm_structured_command_cwd_and_env_are_powershell_safe():
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"timeout": 1},
         {"executable": "cmd.exe"},
         {"input": b"x"},
     ],
@@ -206,10 +207,10 @@ class _RecordingProtocol:
         assert isinstance(data, bytes)
         self.sends.append((len(data), end))
 
-    def get_command_output(self, shell, command_id):
+    def get_command_output_raw(self, shell, command_id):
         if self.fail:
             raise RuntimeError("boom")
-        return b"out", b"err", 3
+        return b"out", b"err", 3, True
 
     def cleanup_command(self, shell, command_id):
         self.calls.append("cleanup_command")
@@ -338,7 +339,7 @@ def test_native_run_ps_timeout_is_per_call(monkeypatch):
     assert seen == [30.0, 2]
 
 
-def test_only_the_native_leg_accepts_a_per_call_timeout(monkeypatch):
+def test_the_executor_accepts_a_per_call_timeout_only_when_told_to(monkeypatch):
     seen = []
 
     class _Timed:
@@ -747,12 +748,15 @@ def test_the_native_session_gets_the_configured_deadline(monkeypatch):
     monkeypatch.setenv("USERNAME", "admin")
     monkeypatch.delenv("USERDOMAIN", raising=False)
     transport = winrm_module._WinRMTransport(
-        WinRMConfig("server", username="admin", read_timeout=45)
+        WinRMConfig("server", username="admin", read_timeout=45, timeout=90)
     )
     transport._leg.session
     del _os
 
-    assert built["timeout"] == 45.0
+    # `read_timeout` keeps its per-request meaning: it bounds opening the
+    # remote session, never the command.
+    assert built["timeout"] == 90
+    assert built["open_timeout"] == 45
 
 
 def test_the_transports_own_run_applies_the_manages_status_rule(monkeypatch):
@@ -904,7 +908,15 @@ def test_the_psrp_leg_manages_its_own_status():
         def connect(self):
             pass
 
-        def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
+        def invoke(
+            self,
+            script,
+            *,
+            raw=False,
+            capture_exit=False,
+            format_text=False,
+            timeout=None,
+        ):
             from hostctl.transports.winrm._psrp import PipelineResult, PipelineStreams
 
             scripts.append(script)

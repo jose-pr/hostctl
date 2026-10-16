@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import dataclasses
 import subprocess
+import time
 import typing
 
 from ...executor import (
@@ -30,7 +31,9 @@ class _WinRMResponse(typing.Protocol):
 
 
 class WinRMSession(typing.Protocol):
-    def run_ps(self, script: str) -> _WinRMResponse: ...
+    def run_ps(
+        self, script: str, *, timeout: typing.Optional[float] = None
+    ) -> _WinRMResponse: ...
 
 
 @dataclasses.dataclass
@@ -52,6 +55,15 @@ _STDIN_CHUNK = 64 * 1024
 _PS_ARGV = ("-NoProfile", "-NonInteractive", "-Command", "-")
 
 
+def _receive_timeouts() -> typing.Tuple[typing.Type[BaseException], ...]:
+    """pywinrm's "no output within the operation timeout", which is a retry."""
+    try:
+        from winrm.exceptions import WinRMOperationTimeoutError
+    except ImportError:
+        return ()
+    return (WinRMOperationTimeoutError,)
+
+
 class _PywinrmStdinSession:
     """Run a script through pywinrm's `Protocol`, with the script on stdin.
 
@@ -60,13 +72,23 @@ class _PywinrmStdinSession:
     (`skip_cmd_shell`) and reads one ASCII bootstrap line from stdin, so no
     command line bounds the script. `-Command -` writes plain text to stderr,
     so there is no CLIXML to strip.
+
+    `timeout` is the total deadline of one call in seconds (`None` for none).
     """
 
-    def __init__(self, protocol: typing.Any) -> None:
+    def __init__(
+        self, protocol: typing.Any, timeout: typing.Optional[float] = None
+    ) -> None:
         self._protocol = protocol
+        self.timeout = timeout
 
-    def run_ps(self, script: str) -> _Response:
+    def run_ps(
+        self, script: str, *, timeout: typing.Optional[float] = None
+    ) -> _Response:
+        """Run one script; `timeout` overrides the session deadline per call."""
         protocol = self._protocol
+        limit = timeout if timeout is not None else self.timeout
+        started = time.monotonic()
         bootstrap = (
             "$s=[Text.Encoding]::UTF8.GetString("
             f"[Convert]::FromBase64String('{_b64(script)}'));"
@@ -74,6 +96,7 @@ class _PywinrmStdinSession:
         ).encode("ascii")
         shell = protocol.open_shell()
         command_id = None
+        timed_out = False
         try:
             command_id = protocol.run_command(
                 shell,
@@ -90,14 +113,53 @@ class _PywinrmStdinSession:
                     bootstrap[start : start + _STDIN_CHUNK],
                     end=start + _STDIN_CHUNK > last,
                 )
-            out, err, status = protocol.get_command_output(shell, command_id)
+            out, err, status = self._receive(shell, command_id, limit, started)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            raise
         finally:
             try:
-                if command_id is not None:
-                    protocol.cleanup_command(shell, command_id)
-            finally:
-                protocol.close_shell(shell)
+                try:
+                    if command_id is not None:
+                        # The WinRS `terminate` signal; deleting the shell
+                        # then ends whatever it still runs.
+                        protocol.cleanup_command(shell, command_id)
+                finally:
+                    protocol.close_shell(shell)
+            except Exception:
+                # Past the deadline the timeout is the error to report.
+                if not timed_out:
+                    raise
         return _Response(status, out, err)
+
+    def _receive(
+        self,
+        shell: str,
+        command_id: str,
+        limit: typing.Optional[float],
+        started: float,
+    ) -> typing.Tuple[bytes, bytes, int]:
+        """Collect output until the command ends or `limit` seconds pass.
+
+        Checked between Receives: a server holds each one for up to the
+        operation timeout when the command prints nothing, so the deadline is
+        noticed within `operation_timeout` of passing.
+        """
+        retry = _receive_timeouts()
+        stdout, stderr = [], []
+        while True:
+            if limit is not None and time.monotonic() - started >= limit:
+                raise expired("powershell.exe", limit, orphaned=True)
+            try:
+                out, err, status, done = self._protocol.get_command_output_raw(
+                    shell, command_id
+                )
+            except retry:
+                continue
+            stdout.append(out)
+            stderr.append(err)
+            if done:
+                return b"".join(stdout), b"".join(stderr), status
 
     def close(self) -> None:
         return None
@@ -109,7 +171,8 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
     `manages_status` declares that the session reports the remote status
     itself, so the flavour's own `exit` epilogue must stay off the script.
     `accepts_timeout` lets `run(timeout=)` through as the session's per-call
-    deadline; without it a `timeout=` is refused.
+    deadline; without it a `timeout=` is refused. `transport_timeout` names
+    the deadline a timeout raised without one is reported against.
     """
 
     executor_capabilities = frozenset((ExecutorCapability.SCRIPT,))
@@ -117,7 +180,9 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
     def __init__(
         self,
         session: typing.Callable[[], WinRMSession],
-        transport_timeout: typing.Optional[typing.Callable[[], float]] = None,
+        transport_timeout: typing.Optional[
+            typing.Callable[[], typing.Optional[float]]
+        ] = None,
         *,
         manages_status: bool = False,
         accepts_timeout: bool = False,
@@ -210,6 +275,9 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
         # and `except subprocess.TimeoutExpired` did not catch it.
         if timeout is None and self._transport_timeout:
             timeout = self._transport_timeout()
+        if isinstance(exc, subprocess.TimeoutExpired) and exc.timeout is not None:
+            # The session knows which deadline it enforced.
+            timeout = exc.timeout
         if isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)):
             return expired(command, timeout, orphaned=True)
         try:

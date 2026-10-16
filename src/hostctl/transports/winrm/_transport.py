@@ -109,7 +109,7 @@ class _NativeLeg(_SessionLeg):
         # bound and reports the remote status on its own marker line.
         self.executor = WinRMExecutor(
             lambda: self.session,
-            lambda: float(self.config.read_timeout),
+            lambda: self.config.timeout,
             manages_status=True,
             accepts_timeout=True,
         )
@@ -142,10 +142,12 @@ class _NativeLeg(_SessionLeg):
             self.config.host,
             ssl=self.config.tls,
             port=self.config.port,
-            # The config's read timeout IS the deadline here: the local
-            # powershell.exe relays the call, so its own wall clock is the
-            # only bound available.
-            timeout=float(self.config.read_timeout),
+            timeout=self.config.timeout,
+            # The per-request bound PowerShell remoting has. Against a host
+            # that accepts TCP and never answers (Windows PowerShell 5.1),
+            # -OpenTimeout 5 s / 60 s / 180 s (the default) ended the call
+            # after 18.5 / 70.5 / 190.4 s; -OperationTimeout 5 s alone did not.
+            open_timeout=self.config.read_timeout,
             transport=self.config.auth,
             verify=self.config.verify,
             message_encryption=self.config.message_encryption,
@@ -159,8 +161,12 @@ class _PywinrmLeg(_SessionLeg):
 
     def __init__(self, config: WinRMConfig) -> None:
         super().__init__(config)
+        # `transport_timeout` is the read timeout: a timeout pywinrm
+        # raises itself is one HTTP request outliving it.
         self.executor = WinRMExecutor(
-            lambda: self.session, lambda: float(self.config.read_timeout)
+            lambda: self.session,
+            lambda: float(self.config.read_timeout),
+            accepts_timeout=True,
         )
 
     def _build(self) -> WinRMSession:
@@ -188,7 +194,8 @@ class _PywinrmLeg(_SessionLeg):
                     math.ceil(self.config.read_timeout),
                     math.ceil(self.config.operation_timeout) + 1,
                 ),
-            ).protocol
+            ).protocol,
+            timeout=self.config.timeout,
         )
 
 
@@ -200,7 +207,9 @@ class _PSRPLeg(_Leg):
     def __init__(self, config: WinRMConfig) -> None:
         super().__init__(config)
         self._runspace: typing.Optional[RunspaceSession] = None
-        self.executor = PSRPExecutor(lambda: self.runspace())
+        self.executor = PSRPExecutor(
+            lambda: self.runspace(), lambda: self.config.timeout
+        )
 
     def runspace(self) -> RunspaceSession:
         with self._lock:

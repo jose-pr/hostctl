@@ -55,6 +55,9 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     message_encryption: MessageEncryption = "auto"
     operation_timeout: float = 20.0
     read_timeout: float = 30.0
+    #: The default for `run(timeout=)`: a total deadline per command, which a
+    #: per-call `timeout=` overrides; `None` sets no default.
+    timeout: typing.Optional[float] = 30.0
     provider: WinRMProviderName = "auto"
     #: Opt in to Basic credentials over plain HTTP; see `__post_init__`.
     cleartext_auth: bool = False
@@ -78,6 +81,8 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             raise ValueError("operation_timeout must be positive")
         if self.read_timeout <= self.operation_timeout:
             raise ValueError("read_timeout must be greater than operation_timeout")
+        if self.timeout is not None and not self.timeout > 0:
+            raise ValueError("timeout must be greater than 0 seconds, or None")
         if self.provider not in typing.get_args(WinRMProviderName):
             raise ValueError("provider must be 'auto', 'native', 'pywinrm', or 'psrp'")
         if self.provider == "native" and self.password is not None:
@@ -128,6 +133,10 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
                 "read_timeout": _seconds_text(self.read_timeout),
             }
         )
+        if self.timeout != 30.0:
+            # An empty value is `None`, as `SerialConfig` spells it.
+            timeout = "" if self.timeout is None else _seconds_text(self.timeout)
+            query += "&" + urlencode({"timeout": timeout})
         if self.provider != "auto":
             query += "&" + urlencode({"provider": self.provider})
         if self.cleartext_auth:
@@ -149,6 +158,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
                 "message_encryption",
                 "operation_timeout",
                 "read_timeout",
+                "timeout",
                 "provider",
                 "cleartext_auth",
             },
@@ -171,6 +181,11 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             ),
             operation_timeout=_query_float(query, "operation_timeout", 20.0),
             read_timeout=_query_float(query, "read_timeout", 30.0),
+            timeout=(
+                None
+                if query.get("timeout") == ""
+                else _query_float(query, "timeout", 30.0)
+            ),
             provider=typing.cast(WinRMProviderName, query.get("provider", "auto")),
             cleartext_auth=_query_bool(query, "cleartext_auth", False),
         )

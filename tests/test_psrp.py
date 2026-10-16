@@ -185,7 +185,15 @@ def test_psrp_executor_asks_for_formatted_text_and_joins_with_crlf():
     seen = {}
 
     class Session:
-        def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
+        def invoke(
+            self,
+            script,
+            *,
+            raw=False,
+            capture_exit=False,
+            format_text=False,
+            timeout=None,
+        ):
             seen.update(capture_exit=capture_exit, format_text=format_text)
             return PipelineResult(
                 ("Mode  Name", "----  ----"),
@@ -204,7 +212,15 @@ def test_psrp_executor_asks_for_formatted_text_and_joins_with_crlf():
 
 def test_psrp_executor_projects_objects_and_error_streams():
     class Session:
-        def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
+        def invoke(
+            self,
+            script,
+            *,
+            raw=False,
+            capture_exit=False,
+            format_text=False,
+            timeout=None,
+        ):
             assert script == "Write-Output x"
             return PipelineResult(
                 ("one", "two"),
@@ -229,7 +245,15 @@ def test_psrp_executor_projects_native_last_exit_code():
     """
 
     class Session:
-        def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
+        def invoke(
+            self,
+            script,
+            *,
+            raw=False,
+            capture_exit=False,
+            format_text=False,
+            timeout=None,
+        ):
             assert capture_exit is True
             return PipelineResult(
                 ("ok",),
@@ -460,15 +484,21 @@ def test_psrp_executor_rejects_byte_stream_options():
     executor = PSRPExecutor(lambda: object())
     with pytest.raises(NotImplementedError, match="stdin"):
         executor("x", input=b"x")
-    with pytest.raises(NotImplementedError, match="timeout"):
-        executor("x", timeout=1)
 
 
 def test_windows_host_dispatches_psrp_as_a_script_without_nested_powershell():
     scripts = []
 
     class Session:
-        def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
+        def invoke(
+            self,
+            script,
+            *,
+            raw=False,
+            capture_exit=False,
+            format_text=False,
+            timeout=None,
+        ):
             scripts.append(script)
             return PipelineResult(
                 ("9000",),
@@ -519,7 +549,15 @@ def test_winrm_provider_backed_host_never_double_wraps_powershell(
     dispatched = []
 
     class FakeRunspace:
-        def invoke(self, value, *, raw=False, capture_exit=False, format_text=False):
+        def invoke(
+            self,
+            value,
+            *,
+            raw=False,
+            capture_exit=False,
+            format_text=False,
+            timeout=None,
+        ):
             dispatched.append(value)
             return PipelineResult(("9000",), PipelineStreams(), "Completed", False, 0)
 

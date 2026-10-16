@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import math
 import subprocess
 import uuid
 import typing
@@ -42,8 +43,17 @@ def status_epilogue(marker: str) -> str:
     return f"Write-Output ('{marker}:' + {POWERSHELL_STATUS})"
 
 
+#: `New-PSSessionOption` takes milliseconds as an `Int32`.
+_MAX_SESSION_OPTION_MS = 2**31 - 1
+
+
 class NativeWinRMSession:
-    """Current-context Windows PowerShell remoting session adapter."""
+    """Current-context Windows PowerShell remoting session adapter.
+
+    `timeout` is the total deadline of one call (seconds, `None` for none);
+    `open_timeout` bounds establishing the remote session, as
+    `New-PSSessionOption -OpenTimeout` (seconds, `None` for PowerShell's 180).
+    """
 
     def __init__(
         self,
@@ -52,6 +62,7 @@ class NativeWinRMSession:
         ssl: bool = False,
         port: typing.Optional[int] = None,
         timeout: typing.Optional[float] = None,
+        open_timeout: typing.Optional[float] = None,
         transport: str = "ntlm",
         verify: bool = True,
         message_encryption: str = "auto",
@@ -60,6 +71,7 @@ class NativeWinRMSession:
         self.ssl = ssl
         self.port = port
         self.timeout = timeout
+        self.open_timeout = open_timeout
         if transport not in {"ntlm", "kerberos"}:
             raise NotImplementedError(
                 "native WinRM supports only current-context Negotiate (ntlm/kerberos)"
@@ -101,12 +113,20 @@ class NativeWinRMSession:
         ]
         if self.port is not None:
             options.append(f"Port={self.port}")
-        prelude = ""
+        # `SkipCACheck` and `OpenTimeout` are `New-PSSessionOption`
+        # parameters, not `Invoke-Command` ones.  Both certificate checks are
+        # skipped together to match the pywinrm leg's `verify=False`.
+        session_options = []
         if self._skip_ca_check:
-            # `SkipCACheck` is a `New-PSSessionOption` parameter, not an
-            # `Invoke-Command` one.  Both checks are skipped together to match
-            # the pywinrm leg's `verify=False`.
-            prelude = "$so=New-PSSessionOption -SkipCACheck -SkipCNCheck;"
+            session_options.append("-SkipCACheck -SkipCNCheck")
+        if self.open_timeout is not None:
+            milliseconds = min(
+                math.ceil(self.open_timeout * 1000), _MAX_SESSION_OPTION_MS
+            )
+            session_options.append(f"-OpenTimeout {milliseconds}")
+        prelude = ""
+        if session_options:
+            prelude = "$so=New-PSSessionOption " + " ".join(session_options) + ";"
             options.append("SessionOption=$so")
 
         def decoded(name: str, value: str) -> str:

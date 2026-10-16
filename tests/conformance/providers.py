@@ -469,10 +469,17 @@ class LocalWinRSProtocol:
         if end:
             process.stdin.close()
 
-    def get_command_output(self, shell, command_id):
+    def get_command_output_raw(self, shell, command_id):
+        """One Receive, which a server answers with a fault when the command
+        prints nothing within its operation timeout (here 0.2 s)."""
+        from winrm.exceptions import WinRMOperationTimeoutError
+
         process = self._processes[command_id]
-        out, err = process.communicate()
-        return out, err, process.returncode
+        try:
+            out, err = process.communicate(timeout=0.2)
+        except subprocess.TimeoutExpired:
+            raise WinRMOperationTimeoutError() from None
+        return out, err, process.returncode, True
 
     def cleanup_command(self, shell, command_id):
         process = self._processes.pop(command_id, None)
@@ -486,9 +493,13 @@ class LocalWinRSProtocol:
 
 
 def _reap(process: subprocess.Popen) -> None:
-    """End `process` if it still runs, close its pipes and wait for it."""
+    """End `process` if it still runs, close its pipes and wait for it.
+
+    The whole tree, as a WinRS shell's job object ends: a surviving child
+    holds the pipes, and closing them would wait for it.
+    """
     if process.poll() is None:
-        process.kill()
+        _kill_tree(process)
     for stream in (process.stdin, process.stdout, process.stderr):
         if stream is not None:
             try:
@@ -891,7 +902,16 @@ def fake_providers() -> tuple[Provider, ...]:
             # server's would: pwsh on POSIX is not that (an unsuffixed
             # program, terminal mode sequences on stdout), so paths only.
             frozenset(
-                ("run", "path", "args", "cwd", "env", "symlink", "local-python")
+                (
+                    "run",
+                    "path",
+                    "args",
+                    "cwd",
+                    "env",
+                    "timeout",
+                    "symlink",
+                    "local-python",
+                )
                 if os.name == "nt"
                 else ("path", "symlink", "local-python")
             ),
