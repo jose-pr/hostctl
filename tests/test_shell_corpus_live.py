@@ -95,17 +95,17 @@ _PS = ("powershell", "pwsh")
 #: finding id -> predicate over (flavour, slot, value). Every failing cell of
 #: the corpus must be named here; a new failure is a new finding, not a row to
 #: add without one.
-KNOWN_DEFECTS: typing.Dict[str, Predicate] = {
-    # pwsh's `>` takes a wildcard path for cmdlet output (`echo` is one).
-    "new-ps-redirect-wildcard": lambda f, s, v: (
-        f == "pwsh" and s == "redirect" and v == "[ab]"
-    ),
-}
+KNOWN_DEFECTS: typing.Dict[str, Predicate] = {}
 
 #: Cells a flavour refuses or corrupts on purpose, each naming its ledger row
 #: in docs/guide/contracts.md. A documented cell may raise or arrive changed;
 #: it must never execute.
 DOCUMENTED: typing.Dict[str, Predicate] = {
+    # "PowerShell 7 `REDIRECT`/`APPEND` target containing `[`, `]`, `*` or `?`":
+    # `echo` is a cmdlet, so pwsh's `>` reads the target as a wildcard.
+    "pwsh-redirect-wildcard": lambda f, s, v: (
+        f == "pwsh" and s == "redirect" and v == "[ab]"
+    ),
     # "PowerShell native argument `--%`"
     "ps-stop-parsing": lambda f, s, v: (
         f in _PS and s in ("argv_native", "argv_unresolved", "session") and v == "--%"
