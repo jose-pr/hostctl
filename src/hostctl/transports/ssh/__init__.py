@@ -1,12 +1,12 @@
 """SSH: commands over asyncssh, paths over SFTP."""
 
-from ._transport import (
+from ._config import (
     SSHClientKeys as SSHClientKeys,
     SSHConfig as SSHConfig,
     SSHKeySource as SSHKeySource,
     SSHKnownHosts as SSHKnownHosts,
-    ssh_providers as ssh_providers,
 )
+from ._providers import ssh_providers as ssh_providers
 
 __all__ = [
     "SSHClientKeys",

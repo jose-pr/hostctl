@@ -40,7 +40,8 @@ from hostctl.process import Process
 from hostctl.shell._cmd import _batch_token
 from hostctl.shell._powershell import _binder_wraps, _crt_escape
 from hostctl.shell import BASH, CMD, FISH, POSIX_SHELL, POWERSHELL, PWSH, ZSH
-from hostctl.shell._flavour import ShellOperator, ShellSession
+from hostctl.shell._vocabulary import ShellOperator
+from hostctl.shell._shell import ShellSession
 
 NT = os.name == "nt"
 CHUNK = 25

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from pathapi import Path as NextPath
 
-from hostctl.host._contracts import Host
+from hostctl.host._host import Host
 from hostctl.transports.local._host import LocalHost
 
 
@@ -235,7 +235,7 @@ def test_local_host_is_a_system_host():
     """One implementation of a system host, so local and remote cannot
     diverge."""
     from hostctl.transports.local._host import LocalHost
-    from hostctl.system._system import SystemHost
+    from hostctl.system._host import SystemHost
 
     host = LocalHost()
 
@@ -268,7 +268,7 @@ def test_output_written_around_a_dispatch_keeps_its_order():
 
 def test_an_invalid_environment_name_is_refused_before_any_provider_runs():
     from hostctl.provider._contracts import ExecutorProvider
-    from hostctl.system._system import PosixHost
+    from hostctl.system._kinds import PosixHost
 
     called = []
 

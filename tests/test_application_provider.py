@@ -1,6 +1,6 @@
 from pathapi import Path as HostPath
 from hostctl.exceptions import OperationNotStartedError
-from hostctl.system._system import PosixHost
+from hostctl.system._kinds import PosixHost
 from hostctl.provider._contracts import PathProvider, ProviderProbe
 import pytest
 from pathapi.mempath import MemPath, MemPathBackend

@@ -13,7 +13,8 @@ import inspect
 import pytest
 
 import hostctl
-from hostctl.host._contracts import Host, HostConfig
+from hostctl.host._host import Host
+from hostctl.host._config import HostConfig
 
 _CLASSES = [
     getattr(hostctl, name)

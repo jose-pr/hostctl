@@ -6,14 +6,14 @@ import typing
 from pathlib import Path, PurePath, PurePosixPath
 
 from ..executor import Environment, PathLike
-from ._flavour import (
+from ._vocabulary import (
     ShellCommand,
-    ShellFlavour,
     ShellOperator,
     ShellToken,
     login_join,
     posix_cwd_operand,
 )
+from ._flavour import ShellFlavour
 
 #: Characters that need no quoting: `shlex.quote`'s set without `%`, which fish
 #: expands in a whole word (`%self` is the shell's PID).

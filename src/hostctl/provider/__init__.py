@@ -13,9 +13,9 @@ from ._contracts import (
     PathProvider as PathProvider,
     ProviderProbe as ProviderProbe,
     ProviderSelection as ProviderSelection,
-    ProviderSelector as ProviderSelector,
     SessionInitializer as SessionInitializer,
 )
+from ._selector import ProviderSelector as ProviderSelector
 
 __all__ = [
     "ExecutorProvider",

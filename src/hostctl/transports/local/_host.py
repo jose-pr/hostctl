@@ -8,8 +8,9 @@ import typing as _ty
 
 from ...exceptions import OperationNotStartedError
 from ._providers import LocalExecutorProvider, LocalPathProvider
-from ...system._system import SystemHost
-from ...host._contracts import HostConfig, HostInfo, normalize_os_family
+from ...system._host import SystemHost
+from ...host._config import HostConfig
+from ...host._info import HostInfo, normalize_os_family
 from pathapi import Path as HostPath
 from ...executor import PathLike
 from ...shell import POSIX_SHELL, POWERSHELL

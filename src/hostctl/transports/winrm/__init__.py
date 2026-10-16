@@ -5,10 +5,8 @@ from ._psrp import (
     PipelineStreams as PipelineStreams,
     RunspaceSession as RunspaceSession,
 )
-from ._transport import (
-    WinRMConfig as WinRMConfig,
-    winrm_providers as winrm_providers,
-)
+from ._config import WinRMConfig as WinRMConfig
+from ._providers import winrm_providers as winrm_providers
 
 __all__ = [
     "PipelineResult",

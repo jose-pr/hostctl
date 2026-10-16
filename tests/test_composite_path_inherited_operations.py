@@ -22,7 +22,7 @@ import pytest
 from pathapi.mempath import MemPath, MemPathBackend
 
 from hostctl.provider._contracts import PathProvider
-from hostctl.system._system import PosixHost
+from hostctl.system._kinds import PosixHost
 
 FULL = PathProvider.DEFAULT_CAPABILITIES | {"symlink_to", "readlink", "scandir"}
 
@@ -145,7 +145,7 @@ def test_a_composite_argument_keeps_its_backend(tmp_path):
     """
     import os
 
-    from hostctl.transports.winrm._transport import WinRMPath
+    from hostctl.transports.winrm._path import WinRMPath
 
     class _Backend:
         """A backend whose stat carries st_dev/st_ino, as a real one may.

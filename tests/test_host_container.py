@@ -9,9 +9,10 @@ from pathlib import PurePosixPath
 import pytest
 
 from hostctl.shell._grammar import Exec
-from hostctl.host._contracts import HostConfig
+from hostctl.host._config import HostConfig
 from hostctl.transports.container._executor import normalize_container_error
-from hostctl.transports.container._host import ContainerConfig, ContainerHost
+from hostctl.transports.container._config import ContainerConfig
+from hostctl.transports.container._host import ContainerHost
 from hostctl.shell import POWERSHELL, POSIX_SHELL
 
 
@@ -292,7 +293,7 @@ def test_spawn_dispatches_through_the_provider_like_run_does():
 
 @pytest.mark.parametrize("spelling", ("auto", "posix", "windows"))
 def test_container_path_flavor_strings_round_trip_through_the_uri(spelling):
-    from hostctl.host._contracts import HostConfig
+    from hostctl.host._config import HostConfig
 
     config = ContainerConfig("web", path_flavor=spelling)
     restored = HostConfig(config.connection_uri)

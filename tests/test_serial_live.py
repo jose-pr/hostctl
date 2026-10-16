@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from hostctl.host._contracts import HostConfig
+from hostctl.host._config import HostConfig
 from hostctl.transports.serial._host import SerialConfig
 
 

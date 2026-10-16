@@ -9,15 +9,15 @@ from pathlib import PureWindowsPath
 
 from ..executor import Environment, PathLike
 from ..executor import POWERSHELL_STATUS
-from ._flavour import (
+from ._vocabulary import (
     ShellCommand,
-    ShellFlavour,
     ShellOperator,
     ShellTarget,
     ShellToken,
     login_join,
     program_target,
 )
+from ._flavour import ShellFlavour
 from ._grammar import Cmdlet, Command, PSParam
 from ._cmd import _batch_token, _echo_argument
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.transports.ssh._config import SSHConfig
 from hostctl.transports.ssh._transport import _SSHTransport
 from hostctl.process import Process, TerminalOptions
 from hostctl.transports.ssh._process import SSHProcess
@@ -175,7 +175,7 @@ def test_a_binary_session_takes_the_str_a_shell_renders():
     str a `ShellSession` renders raised `TypeError: string argument without
     an encoding` from inside a third party."""
     from hostctl.shell import POSIX_SHELL
-    from hostctl.shell._flavour import ShellSession
+    from hostctl.shell._shell import ShellSession
 
     remote = _Process()
     session = ShellSession(POSIX_SHELL, SSHProcess(remote, "command"))

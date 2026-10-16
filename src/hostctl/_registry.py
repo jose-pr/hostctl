@@ -9,7 +9,7 @@ import importlib.metadata as _metadata
 import typing as _ty
 
 if _ty.TYPE_CHECKING:
-    from .host._contracts import HostConfig
+    from .host._config import HostConfig
 
 
 def entry_points_in(group: str) -> tuple:
@@ -30,7 +30,7 @@ def host_schemes() -> tuple[str, ...]:
     The schemes of the registered configs, plus the names of the
     `hostctl.configs` entry points, which are listed and not imported.
     """
-    from .host._contracts import HostConfig
+    from .host._config import HostConfig
 
     names = {
         scheme

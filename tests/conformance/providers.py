@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
 
-from hostctl.host._contracts import HostInfo
+from hostctl.host._info import HostInfo
 from pathapi import Path as HostPath
 from hostctl.transports.local._host import LocalHost
 from hostctl.shell._grammar import starts_direct_command
@@ -665,13 +665,13 @@ class FakeSSHHost:
     transport = "ssh"
 
     def __new__(cls):
-        from hostctl.system._system import PosixHost
-        from hostctl.transports.ssh._transport import SSHConfig
-        from hostctl.transports.ssh._transport import (
+        from hostctl.system._kinds import PosixHost
+        from hostctl.transports.ssh._config import SSHConfig
+        from hostctl.transports.ssh._providers import (
             SFTPPathProvider,
             SSHExecutorProvider,
-            _SSHTransport,
         )
+        from hostctl.transports.ssh._transport import _SSHTransport
 
         dialect = POWERSHELL if os.name == "nt" else POSIX_SHELL
         # The Windows fake hands the line straight to CreateProcess and to
@@ -702,14 +702,14 @@ class FakeWinRMHost:
     transport = "winrm"
 
     def __new__(cls):
-        from hostctl.system._system import WindowsHost
-        from hostctl.transports.winrm._transport import WinRMConfig
+        from hostctl.system._kinds import WindowsHost
+        from hostctl.transports.winrm._config import WinRMConfig
         from hostctl.transports.winrm._pywinrm import _PywinrmStdinSession
-        from hostctl.transports.winrm._transport import (
+        from hostctl.transports.winrm._providers import (
             WinRMExecutorProvider,
             WinRMPathProvider,
-            _WinRMTransport,
         )
+        from hostctl.transports.winrm._transport import _WinRMTransport
 
         config = WinRMConfig(
             "fake",
@@ -737,7 +737,8 @@ class FakeContainerHost:
     transport = "container"
 
     def __new__(cls):
-        from hostctl.transports.container._host import ContainerConfig, ContainerHost
+        from hostctl.transports.container._config import ContainerConfig
+        from hostctl.transports.container._host import ContainerHost
         from pathapi import Path as HostPath
 
         client = _FakeDockerClient(LocalExecutor())
@@ -751,7 +752,8 @@ class FakeQEMUHost:
     flavour = "posix"
 
     def __new__(cls):
-        from hostctl.transports.qemu._host import QEMUConfig, QEMUHost
+        from hostctl.transports.qemu._config import QEMUConfig
+        from hostctl.transports.qemu._host import QEMUHost
 
         # The shipped helper is probed through `guest-exec`, which the
         # transport answers by interpreting GNU or PowerShell commands over
@@ -1099,7 +1101,7 @@ def live_providers() -> tuple[Provider, ...]:
 
 
 def _uri_live(uri: str) -> tuple[object, Callable[[], None]]:
-    from hostctl.host._contracts import HostConfig
+    from hostctl.host._config import HostConfig
 
     options = {}
     scheme = uri.split(":", 1)[0].casefold()
@@ -1126,7 +1128,7 @@ def _ssh_local() -> tuple[object, Callable[[], None]]:
     """
     from pathapi import PosixPathname, WindowsPathname
 
-    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._config import SSHConfig
     from hostctl.shell import CMD, POSIX_SHELL
 
     windows = os.environ.get("HOSTCTL_TEST_SSH_FLAVOUR", "posix") == "windows"
@@ -1167,7 +1169,7 @@ def _loop_serial() -> tuple[object, Callable[[], None]]:
 
 
 def _docker_live() -> tuple[object, Callable[[], None]]:
-    from hostctl.transports.container._host import ContainerConfig
+    from hostctl.transports.container._config import ContainerConfig
 
     config = ContainerConfig(
         os.environ.get("HOSTCTL_TEST_DOCKER_CONTAINER", "hostctl-conformance"),

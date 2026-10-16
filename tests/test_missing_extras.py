@@ -38,20 +38,20 @@ def hide(monkeypatch):
 
 
 def _ssh_run():
-    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._config import SSHConfig
 
     SSHConfig("nas.example", known_hosts=None).open().run("true")
 
 
 def _ssh_path():
-    from hostctl.transports.ssh._transport import SSHConfig
-    from hostctl.transports.ssh._transport import ssh_providers
+    from hostctl.transports.ssh._config import SSHConfig
+    from hostctl.transports.ssh._providers import ssh_providers
 
     ssh_providers(SSHConfig("nas.example", known_hosts=None))[1].path("/")
 
 
 def _winrm_run():
-    from hostctl.transports.winrm._transport import WinRMConfig
+    from hostctl.transports.winrm._config import WinRMConfig
 
     WinRMConfig(
         "win.example", username="u", password="p", provider="pywinrm"
@@ -65,7 +65,7 @@ def _psrp():
 
 
 def _container_run():
-    from hostctl.transports.container._host import ContainerConfig
+    from hostctl.transports.container._config import ContainerConfig
 
     ContainerConfig("web").open().run("true")
 
@@ -77,7 +77,7 @@ def _serial_open():
 
 
 def _libvirt():
-    from hostctl.transports.qemu._qga import LibvirtGuestAgentTransport
+    from hostctl.transports.qemu._qga_transports import LibvirtGuestAgentTransport
 
     LibvirtGuestAgentTransport("vm", connection_uri="qemu:///system").connect()
 
@@ -112,8 +112,8 @@ def test_a_missing_dependency_names_the_extra_to_install(hide, extra, modules, c
 
 
 def test_a_probe_reports_an_incomplete_ssh_extra(hide):
-    from hostctl.transports.ssh._transport import SFTPPathProvider, ssh_providers
-    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._providers import SFTPPathProvider, ssh_providers
+    from hostctl.transports.ssh._config import SSHConfig
 
     hide("sftppath")
     _, paths = ssh_providers(SSHConfig("nas.example"))

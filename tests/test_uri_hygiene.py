@@ -10,11 +10,11 @@ from __future__ import annotations
 import pytest
 
 from hostctl.uri._connection import ConnectionString
-from hostctl.transports.container._host import ContainerConfig
-from hostctl.host._contracts import HostConfig
-from hostctl.system._system import PosixConfig
-from hostctl.transports.ssh._transport import SSHConfig
-from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.transports.container._config import ContainerConfig
+from hostctl.host._config import HostConfig
+from hostctl.system._kinds import PosixConfig
+from hostctl.transports.ssh._config import SSHConfig
+from hostctl.transports.winrm._config import WinRMConfig
 from hostctl.uri._parse import redact_uri
 
 

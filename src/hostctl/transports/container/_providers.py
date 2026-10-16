@@ -7,12 +7,8 @@ import logging
 
 from ...exceptions import OperationNotStartedError
 
-from ...provider._contracts import (
-    ExecutorProvider,
-    PathProvider,
-    ProviderProbe,
-    ProviderSelector,
-)
+from ...provider._contracts import ExecutorProvider, PathProvider, ProviderProbe
+from ...provider._selector import ProviderSelector
 
 log = logging.getLogger("hostctl.transports.container")
 

@@ -247,7 +247,7 @@ def test_an_exported_password_does_not_break_a_local_command(monkeypatch, capsys
 def test_an_explicit_unknown_credential_still_fails_closed():
     """Filtering is for the ambient channel only: a name a config does not
     know, passed deliberately, is a typo worth reporting."""
-    from hostctl.host._contracts import HostConfig
+    from hostctl.host._config import HostConfig
 
     with pytest.raises(ValueError, match="unknown credential argument"):
         HostConfig("local:", passwrd="typo")
@@ -381,7 +381,7 @@ def test_info_on_an_unreachable_host_exits_125_and_prints_no_identity(
 
 
 def test_the_library_info_of_an_unreachable_host_is_still_synthesized(unreachable_ssh):
-    from hostctl.host._contracts import Host
+    from hostctl.host._host import Host
 
     # Not entered as a context: `connect()` raises when nothing connected.
     host = Host("ssh://nonexistent.invalid")
@@ -392,8 +392,8 @@ def test_the_library_info_of_an_unreachable_host_is_still_synthesized(unreachabl
 
 
 def test_info_reports_a_refused_login_as_126(monkeypatch, capsys):
-    from hostctl.host._contracts import HostInfo
-    from hostctl.system._system import SystemHost
+    from hostctl.host._info import HostInfo
+    from hostctl.system._host import SystemHost
 
     def refused(self):
         return HostInfo(), False, [PermissionError("auth failed")]
@@ -410,7 +410,7 @@ def test_info_exits_zero_when_a_provider_answers(capsys):
 
 
 def test_every_epilog_uri_dispatches():
-    from hostctl.host._contracts import HostConfig
+    from hostctl.host._config import HostConfig
     from hostctl.cli import _root
 
     lines = _root._EPILOG.split("connection URIs:\n", 1)[1].split("\n\n", 1)[0]

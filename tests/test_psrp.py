@@ -7,9 +7,9 @@ import types
 import pytest
 
 from hostctl.provider._contracts import ExecutorProvider
-from hostctl.host._contracts import HostConfig
-from hostctl.transports.winrm._transport import WinRMConfig
-from hostctl.system._system import WindowsHost
+from hostctl.host._config import HostConfig
+from hostctl.transports.winrm._config import WinRMConfig
+from hostctl.system._kinds import WindowsHost
 from hostctl.transports.winrm._psrp import PSRPExecutor, pypsrp_available
 from hostctl.transports.winrm._psrp import RunspaceSession
 from hostctl.transports.winrm._psrp import PipelineResult, PipelineStreams
@@ -364,7 +364,7 @@ def real_pypsrp():
 def test_psrp_ssl_transport_is_basic_over_https(real_pypsrp):
     """pywinrm's `ssl` is Basic over HTTPS; it mapped to certificate auth,
     which raised at the first send because the config carries no certificate."""
-    from hostctl.transports.winrm._transport import WinRMConfig
+    from hostctl.transports.winrm._config import WinRMConfig
 
     config = WinRMConfig("h", "u", "p", transport="ssl", ssl=True)
     transport = RunspaceSession(config)._make_pool().connection.transport
@@ -374,7 +374,7 @@ def test_psrp_ssl_transport_is_basic_over_https(real_pypsrp):
 
 
 def test_psrp_allow_cleartext_turns_message_encryption_off(real_pypsrp, monkeypatch):
-    from hostctl.transports.winrm._transport import WinRMConfig
+    from hostctl.transports.winrm._config import WinRMConfig
     import pypsrp.wsman
 
     built = []
@@ -400,7 +400,7 @@ def test_psrp_allow_cleartext_turns_message_encryption_off(real_pypsrp, monkeypa
 def test_the_runspace_marker_is_per_call():
     """The fixed marker is a string any command may print, and the line after
     it was removed from the output and read as the exit status."""
-    from hostctl.transports.winrm._pywinrm import exit_marker
+    from hostctl.transports.winrm._native import exit_marker
 
     assert exit_marker() != exit_marker()
 
@@ -502,10 +502,8 @@ def test_winrm_provider_backed_host_never_double_wraps_powershell(
     single layer, which is the seam the bare-``ExecutorProvider`` test above
     does not cover.
     """
-    from hostctl.transports.winrm._transport import (
-        WinRMExecutorProvider,
-        _WinRMTransport,
-    )
+    from hostctl.transports.winrm._providers import WinRMExecutorProvider
+    from hostctl.transports.winrm._transport import _WinRMTransport
 
     if provider == "psrp":
         pytest.importorskip(

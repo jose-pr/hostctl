@@ -21,7 +21,7 @@ from hostctl.shell import (
     register_shell_flavour,
     shell_flavour,
 )
-from hostctl.transports.container._host import ContainerConfig
+from hostctl.transports.container._config import ContainerConfig
 from hostctl.shell._grammar import Cmdlet
 from hostctl.executor import (
     Executor,
@@ -30,10 +30,11 @@ from hostctl.executor import (
     ExecutionOptions,
 )
 from hostctl.transports.local._host import LocalConfig
-from hostctl.transports.qemu._host import QEMUConfig
-from hostctl.shell._flavour import Shell, ShellOperator, ShellSession
-from hostctl.transports.ssh._transport import SSHConfig
-from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.transports.qemu._config import QEMUConfig
+from hostctl.shell._shell import Shell, ShellSession
+from hostctl.shell._vocabulary import ShellOperator
+from hostctl.transports.ssh._config import SSHConfig
+from hostctl.transports.winrm._config import WinRMConfig
 from hostctl.transports.ssh._transport import _SSHTransport
 from hostctl.transports.winrm._transport import _WinRMTransport
 from hostctl.transports.winrm._psrp import PSRPExecutor
@@ -522,7 +523,7 @@ def test_a_cmd_configured_windows_host_runs_structured_commands(value):
     """The public consequence: a WindowsHost with shell='cmd' over an
     args-capable provider could not run a structured command at all --
     it reported success while the child saw carets and backslashes."""
-    from hostctl.host._contracts import HostConfig
+    from hostctl.host._config import HostConfig
 
     host = HostConfig("windows://node?executor=local&shell=cmd")._create_host()
     code = "import sys; print(ascii(sys.argv[1]))"
@@ -856,7 +857,7 @@ def test_host_bound_shell_detects_native_cwd_and_env_support():
     cwd/env still got a rendered `cd`/`export` prefix in the script.
     """
     from hostctl.provider._contracts import ExecutorProvider
-    from hostctl.system._system import PosixHost
+    from hostctl.system._kinds import PosixHost
 
     seen = []
 
@@ -1097,7 +1098,7 @@ def test_host_shell_run_hands_the_provider_what_host_run_does():
     """`Shell.run` rendered the epilogue on its own, so a status-managing
     provider got `exit ...` that ended its runspace before the status marker."""
     from hostctl.provider._contracts import ExecutorProvider
-    from hostctl.system._system import WindowsHost
+    from hostctl.system._kinds import WindowsHost
 
     scripts = []
 

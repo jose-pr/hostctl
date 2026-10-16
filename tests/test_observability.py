@@ -17,15 +17,11 @@ import subprocess
 import pathapi
 import pytest
 
-from hostctl.provider._contracts import (
-    ExecutorProvider,
-    PathProvider,
-    ProviderProbe,
-    ProviderSelector,
-)
+from hostctl.provider._contracts import ExecutorProvider, PathProvider, ProviderProbe
+from hostctl.provider._selector import ProviderSelector
 from hostctl.transports.local._host import LocalHost
 from hostctl.exceptions import OperationNotStartedError
-from hostctl.system._system import PosixHost, WindowsHost
+from hostctl.system._kinds import PosixHost, WindowsHost
 
 
 def _executor(name, fault=None, **options):

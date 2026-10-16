@@ -9,7 +9,7 @@ import threading
 import pytest
 
 from hostctl.exceptions import QGACommandError, QGAProtocolError
-from hostctl.transports.qemu._qga import SSHUnixGuestAgentTransport
+from hostctl.transports.qemu._qga_transports import SSHUnixGuestAgentTransport
 
 
 def _frame(value):

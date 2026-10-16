@@ -3,16 +3,15 @@
 import typing
 from importlib import metadata as _metadata
 
-from ._flavour import (
-    Shell as Shell,
+from ._shell import Shell as Shell, ShellSession as ShellSession
+from ._vocabulary import (
     ShellCommand as ShellCommand,
-    ShellFlavour as ShellFlavour,
     ShellOperator as ShellOperator,
     ShellTarget as ShellTarget,
-    ShellSession as ShellSession,
     ShellToken as ShellToken,
     wants_epilogue as wants_epilogue,
 )
+from ._flavour import ShellFlavour as ShellFlavour
 from ._grammar import Cmdlet as Cmdlet, PSParam as PSParam
 from ._cmd import CmdShellFlavour as CmdShellFlavour
 from ._fish import FishShellFlavour as FishShellFlavour

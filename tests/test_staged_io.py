@@ -20,9 +20,9 @@ import pytest
 from pathapi.providers import CommitOnClose
 
 from hostctl.paths._staged_io import staged_open, validate_open_mode
-from hostctl.transports.winrm._transport import WinRMPath
+from hostctl.transports.winrm._path import WinRMPath
 from hostctl.transports.container._path import PosixContainerPath
-from hostctl.transports.qemu._host import PosixQEMUPath
+from hostctl.transports.qemu._path import PosixQEMUPath
 
 
 class _RecordingBackend:
@@ -465,11 +465,8 @@ class _Tree(_Child):
 
 
 def _windows_destination(tmp_path):
-    from hostctl.transports.winrm._transport import (
-        _SCRIPT_BUDGET,
-        WinRMPath,
-        WinRMPathBackend,
-    )
+    from hostctl.transports.winrm._transport import _SCRIPT_BUDGET
+    from hostctl.transports.winrm._path import WinRMPath, WinRMPathBackend
     from tests.conformance.path_fakes import WinRMFilesystemRunner
 
     runner = WinRMFilesystemRunner()

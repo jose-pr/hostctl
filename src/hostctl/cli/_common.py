@@ -11,7 +11,8 @@ import typing
 
 from duho import Cmd, CommandError, LoggingArgs, running_mode
 
-from ..host._contracts import Host, HostConfig
+from ..host._host import Host
+from ..host._config import HostConfig
 from pathapi import Path as HostPath
 from ..uri._parse import redact_uri
 

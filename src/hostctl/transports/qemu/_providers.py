@@ -8,7 +8,8 @@ import logging
 import typing
 
 
-from ...provider._contracts import PathProvider, ProviderProbe, ProviderSelector
+from ...provider._contracts import PathProvider, ProviderProbe
+from ...provider._selector import ProviderSelector
 
 log = logging.getLogger("hostctl.transports.qemu")
 

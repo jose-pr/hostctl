@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from hostctl.host._contracts import Host
+from hostctl.host._host import Host
 from hostctl.transports.serial._console import (
     LoginStep,
     PromptConsoleProfile,

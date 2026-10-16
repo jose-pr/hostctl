@@ -14,7 +14,8 @@ from hostctl.executor import ExecutorCapability, normalize_input
 from hostctl.shell import CMD, POSIX_SHELL, PWSH, ZSH, POWERSHELL
 from hostctl.shell._grammar import Cmdlet, PSParam
 from hostctl.shell._powershell import PowerShellFlavour
-from hostctl.shell._flavour import Shell, ShellOperator, ShellSession, ShellTarget
+from hostctl.shell._shell import Shell, ShellSession
+from hostctl.shell._vocabulary import ShellOperator, ShellTarget
 
 
 class _Recorder:
@@ -64,7 +65,7 @@ def test_send_appends_a_newline_and_no_separator(script, expected):
     """`send()` appended `;` unconditionally, which broke ordinary shell text
     that already ended in a terminator (`echo hi;;`, `sleep 5 &;`), a heredoc
     delimiter, and an open pipeline. A newline ends a command in every shell."""
-    from hostctl.shell._flavour import ShellSession
+    from hostctl.shell._shell import ShellSession
 
     process = _Process()
     session = ShellSession(POSIX_SHELL, process)
@@ -234,7 +235,7 @@ def test_a_flavour_names_the_parser_each_token_meets():
     a vector, nothing re-parses -- so every target renders alike. On Windows
     they genuinely differ, which is what the distinction exists for.
     """
-    from hostctl.shell._flavour import ShellTarget
+    from hostctl.shell._vocabulary import ShellTarget
 
     value = "a b.txt"
     posix = {
@@ -259,7 +260,7 @@ def test_powershell_5_escapes_for_a_native_line_and_not_for_a_cmdlet():
     bound parameter.
     """
     from hostctl.shell._powershell import PowerShellFlavour
-    from hostctl.shell._flavour import ShellTarget
+    from hostctl.shell._vocabulary import ShellTarget
 
     five = PowerShellFlavour(5)
     value = 'a "quoted" value'

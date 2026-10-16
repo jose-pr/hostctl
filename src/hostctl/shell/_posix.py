@@ -7,14 +7,14 @@ import typing
 from pathlib import Path, PurePath, PurePosixPath
 
 from ..executor import Environment, PathLike
-from ._flavour import (
+from ._vocabulary import (
     ShellCommand,
-    ShellFlavour,
     ShellOperator,
     ShellToken,
     login_join,
     posix_cwd_operand,
 )
+from ._flavour import ShellFlavour
 
 
 class PosixShellFlavour(ShellFlavour):

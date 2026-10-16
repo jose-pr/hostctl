@@ -13,7 +13,8 @@ import os
 import pytest
 from conformance.path_fakes import LocalQGATransport
 
-from hostctl.transports.qemu._host import QEMUConfig, QEMUHost
+from hostctl.transports.qemu._config import QEMUConfig
+from hostctl.transports.qemu._host import QEMUHost
 from hostctl.transports.qemu._helper import PosixGuestPathHelper, WindowsGuestPathHelper
 
 

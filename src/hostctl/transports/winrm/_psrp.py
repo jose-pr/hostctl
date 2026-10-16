@@ -339,7 +339,7 @@ class RunspaceSession:
             script_text = POWERSHELL.structured_command((script, *args))
         else:
             script_text = str(script)
-        from ._pywinrm import LASTEXITCODE_RESET, exit_marker, status_epilogue
+        from ._native import LASTEXITCODE_RESET, exit_marker, status_epilogue
 
         # A per-call nonce, for the same reason the native wrapper uses one:
         # the fixed marker is a string any command may print, and the line

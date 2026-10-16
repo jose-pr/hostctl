@@ -6,7 +6,8 @@ import pytest
 from pathapi import Path
 from pathapi import FileStat
 
-from hostctl.transports.qemu._host import PosixQEMUPath, QGAPathBackend, WindowsQEMUPath
+from hostctl.transports.qemu._path import PosixQEMUPath, WindowsQEMUPath
+from hostctl.transports.qemu._backend import QGAPathBackend
 from hostctl.exceptions import QGACommandError
 
 FILE_COMMANDS = {
@@ -508,7 +509,7 @@ def test_a_windows_listing_drops_names_windows_would_misread():
 
 
 def test_a_helperless_provider_still_answers_exists_through_the_composite():
-    from hostctl.system._system import PosixHost
+    from hostctl.system._kinds import PosixHost
     from hostctl.transports.qemu._providers import QGAPathProvider
 
     transport = _Transport()

@@ -9,11 +9,13 @@ import pytest
 from pathapi import WindowsPathname
 
 from hostctl.shell import POWERSHELL
-from hostctl.host._contracts import Host, HostConfig, HostInfo
+from hostctl.host._host import Host
+from hostctl.host._config import HostConfig
+from hostctl.host._info import HostInfo
 from hostctl.transports.local._host import LocalConfig, LocalHost
-from hostctl.system._system import PosixHost, WindowsHost
-from hostctl.transports.ssh._transport import SSHConfig
-from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.system._kinds import PosixHost, WindowsHost
+from hostctl.transports.ssh._config import SSHConfig
+from hostctl.transports.winrm._config import WinRMConfig
 from hostctl.uri._parse import parse_credentials, redact_uri, uri_hostname
 from hostctl.uri._parse import _encode_stripped_characters
 
@@ -439,7 +441,7 @@ def test_uri_helpers_are_public_for_custom_configs():
 
 
 def test_ssh_providers_share_one_transport_for_composition():
-    from hostctl.transports.ssh._transport import ssh_providers
+    from hostctl.transports.ssh._providers import ssh_providers
     from hostctl.provider._contracts import ExecutorProvider, PathProvider
 
     executor, path = ssh_providers(SSHConfig("nas.example.com", username="root"))
@@ -453,7 +455,7 @@ def test_ssh_providers_share_one_transport_for_composition():
 
 
 def test_winrm_providers_share_one_transport_for_composition():
-    from hostctl.transports.winrm._transport import winrm_providers
+    from hostctl.transports.winrm._providers import winrm_providers
     from hostctl.provider._contracts import ExecutorProvider, PathProvider
 
     executor, path = winrm_providers(
@@ -656,7 +658,7 @@ def test_an_unsupported_session_raises_not_implemented_not_a_runtime_error():
     is available" is an `OperationNotStartedError` -- a RuntimeError -- so a caller
     catching NotImplementedError to fall back to `run()` crashed instead.
     """
-    from hostctl.system._system import IOSHost
+    from hostctl.system._kinds import IOSHost
 
     host = IOSHost()
 
@@ -671,7 +673,7 @@ def test_spawn_looks_past_a_provider_that_cannot_open_sessions():
     import subprocess
 
     from hostctl.provider._contracts import ExecutorProvider
-    from hostctl.system._system import PosixHost
+    from hostctl.system._kinds import PosixHost
 
     def execute(command, *args, **options):
         return subprocess.CompletedProcess((command,), 0, b"", b"")
@@ -944,7 +946,7 @@ def test_the_host_executor_treats_argv_as_argv():
 
 def test_host_shell_is_a_shell_by_isinstance():
     """`Host.shell` is annotated `-> Shell`; the proxy answered False."""
-    from hostctl.shell._flavour import Shell
+    from hostctl.shell._shell import Shell
 
     host = LocalConfig()._create_host()
 

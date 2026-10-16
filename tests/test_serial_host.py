@@ -6,7 +6,8 @@ import sys
 
 import pytest
 
-from hostctl.host._contracts import Host, HostConfig
+from hostctl.host._host import Host
+from hostctl.host._config import HostConfig
 from hostctl.transports.serial._console import (
     LoginStep,
     PromptConsoleProfile,

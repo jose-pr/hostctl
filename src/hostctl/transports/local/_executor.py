@@ -198,7 +198,7 @@ def _batch_safe(argv):
             f"a batch file path must not contain a quote or a percent sign: {program!r}"
         )
     from ...shell import CMD
-    from ...shell._flavour import ShellTarget
+    from ...shell._vocabulary import ShellTarget
 
     return " ".join(
         [f'"{program}"']

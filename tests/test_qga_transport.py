@@ -13,7 +13,7 @@ from hostctl.exceptions import (
     QGAProtocolError,
     QGATimeoutError,
 )
-from hostctl.transports.qemu._qga import (
+from hostctl.transports.qemu._qga_transports import (
     LibvirtGuestAgentTransport,
     UnixSocketGuestAgentTransport,
 )

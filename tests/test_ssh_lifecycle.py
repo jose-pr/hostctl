@@ -10,8 +10,8 @@ import pytest
 
 pytest.importorskip("asyncssh")
 
-from hostctl.host._contracts import HostConfig
-from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.host._config import HostConfig
+from hostctl.transports.ssh._config import SSHConfig
 from hostctl import _async
 from hostctl.exceptions import OperationNotStartedError
 

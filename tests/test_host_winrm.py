@@ -13,10 +13,12 @@ from pathlib import PureWindowsPath
 import pytest
 
 from pathapi import Path as NextPath
-from hostctl.shell._flavour import Shell
-from hostctl.transports.winrm._transport import WinRMConfig, WinRMPath
+from hostctl.shell._shell import Shell
+from hostctl.transports.winrm._config import WinRMConfig
+from hostctl.transports.winrm._path import WinRMPath
 from hostctl.transports.winrm._transport import _SCRIPT_BUDGET, _WinRMTransport
-from hostctl.transports.winrm._pywinrm import NativeWinRMSession, _PywinrmStdinSession
+from hostctl.transports.winrm._native import NativeWinRMSession
+from hostctl.transports.winrm._pywinrm import _PywinrmStdinSession
 
 
 class _Response:
@@ -284,7 +286,8 @@ def test_a_forged_error_line_in_remote_stderr_is_only_stderr(monkeypatch):
 
 
 def test_a_line_with_another_calls_marker_is_only_stderr(monkeypatch):
-    from hostctl.transports.winrm._pywinrm import WinRMExecutor, exit_marker
+    from hostctl.transports.winrm._pywinrm import WinRMExecutor
+    from hostctl.transports.winrm._native import exit_marker
 
     other = f"{exit_marker()}:error:auth:{base64.b64encode(b'x').decode()}".encode()
     monkeypatch.setattr(
@@ -302,7 +305,7 @@ def test_a_line_with_another_calls_marker_is_only_stderr(monkeypatch):
 def test_a_marked_error_line_raises_by_kind(monkeypatch, kind, error):
     from hostctl.transports.winrm._pywinrm import WinRMExecutor
 
-    import hostctl.transports.winrm._pywinrm as module
+    import hostctl.transports.winrm._native as module
 
     monkeypatch.setattr(module, "exit_marker", lambda: "MARK_TEST")
     session = NativeWinRMSession("server.example")
@@ -412,7 +415,7 @@ def test_native_winrm_cert_ignore_survives_both_port_spellings(port):
 
 
 def test_native_winrm_carries_the_remote_exit_code_through_a_marker():
-    from hostctl.transports.winrm._pywinrm import exit_marker, status_epilogue
+    from hostctl.transports.winrm._native import exit_marker, status_epilogue
 
     marker = exit_marker()
     wrapper = NativeWinRMSession("server.example")._wrapper("cmd /c exit 7", marker)
@@ -431,7 +434,7 @@ def test_the_exit_marker_is_per_call_so_output_cannot_forge_it():
     """`__HOSTCTL_LASTEXITCODE__` is a string any command may print -- a log
     line, a grep over the sources -- and the wrapper removed that line from
     stdout and took the number after it as the exit status."""
-    from hostctl.transports.winrm._pywinrm import exit_marker
+    from hostctl.transports.winrm._native import exit_marker
 
     first, second = exit_marker(), exit_marker()
 
@@ -654,7 +657,7 @@ def test_native_winrm_declares_that_it_manages_status():
     comes back, the status stays 0, and `check=True` passes for a command that
     failed by exit status.
     """
-    from hostctl.transports.winrm._transport import WinRMExecutorProvider
+    from hostctl.transports.winrm._providers import WinRMExecutorProvider
 
     native = _WinRMTransport(WinRMConfig("server.example", "operator"))
     assert "manages_status" in native.capabilities
@@ -668,7 +671,7 @@ def test_pywinrm_does_not_claim_to_manage_status():
     Pinned on the pywinrm provider explicitly: PSRP manages status on its own,
     so with pypsrp installed "auto" would hide the distinction.
     """
-    from hostctl.transports.winrm._transport import WinRMExecutorProvider
+    from hostctl.transports.winrm._providers import WinRMExecutorProvider
 
     remote = _WinRMTransport(
         WinRMConfig("server.example", "operator", password="secret", provider="pywinrm")
@@ -680,7 +683,7 @@ def test_pywinrm_does_not_claim_to_manage_status():
 def test_a_status_managing_provider_gets_a_script_without_the_epilogue():
     """The consequence the capability exists for, at the flavour boundary."""
     from hostctl.shell import POWERSHELL
-    from hostctl.shell._flavour import wants_epilogue
+    from hostctl.shell._vocabulary import wants_epilogue
 
     epilogue = POWERSHELL.execution_epilogue
     assert POWERSHELL.script(("cmd /c exit 7",)).endswith(epilogue)
@@ -773,7 +776,7 @@ def test_basic_credentials_over_http_are_refused(transport):
     password in clear or not depending only on which extra was installed."""
     with pytest.raises(ValueError, match="cleartext"):
         WinRMConfig("host", "user", "secret", transport=transport)
-    from hostctl.host._contracts import HostConfig
+    from hostctl.host._config import HostConfig
 
     with pytest.raises(ValueError, match="cleartext"):
         HostConfig(f"winrm://user@host?transport={transport}")
@@ -781,7 +784,7 @@ def test_basic_credentials_over_http_are_refused(transport):
 
 @pytest.mark.parametrize("transport", ["basic", "plaintext", "ssl"])
 def test_basic_over_https_and_an_explicit_opt_in_build(transport):
-    from hostctl.host._contracts import HostConfig
+    from hostctl.host._config import HostConfig
 
     assert WinRMConfig("host", "user", "secret", transport=transport, ssl=True)
     config = WinRMConfig(
@@ -797,7 +800,7 @@ def test_basic_over_https_and_an_explicit_opt_in_build(transport):
     [("1", True), ("TRUE", True), ("on", True), ("0", False), ("No", False)],
 )
 def test_allow_cleartext_query_is_a_strict_boolean(value, expected):
-    from hostctl.host._contracts import HostConfig
+    from hostctl.host._config import HostConfig
 
     config = HostConfig(
         f"winrm://user@host?transport=basic&allow_cleartext={value}"
@@ -848,7 +851,7 @@ def test_auto_without_a_password_off_windows_needs_a_password(monkeypatch):
 
 
 def test_provider_native_means_no_password_and_pywinrm_psrp_need_one():
-    from hostctl.host._contracts import HostConfig
+    from hostctl.host._config import HostConfig
 
     with pytest.raises(ValueError, match="current Windows logon"):
         WinRMConfig("server", "admin", "secret", provider="native")
@@ -863,7 +866,7 @@ def test_provider_native_means_no_password_and_pywinrm_psrp_need_one():
 
 
 def test_a_config_without_a_port_survives_its_own_uri():
-    from hostctl.host._contracts import HostConfig
+    from hostctl.host._config import HostConfig
 
     config = WinRMConfig("h", "u")
     assert HostConfig(str(config)) == config

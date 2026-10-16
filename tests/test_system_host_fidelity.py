@@ -4,16 +4,13 @@ import time
 
 import pytest
 
-from hostctl.provider._contracts import (
-    ExecutorProvider,
-    PathProvider,
-    ProviderProbe,
-    ProviderSelector,
-)
-from hostctl.host._contracts import HostConfig, HostInfo
-from hostctl.system._system import IOSHost, PosixHost, WindowsHost
+from hostctl.provider._contracts import ExecutorProvider, PathProvider, ProviderProbe
+from hostctl.provider._selector import ProviderSelector
+from hostctl.host._config import HostConfig
+from hostctl.host._info import HostInfo
+from hostctl.system._kinds import IOSHost, PosixHost, WindowsHost
 from hostctl.exceptions import OperationNotStartedError
-from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.transports.ssh._config import SSHConfig
 
 
 def test_selection_trace_has_generation_policy_pin_and_redaction():
@@ -298,7 +295,7 @@ def test_abstract_system_config_fails_clearly_instead_of_attribute_error():
     a bare `AttributeError` from `_create_host()` nor advertise a `system://`
     URI that `HostConfig(...)` would reject.
     """
-    from hostctl.system._system import SystemConfig
+    from hostctl.system._config import SystemConfig
 
     config = SystemConfig("node")
 
@@ -319,13 +316,9 @@ def test_system_config_scheme_stays_the_derived_hostconfig_property():
     A concrete config must not shadow `HostConfig.scheme` with a plain
     string, which `SystemHost.__init__` could then assign to.
     """
-    from hostctl.host._contracts import HostConfig as _HostConfig
-    from hostctl.system._system import (
-        IOSConfig,
-        PosixConfig,
-        SystemConfig,
-        WindowsConfig,
-    )
+    from hostctl.host._config import HostConfig as _HostConfig
+    from hostctl.system._kinds import IOSConfig, PosixConfig, WindowsConfig
+    from hostctl.system._config import SystemConfig
 
     assert isinstance(_HostConfig.__dict__["scheme"], property)
     # No subclass in this family replaces the property with a plain attribute.
@@ -347,7 +340,7 @@ def test_system_config_scheme_stays_the_derived_hostconfig_property():
 
 def test_config_less_system_host_builds_its_own_family_configuration():
     """A host built without a config gets its family's config, not a mutated base."""
-    from hostctl.system._system import IOSConfig, PosixConfig, WindowsConfig
+    from hostctl.system._kinds import IOSConfig, PosixConfig, WindowsConfig
 
     for host_type, config_type, scheme in (
         (PosixHost, PosixConfig, "posix"),
@@ -361,8 +354,8 @@ def test_config_less_system_host_builds_its_own_family_configuration():
 
 def test_advertised_system_uris_round_trip_through_hostconfig():
     """Every scheme a config advertises must parse back into a config."""
-    from hostctl.host._contracts import HostConfig
-    from hostctl.system._system import IOSConfig, PosixConfig, WindowsConfig
+    from hostctl.host._config import HostConfig
+    from hostctl.system._kinds import IOSConfig, PosixConfig, WindowsConfig
 
     for config_type in (PosixConfig, WindowsConfig, IOSConfig):
         uri = config_type("node").connection_uri

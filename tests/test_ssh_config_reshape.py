@@ -10,9 +10,9 @@ import pytest
 
 pytest.importorskip("asyncssh")
 
-from hostctl.host._contracts import HostConfig
-from hostctl.transports.ssh._transport import SSHConfig
-from hostctl.system._system import PosixHost, WindowsHost
+from hostctl.host._config import HostConfig
+from hostctl.transports.ssh._config import SSHConfig
+from hostctl.system._kinds import PosixHost, WindowsHost
 from conformance.inprocess_ssh import InProcessSSHServer
 
 

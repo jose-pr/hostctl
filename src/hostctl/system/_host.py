@@ -1,15 +1,21 @@
-"""Operating-system hosts composed from ordered transport providers."""
+"""`SystemHost`: a host composed from ordered executor and path providers."""
 
 from __future__ import annotations
 
 import collections.abc
+
 import dataclasses
+
 import logging
+
 import subprocess
+
 import threading
+
 import typing
-from contextvars import ContextVar
-from urllib.parse import unquote, quote, urlencode
+
+
+from urllib.parse import quote
 
 from pathapi import Path
 
@@ -19,330 +25,34 @@ from ..executor import (
     run_displayed,
     validate_environment_names,
 )
+
 from ..exceptions import OperationNotStartedError
-from ..provider._contracts import ProviderSelector
-from ..shell import POWERSHELL, POSIX_SHELL, shell_flavour
+
+from ..provider._selector import ProviderSelector
+
+from ..shell import shell_flavour
+
 from ..shell._flavour import ShellFlavour
-from ..shell._invocation import render_command, shell_invocation
-from ..shell._flavour import wants_epilogue
+
+from ..shell._invocation import render_command
+
+from ..shell._vocabulary import wants_epilogue
+
 from ..executor import CaptureOutput, Environment, FileHandle, Input, PathLike
-from ..host._contracts import Host, HostConfig, _HostExecutor, HostInfo
-from ..uri._parse import _refuse_uri, reject_control_characters, strict_uri_query
-from .._registry import entry_points_in
+
+from ..host._host import Host, _HostExecutor
+from ..host._config import HostConfig
+from ..host._info import HostInfo
+
+
 from ..shell._grammar import Command, starts_direct_command
+
 from ..paths._composite import CompositePosixPath, CompositeWindowsPath
 
+from ._config import SystemConfig
+from ._shell_plan import _ShellContext, _shell_invocation
+
 log = logging.getLogger("hostctl.system")
-
-_SYSTEM_PROVIDER_RESOLVERS = {}
-
-
-def register_system_provider(
-    name: str,
-    resolver: typing.Callable[["SystemConfig", str], typing.Any],
-    *,
-    replace: bool = False,
-) -> None:
-    """Register a provider descriptor resolver for :class:`SystemConfig`.
-
-    `resolver(config, kind)` returns the provider for `kind` (`"executor"` or
-    `"path"`), or `None` when the descriptor offers none. A name registered
-    already raises `ValueError` unless `replace=True`.
-    """
-    key = str(name).casefold().strip()
-    if not key or not callable(resolver):
-        raise ValueError("provider name and callable resolver are required")
-    if key in _SYSTEM_PROVIDER_RESOLVERS and not replace:
-        raise ValueError(f"system provider is already registered: {key}")
-    _SYSTEM_PROVIDER_RESOLVERS[key] = resolver
-
-
-def system_provider_names() -> typing.Tuple[str, ...]:
-    """Every provider descriptor `SystemConfig` accepts, sorted.
-
-    The registered names plus the `hostctl.system_providers` entry points,
-    which are listed and not imported.
-    """
-    names = set(_SYSTEM_PROVIDER_RESOLVERS)
-    names.update(
-        str(point.name).casefold() for point in entry_points_in(_ENTRY_POINT_GROUP)
-    )
-    return tuple(sorted(names))
-
-
-_ENTRY_POINT_GROUP = "hostctl.system_providers"
-
-
-def _load_system_provider(key: str):
-    """Load, register and return the plugin resolver named `key`, if any."""
-    for point in entry_points_in(_ENTRY_POINT_GROUP):
-        if str(point.name).casefold() != key:
-            continue
-        try:
-            resolver = point.load()
-            register_system_provider(key, resolver, replace=True)
-        except Exception as exc:
-            raise ValueError(f"invalid system provider plugin {key!r}: {exc}") from exc
-        return resolver
-    return None
-
-
-def _provider_option(config: "SystemConfig", name: str):
-    values = config.options.get("provider_options", {})
-    if isinstance(values, dict):
-        return values.get(name)
-    return None
-
-
-def _local_provider(config, kind):
-    del config
-    from ..transports.local._providers import LocalExecutorProvider, LocalPathProvider
-
-    return LocalExecutorProvider() if kind == "executor" else LocalPathProvider()
-
-
-#: The transports one `_create_host()` call has built, by option key. Scoped to
-#: the call (and so to its thread), because the executor and path providers of
-#: ONE host must share a connection and two hosts must not.
-_TRANSPORTS: "ContextVar[typing.Optional[dict]]" = ContextVar(
-    "hostctl_transports", default=None
-)
-
-
-def _shared_transport(key, build):
-    """The transport for `key` within this `_create_host()` call, built once."""
-    cache = _TRANSPORTS.get()
-    if cache is None:
-        return build()
-    if key not in cache:
-        cache[key] = build()
-    return cache[key]
-
-
-def _transport_provider(config, kind, option, label, load):
-    """Resolve one provider of a transport-backed pair from `provider_options`.
-
-    `load()` imports lazily: (config type, transport type, executor provider
-    type, path provider type).
-    """
-    config_type, transport_type, executor_type, path_type = load()
-    value = _provider_option(config, option)
-    if not isinstance(value, config_type):
-        raise ValueError(
-            f"system {label} descriptors require "
-            f"provider_options={{'{option}': {config_type.__name__}(...)}}"
-        )
-    transport = _shared_transport(option, lambda: transport_type(value))
-    return executor_type(transport) if kind == "executor" else path_type(transport)
-
-
-def _load_ssh():
-    from ..transports.ssh._transport import (
-        SFTPPathProvider,
-        SSHConfig,
-        SSHExecutorProvider,
-        _SSHTransport,
-    )
-
-    return SSHConfig, _SSHTransport, SSHExecutorProvider, SFTPPathProvider
-
-
-def _load_winrm():
-    from ..transports.winrm._transport import (
-        WinRMConfig,
-        WinRMExecutorProvider,
-        WinRMPathProvider,
-        _WinRMTransport,
-    )
-
-    return WinRMConfig, _WinRMTransport, WinRMExecutorProvider, WinRMPathProvider
-
-
-def _ssh_provider(config, kind):
-    return _transport_provider(config, kind, "ssh", "SSH", _load_ssh)
-
-
-def _winrm_provider(config, kind):
-    return _transport_provider(config, kind, "winrm", "WinRM", _load_winrm)
-
-
-register_system_provider("local", _local_provider)
-register_system_provider("ssh", _ssh_provider)
-register_system_provider("sftp", _ssh_provider)
-register_system_provider("winrm", _winrm_provider)
-
-
-class _ShellContext(typing.NamedTuple):
-    """What the SHELL layer must supply, because the provider cannot.
-
-    `cwd` and `env` are `None` when the provider carries them natively --
-    passing them to the flavour as well would apply them twice. Computed
-    once per dispatch: the combinations are the bug surface, so there is one
-    expression of them.
-    """
-
-    cwd: typing.Optional[PathLike]
-    env: typing.Optional[typing.Any]
-    epilogue: bool
-
-
-def _shell_invocation(flavour, cmds, *, cwd, env, epilogue, executable, provider=None):
-    """`shell_invocation` for the provider's declared login shell."""
-    return shell_invocation(
-        flavour,
-        cmds,
-        cwd=cwd,
-        env=env,
-        epilogue=epilogue,
-        executable=executable,
-        login_shell=getattr(provider, "login_shell", None),
-    )
-
-
-class SystemConfig(HostConfig):
-    """Base configuration for a logical system with one or more providers.
-
-    Abstract: concrete system families are :class:`PosixConfig`,
-    :class:`WindowsConfig`, and :class:`IOSConfig`.  Each binds ``host_type``
-    and ``uri_scheme``; this class binds neither and cannot be instantiated
-    into a host on its own.
-    """
-
-    #: Class-level URI scheme that *builds* :attr:`connection_uri`.  This is
-    #: deliberately not named ``scheme``: ``HostConfig.scheme`` is a property
-    #: derived by parsing the built URI, and a plain string would shadow it.
-    #: The two flow one way -- ``uri_scheme`` builds the URI, ``scheme``
-    #: reads it back -- so they cannot disagree.
-    uri_scheme: typing.ClassVar[str] = ""
-
-    #: Concrete `SystemHost` subclass this configuration creates.  Bound by
-    #: each concrete config; ``None`` marks this base class as abstract.
-    host_type: typing.ClassVar[typing.Optional[typing.Type["SystemHost"]]] = None
-
-    def __init__(
-        self,
-        authority: str = "localhost",
-        *,
-        shell: object = None,
-        executor: typing.Iterable[str] = (),
-        path: typing.Iterable[str] = (),
-        provider_options: typing.Optional[typing.Mapping[str, object]] = None,
-        initializer: typing.Optional[typing.Callable[..., object]] = None,
-    ):
-        super().__init__()
-        _refuse_uri(type(self).__name__, authority)
-        for name, value in (("executor", executor), ("path", path)):
-            if isinstance(value, (str, bytes)):
-                raise TypeError(
-                    f"{name}= takes a sequence of descriptor names, "
-                    "e.g. ('local',), not a string"
-                )
-        self.authority = authority or "localhost"
-        self.shell = shell
-        self.executors = tuple(executor)
-        self.paths = tuple(path)
-        self.options = {
-            key: value
-            for key, value in (
-                ("provider_options", provider_options),
-                ("initializer", initializer),
-            )
-            if value is not None
-        }
-
-    def _build_providers(self, kind: str):
-        descriptors = self.executors if kind == "executor" else self.paths
-        result = []
-        for descriptor in descriptors:
-            key = str(descriptor).casefold()
-            resolver = _SYSTEM_PROVIDER_RESOLVERS.get(key) or _load_system_provider(key)
-            if resolver is None:
-                raise ValueError(f"unknown {kind} provider descriptor: {descriptor!r}")
-            provider = resolver(self, kind)
-            if provider is None:
-                raise ValueError(
-                    f"provider descriptor {descriptor!r} does not support {kind}"
-                )
-            result.append(provider)
-        return tuple(result)
-
-    @property
-    def connection_uri(self) -> str:
-        if not self.uri_scheme:
-            # The abstract base registers no URI scheme, so it has no
-            # round-trippable URI to advertise, and a URI that cannot be
-            # parsed back is worse than declining to produce one.
-            raise NotImplementedError(
-                f"{type(self).__name__} is abstract and has no connection URI"
-            )
-        query: typing.List[typing.Tuple[str, str]] = [
-            ("executor", value) for value in self.executors
-        ]
-        query += [("path", value) for value in self.paths]
-        if self.shell is not None:
-            query.append(("shell", getattr(self.shell, "name", str(self.shell))))
-        return f"{self.uri_scheme}://{quote(self.authority, safe='')}" + (
-            f"?{urlencode(query)}" if query else ""
-        )
-
-    @classmethod
-    def _from_parsed_uri(cls, parsed, **credentials):
-        constructor_only = {}
-        for key in ("provider_options", "initializer"):
-            if key in credentials:
-                constructor_only[key] = credentials.pop(key)
-        if credentials:
-            names = ", ".join(sorted(str(key) for key in credentials))
-            raise ValueError(
-                "system URI reconstruction accepts only provider_options= and "
-                f"initializer= constructor options; unsupported credentials: {names}"
-            )
-        # The SHARED parser, with the two keys that legitimately repeat
-        # declared.
-        query = strict_uri_query(
-            parsed, ("executor", "path", "shell"), repeatable=("executor", "path")
-        )
-        executors = typing.cast(typing.Tuple[str, ...], query.get("executor", ()))
-        paths = typing.cast(typing.Tuple[str, ...], query.get("path", ()))
-        # The whole netloc, userinfo included, is unquoted below, so a
-        # percent-encoded control character there would arrive decoded.
-        reject_control_characters(parsed.netloc)
-        return cls(
-            # Unquoted: `connection_uri` percent-encodes the authority, so
-            # storing the still-encoded netloc added a layer on every
-            # `HostConfig(str(config))` round trip -- `node:22` became
-            # `node%3A22`, then `node%253A22` -- and the API header promises
-            # `str(config)` can be handed straight back.
-            unquote(parsed.netloc) or unquote(parsed.path) or "localhost",
-            shell=query.get("shell"),
-            executor=executors,
-            path=paths,
-            **constructor_only,
-        )
-
-    def _create_host(self):
-        if self.host_type is None:
-            names = ", ".join(
-                item.__name__ for item in (PosixConfig, WindowsConfig, IOSConfig)
-            )
-            raise TypeError(
-                f"{type(self).__name__} is abstract and creates no host; "
-                f"use a concrete system configuration ({names})"
-            )
-        # A fresh transport cache per call: one host's executor and path
-        # providers share a connection, and two hosts never do -- either one's
-        # `close()` would tear down the connection the other is using.
-        token = _TRANSPORTS.set({})
-        try:
-            executor_providers = self._build_providers("executor")
-            path_providers = self._build_providers("path")
-        finally:
-            _TRANSPORTS.reset(token)
-        return self.host_type(
-            self,
-            executor_providers=executor_providers,
-            path_providers=path_providers,
-        )
 
 
 class SystemHost(Host):
@@ -1237,68 +947,3 @@ class SystemHost(Host):
                 f"executor provider {provider.name!r} does not support runspaces"
             )
         return method()
-
-
-class PosixHost(SystemHost):
-    """A POSIX system: POSIX-shell command construction and POSIX paths.
-
-    Compose it from providers directly, or open an :class:`SSHConfig`.
-    """
-
-    system_family = "posix"
-    default_shell = POSIX_SHELL
-
-
-class WindowsHost(SystemHost):
-    """A Windows system: PowerShell command construction and Windows paths.
-
-    Compose it from providers directly, or open a :class:`WinRMConfig`.
-    """
-
-    system_family = "windows"
-    default_shell = POWERSHELL
-
-
-class IOSHost(SystemHost):
-    """A Cisco IOS-style device: session and command only, by design.
-
-    It configures **no shell flavour and no path grammar**, which is a
-    deliberate gap rather than an unfinished one: IOS command syntax is
-    not a shell, and quoting it as one would corrupt ordinary commands.
-    So commands must be :class:`Exec` (or raw text the device
-    understands), and :meth:`path` raises ``NotImplementedError`` until
-    an IOS path grammar exists.
-    """
-
-    system_family = "ios"
-    default_shell = None
-
-
-class PosixConfig(SystemConfig, schemes=("posix", "posix+ssh")):
-    """Connection identity for a :class:`PosixHost` (`posix:`, `posix+ssh:`)."""
-
-    host_type = PosixHost
-    uri_scheme = "posix"
-
-
-class WindowsConfig(SystemConfig, schemes=("windows", "windows+winrm")):
-    """Connection identity for a :class:`WindowsHost` (`windows:`,
-    `windows+winrm:`)."""
-
-    host_type = WindowsHost
-    uri_scheme = "windows"
-
-
-class IOSConfig(SystemConfig, schemes=("ios",)):
-    """Connection identity for an :class:`IOSHost` (`ios:`), which is
-    session- and command-only."""
-
-    host_type = IOSHost
-    uri_scheme = "ios"
-
-
-# Each host family and its configuration are mutually referential, so the
-# host -> config direction is bound here, once both sides are defined.
-PosixHost.config_type = PosixConfig
-WindowsHost.config_type = WindowsConfig
-IOSHost.config_type = IOSConfig

@@ -7,14 +7,11 @@ import pytest
 
 import hostctl
 from hostctl.provider._contracts import ExecutorProvider
-from hostctl.host._contracts import HostConfig
-from hostctl.system._system import (
-    PosixConfig,
-    register_system_provider,
-    system_provider_names,
-)
+from hostctl.host._config import HostConfig
+from hostctl.system._kinds import PosixConfig
+from hostctl.system._resolvers import register_system_provider, system_provider_names
 from hostctl._registry import host_schemes
-from hostctl.system import _system as system_module
+from hostctl.system import _resolvers as system_module
 
 
 class _EntryPoint:

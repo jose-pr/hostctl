@@ -9,7 +9,7 @@ import subprocess
 import pytest
 from pathapi import WindowsPathname
 
-from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.transports.ssh._config import SSHConfig
 from hostctl.transports.ssh._executor import _clixml_text
 from hostctl.shell import CMD, POWERSHELL
 
@@ -88,8 +88,8 @@ class _Connection:
 
 def _host():
     from hostctl import _async
-    from hostctl.system._system import WindowsHost
-    from hostctl.transports.ssh._transport import ssh_providers
+    from hostctl.system._kinds import WindowsHost
+    from hostctl.transports.ssh._providers import ssh_providers
 
     config = SSHConfig("h", dialect=POWERSHELL, path_flavor=WindowsPathname)
     executor, paths = ssh_providers(config)

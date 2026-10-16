@@ -281,7 +281,8 @@ def test_a_failing_guest_command_becomes_a_filesystem_error():
 
 def test_exists_below_a_regular_file_is_false_not_an_error():
     """GNU stat answers ENOTDIR for `/etc/passwd/child`; pathlib says False."""
-    from hostctl.transports.qemu._host import PosixQEMUPath, QGAPathBackend
+    from hostctl.transports.qemu._path import PosixQEMUPath
+    from hostctl.transports.qemu._backend import QGAPathBackend
 
     guest = _Guest(
         {
@@ -402,7 +403,8 @@ class _QGATransport:
 
 
 def _host(transport, **options):
-    from hostctl.transports.qemu._host import QEMUConfig, QEMUHost
+    from hostctl.transports.qemu._config import QEMUConfig
+    from hostctl.transports.qemu._host import QEMUHost
 
     return QEMUHost(QEMUConfig("guest", transport_factory=lambda: transport, **options))
 

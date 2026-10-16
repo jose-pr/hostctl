@@ -10,7 +10,7 @@ import pytest
 from pathapi.mempath import MemPath, MemPathBackend
 
 from hostctl.provider._contracts import PathProvider
-from hostctl.system._system import PosixHost
+from hostctl.system._kinds import PosixHost
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ from pathapi.mempath import MemPath, MemPathBackend
 
 from pathapi import Path as HostPath
 from hostctl.provider._contracts import PathProvider, ProviderProbe
-from hostctl.system._system import PosixHost
+from hostctl.system._kinds import PosixHost
 
 
 def _memory_provider(name, backend, **options):
@@ -192,7 +192,7 @@ def test_a_uri_backed_path_reports_a_filesystem_logical_path():
     """An SSH host's logical paths are paths on the target, never a URI:
     used as the logical path, `sftp://host:22/...` sent I/O to
     `/sftp:/host:22/...`."""
-    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._config import SSHConfig
 
     host = SSHConfig("h", username="root").open()
 
@@ -206,7 +206,7 @@ def test_a_uri_backed_path_reports_a_filesystem_logical_path():
 def test_logical_text_prefers_the_filesystem_spelling():
     from sftppath import SFTPPath
 
-    from hostctl.paths._composite import _logical_text
+    from hostctl.paths._forwarding import _logical_text
 
     assert _logical_text(SFTPPath("/usr/lib/jvm/java", host="h")) == "/usr/lib/jvm/java"
     # A backend with no filesystem spelling keeps its own text.

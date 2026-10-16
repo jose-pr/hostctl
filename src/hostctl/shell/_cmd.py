@@ -6,14 +6,14 @@ import typing
 from pathlib import PureWindowsPath
 
 from ..executor import Environment, PathLike
-from ._flavour import (
+from ._vocabulary import (
     ShellCommand,
-    ShellFlavour,
     ShellOperator,
     ShellTarget,
     ShellToken,
     program_target,
 )
+from ._flavour import ShellFlavour
 from ._grammar import PSParam
 
 

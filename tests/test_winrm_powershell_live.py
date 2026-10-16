@@ -20,7 +20,7 @@ import subprocess
 import pytest
 
 from conformance.providers import LocalWinRSProtocol
-from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.transports.winrm._config import WinRMConfig
 from hostctl.transports.winrm._pywinrm import _PywinrmStdinSession
 from hostctl.transports.winrm._transport import _SCRIPT_BUDGET, _WinRMTransport
 
@@ -226,7 +226,7 @@ def test_exists_answers_from_metadata(backend, tmp_path):
 
 def test_exclusive_open_of_an_existing_file_downloads_nothing(transport, tmp_path):
     """`open("xb")` read the whole existing file just to learn it was there."""
-    from hostctl.transports.winrm._transport import WinRMPath
+    from hostctl.transports.winrm._path import WinRMPath
 
     target = tmp_path / "big.bin"
     target.write_bytes(os.urandom(1 << 20))

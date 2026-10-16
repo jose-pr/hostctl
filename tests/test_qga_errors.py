@@ -9,12 +9,12 @@ import json
 import pytest
 
 from hostctl.exceptions import QGACommandError, QGATimeoutError
-from hostctl.transports.qemu._qga import (
+from hostctl.transports.qemu._qga_transports import (
     SSHUnixGuestAgentTransport,
     UnixSocketGuestAgentTransport,
-    guest_oserror,
     normalize_libvirt_error,
 )
+from hostctl.transports.qemu._qga import guest_oserror
 
 
 def _frame(value):

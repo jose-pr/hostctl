@@ -1,47 +1,51 @@
-"""Guest-side metadata and namespace operations for QGA paths.
-
-QGA's file RPCs move bytes and nothing else: there is no `guest-file-stat`,
-no listing, no rename. `QGAPathBackend` therefore gates `stat`, `scandir`
-and every mutation on a `GuestPathHelper`, and without one the path
-provider reports `degraded`. This module supplies that helper by running
-ordinary programs in the guest through `guest-exec`.
-
-**Positively probed, never assumed.** `stat -c`, `find -printf` and
-`ls --time-style` are GNU spellings that busybox and the BSDs do not share,
-and a helper that assumes GNU and silently mis-parses is worse than no
-helper at all. `PosixGuestPathHelper.probe()` runs one decisive command and
-returns `None` when the guest cannot answer it, which leaves the backend in
-exactly the degraded mode it has today rather than turning a working
-read/write path into an error.
-
-Measured on Fedora 44 (GNU coreutils 9.10, findutils 4.10.0):
-
-- `stat -c %f -- /` answers `41ed` -- hex, and a directory. A guest whose
-  `stat` does not take `-c` fails or answers something that is not hex,
-  which is what the probe tests.
-- `find <dir> -maxdepth 1 -mindepth 1 -printf '%f\\0%m\\0%s\\0%T@\\0%y\\0'`
-  round-trips a filename containing a NEWLINE, which every line-oriented
-  listing loses. That is why the fields are NUL-separated rather than
-  parsed out of `ls`.
-- `stat -L` dereferences (`a1ff` for the link, `81a4` for its target), so
-  `follow_symlinks` is a flag rather than a second implementation.
-"""
+"""Guest path helpers: metadata and namespace operations run as guest programs."""
 
 from __future__ import annotations
 
-import errno
-import os
-import stat as _stat
+
 import subprocess
+
+
 import typing
+
 
 from pathapi import FileStat
 
+
 from ._qga import guest_oserror
+
+
+import errno
+
+import os
+
+import stat as _stat
+
+from ._qga import guest_oserror
+
+
+class GuestPathHelper(typing.Protocol):
+    """Positively probed OS helper operations not supplied by QGA file RPCs."""
+
+    def stat(self, path: str, *, follow_symlinks: bool = True) -> FileStat: ...
+
+    def scandir(self, path: str) -> typing.Iterable[typing.Tuple[str, FileStat]]: ...
+
+    def mkdir(self, path: str, mode: int) -> None: ...
+
+    def unlink(self, path: str, *, missing_ok: bool = False) -> None: ...
+
+    def rmdir(self, path: str) -> None: ...
+
+    def rename(self, path: str, target: str, *, replace: bool = False) -> None: ...
+
+    def chmod(self, path: str, mode: int, *, follow_symlinks: bool = True) -> None: ...
+
 
 #: Script bytes one `guest-exec` call carries as its `input-data`; a larger
 #: write is split across calls.
 _GUEST_EXEC_SCRIPT_BUDGET = 12_000
+
 
 #: `find -printf`'s type letters, in `stat` terms.
 
@@ -55,6 +59,7 @@ _FILE_TYPES = {
     "s": _stat.S_IFSOCK,
 }
 
+
 #: One `find -printf` record: name, octal permissions, size, mtime, type.
 #:
 #: The separator is the two characters backslash and 0, NOT a NUL byte:
@@ -62,6 +67,7 @@ _FILE_TYPES = {
 #: it anyway -- argv crosses `execve`, which ends a C string at the
 #: first NUL. Sent as an escape it arrives intact and find emits it.
 _SCANDIR_FORMAT = "%f\\0%m\\0%s\\0%T@\\0%y\\0"
+
 
 GuestRunner = typing.Callable[..., subprocess.CompletedProcess]
 
@@ -309,7 +315,7 @@ class WindowsGuestPathHelper:
 
     @classmethod
     def probe(cls, run: GuestRunner) -> typing.Optional["WindowsGuestPathHelper"]:
-        from ..winrm._transport import WinRMPathBackend
+        from ..winrm._path import WinRMPathBackend
 
         run_script = cls.runner(run)
         try:

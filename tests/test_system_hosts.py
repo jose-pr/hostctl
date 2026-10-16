@@ -8,17 +8,17 @@ import pytest
 from pathapi.mempath import MemPath, MemPathBackend
 
 from hostctl.shell._grammar import Exec
-from hostctl.host._contracts import HostConfig
+from hostctl.host._config import HostConfig
 from hostctl.exceptions import OperationNotStartedError
 from hostctl.provider._contracts import (
     PathProvider,
     ProviderProbe,
     ExecutorProvider,
-    ProviderSelector,
     SessionInitializer,
 )
-from hostctl.system._system import PosixHost, PosixConfig, WindowsHost
-from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.provider._selector import ProviderSelector
+from hostctl.system._kinds import PosixHost, PosixConfig, WindowsHost
+from hostctl.transports.winrm._config import WinRMConfig
 from hostctl.transports.local._executor import LocalExecutor
 from pathapi import Path as HostPath
 
@@ -117,7 +117,7 @@ def test_system_config_rejects_unknown_provider_descriptor():
 
 
 def test_system_config_resolves_transport_descriptors_with_explicit_options():
-    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._config import SSHConfig
 
     config = PosixConfig(
         "node",
@@ -232,7 +232,7 @@ def test_executor_fallback_replans_capabilities_before_retrying():
 
 
 def test_ios_host_without_shell_requires_direct_provider():
-    from hostctl.system._system import IOSHost
+    from hostctl.system._kinds import IOSHost
 
     host = IOSHost(executor_providers=(ExecutorProvider("raw", lambda *a, **k: None),))
     with pytest.raises(NotImplementedError):
@@ -348,8 +348,8 @@ def test_system_host_close_attempts_all_targets_and_reraises_first_error():
 
 
 def test_a_transport_config_opens_the_system_family_its_paths_select():
-    from hostctl.transports.ssh._transport import SSHConfig
-    from hostctl.system._system import WindowsHost
+    from hostctl.transports.ssh._config import SSHConfig
+    from hostctl.system._kinds import WindowsHost
 
     from pathapi import WindowsPathname
 
@@ -361,8 +361,8 @@ def test_a_transport_config_opens_the_system_family_its_paths_select():
 
 
 def test_transport_configs_compose_system_hosts_without_uri_changes():
-    from hostctl.transports.ssh._transport import SSHConfig
-    from hostctl.transports.winrm._transport import WinRMConfig
+    from hostctl.transports.ssh._config import SSHConfig
+    from hostctl.transports.winrm._config import WinRMConfig
 
     ssh_config = SSHConfig("example", username="root")
     posix = ssh_config.open()
@@ -383,7 +383,7 @@ def test_transport_configs_compose_system_hosts_without_uri_changes():
 
 
 def test_composite_path_accepts_path_protocol_and_retains_alternates():
-    from hostctl.system._system import PosixHost
+    from hostctl.system._kinds import PosixHost
 
     first_backend = MemPathBackend()
     second_backend = MemPathBackend()
@@ -401,7 +401,7 @@ def test_composite_path_accepts_path_protocol_and_retains_alternates():
 
 
 def test_composite_path_uses_target_flavour_independent_of_client():
-    from hostctl.system._system import PosixHost, WindowsHost
+    from hostctl.system._kinds import PosixHost, WindowsHost
 
     posix_backend = MemPathBackend()
     posix_provider = PathProvider(
@@ -631,7 +631,7 @@ def test_a_shell_less_host_refuses_context_it_cannot_apply():
 
     `IOSHost` configures no shell, so there is nowhere to embed cwd/env.
     """
-    from hostctl.system._system import IOSHost
+    from hostctl.system._kinds import IOSHost
 
     provider = ExecutorProvider(
         "bare",
@@ -758,7 +758,7 @@ def test_two_hosts_from_one_config_do_not_share_a_transport():
     descriptors because they are what the cache serves; `local` providers
     build no transport at all.
     """
-    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._config import SSHConfig
 
     config = PosixConfig(
         "node",
@@ -855,7 +855,7 @@ def test_an_out_of_band_environment_is_carried_not_dropped():
     so a registered flavour for a shell that cannot export variables lost
     every one of them in silence."""
     from hostctl.shell import POSIX_SHELL
-    from hostctl.shell._flavour import ShellCommand
+    from hostctl.shell._vocabulary import ShellCommand
 
     class _OutOfBand(type(POSIX_SHELL)):
         name = "test-out-of-band"
@@ -886,7 +886,7 @@ def test_an_out_of_band_environment_is_carried_not_dropped():
 
 def test_a_provider_that_cannot_carry_it_refuses_rather_than_losing_it():
     from hostctl.shell import POSIX_SHELL
-    from hostctl.shell._flavour import ShellCommand
+    from hostctl.shell._vocabulary import ShellCommand
 
     class _OutOfBand(type(POSIX_SHELL)):
         name = "test-out-of-band-2"
@@ -916,7 +916,7 @@ def test_a_family_with_no_path_grammar_says_so():
     """Everything non-Windows fell through to POSIX, so an `IOSHost` --
     documented as command-only until an IOS path grammar is designed --
     advertised `path` and applied POSIX rules to `flash:/config.text`."""
-    from hostctl.system._system import IOSHost
+    from hostctl.system._kinds import IOSHost
     from pathapi import Path as LocalPath
 
     host = IOSHost(path_providers=(PathProvider("local", lambda *p: LocalPath(*p)),))
@@ -929,7 +929,7 @@ def test_info_stops_dialling_once_it_knows_everything():
     """`info()` stops at the first provider that answers in full: dialling
     an ordered fallback may prompt for 2FA or wait out a TCP timeout merely
     to read `HostInfo` the primary already gave."""
-    from hostctl.host._contracts import HostInfo
+    from hostctl.host._info import HostInfo
 
     connected = []
 
@@ -994,8 +994,8 @@ def test_concurrent_hosts_from_one_config_do_not_share_a_transport(monkeypatch):
     import threading
     import time
 
-    from hostctl.transports.ssh._transport import SSHConfig
-    from hostctl.system import _system as system_module
+    from hostctl.transports.ssh._config import SSHConfig
+    from hostctl.system import _resolvers as system_module
 
     real = system_module._ssh_provider
 

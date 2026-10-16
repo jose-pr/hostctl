@@ -24,7 +24,9 @@ from ._process import SerialConsoleProcess
 from ...exceptions import ConsoleProtocolError
 from ._console import RawConsoleProfile, SerialConsoleProtocol
 from ...shell._grammar import Command, starts_direct_command
-from ...host._contracts import Host, HostConfig, HostInfo
+from ...host._host import Host
+from ...host._config import HostConfig
+from ...host._info import HostInfo
 from ...executor import PathLike
 from ...uri._parse import strict_uri_query
 
