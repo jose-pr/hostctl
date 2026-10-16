@@ -29,9 +29,10 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `dialect=`, `path_flavor=` (and `?dialect=`, `?path_flavor=`); `ShellFlavour.path_flavor` | `shell=`, `pathname=` (`?shell=`, `?pathname=`); `ShellFlavour.pathname` |
 | `SSHShellSelection`, `QEMUShellSelection`, `ContainerShellSelection`, `*PathSelection`, `PathnameConstructor` | `hostctl.host.ShellSelection`, `hostctl.host.PathnameSelection` |
 | `ContainerConfig(user=)` (`?user=`); `SerialConfig(port=, protocol=)`; `SerialConsoleProtocol` | `username=` (`?username=`); `device=`, `profile=`; `ConsoleProfile` |
-| `WinRMConfig(transport=, ssl=, server_cert_validation=, operation_timeout_sec=, read_timeout_sec=)` (and the same URI keys) | `auth=`, `tls=`, `verify=` (bool, `?verify=false`), `operation_timeout=`, `read_timeout=` (float s) |
+| `WinRMConfig(transport=, ssl=, server_cert_validation=)` (and the same URI keys) | `auth=`, `tls=`, `verify=` (bool, `?verify=false`) |
+| `WinRMConfig(read_timeout_sec=, operation_timeout_sec=)` (and the same URI keys; also `read_timeout`, `operation_timeout`) | `connect_timeout=` (float s, default 30, `?connect_timeout=`) where the aim was to stop a hang while connecting; `timeout=` where it was to let a long command finish. The per-request knobs are internal; the old names raise and say so |
 | `WinRMConfig(transport="basic"/"plaintext"/"ssl")` over plain HTTP (the password sent in cleartext on pywinrm) | `ValueError` unless `cleartext_auth=True` (`?cleartext_auth=true`); or use `tls=True` |
-| native WinRM: `read_timeout_sec=` raised so a long command could finish (it was the command's deadline) | `timeout=` (default 30 s, `None` for none), the default for `run(timeout=)` on every leg; `read_timeout` is per request |
+| native WinRM: `read_timeout_sec=` raised so a long command could finish (it was the command's deadline) | `timeout=` (default 30 s, `None` for none), the default for `run(timeout=)` on every leg; `connect_timeout` bounds opening the session |
 | pywinrm and PSRP commands with no deadline; `run(timeout=)` refused | `timeout=30.0` applies; pass `timeout=None` to keep them unbounded; `run(timeout=)` is accepted |
 | positional config arguments after the first | keyword-only (`TypeError` otherwise) |
 | `ExecutorCommand`; `executor.PathLike`, `Input`, `Environment`, `FileHandle` | `CommandLike`; `StrPath`, `CommandInput`, `CommandEnvironment`, `StreamTarget` |
@@ -67,6 +68,11 @@ collection until pytruenas ports to these names.
 - `SshConfig(connect_timeout=30.0)` bounds how long an SSH connection may take
   to establish (`None` keeps asyncssh's default), and is the `connect_timeout`
   URI key.
+- `WinRMConfig(connect_timeout=30.0)` bounds establishing the connection with
+  the same name and meaning: `-OpenTimeout` on the native leg, pypsrp's
+  `connection_timeout` on PSRP, and the connect half of each HTTP request's
+  timeout on pywinrm (`None` keeps each library's default). An expiry raises
+  `ConnectionError`. This ships in 0.4.0.
 - `hostctl.shell.wants_epilogue(capabilities)` answers whether a script for a
   provider needs the flavour's status epilogue (not when it declares
   `manages_status`). `shell_flavour_names()` (also in `hostctl`) lists the
@@ -128,16 +134,18 @@ collection until pytruenas ports to these names.
 
 ### Changed
 
-- **Breaking, 0.4.0: `WinRMConfig(timeout=30.0)` is the default for
-  `run(timeout=)` on every WinRM leg, and `read_timeout` is per request
-  on every leg.** The native leg used
-  `read_timeout_sec` as each command's total deadline; it now uses `timeout`
-  (default 30 s), and `read_timeout` bounds opening the remote session
-  (`New-PSSessionOption -OpenTimeout`). pywinrm and PSRP had no deadline and
-  refused `run(timeout=)`; both now apply `timeout` too, so a command running
-  past 30 s raises `TimeoutExpired` (`orphaned=True`, after asking the server
-  to stop it) where it used to finish. Pass `timeout=None` for no default, or
-  `run(timeout=)` per call. See "Migrating from 0.3".
+- **Breaking, 0.4.0: `WinRMConfig` has two timeouts, `timeout` and
+  `connect_timeout`.** `timeout=30.0` is the default for `run(timeout=)` on
+  every WinRM leg. The native leg used `read_timeout_sec` as each command's
+  total deadline; it now uses `timeout`, and `connect_timeout` (default 30 s)
+  bounds opening the remote session (`New-PSSessionOption -OpenTimeout`).
+  pywinrm and PSRP had no deadline and refused `run(timeout=)`; both now
+  apply `timeout` too, so a command running past 30 s raises
+  `TimeoutExpired` (`orphaned=True`, after asking the server to stop it)
+  where it used to finish. Pass `timeout=None` for no default, or
+  `run(timeout=)` per call. The per-request WS-Man timing
+  (`read_timeout_sec`, `operation_timeout_sec`) is internal: a 20 s server
+  hold and a 30 s HTTP read limit. See "Migrating from 0.3".
 
 - **Breaking, 0.4.0: `host.path(p, backend=name)` pins the path to that
   provider**, as `.via(name)` does: every operation on it and on every path

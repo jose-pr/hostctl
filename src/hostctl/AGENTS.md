@@ -450,7 +450,7 @@ Behaviour:
 ## WinRM (`hostctl.transports.winrm`)
 
 ```python
-WinRMConfig(host, *, username, password=None, auth='ntlm', port=None, tls=False, verify=True, message_encryption='auto', operation_timeout=20.0, read_timeout=30.0, timeout=30.0, provider='auto', cleartext_auth=False)
+WinRMConfig(host, *, username, password=None, auth='ntlm', port=None, tls=False, verify=True, message_encryption='auto', timeout=30.0, connect_timeout=30.0, provider='auto', cleartext_auth=False)
 winrm_providers(config) -> tuple[ExecutorProvider, PathProvider]
 ```
 
@@ -465,11 +465,20 @@ are a `CompositeWindowsPath` over the WinRM path backend.
   `?cleartext_auth=true`).
 - `tls=True` is HTTPS; `verify=False` (`?verify=false`) skips the server
   certificate check. `str(config)` omits an unset port.
-- The timeouts are float seconds, rounded up where a leg needs whole seconds.
-  `timeout` is the default for `run(timeout=)`: the same total deadline per
-  command, which a per-call `timeout=` overrides, on every leg; `None` sets
-  no default. `operation_timeout` and `read_timeout` bound one request each
-  (URI `?timeout=`, empty for `None`; `?read_timeout=`, `?operation_timeout=`).
+- Two timeouts, float seconds; each is a URI key (empty for `None`) omitted
+  from `connection_uri` at 30. `timeout` is the default for `run(timeout=)`:
+  the same total deadline per command, which a per-call `timeout=`
+  overrides, on every leg; `None` sets no default. `connect_timeout` bounds
+  establishing the connection, as on `SSHConfig`: native
+  `New-PSSessionOption -OpenTimeout`, PSRP pypsrp's `connection_timeout`,
+  pywinrm the connect half of every HTTP request's `(connect, read)`
+  timeout. `None` keeps each library's default: PowerShell's 180 s, pypsrp's
+  30 s, and on pywinrm the 30 s read limit bounds connecting too.
+- Per-request timing is fixed: the server holds a silent Receive up to 20 s
+  (WS-Man `OperationTimeout`) and one HTTP read may take 30 s.
+  `read_timeout=`/`operation_timeout=` raise `TypeError`; those URI keys
+  (and 0.3's `*_timeout_sec`) raise `ValueError` naming `connect_timeout`
+  and `timeout`.
 - `provider` is `auto`, `native`, `pywinrm` or `psrp`. `auto` picks a
   password-free config on a Windows client as `native` (current-context
   PowerShell remoting, see "Environment variables"); otherwise PSRP when
@@ -491,12 +500,15 @@ Behaviour:
   stdin is unsupported.
 - A deadline raises `subprocess.TimeoutExpired` with `orphaned=True`.
   native: the local `powershell.exe` relay is killed and the remote command
-  keeps running; `read_timeout` is `New-PSSessionOption -OpenTimeout`, which
-  bounds opening the remote session. pywinrm: the deadline is checked between
-  WinRS Receives, so it is noticed up to `operation_timeout` late; the command
-  is sent the WinRS terminate signal and its shell deleted. PSRP: each Receive
-  is shortened to the time left, then the pipeline is sent PSRP's stop
-  signal. Termination is requested, never confirmed.
+  keeps running. pywinrm: the deadline is checked between WinRS Receives, so
+  it is noticed up to 20 s (one silent Receive) late; the command is sent
+  the WinRS terminate signal and its shell deleted. PSRP: each Receive is
+  shortened to the time left, then the pipeline is sent PSRP's stop signal.
+  Termination is requested, never confirmed.
+- An expired `connect_timeout` is not a deadline: it raises
+  `ConnectionError`. On PSRP the runspace opens before dispatch, so that is
+  `OperationNotStartedError`; pywinrm connects per request, so it may come
+  mid-command, with the command's effect unknown.
 - `timeout=None` with no `run(timeout=)` waits for the command however long
   it takes, and on the native leg a host that stops answering after the
   session opened can block the call indefinitely.
@@ -1190,12 +1202,11 @@ dependency may (asyncssh, pywinrm, docker), as documented by that package.
   mid-command means its effect on the target is unknown.
 - **Timeouts are not all total deadlines.** `run(timeout=)` bounds the call on
   local, SSH, QEMU and every WinRM leg, and `WinRMConfig(timeout=)` is its
-  default there (30 s; `None` for none). `SSHConfig(connect_timeout=)` bounds
-  only connecting; `QEMUConfig(agent_timeout=)` one agent round trip;
-  `WinRMConfig(operation_timeout=, read_timeout=)` one WS-Man request each
-  (on the native leg `read_timeout` bounds opening the session); a
-  container's `run()` refuses `timeout=`; `SerialConfig(read_timeout=)` bounds
-  one read.
+  default there (30 s; `None` for none). `SSHConfig(connect_timeout=)` and
+  `WinRMConfig(connect_timeout=)` bound only establishing the connection;
+  `QEMUConfig(agent_timeout=)` one agent round trip; a container's `run()`
+  refuses `timeout=`; `SerialConfig(read_timeout=, write_timeout=)` bound
+  one read and one write.
 - **Loggers.** Every module logs through `logging.getLogger(__name__)`, so
   every logger is a child of `hostctl`: configure that one (at `DEBUG` it
   shows provider selection and dispatch, redacted). Child names follow the

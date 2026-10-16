@@ -63,15 +63,17 @@ not only spelling:
   `?operation_timeout_sec=`/`?read_timeout_sec=` and the container's `?user=`
   raise `unknown connection parameter`; a stored URI written by 0.3 must be
   rewritten with the new keys (`shell`, `pathname`, `auth`, `tls`,
-  `verify=true|false`, `operation_timeout`, `read_timeout`, `username`).
+  `verify=true|false`, `username`) and without the WinRM timeout keys, which
+  have no per-request replacement (`connect_timeout`, `timeout` instead).
   `str(config)` of a 0.4.0 config is already in the new form.
-- **WinRM timeouts are float seconds and `verify` is a bool.**
-  `server_cert_validation="ignore"` is `verify=False`; `read_timeout_sec=30`
-  is `read_timeout=30.0`, and it is per request on every leg. A native-leg
-  user who raised `read_timeout_sec` so long commands could finish raises
-  `timeout` instead: `WinRMConfig(timeout=30.0)` is the default for
-  `run(timeout=)` on all three legs, so a pywinrm or PSRP command past 30 s
-  now raises `TimeoutExpired` where it used to run unbounded.
+- **WinRM has two timeouts, float seconds, and `verify` is a bool.**
+  `server_cert_validation="ignore"` is `verify=False`. `read_timeout_sec` and
+  `operation_timeout_sec` are gone, and the per-request timing is internal:
+  lower `connect_timeout` (default 30 s) to stop a hang while connecting.
+  A native-leg user who raised `read_timeout_sec` so long commands could
+  finish raises `timeout` instead: `WinRMConfig(timeout=30.0)` is the default
+  for `run(timeout=)` on all three legs, so a pywinrm or PSRP command past
+  30 s now raises `TimeoutExpired` where it used to run unbounded.
 - **SSH defaults changed.** `username=None` is the local account, not
   `root`; neither leg reads `~/.ssh/config` unless `ssh_config=` names one;
   a relative `host.path()` is the login directory; `connect()` raises

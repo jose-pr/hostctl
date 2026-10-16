@@ -115,7 +115,7 @@ assert str(same) == str(config)
 | | |
 | --- | --- |
 | URI | `winrm://user@host[:port][?query]` (HTTP), `winrms://...` (HTTPS) |
-| query keys | `auth`, `verify`, `message_encryption`, `operation_timeout`, `read_timeout`, `timeout`, `provider`, `cleartext_auth` |
+| query keys | `auth`, `verify`, `message_encryption`, `timeout`, `connect_timeout`, `provider`, `cleartext_auth` |
 | credentials | `password` |
 | extra | `winrm`; `psrp` for runspaces (Python 3.10+); `winrm-credssp`, `winrm-kerberos` for those `auth` values |
 
@@ -139,14 +139,17 @@ assert "secret" not in str(config)
 - **No password.** On a Windows client, a config with no password uses the
   current Windows login (native PowerShell remoting); `username` must name that
   user.
-- **Timeouts.** All are float seconds. `timeout` (default 30) is the default
-  for `run(timeout=)`: the same total deadline per command, which a per-call
-  `timeout=` overrides; `timeout=None` (`?timeout=`) sets none, so a command
-  that never finishes blocks the call, and on the native leg so does a host
-  that stops answering once the session is open. `operation_timeout` and
-  `read_timeout` bound one WS-Man request each, as SSH's `connect_timeout`
-  bounds only connecting; on the native leg `read_timeout` bounds opening the
-  session.
+- **Timeouts.** Two, both float seconds with a default of 30. `timeout` is
+  the default for `run(timeout=)`: the same total deadline per command,
+  which a per-call `timeout=` overrides; `timeout=None` (`?timeout=`) sets
+  none, so a command that never finishes blocks the call, and on the native
+  leg so does a host that stops answering once the session is open.
+  `connect_timeout` bounds only establishing the connection, as on SSH, and
+  a host that never accepts it raises `ConnectionError`.
+  `connect_timeout=None` (`?connect_timeout=`) keeps each leg's library
+  default: PowerShell's 180 s on the native leg, pypsrp's 30 s on PSRP, and
+  on pywinrm its single 30 s HTTP timeout, which then bounds connecting too.
+  How long one WS-Man request may wait is fixed and not configurable.
 
 ## Containers
 

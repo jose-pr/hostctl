@@ -151,8 +151,8 @@ waiting to be formatted (`[pscustomobject]@{a=1}` printed nothing).
   expires the command is asked to stop (the native relay is killed, pywinrm
   sends the WinRS terminate signal, PSRP its stop signal) and `TimeoutExpired`
   carries `orphaned=True`, since none of them confirms the remote process
-  ended. `read_timeout` and `operation_timeout` bound one request each and
-  never end a running command. Every leg reports one status: 0 when the last
+  ended. `WinRMConfig(connect_timeout=)` bounds only establishing the
+  connection and never ends a running command. Every leg reports one status: 0 when the last
   statement succeeded, else the native exit code, else 1. A remote error is that
   status with its text on stderr; only transport and authentication failures are
   normalized to `ConnectionError`/`PermissionError`.
