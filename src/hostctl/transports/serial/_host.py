@@ -25,7 +25,7 @@ from ._executor import SerialExecutor, SerialFactory, SerialLike, SerialSettings
 from ...process import Process, terminal_options
 from ._process import SerialConsoleProcess
 from ...exceptions import ConsoleProtocolError
-from ._console import RawConsoleProfile, ConsoleProfile
+from ...console import RawConsoleProfile, ConsoleProfile
 from ...shell._grammar import Command, starts_direct_command
 from ...host._host import Host
 from ...host._config import HostConfig

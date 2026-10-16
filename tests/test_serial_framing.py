@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from hostctl.exceptions import ConsoleProtocolError
-from hostctl.transports.serial._console import LoginStep, PromptConsoleProfile
+from hostctl.console import LoginStep, PromptConsoleProfile
 from hostctl.transports.serial._host import SerialConfig, SerialHost
 
 

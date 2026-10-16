@@ -805,7 +805,7 @@ class FakeSerialHost:
 
     def __new__(cls):
         import serial
-        from hostctl.transports.serial._console import RawConsoleProfile
+        from hostctl.console import RawConsoleProfile
         from hostctl.transports.serial._host import SerialConfig
 
         port = serial.serial_for_url("loop://", timeout=0.1, write_timeout=1)
@@ -1199,7 +1199,7 @@ def _ssh_local() -> tuple[object, Callable[[], None]]:
 
 def _loop_serial() -> tuple[object, Callable[[], None]]:
     import serial
-    from hostctl.transports.serial._console import RawConsoleProfile
+    from hostctl.console import RawConsoleProfile
     from hostctl.transports.serial._host import SerialConfig
 
     port = serial.serial_for_url("loop://", timeout=0.1, write_timeout=1)

@@ -8,7 +8,7 @@ import pytest
 
 from hostctl.host._host import Host
 from hostctl.host._config import HostConfig
-from hostctl.transports.serial._console import (
+from hostctl.console import (
     LoginStep,
     PromptConsoleProfile,
     RawConsoleProfile,

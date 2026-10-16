@@ -39,6 +39,14 @@ from .executor import (
     ExecutorCapability as ExecutorCapability,
     CommandLike as CommandLike,
 )
+from .console import (
+    ConsoleProfile as ConsoleProfile,
+    ConsoleStream as ConsoleStream,
+    LoginStep as LoginStep,
+    PromptConsoleProfile as PromptConsoleProfile,
+    RawConsoleProfile as RawConsoleProfile,
+    console_stream as console_stream,
+)
 from .host import (
     DEFAULT as DEFAULT,
     Host as Host,
@@ -110,14 +118,7 @@ from .transports.local import (
     local_providers as local_providers,
 )
 from .transports.qemu import QEMUConfig as QEMUConfig, QEMUHost as QEMUHost
-from .transports.serial import (
-    LoginStep as LoginStep,
-    PromptConsoleProfile as PromptConsoleProfile,
-    RawConsoleProfile as RawConsoleProfile,
-    SerialConfig as SerialConfig,
-    ConsoleProfile as ConsoleProfile,
-    SerialHost as SerialHost,
-)
+from .transports.serial import SerialConfig as SerialConfig, SerialHost as SerialHost
 from .transports.ssh import SSHConfig as SSHConfig, ssh_providers as ssh_providers
 from .transports.winrm import (
     WinRMConfig as WinRMConfig,
@@ -196,11 +197,13 @@ __all__ = [
     "POSIX_SHELL",
     "PWSH",
     "ZSH",
-    # Serial consoles
+    # Consoles
     "ConsoleProfile",
+    "ConsoleStream",
     "RawConsoleProfile",
     "PromptConsoleProfile",
     "LoginStep",
+    "console_stream",
     # Provider composition
     "ExecutorProvider",
     "PathProvider",

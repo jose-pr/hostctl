@@ -16,7 +16,7 @@ from ...process import (
 from ._executor import SerialLike, normalize_serial_error
 
 if typing.TYPE_CHECKING:  # pragma: no cover - import cycle at runtime
-    from ._console import ConsoleProfile
+    from ...console import ConsoleProfile
 
 
 class SerialProcess(_LeasedStreamProcess):
@@ -218,8 +218,11 @@ class SerialConsoleProcess(Process):
             data = data.encode(self.encoding, self.errors)
         self.process.write(data)
 
-    def read(self, size: int = -1) -> ProcessData:
-        value = typing.cast(bytes, self.process.read(size))
+    def read(
+        self, size: int = -1, *, timeout: typing.Optional[float] = None
+    ) -> ProcessData:
+        """Read up to `size` bytes, bounded by `timeout` as `SerialProcess.read` is."""
+        value = typing.cast(bytes, self.process.read(size, timeout=timeout))
         if self._decoder is None:
             return value
         # Never final: an idle line reads `b""` too, so a character split

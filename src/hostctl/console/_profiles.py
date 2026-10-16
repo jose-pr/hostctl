@@ -1,4 +1,4 @@
-"""Console protocols for serial transports.
+"""Console profiles: how a byte stream is logged into and driven.
 
 The wire is deliberately kept separate from shell and operating-system
 assumptions.  Profiles negotiate a console, optionally frame commands, and
@@ -12,27 +12,31 @@ import re
 import time
 import typing
 
-from ...exceptions import ConsoleProtocolError
-from ._process import SerialProcess
+from ..exceptions import ConsoleProtocolError
+from ._stream import ConsoleStream
 
 
 @typing.runtime_checkable
 class ConsoleProfile(typing.Protocol):
-    """Runtime contract implemented by serial console profiles."""
+    """What a console profile implements: negotiate, send, and optionally run.
+
+    `run` returns the command's output and status, and is called only when
+    `can_run` is true. Every method takes the `ConsoleStream` to drive.
+    """
 
     can_run: bool
     line_terminator: bytes
     encoding: str
 
-    def negotiate(self, process: SerialProcess) -> None: ...
+    def negotiate(self, stream: ConsoleStream) -> None: ...
 
     def send(
-        self, process: SerialProcess, command: typing.Union[str, bytes]
+        self, stream: ConsoleStream, command: typing.Union[str, bytes]
     ) -> None: ...
 
     def run(
         self,
-        process: SerialProcess,
+        stream: ConsoleStream,
         command: typing.Union[str, bytes],
         *,
         timeout: typing.Optional[float] = None,
@@ -41,7 +45,7 @@ class ConsoleProfile(typing.Protocol):
 
 @dataclasses.dataclass(frozen=True, repr=False)
 class LoginStep:
-    """One bounded expect/send step used by :class:`PromptConsoleProfile`."""
+    """One bounded expect/send step of a console login."""
 
     expect: typing.Union[bytes, str]
     send: typing.Union[bytes, str]
@@ -70,19 +74,19 @@ class RawConsoleProfile:
     encoding = "utf-8"
     max_buffer = 64 * 1024
 
-    def negotiate(self, process: SerialProcess) -> None:
+    def negotiate(self, stream: ConsoleStream) -> None:
         return None
 
-    def send(self, process: SerialProcess, command: typing.Union[str, bytes]) -> None:
+    def send(self, stream: ConsoleStream, command: typing.Union[str, bytes]) -> None:
         data = (
             command.encode(self.encoding)
             if isinstance(command, str)
             else bytes(command)
         )
-        process.write(data + self.line_terminator)
+        stream.write(data + self.line_terminator)
 
     def run(
-        self, process: SerialProcess, command: typing.Union[str, bytes], *, timeout=None
+        self, stream: ConsoleStream, command: typing.Union[str, bytes], *, timeout=None
     ):
         raise NotImplementedError("raw serial consoles do not provide framed run()")
 
@@ -118,7 +122,7 @@ class PromptConsoleProfile:
         paging_disable: typing.Optional[typing.Union[bytes, str]] = None,
         max_paging_pages: int = 32,
         terminal_setup: typing.Optional[
-            typing.Callable[[SerialProcess, int, int], None]
+            typing.Callable[[ConsoleStream, int, int], None]
         ] = None,
         status_parser: typing.Optional[typing.Callable[[re.Match[bytes]], int]] = None,
         login_timeout: float = 10.0,
@@ -211,12 +215,12 @@ class PromptConsoleProfile:
 
     def _read_until(
         self,
-        process: SerialProcess,
+        stream: ConsoleStream,
         expression: typing.Pattern[bytes],
         *,
         timeout: float | None,
         initial: bytes = b"",
-        paging_process: SerialProcess | None = None,
+        paging_stream: ConsoleStream | None = None,
         skip: bytes | None = None,
         floor: int = 0,
     ) -> bytes:
@@ -225,7 +229,7 @@ class PromptConsoleProfile:
         pages = 0
         while True:
             start = self._window(buffer, skip, floor)
-            if paging_process is not None and self._paging_prompt is not None:
+            if paging_stream is not None and self._paging_prompt is not None:
                 paging = self._paging_prompt.search(buffer, start)
                 if paging is not None:
                     if pages >= self.max_paging_pages:
@@ -238,7 +242,7 @@ class PromptConsoleProfile:
                     # returned its LAST page and reported success -- the
                     # opposite of what paging support is for.
                     del buffer[paging.start() : paging.end()]
-                    paging_process.write(self.paging_continue)
+                    paging_stream.write(self.paging_continue)
                     continue
             match = expression.search(buffer, start)
             if match:
@@ -261,7 +265,7 @@ class PromptConsoleProfile:
                 if timeout is None
                 else max(0.0, timeout - (time.monotonic() - started))
             )
-            chunk = self._read(process, remaining)
+            chunk = self._read(stream, remaining)
             if chunk:
                 buffer.extend(chunk)
                 continue
@@ -269,7 +273,7 @@ class PromptConsoleProfile:
             # respecting a monotonic deadline.
             time.sleep(0.001)
 
-    def _read(self, process: SerialProcess, remaining: float | None) -> bytes:
+    def _read(self, stream: ConsoleStream, remaining: float | None) -> bytes:
         """One backend read, bounded by what is left of the caller's budget.
 
         Without the bound, `run(timeout=)` was only checked *between* reads,
@@ -278,15 +282,15 @@ class PromptConsoleProfile:
         forever instead of raising `TimeoutExpired`.
         """
         if remaining is None:
-            return process.read(self.read_size)
+            return stream.read(self.read_size)
         try:
-            return process.read(self.read_size, timeout=remaining)
+            return stream.read(self.read_size, timeout=remaining)
         except TypeError:
-            # An injected process that predates the keyword; the deadline
+            # An injected stream that predates the keyword; the deadline
             # check between reads is then the only bound available.
-            return process.read(self.read_size)
+            return stream.read(self.read_size)
 
-    def drain(self, process: SerialProcess) -> None:
+    def drain(self, stream: ConsoleStream) -> None:
         """Discard whatever the previous exchange left in the stream.
 
         Raw serial is one merged stream with no request/response
@@ -295,67 +299,67 @@ class PromptConsoleProfile:
         read -- were consumed by the NEXT `run()` and reported as its output
         with returncode 0.
         """
-        reset = getattr(process, "reset_input_buffer", None)
+        reset = getattr(stream, "reset_input_buffer", None)
         if callable(reset):
             try:
                 reset()
             except (NotImplementedError, ConnectionError):
                 pass
         # A driver-level reset does not cover bytes already read into the
-        # backend object, and an injected process may have no reset at all.
+        # backend object, and an injected stream may have no reset at all.
         for _ in range(64):
             try:
-                if not self._read(process, 0.0):
+                if not self._read(stream, 0.0):
                     return
             except (TimeoutError, ConnectionError):
                 return
 
-    def negotiate(self, process: SerialProcess) -> None:
+    def negotiate(self, stream: ConsoleStream) -> None:
         transcript = b""
-        reset = getattr(process, "reset_input_buffer", None)
+        reset = getattr(stream, "reset_input_buffer", None)
         if callable(reset):
             try:
                 reset()
             except NotImplementedError:
                 pass
         if self.wakeup:
-            process.write(self.wakeup)
+            stream.write(self.wakeup)
         # The patterns were compiled once in `__init__` and then recompiled
         # here on every connect, while `_login_patterns` sat unused -- two
         # compilation sites for one expression, which is one too many to
         # keep in agreement.
         for step, pattern in zip(self.login, self._login_patterns):
             transcript = self._read_until(
-                process, pattern, timeout=self.login_timeout, initial=transcript
+                stream, pattern, timeout=self.login_timeout, initial=transcript
             )
-            process.write(step.send + self.line_terminator)
+            stream.write(step.send + self.line_terminator)
         self._read_until(
-            process, self._prompt, timeout=self.login_timeout, initial=transcript
+            stream, self._prompt, timeout=self.login_timeout, initial=transcript
         )
         if self.paging_disable is not None:
-            process.write(self.paging_disable + self.line_terminator)
+            stream.write(self.paging_disable + self.line_terminator)
             # Its reply is deliberately NOT waited for here: a device that
             # answers nothing would cost a full prompt timeout on every
             # connect. `run()` drains before it sends, which is what keeps
             # that reply out of the first command's output.
 
-    def resize(self, process: SerialProcess, columns: int, rows: int) -> None:
+    def resize(self, stream: ConsoleStream, columns: int, rows: int) -> None:
         if self.terminal_setup is None:
             raise NotImplementedError("console profile does not support terminal setup")
         if columns <= 0 or rows <= 0:
             raise ValueError("terminal columns and rows must be positive")
-        self.terminal_setup(process, columns, rows)
+        self.terminal_setup(stream, columns, rows)
 
-    def send(self, process: SerialProcess, command: typing.Union[str, bytes]) -> None:
+    def send(self, stream: ConsoleStream, command: typing.Union[str, bytes]) -> None:
         data = (
             command.encode(self.encoding)
             if isinstance(command, str)
             else bytes(command)
         )
-        process.write(data + self.line_terminator)
+        stream.write(data + self.line_terminator)
 
     def run(
-        self, process: SerialProcess, command: typing.Union[str, bytes], *, timeout=None
+        self, stream: ConsoleStream, command: typing.Union[str, bytes], *, timeout=None
     ):
         """One framed exchange, in its own window.
 
@@ -369,13 +373,13 @@ class PromptConsoleProfile:
         """
         if not self.can_run:
             raise NotImplementedError("console profile does not provide reliable run()")
-        self.drain(process)
+        self.drain(stream)
         encoded = (
             command.encode(self.encoding)
             if isinstance(command, str)
             else bytes(command)
         )
-        self.send(process, command)
+        self.send(stream, command)
         skip = encoded if self.echo else None
         started = time.monotonic()
         assert self.status_marker is not None
@@ -383,10 +387,10 @@ class PromptConsoleProfile:
         # device says the command finished.
         try:
             transcript = self._read_until(
-                process,
+                stream,
                 self.status_marker,
                 timeout=timeout,
-                paging_process=process,
+                paging_stream=stream,
                 skip=skip,
             )
         except TimeoutError as exc:
@@ -412,11 +416,11 @@ class PromptConsoleProfile:
             last = candidate
         assert last is not None
         transcript = self._read_until(
-            process,
+            stream,
             self._prompt,
             timeout=remaining,
             initial=transcript,
-            paging_process=process,
+            paging_stream=stream,
             floor=last.end(),
         )
         window = self._window(transcript, skip, 0)

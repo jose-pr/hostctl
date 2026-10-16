@@ -22,13 +22,13 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `WinRMPath`, `HostPath` in `hostctl` | removed; `host.path()` returns `CompositeWindowsPath`; annotate with `pathapi.Path` |
 | `from hostctl.host import PosixHost, uri_host, ...` | `from hostctl import ...` (homes: `hostctl.system`, `hostctl.uri`; `hostctl.host` holds only `Host`, `HostConfig`, `HostInfo`, `Timeout`, `DEFAULT` and the selections) |
 | `hostctl.host.qemu`, `.container`, `.serial`, `.system`, `.composite_path` | `hostctl.transports.qemu`, `.container`, `.serial`, `hostctl.system`, `hostctl.paths` |
-| `hostctl.serial` (console profiles) | `hostctl.transports.serial` (still re-exported from `hostctl`) |
+| `hostctl.serial` (console profiles) | `hostctl.console` (still re-exported from `hostctl`); `hostctl.transports.serial` holds the transport only |
 | concrete executors, processes, path backends, `provider.transports`, `shell.posix` etc.; `LocalExecutor` from `hostctl.executor` | internal; flavour classes stay in `hostctl.shell`; `LocalExecutor` is in `hostctl` and `hostctl.transports.local` |
 | `provider.transports.READ_ONLY_PATH_OPERATIONS` | `hostctl.provider.READ_ONLY_PATH_OPERATIONS` |
 | loggers `hostctl.host.ssh`, `hostctl.host.winrm`, `hostctl.host.system`, `hostctl.host.qemu`, `hostctl.provider`, `hostctl.provider.transports` | one per module, named for it (`hostctl.transports.ssh._transport`, `hostctl.system._host`, `hostctl.provider._contracts`, ...); configure `hostctl` |
 | `dialect=`, `path_flavor=` (and `?dialect=`, `?path_flavor=`); `ShellFlavour.path_flavor` | `shell=`, `pathname=` (`?shell=`, `?pathname=`); `ShellFlavour.pathname` |
 | `SSHShellSelection`, `QEMUShellSelection`, `ContainerShellSelection`, `*PathSelection`, `PathnameConstructor` | `hostctl.host.ShellSelection`, `hostctl.host.PathnameSelection` |
-| `ContainerConfig(user=)` (`?user=`); `SerialConfig(port=, protocol=)`; `SerialConsoleProtocol` | `username=` (`?username=`); `device=`, `profile=`; `ConsoleProfile` |
+| `ContainerConfig(user=)` (`?user=`); `SerialConfig(port=, protocol=)`; `SerialConsoleProtocol` | `username=` (`?username=`); `device=`, `profile=`; `ConsoleProfile`, whose methods take a `ConsoleStream` (any object with `read(size, *, timeout=)` and `write(data)`) where they took a `SerialProcess` |
 | `WinRMConfig(transport=, ssl=, server_cert_validation=)` (and the same URI keys) | `auth=`, `tls=`, `verify=` (bool, `?verify=false`) |
 | `WinRMConfig(read_timeout_sec=, operation_timeout_sec=)` (and the same URI keys; also `read_timeout`, `operation_timeout`) | `timeout=Timeout(connect=10)` (default 30 s, `?timeout_connect=10`) where the aim was to stop a hang while connecting; `timeout=600` (the total, `?timeout=600`) where it was to let a long command finish. The per-request knobs are internal; the old names raise and say so |
 | `WinRMConfig(transport="basic"/"plaintext"/"ssl")` over plain HTTP (the password sent in cleartext on pywinrm) | `ValueError` unless `cleartext_auth=True` (`?cleartext_auth=true`); or use `tls=True` |
@@ -92,6 +92,16 @@ collection until pytruenas ports to these names.
   status is the worst: 130, then 125-127, then the largest remote status.
   A password is read once for all hosts. One host behaves exactly as
   before, over MCP too (`uri` stays a string; further hosts are `more`).
+
+- **`hostctl.console`: console profiles over any byte stream**, in 0.4.0.
+  `ConsoleProfile`, `RawConsoleProfile`, `PromptConsoleProfile` and
+  `LoginStep` move there from the serial transport and drive a
+  `ConsoleStream` -- `read(size, *, timeout=)` and `write(data)` -- instead
+  of a `SerialProcess`, with unchanged behaviour. `console_stream(process)`
+  adapts a process whose read blocks (a QEMU console from `open_serial()`, a
+  container or SSH `spawn(terminal=True)`) by reading it on a thread, so a
+  profile can drive those consoles too. A serial `spawn()` session's `read`
+  takes `timeout=`.
 
 - **Typed selection records, a host name and an audible fallback**, in
   0.4.0. `SelectionStep` and `ProviderDetail` (in `hostctl` and

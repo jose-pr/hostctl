@@ -11,7 +11,7 @@ and configs you construct, exceptions you catch, types you annotate with), or
 from the public module that is each name's home: `hostctl.host`,
 `hostctl.exceptions`, `hostctl.uri`, `hostctl.system`, `hostctl.provider`,
 `hostctl.executor`, `hostctl.process`, `hostctl.paths`, `hostctl.shell`,
-`hostctl.sync`, `hostctl.deploy`, `hostctl.cli` and `hostctl.transports.local`, `.ssh`,
+`hostctl.sync`, `hostctl.deploy`, `hostctl.console`, `hostctl.cli` and `hostctl.transports.local`, `.ssh`,
 `.winrm`, `.container`, `.qemu`, `.serial`. Every public module declares
 `__all__`; a name outside it, and every module with a `_`-prefixed component,
 is internal and may change without notice. Concrete executors, process
@@ -893,12 +893,51 @@ value. `inter_byte_timeout` is pyserial's own, separate field.
   the process that replaced it.
 
 ```python
+SerialProcess.read(size=-1, *, timeout=None) -> bytes
+SerialProcess.write(data, *, timeout=None)
+SerialProcess.send_break(duration=0.25)
+SerialProcess.reset_input_buffer()
+```
+
+`SerialProcess` is the leased port as a `Process`, with `dtr`/`rts`
+properties and `send_break()`. `SerialLike` is the pyserial-shaped port
+protocol (`read`, `write`, `flush`, `send_break`, `close`). `profile=`
+(default `RawConsoleProfile()`) takes a `hostctl.console` profile. The
+process `spawn()` returns reads with `read(size=-1, *, timeout=None)` too,
+so it is a `ConsoleStream` as it is.
+
+## Consoles (`hostctl.console`)
+
+A console profile drives a byte stream: it logs in, sends lines and, when it
+can, frames one command's output and status. The profiles know nothing of the
+transport; `SerialConfig(profile=)` uses one, and any other console stream can
+be driven directly.
+
+```python
+ConsoleStream.read(size=-1, *, timeout=None) -> bytes
+ConsoleStream.write(data)
+console_stream(process) -> ConsoleStream
+```
+
+- `ConsoleStream` is the protocol a profile drives. `read` returns up to
+  `size` bytes, `b""` when nothing arrived within `timeout` (`None`: the
+  stream's own wait; `0`: only what is already there), and raises
+  `ConnectionError` once the stream has ended; `write` delivers all of `data`.
+  An optional `reset_input_buffer()` discards unread bytes.
+- `console_stream(process)` returns a process whose `read` takes `timeout=`
+  (a `SerialProcess`, a serial `spawn()` session) unchanged. Any other
+  byte-mode `Process` -- `QEMUHost.open_serial()`, a container or SSH
+  `spawn(terminal=True)` -- is read by a daemon thread from then on, so read it
+  only through the returned stream. A process opened with `encoding=` raises
+  `TypeError` on the first read.
+
+```python
 RawConsoleProfile()
 PromptConsoleProfile(prompt, *, login=(), line_terminator=b'\r\n', error_patterns=(), status_marker=None, reliable_status=False, max_buffer=65536, read_size=4096, wakeup=b'\r', echo=True, paging_prompt=None, paging_continue=b' ', paging_disable=None, max_paging_pages=32, terminal_setup=None, status_parser=None, login_timeout=10.0)
 LoginStep(expect, send, secret=False)
-ConsoleProfile.negotiate(process)
-ConsoleProfile.run(process, command, *, timeout=None) -> tuple[bytes, int]
-ConsoleProfile.send(process, command)
+ConsoleProfile.negotiate(stream)
+ConsoleProfile.run(stream, command, *, timeout=None) -> tuple[bytes, int]
+ConsoleProfile.send(stream, command)
 ```
 
 - `RawConsoleProfile` supports sessions only.
@@ -909,18 +948,9 @@ ConsoleProfile.send(process, command)
   `ConsoleProtocolError`, never a bare `TimeoutError`, and a transcript
   attached to an error has `secret=True` values replaced with `<redacted>`.
 - `LoginStep` is one expect/send pair; `ConsoleProfile` is the protocol a
-  custom profile implements.
-
-```python
-SerialProcess.read(size=-1, *, timeout=None) -> bytes
-SerialProcess.write(data, *, timeout=None)
-SerialProcess.send_break(duration=0.25)
-SerialProcess.reset_input_buffer()
-```
-
-`SerialProcess` is the leased port as a `Process`, with `dtr`/`rts`
-properties and `send_break()`. `SerialLike` is the pyserial-shaped port
-protocol (`read`, `write`, `flush`, `send_break`, `close`).
+  custom profile implements (`can_run`, `line_terminator`, `encoding` and the
+  three methods). A timed-out `run` raises `TimeoutError` carrying the
+  transcript so far as `.output`.
 
 ## Shells (`hostctl.shell`)
 

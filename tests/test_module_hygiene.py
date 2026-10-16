@@ -291,6 +291,7 @@ def test_an_explicit_reexport_is_in_all(module):
 
 #: Contract modules: none may import a transport or the system hosts.
 _CONTRACTS = (
+    "console",
     "exceptions",
     "host",
     "uri",

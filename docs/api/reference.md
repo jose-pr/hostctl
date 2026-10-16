@@ -8,8 +8,9 @@ implement.
 Each name also has a public home module: `hostctl.host`, `hostctl.exceptions`,
 `hostctl.uri`, `hostctl.system`, `hostctl.provider`, `hostctl.executor`,
 `hostctl.process`, `hostctl.paths`, `hostctl.shell`, `hostctl.sync`,
-`hostctl.cli` and the transport packages `hostctl.transports.local`, `.ssh`,
-`.winrm`, `.container`, `.qemu` and `.serial`. Each declares `__all__`; a name
+`hostctl.console`, `hostctl.cli` and the transport packages
+`hostctl.transports.local`, `.ssh`, `.winrm`, `.container`, `.qemu` and
+`.serial`. Each declares `__all__`; a name
 outside it, and every module whose name starts with an underscore, is internal
 and may change without a deprecation cycle. Concrete executors, process
 adapters and path backends are internal: a host hands them back typed as
@@ -67,8 +68,10 @@ points and a worked example are in
 ::: hostctl.register_shell_flavour
 ::: hostctl.shell_flavour
 
-## Serial consoles
+## Consoles
 
+::: hostctl.ConsoleStream
+::: hostctl.console_stream
 ::: hostctl.ConsoleProfile
 ::: hostctl.RawConsoleProfile
 ::: hostctl.PromptConsoleProfile
