@@ -28,6 +28,7 @@ from ...shell import POWERSHELL
 from ...shell._flavour import ShellFlavour
 from ...shell._vocabulary import wants_epilogue
 from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT, WinRMConfig
+from ...executor import _OMITTED, _Omitted
 from ._path import WinRMPath, WinRMPathBackend
 
 log = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ class _NativeLeg(_SessionLeg):
         # bound and reports the remote status on its own marker line.
         self.executor = WinRMExecutor(
             lambda: self.session,
-            lambda: self.config.timeout,
+            lambda: self.config.timeouts.total,
             manages_status=True,
             accepts_timeout=True,
         )
@@ -141,11 +142,11 @@ class _NativeLeg(_SessionLeg):
             self.config.host,
             ssl=self.config.tls,
             port=self.config.port,
-            timeout=self.config.timeout,
+            timeout=self.config.timeouts.total,
             # Against a host that accepts TCP and never answers (Windows
             # PowerShell 5.1), -OpenTimeout 5 s / 60 s / 180 s (the default)
             # ended the call after 18.5 / 70.5 / 190.4 s.
-            open_timeout=self.config.connect_timeout,
+            open_timeout=self.config.timeouts.connect,
             transport=self.config.auth,
             verify=self.config.verify,
             message_encryption=self.config.message_encryption,
@@ -187,14 +188,12 @@ class _PywinrmLeg(_SessionLeg):
             operation_timeout_sec=_OPERATION_TIMEOUT,
             read_timeout_sec=_READ_TIMEOUT,
         ).protocol
-        if self.config.connect_timeout is not None:
+        connect = self.config.timeouts.connect
+        if connect is not None:
             # pywinrm hands this attribute to `requests` as the `timeout=` of
             # every request, so a `(connect, read)` pair splits the two.
-            protocol.transport.read_timeout_sec = (
-                self.config.connect_timeout,
-                _READ_TIMEOUT,
-            )
-        return _PywinrmStdinSession(protocol, timeout=self.config.timeout)
+            protocol.transport.read_timeout_sec = (connect, _READ_TIMEOUT)
+        return _PywinrmStdinSession(protocol, timeout=self.config.timeouts.total)
 
 
 class _PSRPLeg(_Leg):
@@ -206,7 +205,7 @@ class _PSRPLeg(_Leg):
         super().__init__(config)
         self._runspace: typing.Optional[RunspaceSession] = None
         self.executor = PSRPExecutor(
-            lambda: self.runspace(), lambda: self.config.timeout
+            lambda: self.runspace(), lambda: self.config.timeouts.total
         )
 
     def runspace(self) -> RunspaceSession:
@@ -348,9 +347,10 @@ class _WinRMTransport:
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
         input: CommandInput = None,
-        timeout: typing.Optional[float] = None,
+        timeout: typing.Union[float, None, _Omitted] = _OMITTED,
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
+        """Run on the selected leg; an omitted `timeout` is the config's total."""
         if executable is not None:
             raise NotImplementedError(
                 "WinRM provider run supports PowerShell only and does not accept executable"

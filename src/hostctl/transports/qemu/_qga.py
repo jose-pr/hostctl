@@ -16,6 +16,12 @@ from ...exceptions import (
     QGAProtocolError,
     QGATimeoutError,
 )
+from ...executor import _OMITTED, _Omitted
+
+
+def _deadline(seconds: typing.Optional[float]) -> typing.Optional[float]:
+    """The monotonic instant `seconds` from now; `None` is no deadline."""
+    return None if seconds is None else time.monotonic() + seconds
 
 
 class _QGARequestNotSerializable(ValueError):
@@ -120,14 +126,26 @@ class _QGAFramedSession:
     Concrete transports only provide raw byte-stream operations.  Keeping the
     parser here ensures partial reads, synchronization, correlation, and error
     unwrapping behave identically for Unix sockets and SSH tunnels.
+
+    `timeout` bounds one request, `None` for none. `connect_timeout` bounds
+    opening the stream and its guest-sync; omitted, opening shares the
+    deadline of the request that triggers it (and `timeout` for `connect()`).
     """
 
-    def __init__(self, *, timeout: float, max_reply_size: int) -> None:
-        if timeout <= 0:
-            raise ValueError("timeout must be greater than zero")
+    def __init__(
+        self,
+        *,
+        timeout: typing.Optional[float],
+        max_reply_size: int,
+        connect_timeout: typing.Union[float, None, _Omitted] = _OMITTED,
+    ) -> None:
+        for value in (timeout, connect_timeout):
+            if value is not None and value is not _OMITTED and value <= 0:
+                raise ValueError("timeout must be greater than zero")
         if max_reply_size <= 0:
             raise ValueError("max_reply_size must be greater than zero")
-        self.timeout = float(timeout)
+        self.timeout = None if timeout is None else float(timeout)
+        self.connect_timeout = connect_timeout
         self.max_reply_size = int(max_reply_size)
         self._buffer = bytearray()
         self._ids = iter(range(1, 2**63))
@@ -138,7 +156,11 @@ class _QGAFramedSession:
         with self._session_lock:
             if self._connected:
                 return
-            deadline = time.monotonic() + self.timeout
+            deadline = _deadline(
+                self.timeout
+                if self.connect_timeout is _OMITTED
+                else self.connect_timeout
+            )
             try:
                 self._connect_raw(deadline)
                 self._buffer.clear()
@@ -161,16 +183,23 @@ class _QGAFramedSession:
         if not isinstance(command, str) or not command:
             raise ValueError("QGA request requires a non-empty 'execute' string")
         request_timeout = self.timeout if timeout is None else float(timeout)
-        if request_timeout <= 0:
+        if request_timeout is not None and request_timeout <= 0:
             raise ValueError("timeout must be greater than zero")
-        deadline = time.monotonic() + request_timeout
+        deadline = _deadline(request_timeout)
         with self._session_lock:
             try:
                 if not self._connected:
-                    self._connect_raw(deadline)
+                    opening = (
+                        deadline
+                        if self.connect_timeout is _OMITTED
+                        else _deadline(self.connect_timeout)
+                    )
+                    self._connect_raw(opening)
                     self._buffer.clear()
                     self._connected = True
-                    self._synchronize(deadline)
+                    self._synchronize(opening)
+                    if opening is not deadline:
+                        deadline = _deadline(request_timeout)
                 request_id = next(self._ids)
                 payload = dict(request)
                 payload["id"] = request_id
@@ -197,7 +226,7 @@ class _QGAFramedSession:
         except Exception:
             pass
 
-    def _synchronize(self, deadline: float) -> None:
+    def _synchronize(self, deadline: typing.Optional[float]) -> None:
         token = secrets.randbits(52)
         request_id = f"sync-{next(self._ids)}"
         self._send(
@@ -225,7 +254,7 @@ class _QGAFramedSession:
     def _send(
         self,
         request: typing.Mapping[str, object],
-        deadline: float,
+        deadline: typing.Optional[float],
         *,
         prefix: bytes = b"",
     ) -> None:
@@ -239,7 +268,7 @@ class _QGAFramedSession:
             ) from exc
         self._send_raw(prefix + encoded + b"\n", deadline)
 
-    def _discard_until_delimiter(self, deadline: float) -> None:
+    def _discard_until_delimiter(self, deadline: typing.Optional[float]) -> None:
         while True:
             position = self._buffer.find(b"\xff")
             if position >= 0:
@@ -250,7 +279,7 @@ class _QGAFramedSession:
             self._receive(deadline)
 
     def _correlated_reply(
-        self, request_id: object, deadline: float
+        self, request_id: object, deadline: typing.Optional[float]
     ) -> typing.Mapping[str, object]:
         while True:
             reply = self._read_reply(deadline)
@@ -261,7 +290,9 @@ class _QGAFramedSession:
             if "id" not in reply and "error" in reply:
                 return reply
 
-    def _read_reply(self, deadline: float) -> typing.Mapping[str, object]:
+    def _read_reply(
+        self, deadline: typing.Optional[float]
+    ) -> typing.Mapping[str, object]:
         while True:
             newline = self._buffer.find(b"\n")
             if newline < 0:
@@ -284,7 +315,7 @@ class _QGAFramedSession:
                 raise QGAProtocolError("QGA reply must be a JSON object")
             return typing.cast(typing.Mapping[str, object], reply)
 
-    def _receive(self, deadline: float) -> None:
+    def _receive(self, deadline: typing.Optional[float]) -> None:
         chunk = self._recv_raw(min(65536, self.max_reply_size + 1), deadline)
         if not isinstance(chunk, bytes):
             raise QGAProtocolError("QGA transport returned non-byte data")
@@ -312,19 +343,21 @@ class _QGAFramedSession:
         return reply["return"]
 
     @staticmethod
-    def _remaining(deadline: float) -> float:
+    def _remaining(deadline: typing.Optional[float]) -> typing.Optional[float]:
+        if deadline is None:
+            return None
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise QGATimeoutError("QGA request deadline expired")
         return remaining
 
-    def _connect_raw(self, deadline: float) -> None:
+    def _connect_raw(self, deadline: typing.Optional[float]) -> None:
         raise NotImplementedError
 
-    def _send_raw(self, data: bytes, deadline: float) -> None:
+    def _send_raw(self, data: bytes, deadline: typing.Optional[float]) -> None:
         raise NotImplementedError
 
-    def _recv_raw(self, size: int, deadline: float) -> bytes:
+    def _recv_raw(self, size: int, deadline: typing.Optional[float]) -> bytes:
         raise NotImplementedError
 
     def _close_raw(self) -> None:

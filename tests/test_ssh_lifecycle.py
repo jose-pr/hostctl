@@ -10,6 +10,7 @@ import pytest
 
 pytest.importorskip("asyncssh")
 
+from hostctl import Timeout
 from hostctl.host._config import HostConfig
 from hostctl.transports.ssh._config import SSHConfig
 from hostctl import _async
@@ -49,7 +50,7 @@ def test_connect_timeout_bounds_a_silent_server():
         host = SSHConfig(
             "127.0.0.1",
             port=listener.getsockname()[1],
-            connect_timeout=0.5,
+            timeout=Timeout(connect=0.5),
             known_hosts=None,
         ).open()
         started = time.monotonic()
@@ -108,15 +109,16 @@ def test_close_in_a_forked_child_leaves_the_parent_connection(monkeypatch):
     assert transport._ssh is None
 
 
-def test_connect_timeout_round_trips_the_uri_and_is_validated():
-    config = SSHConfig("h", connect_timeout=5)
+def test_the_connect_timeout_round_trips_the_uri_and_is_validated():
+    config = SSHConfig("h", timeout=Timeout(connect=5))
     restored = HostConfig(config.connection_uri)
-    assert restored.connect_timeout == 5.0
-    assert "connect_timeout" not in SSHConfig("h").connection_uri
+    assert restored.timeout.connect == 5.0
+    assert "timeout" not in SSHConfig("h").connection_uri
     assert SSHConfig("h").connect_opts()["connect_timeout"] == 30.0
-    assert "connect_timeout" not in SSHConfig("h", connect_timeout=None).connect_opts()
-    with pytest.raises(ValueError, match="connect_timeout"):
-        SSHConfig("h", connect_timeout=0)
+    unbounded = SSHConfig("h", timeout=Timeout(connect=None))
+    assert "connect_timeout" not in unbounded.connect_opts()
+    with pytest.raises(ValueError, match="timeout.connect"):
+        SSHConfig("h", timeout=Timeout(connect=0))
 
 
 async def _no_command(process):

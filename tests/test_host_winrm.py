@@ -13,6 +13,7 @@ from pathlib import PureWindowsPath
 import pytest
 
 from pathapi import Path as NextPath
+from hostctl import Timeout
 from hostctl.shell._shell import Shell
 from hostctl.transports.winrm._config import WinRMConfig
 from hostctl.transports.winrm._path import WinRMPath
@@ -172,7 +173,7 @@ def test_winrm_config_exposes_secure_transport_settings():
         tls=True,
         verify=True,
         message_encryption="always",
-        connect_timeout=10,
+        timeout=Timeout(connect=10),
     )
     assert config.endpoint == "https://host:5986/wsman"
     assert config.verify is True
@@ -747,12 +748,12 @@ def test_the_native_session_gets_the_configured_deadline(monkeypatch):
     monkeypatch.setenv("USERNAME", "admin")
     monkeypatch.delenv("USERDOMAIN", raising=False)
     transport = winrm_module._WinRMTransport(
-        WinRMConfig("server", username="admin", connect_timeout=45, timeout=90)
+        WinRMConfig("server", username="admin", timeout=Timeout(90, connect=45))
     )
     transport._leg.session
     del _os
 
-    # `connect_timeout` bounds opening the remote session, never the command.
+    # `timeout.connect` bounds opening the remote session, never the command.
     assert built["timeout"] == 90
     assert built["open_timeout"] == 45
 

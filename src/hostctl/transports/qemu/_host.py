@@ -31,6 +31,8 @@ from ...executor import (
 from ...shell._grammar import Command, starts_direct_command
 from ...host._host import Host
 from ...host._info import HostInfo
+from ...executor import _OMITTED, _Omitted
+from ...host._timeout import DEFAULT, _call_timeout
 
 from pathapi import Path
 
@@ -70,7 +72,7 @@ class QEMUHost(Host):
         self._agent_version: typing.Optional[str] = None
         self._executor = QEMUExecutor(
             lambda: self.transport,
-            agent_timeout=config.agent_timeout,
+            agent_timeout=config.timeouts.read,
             merged_capture=self._merges_output,
         )
         self._path_backend: typing.Optional[QGAPathBackend] = None
@@ -94,12 +96,13 @@ class QEMUHost(Host):
                 self._transport = LibvirtGuestAgentTransport(
                     self.config.domain,
                     connection_uri=self.config.connection,
-                    timeout=self.config.agent_timeout,
+                    timeout=self.config.timeouts.read,
                 )
             elif self.config.transport == "unix":
                 self._transport = UnixSocketGuestAgentTransport(
                     typing.cast(str, self.config.socket_path),
-                    timeout=self.config.agent_timeout,
+                    timeout=self.config.timeouts.read,
+                    connect_timeout=self._connect_timeout(),
                     max_reply_size=self.config.max_reply_size,
                 )
             else:
@@ -121,10 +124,16 @@ class QEMUHost(Host):
                 self._transport = SSHUnixGuestAgentTransport(
                     socket_path,
                     lambda: ssh_transport.ssh,
-                    timeout=self.config.agent_timeout,
+                    timeout=self.config.timeouts.read,
+                    connect_timeout=self._connect_timeout(),
                     max_reply_size=self.config.max_reply_size,
                 )
         return self._transport
+
+    def _connect_timeout(self) -> typing.Union[float, None, _Omitted]:
+        """The agent-stream connect bound; omitted, it shares the first reply's."""
+        connect = self.config.timeout.connect
+        return _OMITTED if connect is DEFAULT else connect
 
     @property
     def executor(self) -> QEMUExecutor:
@@ -170,8 +179,8 @@ class QEMUHost(Host):
         if self._commands is not None:
             return
         transport = self.transport
-        transport.execute({"execute": "guest-ping"}, self.config.agent_timeout)
-        info = transport.execute({"execute": "guest-info"}, self.config.agent_timeout)
+        transport.execute({"execute": "guest-ping"}, self.config.timeouts.read)
+        info = transport.execute({"execute": "guest-info"}, self.config.timeouts.read)
         if not isinstance(info, typing.Mapping):
             raise ConnectionError("guest-info returned a non-object result")
         version = info.get("version")
@@ -193,14 +202,14 @@ class QEMUHost(Host):
         discovered = frozenset(commands)
         if "guest-get-osinfo" in commands:
             value = transport.execute(
-                {"execute": "guest-get-osinfo"}, self.config.agent_timeout
+                {"execute": "guest-get-osinfo"}, self.config.timeouts.read
             )
             if isinstance(value, typing.Mapping):
                 self._os_info = value
         if "guest-get-host-name" in commands:
             value = transport.execute(
                 {"execute": "guest-get-host-name"},
-                self.config.agent_timeout,
+                self.config.timeouts.read,
             )
             if isinstance(value, typing.Mapping):
                 hostname = value.get("host-name")
@@ -336,7 +345,7 @@ class QEMUHost(Host):
                 self.transport,
                 supported_commands=self.supported_commands,
                 helper=self.config.path_helper or self._guest_path_helper(),
-                timeout=self.config.agent_timeout,
+                timeout=self.config.timeouts.read,
             )
         path_backend = self._path_backend
         if (
@@ -423,9 +432,10 @@ class QEMUHost(Host):
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
         input: CommandInput = None,
-        timeout: typing.Optional[float] = None,
+        timeout: typing.Optional[float] = _OMITTED,  # type: ignore[assignment]
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
+        timeout = _call_timeout(self.config, timeout)
         if "run" not in self.capabilities:
             raise NotImplementedError("guest agent does not provide guest-exec")
         direct = starts_direct_command(cmds)

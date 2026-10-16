@@ -8,6 +8,9 @@ import math
 import typing
 from urllib.parse import urlencode
 
+from ..executor import _OMITTED, _Omitted
+from ..uri._parse import _seconds_text
+
 
 class _Default(enum.Enum):
     """The type of :data:`DEFAULT`; its one member is compared by identity."""
@@ -111,18 +114,6 @@ class Timeout:
 _TimeoutArgument = typing.Union[float, None, Timeout]
 
 
-class _Omitted(enum.Enum):
-    """`run(timeout=)` left out: the config's total applies."""
-
-    OMITTED = "omitted"
-
-    def __repr__(self) -> str:
-        return "<config timeout>"
-
-
-_OMITTED = _Omitted.OMITTED
-
-
 class _TimeoutField:
     """A config's `timeout` attribute: any `_TimeoutArgument` in, a `Timeout` out.
 
@@ -199,15 +190,30 @@ def _config_timeouts(config: object) -> Timeout:
 def _run_timeout(
     config: object, timeout: typing.Union[float, None, _Omitted, _Default]
 ) -> typing.Union[float, None, _Omitted]:
-    """The deadline a `run()` call applies.
+    """The deadline a provider-composed host's `run()` passes on.
 
-    The call's own value; else the config's resolved total; `_OMITTED` when
-    that total is `DEFAULT`, which leaves the choice to the provider.
+    The call's own value; else the config's `timeout.total` as set;
+    `_OMITTED` when that is `DEFAULT`, so the provider applies its own.
+    """
+    if timeout is not _OMITTED and timeout is not DEFAULT:
+        return typing.cast(typing.Optional[float], timeout)
+    timeout_field = getattr(config, "timeout", None)
+    total = timeout_field.total if isinstance(timeout_field, Timeout) else DEFAULT
+    return _OMITTED if total is DEFAULT else total
+
+
+def _call_timeout(
+    config: object, timeout: typing.Union[float, None, _Omitted, _Default]
+) -> typing.Optional[float]:
+    """The deadline of a `run()` on a host that is its own transport.
+
+    The call's own value; else the config's resolved total; no limit when
+    the transport has none.
     """
     if timeout is not _OMITTED and timeout is not DEFAULT:
         return typing.cast(typing.Optional[float], timeout)
     total = _config_timeouts(config).total
-    return _OMITTED if total is DEFAULT else total
+    return None if total is DEFAULT else total
 
 
 #: The URI query key of each field.
@@ -220,11 +226,6 @@ _URI_KEYS = {
 
 #: Every timeout key a connection URI may carry.
 _URI_TIMEOUT_KEYS = tuple(_URI_KEYS.values())
-
-
-def _seconds_text(value: float) -> str:
-    """`20` for 20.0, so a URI keeps its whole-second spelling."""
-    return str(int(value)) if float(value).is_integer() else repr(float(value))
 
 
 def _timeout_query(timeout: Timeout) -> typing.List[typing.Tuple[str, str]]:

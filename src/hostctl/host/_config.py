@@ -24,6 +24,7 @@ from ..uri._parse import (
 )
 from .._registry import _recursive_subclasses, entry_points_in
 from ._dispatch import _T, _abstract, _constructor_signature
+from ._timeout import Timeout, _resolve as _resolve_timeout
 
 
 class _HostConfigMeta(_abc.ABCMeta):
@@ -147,6 +148,23 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
                     f"host scheme {name!r} is already registered by "
                     f"{other.__name__}; pass replace=True to take it over"
                 )
+
+    #: The `Timeout` fields this config honours, each with what `DEFAULT`
+    #: resolves to; any other field set to a value raises `ValueError`.
+    _timeout_defaults: _ty.ClassVar[_ty.Mapping[str, object]] = {}
+
+    @property
+    def timeouts(self) -> Timeout:
+        """`timeout` with each `DEFAULT` replaced by what the transport applies.
+
+        A field the transport does not support stays `DEFAULT`; so does a
+        system config's `total`, which the selected provider decides. A
+        config without a `timeout` attribute reports `Timeout()`.
+        """
+        timeout = getattr(self, "timeout", None)
+        if not isinstance(timeout, Timeout):
+            return Timeout()
+        return _resolve_timeout(timeout, self._timeout_defaults)
 
     @property
     def scheme(self) -> str:

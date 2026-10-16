@@ -30,6 +30,7 @@ from ..shell._flavour import ShellFlavour
 from ..shell._grammar import Command, Exec
 from ._info import HostInfo
 from ._dispatch import _T, _abstract, _constructor_signature
+from ..executor import _OMITTED
 
 
 class _HostMeta(_abc.ABCMeta):
@@ -254,7 +255,7 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         encoding: _ty.Optional[str] = None,
         errors: _ty.Optional[str] = None,
         input: CommandInput = None,
-        timeout: _ty.Optional[float] = None,
+        timeout: _ty.Optional[float] = _OMITTED,  # type: ignore[assignment]
         text: _ty.Optional[bool] = None,
     ) -> _subprocess.CompletedProcess:
         """Run commands and return a subprocess-compatible result.
@@ -273,6 +274,10 @@ class Host(_abc.ABC, metaclass=_HostMeta):
         output is captured rather than inherited by a process that may have
         no console.  The result type and every other keyword do follow
         ``subprocess``.
+
+        ``timeout`` is seconds for this call, ``None`` for no limit; left out,
+        the config's ``timeout.total`` applies (see
+        :attr:`HostConfig.timeouts`).
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not provide the 'run' capability"

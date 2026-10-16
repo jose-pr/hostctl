@@ -415,13 +415,6 @@ def _query_int(query: _ty.Mapping[str, str], name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer") from exc
 
 
-def _query_float(query: _ty.Mapping[str, str], name: str, default: float) -> float:
-    try:
-        return float(query.get(name, default))
-    except ValueError as exc:
-        raise ValueError(f"{name} must be a number of seconds") from exc
-
-
 def _seconds_text(value: float) -> str:
     """`20` for 20.0, so a URI keeps its whole-second spelling."""
     return str(int(value)) if float(value).is_integer() else repr(float(value))

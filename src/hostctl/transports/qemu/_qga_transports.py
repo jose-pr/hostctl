@@ -20,6 +20,7 @@ from ...exceptions import (
     QGAProtocolError,
     QGATimeoutError,
 )
+from ...executor import _OMITTED, _Omitted
 from ._qga import _QGAFramedSession, _QGARequestNotSerializable
 
 #: libvirt's own error codes, so a `libvirtError` can be classified without
@@ -30,6 +31,8 @@ _LIBVIRT_NO_DOMAIN = 42
 _LIBVIRT_AUTH_FAILED = 45
 
 _LIBVIRT_OPERATION_TIMEOUT = 68
+#: `VIR_DOMAIN_QEMU_AGENT_COMMAND_BLOCK`: wait for the reply without a limit.
+_LIBVIRT_AGENT_BLOCK = -2
 
 _LIBVIRT_AGENT_UNRESPONSIVE = 86
 
@@ -96,7 +99,7 @@ class LibvirtGuestAgentTransport:
         domain: str,
         *,
         connection_uri: typing.Optional[str] = None,
-        timeout: float = 10.0,
+        timeout: typing.Optional[float] = 10.0,
         connect_factory: typing.Optional[
             typing.Callable[[typing.Optional[str]], object]
         ] = None,
@@ -106,11 +109,11 @@ class LibvirtGuestAgentTransport:
     ) -> None:
         if not domain:
             raise ValueError("libvirt domain must not be empty")
-        if timeout <= 0:
+        if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be greater than zero")
         self.domain_name = domain
         self.connection_uri = connection_uri
-        self.timeout = float(timeout)
+        self.timeout = None if timeout is None else float(timeout)
         self._connect_factory = connect_factory
         self._command_factory = command_factory
         self._connection: typing.Optional[object] = None
@@ -212,7 +215,7 @@ class LibvirtGuestAgentTransport:
         if not isinstance(command, str) or not command:
             raise ValueError("QGA request requires a non-empty 'execute' string")
         request_timeout = self.timeout if timeout is None else float(timeout)
-        if request_timeout <= 0:
+        if request_timeout is not None and request_timeout <= 0:
             raise ValueError("timeout must be greater than zero")
         self.connect()
         request_id = next(self._ids)
@@ -224,7 +227,11 @@ class LibvirtGuestAgentTransport:
             raw = self._command_factory(
                 self._domain,
                 json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-                max(1, math.ceil(request_timeout)),
+                (
+                    _LIBVIRT_AGENT_BLOCK
+                    if request_timeout is None
+                    else max(1, math.ceil(request_timeout))
+                ),
                 0,
             )
         except Exception as exc:
@@ -263,7 +270,8 @@ class UnixSocketGuestAgentTransport(_QGAFramedSession):
         self,
         path: str,
         *,
-        timeout: float = 10.0,
+        timeout: typing.Optional[float] = 10.0,
+        connect_timeout: typing.Union[float, None, _Omitted] = _OMITTED,
         max_reply_size: int = 8 * 1024 * 1024,
         socket_factory: typing.Callable[..., socket.socket] = socket.socket,
     ) -> None:
@@ -273,7 +281,11 @@ class UnixSocketGuestAgentTransport(_QGAFramedSession):
         self._socket_factory = socket_factory
         self._uses_system_socket = socket_factory is socket.socket
         self._socket: typing.Optional[socket.socket] = None
-        super().__init__(timeout=timeout, max_reply_size=max_reply_size)
+        super().__init__(
+            timeout=timeout,
+            max_reply_size=max_reply_size,
+            connect_timeout=connect_timeout,
+        )
 
     def __enter__(self) -> UnixSocketGuestAgentTransport:
         self.connect()
@@ -283,7 +295,7 @@ class UnixSocketGuestAgentTransport(_QGAFramedSession):
         self.close()
         return False
 
-    def _connect_raw(self, deadline: float) -> None:
+    def _connect_raw(self, deadline: typing.Optional[float]) -> None:
         if not hasattr(socket, "AF_UNIX") and self._uses_system_socket:
             raise NotImplementedError(
                 "direct QGA sockets require Unix-domain socket support"
@@ -320,7 +332,7 @@ class UnixSocketGuestAgentTransport(_QGAFramedSession):
         finally:
             self._socket = None
 
-    def _send_raw(self, data: bytes, deadline: float) -> None:
+    def _send_raw(self, data: bytes, deadline: typing.Optional[float]) -> None:
         connection = self._require_socket()
         try:
             connection.settimeout(self._remaining(deadline))
@@ -330,7 +342,7 @@ class UnixSocketGuestAgentTransport(_QGAFramedSession):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as exc:
             raise QGADisconnectedError("QGA disconnected while sending") from exc
 
-    def _recv_raw(self, size: int, deadline: float) -> bytes:
+    def _recv_raw(self, size: int, deadline: typing.Optional[float]) -> bytes:
         connection = self._require_socket()
         try:
             connection.settimeout(self._remaining(deadline))
@@ -372,7 +384,9 @@ class _SSHConnection(typing.Protocol):
     ) -> typing.Awaitable[typing.Tuple[_Reader, _Writer]]: ...
 
 
-async def _wait(awaitable: typing.Awaitable[object], timeout: float) -> object:
+async def _wait(
+    awaitable: typing.Awaitable[object], timeout: typing.Optional[float]
+) -> object:
     return await asyncio.wait_for(awaitable, timeout)
 
 
@@ -409,7 +423,8 @@ class SSHUnixGuestAgentTransport(_QGAFramedSession):
         path: str,
         connection: typing.Callable[[], _SSHConnection],
         *,
-        timeout: float = 10.0,
+        timeout: typing.Optional[float] = 10.0,
+        connect_timeout: typing.Union[float, None, _Omitted] = _OMITTED,
         max_reply_size: int = 8 * 1024 * 1024,
     ) -> None:
         if not path:
@@ -418,7 +433,11 @@ class SSHUnixGuestAgentTransport(_QGAFramedSession):
         self._connection = connection
         self._reader: typing.Optional[_Reader] = None
         self._writer: typing.Optional[_Writer] = None
-        super().__init__(timeout=timeout, max_reply_size=max_reply_size)
+        super().__init__(
+            timeout=timeout,
+            max_reply_size=max_reply_size,
+            connect_timeout=connect_timeout,
+        )
 
     def __enter__(self) -> SSHUnixGuestAgentTransport:
         self.connect()
@@ -452,7 +471,7 @@ class SSHUnixGuestAgentTransport(_QGAFramedSession):
                 raise
             raise normalized from exc
 
-    def _connect_raw(self, deadline: float) -> None:
+    def _connect_raw(self, deadline: typing.Optional[float]) -> None:
         from ... import _async
 
         with self._failures("open QGA stream", "timed out opening the QGA stream"):
@@ -466,7 +485,7 @@ class SSHUnixGuestAgentTransport(_QGAFramedSession):
                 typing.Tuple[_Reader, _Writer], opened
             )
 
-    def _send_raw(self, data: bytes, deadline: float) -> None:
+    def _send_raw(self, data: bytes, deadline: typing.Optional[float]) -> None:
         from ... import _async
 
         writer = self._require_writer()
@@ -478,7 +497,7 @@ class SSHUnixGuestAgentTransport(_QGAFramedSession):
         with self._failures("send QGA request", "timed out sending a QGA request"):
             _async.async_to_sync(send())
 
-    def _recv_raw(self, size: int, deadline: float) -> bytes:
+    def _recv_raw(self, size: int, deadline: typing.Optional[float]) -> bytes:
         from ... import _async
 
         with self._failures("receive QGA reply", "timed out waiting for a QGA reply"):

@@ -8,6 +8,14 @@ from urllib.parse import unquote, quote, urlencode
 
 
 from ..host._config import HostConfig
+from ..host._timeout import (
+    DEFAULT,
+    Timeout,
+    _URI_TIMEOUT_KEYS,
+    _TimeoutField,
+    _timeout_from_query,
+    _timeout_query,
+)
 from ..uri._parse import _refuse_uri, reject_control_characters, strict_uri_query
 
 if typing.TYPE_CHECKING:
@@ -34,6 +42,14 @@ class SystemConfig(HostConfig):
     #: each concrete config; ``None`` marks this base class as abstract.
     host_type: typing.ClassVar[typing.Optional[typing.Type["SystemHost"]]] = None
 
+    #: Only `total`; at `DEFAULT` the selected provider applies its own (a
+    #: WinRM provider its `WinRMConfig`'s). Connecting belongs to the
+    #: transport configs in `provider_options`.
+    _timeout_defaults = {"total": DEFAULT}
+
+    #: `total` is the default of `run(timeout=)`.
+    timeout = _TimeoutField()
+
     def __init__(
         self,
         authority: str = "localhost",
@@ -43,8 +59,10 @@ class SystemConfig(HostConfig):
         path: typing.Iterable[str] = (),
         provider_options: typing.Optional[typing.Mapping[str, object]] = None,
         initializer: typing.Optional[typing.Callable[..., object]] = None,
+        timeout: typing.Union[float, None, Timeout] = Timeout(),
     ):
         super().__init__()
+        self.timeout = timeout  # type: ignore[assignment]
         _refuse_uri(type(self).__name__, authority)
         for name, value in (("executor", executor), ("path", path)):
             if isinstance(value, (str, bytes)):
@@ -72,7 +90,9 @@ class SystemConfig(HostConfig):
         return (
             f"{type(self).__name__}(authority={self.authority!r}, "
             f"shell={self.shell!r}, executor={self.executors!r}, "
-            f"path={self.paths!r})"
+            f"path={self.paths!r}"
+            + ("" if self.timeout == Timeout() else f", timeout={self.timeout!r}")
+            + ")"
         )
 
     def _build_providers(self, kind: str):
@@ -108,6 +128,7 @@ class SystemConfig(HostConfig):
         query += [("path", value) for value in self.paths]
         if self.shell is not None:
             query.append(("shell", getattr(self.shell, "name", str(self.shell))))
+        query += _timeout_query(self.timeout)
         return f"{self.uri_scheme}://{quote(self.authority, safe='')}" + (
             f"?{urlencode(query)}" if query else ""
         )
@@ -127,7 +148,9 @@ class SystemConfig(HostConfig):
         # The SHARED parser, with the two keys that legitimately repeat
         # declared.
         query = strict_uri_query(
-            parsed, ("executor", "path", "shell"), repeatable=("executor", "path")
+            parsed,
+            ("executor", "path", "shell", *_URI_TIMEOUT_KEYS),
+            repeatable=("executor", "path"),
         )
         executors = typing.cast(typing.Tuple[str, ...], query.get("executor", ()))
         paths = typing.cast(typing.Tuple[str, ...], query.get("path", ()))
@@ -144,6 +167,7 @@ class SystemConfig(HostConfig):
             shell=query.get("shell"),
             executor=executors,
             path=paths,
+            timeout=_timeout_from_query(query),
             **constructor_only,
         )
 

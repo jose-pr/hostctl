@@ -10,6 +10,8 @@ import types
 
 from ..._extras import _require
 from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT
+from ...executor import _OMITTED, _Omitted
+from ...host._timeout import DEFAULT, _config_timeouts
 from ...executor import (
     CaptureOutput,
     command_text,
@@ -33,7 +35,8 @@ class PSRPExecutor(Executor[subprocess.CompletedProcess]):
     """Execute finalized PowerShell scripts in fresh PSRP pipelines.
 
     `default_timeout` supplies the deadline of a call made without
-    `timeout=`; it returns `None` for no deadline.
+    `timeout=`; it returns `None` for no deadline. A given `timeout=None`
+    is no deadline.
     """
 
     # PSRP receives a finalized PowerShell script; cwd/env are embedded by
@@ -65,7 +68,7 @@ class PSRPExecutor(Executor[subprocess.CompletedProcess]):
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
         input: CommandInput = None,
-        timeout: typing.Optional[float] = None,
+        timeout: typing.Union[float, None, _Omitted] = _OMITTED,
         text: typing.Optional[bool] = None,
         **options: object,
     ) -> subprocess.CompletedProcess:
@@ -76,8 +79,10 @@ class PSRPExecutor(Executor[subprocess.CompletedProcess]):
             raise NotImplementedError("PSRP executor receives a finalized script")
         if stdin is not None or input is not None:
             raise NotImplementedError("PSRP does not provide raw stdin for run()")
-        if timeout is None and self._default_timeout is not None:
-            timeout = self._default_timeout()
+        if timeout is _OMITTED:
+            timeout = (
+                self._default_timeout() if self._default_timeout is not None else None
+            )
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         try:
             result = self._session().invoke(
@@ -243,9 +248,9 @@ class RunspaceSession:
             "operation_timeout": _OPERATION_TIMEOUT,
             "read_timeout": _READ_TIMEOUT,
         }
-        connect_timeout = getattr(config, "connect_timeout", None)
-        if connect_timeout is not None:
-            kwargs["connection_timeout"] = connect_timeout
+        connect = _config_timeouts(config).connect
+        if connect is not None and connect is not DEFAULT:
+            kwargs["connection_timeout"] = connect
         return RunspacePool(WSMan(**kwargs))
 
     def connect(self) -> None:

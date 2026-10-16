@@ -32,6 +32,8 @@ from ..shell._vocabulary import wants_epilogue
 from ..host._host import Host, _HostExecutor
 from ..host._config import HostConfig
 from ..host._info import HostInfo
+from ..executor import _OMITTED
+from ..host._timeout import _run_timeout
 from ..shell._grammar import Command, starts_direct_command
 from ..paths._composite import CompositePosixPath, CompositeWindowsPath
 from ._config import SystemConfig
@@ -639,7 +641,7 @@ class SystemHost(Host):
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
         input: CommandInput = None,
-        timeout: typing.Optional[float] = None,
+        timeout: typing.Optional[float] = _OMITTED,  # type: ignore[assignment]
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
         if not self._executor_selector.providers:
@@ -649,6 +651,10 @@ class SystemHost(Host):
         # Before any provider is selected: whether a name is valid must not
         # depend on which provider happens to carry the call.
         validate_environment_names(env)
+        # An omitted timeout with no configured total is left out of the
+        # dispatch, so the provider applies its own default.
+        deadline = _run_timeout(self.config, timeout)
+        timeout_option = {} if deadline is _OMITTED else {"timeout": deadline}
         # No `retry_declined()` here. Clearing every refusal per call re-dialled
         # a dead primary on EVERY run() -- ~9 s each against a refused port --
         # although the fallback was serving. The selector re-admits an earlier
@@ -673,8 +679,8 @@ class SystemHost(Host):
                     encoding=encoding,
                     errors=errors,
                     input=input,
-                    timeout=timeout,
                     text=text,
+                    **timeout_option,
                 )
             except OperationNotStartedError as exc:
                 # Providers may be retried only when they prove no operation

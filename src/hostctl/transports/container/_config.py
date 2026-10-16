@@ -11,6 +11,12 @@ from ...shell import shell_flavour
 from ...host._config import HostConfig
 from ...host._dispatch import _keyword_only
 from ...host._selection import PathnameSelection, ShellSelection
+from ...host._timeout import (
+    _URI_TIMEOUT_KEYS,
+    _TimeoutField,
+    _timeout_from_query,
+    _timeout_query,
+)
 from ...uri._parse import (
     _refuse_uri,
     pathname_label,
@@ -33,6 +39,10 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
     #: is accepted. The base dispatcher enforces it.
     uri_credentials = ("client_factory",)
 
+    #: docker-py's `DEFAULT_TIMEOUT_SECONDS`. No `total`: an Engine exec
+    #: cannot be cancelled, and the buffered one reads a single response.
+    _timeout_defaults = {"connect": 60.0}
+
     container: str
     engine_url: typing.Optional[str] = None
     username: typing.Optional[str] = None
@@ -40,6 +50,9 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
     executable: typing.Optional[str] = None
     shell: ShellSelection = "auto"
     pathname: PathnameSelection = "auto"
+    #: `connect` is the Docker SDK client's request timeout (60 s): it
+    #: bounds connecting to the Engine and each API reply.
+    timeout: _TimeoutField = _TimeoutField()
     client_factory: typing.Optional[typing.Callable[..., object]] = dataclasses.field(
         default=None, repr=False, compare=False
     )
@@ -65,9 +78,8 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
             value = getattr(self, name)
             if value is not None:
                 query[name] = value
-        return f"docker://{quote(self.container, safe='')}" + (
-            f"?{urlencode(query)}" if query else ""
-        )
+        pairs = list(query.items()) + _timeout_query(self.timeout)
+        return f"docker://{quote(self.container, safe='')}?{urlencode(pairs)}"
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> ContainerConfig:
@@ -80,6 +92,7 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
                 "executable",
                 "shell",
                 "pathname",
+                *_URI_TIMEOUT_KEYS,
             },
         )
         if not parsed.netloc or parsed.path not in ("", "/"):
@@ -98,6 +111,7 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
                 else shell_flavour(query["shell"])
             ),
             pathname=pathname_selection(query.get("pathname", "auto"), allow_auto=True),
+            timeout=_timeout_from_query(query),
             client_factory=typing.cast(
                 typing.Optional[typing.Callable[..., object]],
                 credentials.get("client_factory"),

@@ -10,6 +10,7 @@ import typing
 
 from ..._windows import no_window_flags
 from ...executor import POWERSHELL_STATUS, expired
+from ...executor import _OMITTED, _Omitted
 from ._pywinrm import _Response, _b64
 
 #: Emitted by the remote script block and consumed by the local wrapper.
@@ -188,12 +189,12 @@ class NativeWinRMSession:
         )
 
     def run_ps(
-        self, script: str, *, timeout: typing.Optional[float] = None
+        self, script: str, *, timeout: typing.Union[float, None, _Omitted] = _OMITTED
     ) -> _Response:
-        """Run one script; `timeout` overrides the session deadline per call."""
+        """Run one script; a given `timeout` (`None`: none) replaces the session's."""
         marker = exit_marker()
         wrapper = self._wrapper(script, marker)
-        deadline = timeout if timeout is not None else self.timeout
+        deadline = self.timeout if timeout is _OMITTED else timeout
         try:
             result = subprocess.run(
                 (

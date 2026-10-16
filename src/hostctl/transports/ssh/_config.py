@@ -14,6 +14,13 @@ from pathapi import PosixPathname
 from ...host._config import HostConfig
 from ...host._dispatch import _keyword_only
 from ...host._selection import PathnameSelection, ShellSelection
+from ...host._timeout import (
+    _URI_TIMEOUT_KEYS,
+    _TimeoutField,
+    _refuse_renamed_keys,
+    _timeout_from_query,
+    _timeout_query,
+)
 from ...uri._parse import (
     _refuse_uri,
     pathname_label,
@@ -38,16 +45,16 @@ SSHKnownHosts = typing.Optional[
 ]
 
 
-#: `connect_options` keys hostctl owns, and the field to use instead.
+#: `connect_options` keys hostctl owns, and the keyword to use instead.
 _OWNED_CONNECT_OPTIONS = {
-    "host": "host",
-    "port": "port",
-    "username": "username",
-    "password": "password",
-    "client_keys": "client_keys",
-    "known_hosts": "known_hosts",
-    "config": "ssh_config",
-    "connect_timeout": "connect_timeout",
+    "host": "host=...",
+    "port": "port=...",
+    "username": "username=...",
+    "password": "password=...",
+    "client_keys": "client_keys=...",
+    "known_hosts": "known_hosts=...",
+    "config": "ssh_config=...",
+    "connect_timeout": "timeout=Timeout(connect=...)",
 }
 
 
@@ -115,6 +122,8 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     #: is accepted. The base dispatcher enforces it.
     uri_credentials = ("password", "client_keys", "known_hosts")
 
+    _timeout_defaults = {"total": None, "connect": 30.0}
+
     host: str
     port: int = 22
     username: typing.Optional[str] = None
@@ -142,9 +151,10 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     #: say so explicitly when it has been changed -- guessing is wrong in
     #: both directions.
     login_shell: str = "auto"
-    #: Seconds asyncssh may spend establishing the connection (TCP, key
-    #: exchange and authentication); `None` leaves asyncssh's own default.
-    connect_timeout: typing.Optional[float] = 30.0
+    #: `total` is the default of `run(timeout=)` (none); `connect` bounds
+    #: TCP, key exchange and authentication (30 s), and `None` there leaves
+    #: asyncssh's own default.
+    timeout: _TimeoutField = _TimeoutField()
     #: An ssh_config to read on BOTH legs (`Host`, `HostName`, `IdentityFile`,
     #: `ProxyJump` ...). `None`, the default, reads none. One path: OpenSSH's
     #: `Include` covers the rest. Never part of the URI: a `ProxyCommand`
@@ -175,10 +185,8 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             if key in _OWNED_CONNECT_OPTIONS:
                 raise ValueError(
                     f"connect_options cannot set {key!r}; "
-                    f"use SSHConfig({_OWNED_CONNECT_OPTIONS[key]}=...)"
+                    f"use SSHConfig({_OWNED_CONNECT_OPTIONS[key]})"
                 )
-        if self.connect_timeout is not None and not self.connect_timeout > 0:
-            raise ValueError("connect_timeout must be greater than 0 seconds")
         if self.login_shell not in _LOGIN_SHELLS:
             values = ", ".join(sorted(_LOGIN_SHELLS))
             raise ValueError(f"login_shell must be one of: {values}")
@@ -224,8 +232,9 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
         # exec leg does. Opting out stays possible and explicit:
         # `known_hosts=None`.
         opts["known_hosts"] = self.known_hosts
-        if self.connect_timeout is not None:
-            opts["connect_timeout"] = self.connect_timeout
+        connect = self.timeouts.connect
+        if connect is not None:
+            opts["connect_timeout"] = connect
         opts.update(self.connect_options)
         return opts
 
@@ -242,14 +251,10 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             # Only when it was said: `auto` is the default and carrying it
             # would change every existing URI's text.
             query["login_shell"] = self.login_shell
-        if self.connect_timeout != 30.0:
-            # An empty value is `None` (asyncssh's own default), as for serial.
-            query["connect_timeout"] = (
-                "" if self.connect_timeout is None else self.connect_timeout
-            )
         from netimps import join_host
 
-        return f"ssh://{user}{join_host(self.host, self.port)}?{urlencode(query)}"
+        pairs = list(query.items()) + _timeout_query(self.timeout)
+        return f"ssh://{user}{join_host(self.host, self.port)}?{urlencode(pairs)}"
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> SSHConfig:
@@ -261,8 +266,10 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
                 "executable",
                 "login_shell",
                 "connect_timeout",
+                *_URI_TIMEOUT_KEYS,
             },
         )
+        _refuse_renamed_keys(query, {"connect_timeout": "timeout_connect"})
         if not parsed.hostname or parsed.path not in ("", "/"):
             raise ValueError("SSH URI requires a host and no path")
         from netimps import get_default_port
@@ -284,15 +291,7 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
                 query.get("pathname", "posix"), allow_auto=True
             ),
             login_shell=query.get("login_shell", "auto"),
-            connect_timeout=(
-                30.0
-                if "connect_timeout" not in query
-                else (
-                    None
-                    if query["connect_timeout"] == ""
-                    else float(query["connect_timeout"])
-                )
-            ),
+            timeout=_timeout_from_query(query),
         )
 
     def _create_host(self):

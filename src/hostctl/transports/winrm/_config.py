@@ -11,14 +11,19 @@ from urllib.parse import quote, unquote, urlencode
 from ...uri._parse import (
     _query_bool,
     _refuse_uri,
-    _query_float,
-    _seconds_text,
     strict_uri_query,
     uri_host,
     uri_hostname,
 )
 from ...host._config import HostConfig
 from ...host._dispatch import _keyword_only
+from ...host._timeout import (
+    _URI_TIMEOUT_KEYS,
+    _TimeoutField,
+    _refuse_renamed_keys,
+    _timeout_from_query,
+    _timeout_query_text,
+)
 
 WinRMAuth = typing.Literal[
     "basic",
@@ -49,15 +54,6 @@ _REMOVED_QUERY_KEYS = (
 )
 
 
-def _query_seconds(
-    query: typing.Mapping[str, typing.Any], key: str
-) -> typing.Optional[float]:
-    """`key` in seconds: 30 when absent, `None` for an empty value."""
-    if query.get(key) == "":
-        return None
-    return _query_float(query, key, 30.0)
-
-
 @_keyword_only()
 @dataclasses.dataclass
 class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
@@ -69,6 +65,8 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     #: is accepted. The base dispatcher enforces it.
     uri_credentials = ("password",)
 
+    _timeout_defaults = {"total": 30.0, "connect": 30.0}
+
     host: str
     username: str
     password: typing.Optional[str] = dataclasses.field(default=None, repr=False)
@@ -77,12 +75,10 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     tls: bool = False
     verify: bool = True
     message_encryption: MessageEncryption = "auto"
-    #: The default for `run(timeout=)`: a total deadline per command, which a
-    #: per-call `timeout=` overrides; `None` sets no default.
-    timeout: typing.Optional[float] = 30.0
-    #: Bounds establishing the connection or session; `None` leaves each
-    #: leg's library default.
-    connect_timeout: typing.Optional[float] = 30.0
+    #: `total` is the default of `run(timeout=)` on every leg (30 s);
+    #: `connect` bounds establishing the connection or session (30 s), and
+    #: `None` there leaves each leg's library default.
+    timeout: _TimeoutField = _TimeoutField()
     provider: WinRMProviderName = "auto"
     #: Opt in to Basic credentials over plain HTTP; see `__post_init__`.
     cleartext_auth: bool = False
@@ -102,10 +98,6 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             raise TypeError("verify must be True or False")
         if self.message_encryption not in typing.get_args(MessageEncryption):
             raise ValueError("message_encryption must be 'auto', 'always', or 'never'")
-        if self.timeout is not None and not self.timeout > 0:
-            raise ValueError("timeout must be greater than 0 seconds, or None")
-        if self.connect_timeout is not None and not self.connect_timeout > 0:
-            raise ValueError("connect_timeout must be greater than 0 seconds, or None")
         if self.provider not in typing.get_args(WinRMProviderName):
             raise ValueError("provider must be 'auto', 'native', 'pywinrm', or 'psrp'")
         if self.provider == "native" and self.password is not None:
@@ -154,12 +146,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
                 "message_encryption": self.message_encryption,
             }
         )
-        for key in ("timeout", "connect_timeout"):
-            value = getattr(self, key)
-            if value != 30.0:
-                # An empty value is `None`, as `SerialConfig` spells it.
-                text = "" if value is None else _seconds_text(value)
-                query += "&" + urlencode({key: text})
+        query += _timeout_query_text(self.timeout)
         if self.provider != "auto":
             query += "&" + urlencode({"provider": self.provider})
         if self.cleartext_auth:
@@ -179,18 +166,19 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
                 "auth",
                 "verify",
                 "message_encryption",
-                "timeout",
                 "connect_timeout",
                 "provider",
                 "cleartext_auth",
+                *_URI_TIMEOUT_KEYS,
                 *_REMOVED_QUERY_KEYS,
             },
         )
+        _refuse_renamed_keys(query, {"connect_timeout": "timeout_connect"})
         for key in _REMOVED_QUERY_KEYS:
             if key in query:
                 raise ValueError(
                     f"unknown connection parameter: {key}; WinRM takes "
-                    "connect_timeout (establishing the connection) and "
+                    "timeout_connect (establishing the connection) and "
                     "timeout (the whole command)"
                 )
         if not parsed.hostname or parsed.path not in ("", "/"):
@@ -209,8 +197,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
                 MessageEncryption,
                 query.get("message_encryption", "auto"),
             ),
-            timeout=_query_seconds(query, "timeout"),
-            connect_timeout=_query_seconds(query, "connect_timeout"),
+            timeout=_timeout_from_query(query),
             provider=typing.cast(WinRMProviderName, query.get("provider", "auto")),
             cleartext_auth=_query_bool(query, "cleartext_auth", False),
         )

@@ -15,6 +15,7 @@ from ._executor import (
     normalize_container_error,
 )
 from ...executor import (
+    _OMITTED,
     normalize_environment,
     command_text,
     raise_normalized,
@@ -34,6 +35,7 @@ from ...shell._flavour import ShellFlavour
 from ...shell._grammar import Command, starts_direct_command
 from ...host._host import Host
 from ...host._info import HostInfo, parse_host_info
+from ...host._timeout import DEFAULT
 
 from pathapi import Path
 
@@ -153,11 +155,15 @@ class ContainerHost(Host):
                 factory = (
                     docker.DockerClient if self.config.engine_url else docker.from_env
                 )
-            self._client = (
-                factory(base_url=self.config.engine_url)
-                if self.config.engine_url is not None
-                else factory()
-            )
+            options: typing.Dict[str, object] = {}
+            if self.config.engine_url is not None:
+                options["base_url"] = self.config.engine_url
+            connect = self.config.timeout.connect
+            if connect is not DEFAULT:
+                # Left out at DEFAULT, so the SDK (or a client_factory) keeps
+                # its own; `None` is the SDK's "no limit".
+                options["timeout"] = connect
+            self._client = factory(**options)
         return self._client
 
     @property
@@ -318,9 +324,12 @@ class ContainerHost(Host):
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
         input: CommandInput = None,
-        timeout: typing.Optional[float] = None,
+        timeout: typing.Optional[float] = _OMITTED,  # type: ignore[assignment]
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
+        # The config supports no total, so an omitted timeout is no limit.
+        if timeout is _OMITTED or timeout is DEFAULT:
+            timeout = None
         excluded: typing.List[str] = []
         while True:
             provider = self._executor_provider_selector.select(

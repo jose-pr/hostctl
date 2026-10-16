@@ -273,7 +273,7 @@ class PromptConsoleProfile:
         """One backend read, bounded by what is left of the caller's budget.
 
         Without the bound, `run(timeout=)` was only checked *between* reads,
-        so a `SerialConfig(read_timeout=None)` host -- a supported setting
+        so a `SerialConfig(timeout=Timeout(read=None))` host -- a supported setting
         that round-trips through the URI -- blocked inside the backend
         forever instead of raising `TimeoutExpired`.
         """

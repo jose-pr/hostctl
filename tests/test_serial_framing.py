@@ -192,7 +192,7 @@ def test_output_past_max_buffer_is_an_error_not_a_silent_truncation():
 
 
 def test_a_command_timeout_is_enforced_across_a_blocking_read():
-    """`SerialConfig(read_timeout=None)` is pyserial's "block forever", and
+    """`SerialConfig(timeout=Timeout(read=None))` is pyserial's "block forever", and
     `run(timeout=)` was only checked between reads, so such a host blocked
     inside the backend instead of raising."""
     import subprocess
@@ -208,7 +208,7 @@ def test_a_command_timeout_is_enforced_across_a_blocking_read():
             if self.pending:
                 return super().read(size)
             # pyserial blocks for `self.timeout`; `None` means forever, which
-            # is what `SerialConfig(read_timeout=None)` configures and what a
+            # is what `SerialConfig(timeout=Timeout(read=None))` configures and what a
             # test cannot wait for -- record what it was clamped to instead.
             self.waits.append(self.timeout)
             if self.timeout is None:

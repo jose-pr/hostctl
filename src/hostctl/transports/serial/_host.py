@@ -10,6 +10,7 @@ import typing
 from urllib.parse import quote, unquote, urlencode
 
 from ...executor import (
+    _OMITTED,
     CaptureOutput,
     CommandEnvironment,
     StreamTarget,
@@ -30,6 +31,14 @@ from ...host._host import Host
 from ...host._config import HostConfig
 from ...host._dispatch import _keyword_only
 from ...host._info import HostInfo
+from ...host._timeout import (
+    _URI_TIMEOUT_KEYS,
+    _TimeoutField,
+    _call_timeout,
+    _refuse_renamed_keys,
+    _timeout_from_query,
+    _timeout_query,
+)
 from ...uri._parse import strict_uri_query
 
 
@@ -114,6 +123,8 @@ class SerialConfig(HostConfig, schemes=("serial",)):
         "serial_port",
     )
 
+    _timeout_defaults = {"total": None, "read": 0.1, "write": 10.0}
+
     device: str
     baudrate: int = 115200
     bytesize: int = 8
@@ -122,8 +133,11 @@ class SerialConfig(HostConfig, schemes=("serial",)):
     xonxoff: bool = False
     rtscts: bool = False
     dsrdtr: bool = False
-    read_timeout: typing.Optional[float] = 0.1
-    write_timeout: typing.Optional[float] = 10
+    #: `total` is the default of `run(timeout=)` (none); `read` and `write`
+    #: bound one pyserial read (0.1 s) and one write (10 s).
+    timeout: _TimeoutField = _TimeoutField()
+    #: pyserial's longest gap between two bytes of one read, a framing
+    #: setting rather than an operation bound; `None` disables it.
     inter_byte_timeout: typing.Optional[float] = None
     exclusive: typing.Optional[bool] = None
     profile: ConsoleProfile = dataclasses.field(
@@ -146,6 +160,7 @@ class SerialConfig(HostConfig, schemes=("serial",)):
         HostConfig.__init__(self)
         # Built ONCE, here, by keyword, and kept: `SerialHost` reads it
         # rather than building a second one from the same fields.
+        timeouts = self.timeouts
         settings = SerialSettings(
             self.device,
             baudrate=self.baudrate,
@@ -155,8 +170,8 @@ class SerialConfig(HostConfig, schemes=("serial",)):
             xonxoff=self.xonxoff,
             rtscts=self.rtscts,
             dsrdtr=self.dsrdtr,
-            read_timeout=self.read_timeout,
-            write_timeout=self.write_timeout,
+            read_timeout=typing.cast(typing.Optional[float], timeouts.read),
+            write_timeout=typing.cast(typing.Optional[float], timeouts.write),
             inter_byte_timeout=self.inter_byte_timeout,
             exclusive=self.exclusive,
         )
@@ -181,12 +196,11 @@ class SerialConfig(HostConfig, schemes=("serial",)):
             "xonxoff": str(self.xonxoff).lower(),
             "rtscts": str(self.rtscts).lower(),
             "dsrdtr": str(self.dsrdtr).lower(),
-            "read_timeout": _format_number(self.read_timeout),
-            "write_timeout": _format_number(self.write_timeout),
             "inter_byte_timeout": _format_number(self.inter_byte_timeout),
             "exclusive": "" if self.exclusive is None else str(self.exclusive).lower(),
         }
-        return f"serial:{_device_uri_path(self.device)}?{urlencode(values)}"
+        pairs = list(values.items()) + _timeout_query(self.timeout)
+        return f"serial:{_device_uri_path(self.device)}?{urlencode(pairs)}"
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> "SerialConfig":
@@ -209,7 +223,11 @@ class SerialConfig(HostConfig, schemes=("serial",)):
                 "write_timeout",
                 "inter_byte_timeout",
                 "exclusive",
+                *_URI_TIMEOUT_KEYS,
             ),
+        )
+        _refuse_renamed_keys(
+            query, {"read_timeout": "timeout_read", "write_timeout": "timeout_write"}
         )
 
         def integer(name: str, default: int) -> int:
@@ -227,12 +245,7 @@ class SerialConfig(HostConfig, schemes=("serial",)):
             xonxoff=_bool(query.get("xonxoff", "false"), "xonxoff"),
             rtscts=_bool(query.get("rtscts", "false"), "rtscts"),
             dsrdtr=_bool(query.get("dsrdtr", "false"), "dsrdtr"),
-            read_timeout=_optional_float(
-                query.get("read_timeout", "0.1"), "read_timeout"
-            ),
-            write_timeout=_optional_float(
-                query.get("write_timeout", "10"), "write_timeout"
-            ),
+            timeout=_timeout_from_query(query),
             inter_byte_timeout=_optional_float(
                 query.get("inter_byte_timeout", ""), "inter_byte_timeout"
             ),
@@ -384,9 +397,10 @@ class SerialHost(Host):
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
         input: CommandInput = None,
-        timeout: typing.Optional[float] = None,
+        timeout: typing.Optional[float] = _OMITTED,  # type: ignore[assignment]
         text: typing.Optional[bool] = None,
     ) -> subprocess.CompletedProcess:
+        timeout = _call_timeout(self.config, timeout)
         if not self.config.profile.can_run:
             raise NotImplementedError(
                 "serial console profile does not provide reliable run()"

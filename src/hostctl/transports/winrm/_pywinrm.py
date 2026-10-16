@@ -22,6 +22,7 @@ from ...executor import (
     capture_streams,
     wants_text,
 )
+from ...executor import _OMITTED, _Omitted
 
 
 class _WinRMResponse(typing.Protocol):
@@ -32,7 +33,7 @@ class _WinRMResponse(typing.Protocol):
 
 class WinRMSession(typing.Protocol):
     def run_ps(
-        self, script: str, *, timeout: typing.Optional[float] = None
+        self, script: str, *, timeout: typing.Union[float, None, _Omitted] = _OMITTED
     ) -> _WinRMResponse: ...
 
 
@@ -83,11 +84,11 @@ class _PywinrmStdinSession:
         self.timeout = timeout
 
     def run_ps(
-        self, script: str, *, timeout: typing.Optional[float] = None
+        self, script: str, *, timeout: typing.Union[float, None, _Omitted] = _OMITTED
     ) -> _Response:
-        """Run one script; `timeout` overrides the session deadline per call."""
+        """Run one script; a given `timeout` (`None`: none) replaces the session's."""
         protocol = self._protocol
-        limit = timeout if timeout is not None else self.timeout
+        limit = self.timeout if timeout is _OMITTED else timeout
         started = time.monotonic()
         bootstrap = (
             "$s=[Text.Encoding]::UTF8.GetString("
@@ -171,8 +172,9 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
     `manages_status` declares that the session reports the remote status
     itself, so the flavour's own `exit` epilogue must stay off the script.
     `accepts_timeout` lets `run(timeout=)` through as the session's per-call
-    deadline; without it a `timeout=` is refused. `transport_timeout` names
-    the deadline a timeout raised without one is reported against.
+    deadline (`None` for none); without it a `timeout=` is refused. An
+    omitted `timeout` leaves the session's own. `transport_timeout` names the
+    deadline a timeout raised without one is reported against.
     """
 
     executor_capabilities = frozenset((ExecutorCapability.SCRIPT,))
@@ -208,7 +210,7 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
         input: CommandInput = None,
-        timeout: typing.Optional[float] = None,
+        timeout: typing.Union[float, None, _Omitted] = _OMITTED,
         text: typing.Optional[bool] = None,
         **options: object,
     ) -> subprocess.CompletedProcess:
@@ -217,7 +219,11 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
         if args:
             raise NotImplementedError("WinRMExecutor does not support native arguments")
         command = command_text(command)
-        if timeout is not None and not self._accepts_timeout:
+        if (
+            timeout is not _OMITTED
+            and timeout is not None
+            and not self._accepts_timeout
+        ):
             raise NotImplementedError(
                 "WinRMExecutor timeout is unsupported; configure transport timeouts"
             )
@@ -226,10 +232,10 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
         stdout, stderr = capture_streams(capture_output, stdout, stderr)
         try:
             session = self._session()
-            if timeout is None:
+            if timeout is _OMITTED:
                 result = session.run_ps(command)
             else:
-                result = session.run_ps(command, timeout=timeout)  # type: ignore[call-arg]
+                result = session.run_ps(command, timeout=timeout)
         except Exception as exc:
             normalized = self._normalize_error(exc, command, timeout)
             if normalized is exc:
@@ -266,13 +272,18 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
         return completed
 
     def _normalize_error(
-        self, exc: Exception, command: str, timeout: typing.Optional[float] = None
+        self,
+        exc: Exception,
+        command: str,
+        timeout: typing.Union[float, None, _Omitted] = None,
     ) -> Exception:
         # The dependency-free cases FIRST. Returning early on the optional
         # import also disabled this branch, so on a native-only install --
         # the documented password-free Windows path, which needs no winrm
         # extra -- a timeout crossed the boundary as a builtin `TimeoutError`
         # and `except subprocess.TimeoutExpired` did not catch it.
+        if timeout is _OMITTED:
+            timeout = None
         if timeout is None and self._transport_timeout:
             timeout = self._transport_timeout()
         if isinstance(exc, subprocess.TimeoutExpired) and exc.timeout is not None:

@@ -76,7 +76,7 @@ class SerialProcess(_LeasedStreamProcess):
         """Read up to `size` bytes, bounded by `timeout` when one is given.
 
         The port's own `timeout` is what actually bounds a backend read, and
-        `SerialConfig(read_timeout=None)` -- a supported setting that
+        `SerialConfig(timeout=Timeout(read=None))` -- a supported setting that
         round-trips through the URI -- is pyserial's "block forever". A
         caller's `run(timeout=)` was only checked *between* reads, so such a
         host blocked inside the backend instead of raising `TimeoutExpired`.

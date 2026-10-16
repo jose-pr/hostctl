@@ -10,6 +10,7 @@ import pytest
 
 pytest.importorskip("asyncssh")
 
+from hostctl import Timeout
 from hostctl.host._config import HostConfig
 from hostctl.transports.ssh._config import SSHConfig
 from hostctl.system._kinds import PosixHost, WindowsHost
@@ -90,7 +91,7 @@ def test_connect_options_cannot_override_what_hostctl_owns(key):
         SSHConfig("h", connect_options={key: "x"})
     with pytest.raises(ValueError, match="ssh_config"):
         SSHConfig("h", connect_options={"config": None})
-    with pytest.raises(ValueError, match="connect_timeout"):
+    with pytest.raises(ValueError, match=r"timeout=Timeout\(connect=\.\.\.\)"):
         SSHConfig("h", connect_options={"connect_timeout": 1})
 
 
@@ -160,6 +161,8 @@ def test_an_unresolvable_host_in_auto_mode_cleans_up(monkeypatch):
 
 
 @pytest.mark.parametrize("value", (None, 5.0, 30.0))
-def test_connect_timeout_round_trips_through_the_uri(value):
-    config = SSHConfig("h", connect_timeout=value)
-    assert HostConfig(config.connection_uri).connect_timeout == value
+def test_a_connect_timeout_round_trips_through_the_uri(value):
+    config = SSHConfig("h", timeout=Timeout(connect=value))
+    restored = HostConfig(config.connection_uri)
+    assert restored.timeout == Timeout(connect=value)
+    assert restored == config

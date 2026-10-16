@@ -10,6 +10,7 @@ import types
 
 
 from ..executor import (
+    _OMITTED,
     ExecutorCapability,
     masked_environment,
     run_displayed,
@@ -259,7 +260,7 @@ class Shell(typing.Generic[_Result]):
         encoding: typing.Optional[str] = None,
         errors: typing.Optional[str] = None,
         input: CommandInput = None,
-        timeout: typing.Optional[float] = None,
+        timeout: typing.Optional[float] = _OMITTED,  # type: ignore[assignment]
         text: typing.Optional[bool] = None,
     ) -> _Result:
         """Run shell commands, as one script, on the host or executor.
@@ -267,6 +268,8 @@ class Shell(typing.Generic[_Result]):
         `env` merges over the shell's default per key; the default merges
         nothing and so inherits it. Pass `None` to run without the shell's
         configured environment, keeping whatever the host provides itself.
+        `timeout=None` is passed on as "no limit"; left out, the host's
+        configured default applies.
         """
         cwd = self._resolve_cwd(cwd)
         env = self._resolve_env(env)
@@ -281,11 +284,12 @@ class Shell(typing.Generic[_Result]):
                 ("encoding", self._encoding if encoding is None else encoding),
                 ("errors", self._errors if errors is None else errors),
                 ("input", input),
-                ("timeout", timeout),
                 ("text", text),
             )
             if value is not None
         }
+        if timeout is not _OMITTED:
+            options["timeout"] = timeout
         if self._host is not None:
             if cwd is not None:
                 options["cwd"] = cwd

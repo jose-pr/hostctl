@@ -8,6 +8,7 @@ from urllib.parse import quote, urlsplit
 import pytest
 from pathapi import WindowsPathname
 
+from hostctl import Timeout
 from hostctl.shell import POWERSHELL
 from hostctl.host._host import Host
 from hostctl.host._config import HostConfig
@@ -136,8 +137,7 @@ def test_winrms_uri_round_trip_keeps_secrets_separate():
         tls=True,
         auth="kerberos",
         message_encryption="always",
-        connect_timeout=12.5,
-        timeout=None,
+        timeout=Timeout(None, connect=12.5),
     ).open()
     uri = source.connection_uri
     assert "top-secret" not in uri
@@ -217,7 +217,8 @@ def test_scheme_matches_connection_uri_and_registered_scheme(host):
         ("ssh://host?guess_os=true", "unknown"),
         ("ssh:///tmp/socket", "requires a host"),
         ("winrm://host", "requires a username"),
-        ("local:?shell=posix", "local URI"),
+        ("local:?shell=posix", "unknown connection parameter: shell"),
+        ("local:/x", "local URI"),
     ],
 )
 def test_connection_string_rejects_invalid_or_ambiguous_input(uri, message):

@@ -426,6 +426,21 @@ def dispatch_output(
     return stdout, stderr
 
 
+class _Omitted(enum.Enum):
+    """`timeout=` left out of a call: the configured default applies.
+
+    Distinct from `None`, which is "no limit for this call".
+    """
+
+    OMITTED = "omitted"
+
+    def __repr__(self) -> str:
+        return "<config timeout>"
+
+
+_OMITTED = _Omitted.OMITTED
+
+
 class ExecutorCapability(str, enum.Enum):
     """Native executor features, spelled as strings.
 

@@ -1,6 +1,6 @@
-"""`WinRMConfig(timeout=)` is the default for `run(timeout=)` on every leg.
+"""`WinRMConfig(timeout=)` sets `total`, the default for `run(timeout=)` on every leg.
 
-`connect_timeout` bounds only establishing the connection, and the per-request
+`timeout.connect` bounds only establishing the connection, and the per-request
 timing is internal: none of them may end a command still producing its result.
 """
 
@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+from hostctl import DEFAULT, Timeout
 from hostctl.host._config import HostConfig
 from hostctl.transports.winrm._config import (
     _OPERATION_TIMEOUT,
@@ -32,12 +33,13 @@ from hostctl.transports.winrm._transport import _WinRMTransport
 # --- the config field -------------------------------------------------------
 
 
-def test_timeout_defaults_to_thirty_seconds_and_is_in_the_signature():
+def test_total_and_connect_resolve_to_thirty_seconds():
     config = WinRMConfig("h", username="u")
-    assert config.timeout == 30.0
+    assert config.timeout == Timeout()
+    assert config.timeouts == Timeout(30, connect=30)
     parameter = inspect.signature(WinRMConfig).parameters["timeout"]
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
-    assert parameter.default == 30.0
+    assert parameter.default == Timeout()
 
 
 @pytest.mark.parametrize("value", [0, -1, math.nan])
@@ -47,62 +49,70 @@ def test_timeout_must_be_positive(value):
 
 
 def test_timeout_none_is_no_default_deadline():
-    assert WinRMConfig("h", username="u", timeout=None).timeout is None
+    config = WinRMConfig("h", username="u", timeout=None)
+    assert config.timeout == Timeout(None)
+    assert config.timeouts == Timeout(None, connect=30)
 
 
-def test_timeout_is_independent_of_connect_timeout():
-    config = WinRMConfig("h", username="u", connect_timeout=60, timeout=5)
-    assert (config.timeout, config.connect_timeout) == (5, 60)
-
-
-def test_connect_timeout_defaults_to_thirty_seconds_and_is_in_the_signature():
-    config = WinRMConfig("h", username="u")
-    assert config.connect_timeout == 30.0
-    parameter = inspect.signature(WinRMConfig).parameters["connect_timeout"]
-    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
-    assert parameter.default == 30.0
+def test_total_is_independent_of_connect():
+    config = WinRMConfig("h", username="u", timeout=Timeout(5, connect=60))
+    assert (config.timeouts.total, config.timeouts.connect) == (5, 60)
 
 
 @pytest.mark.parametrize("value", [0, -1, math.nan])
-def test_connect_timeout_must_be_positive(value):
-    with pytest.raises(ValueError, match="connect_timeout"):
-        WinRMConfig("h", username="u", connect_timeout=value)
+def test_connect_must_be_positive(value):
+    with pytest.raises(ValueError, match="timeout.connect"):
+        WinRMConfig("h", username="u", timeout=Timeout(connect=value))
 
 
-def test_connect_timeout_none_is_the_library_default():
-    assert WinRMConfig("h", username="u", connect_timeout=None).connect_timeout is None
+def test_connect_none_is_the_library_default():
+    config = WinRMConfig("h", username="u", timeout=Timeout(connect=None))
+    assert config.timeouts.connect is None
+
+
+@pytest.mark.parametrize("field", ["read", "write"])
+def test_read_and_write_are_not_supported(field):
+    with pytest.raises(ValueError, match=f"WinRMConfig: timeout.{field} is not"):
+        WinRMConfig("h", username="u", timeout=Timeout(**{field: 5}))
 
 
 @pytest.mark.parametrize(
     ("value", "spelled"),
     [
-        (45.0, "connect_timeout=45"),
-        (2.5, "connect_timeout=2.5"),
-        (None, "connect_timeout="),
+        (45.0, "timeout_connect=45"),
+        (2.5, "timeout_connect=2.5"),
+        (None, "timeout_connect="),
     ],
 )
-def test_a_non_default_connect_timeout_round_trips_through_the_uri(value, spelled):
-    config = WinRMConfig("h", username="u", connect_timeout=value)
+def test_a_non_default_connect_round_trips_through_the_uri(value, spelled):
+    config = WinRMConfig("h", username="u", timeout=Timeout(connect=value))
     assert spelled in config.connection_uri
     restored = HostConfig(config.connection_uri)
-    assert restored.connect_timeout == value
+    assert restored.timeout.connect == value
     assert restored == config
 
 
-def test_the_default_connect_timeout_stays_out_of_the_uri():
+def test_a_default_connect_stays_out_of_the_uri():
     query = parse_qs(urlsplit(WinRMConfig("h", username="u").connection_uri).query)
-    assert "connect_timeout" not in query
+    assert "timeout_connect" not in query
 
 
-def test_a_bad_connect_timeout_in_the_uri_raises():
-    with pytest.raises(ValueError, match="connect_timeout"):
-        HostConfig("winrm://u@h?connect_timeout=soon")
-    with pytest.raises(ValueError, match="connect_timeout"):
-        HostConfig("winrm://u@h?connect_timeout=0")
+def test_a_bad_connect_in_the_uri_raises():
+    with pytest.raises(ValueError, match="timeout_connect"):
+        HostConfig("winrm://u@h?timeout_connect=soon")
+    with pytest.raises(ValueError, match="timeout_connect"):
+        HostConfig("winrm://u@h?timeout_connect=0")
 
 
-@pytest.mark.parametrize("name", ["read_timeout", "operation_timeout"])
-def test_the_per_request_timeouts_are_not_keywords(name):
+def test_the_removed_connect_timeout_key_names_its_replacement():
+    with pytest.raises(ValueError, match="connect_timeout; use timeout_connect"):
+        HostConfig("winrm://u@h?connect_timeout=30")
+
+
+@pytest.mark.parametrize(
+    "name", ["read_timeout", "operation_timeout", "connect_timeout"]
+)
+def test_the_removed_timeout_fields_are_not_keywords(name):
     with pytest.raises(TypeError, match=name):
         WinRMConfig("h", username="u", **{name: 30})
 
@@ -115,7 +125,7 @@ def test_a_per_request_timeout_in_the_uri_names_the_fields_to_use(name):
     with pytest.raises(ValueError, match="unknown connection parameter") as raised:
         HostConfig(f"winrm://u@h?{name}=30")
     assert name in str(raised.value)
-    assert "connect_timeout" in str(raised.value)
+    assert "timeout_connect" in str(raised.value)
     assert "timeout (the whole command)" in str(raised.value)
 
 
@@ -127,15 +137,15 @@ def test_the_read_limit_outlasts_the_server_hold():
     ("value", "spelled"),
     [(45.0, "timeout=45"), (2.5, "timeout=2.5"), (None, "timeout=")],
 )
-def test_a_non_default_timeout_round_trips_through_the_uri(value, spelled):
+def test_a_non_default_total_round_trips_through_the_uri(value, spelled):
     config = WinRMConfig("h", username="u", timeout=value)
     assert spelled in config.connection_uri
     restored = HostConfig(config.connection_uri)
-    assert restored.timeout == value
+    assert restored.timeout == Timeout(value)
     assert restored == config
 
 
-def test_the_default_timeout_stays_out_of_the_uri():
+def test_a_default_total_stays_out_of_the_uri():
     query = parse_qs(urlsplit(WinRMConfig("h", username="u").connection_uri).query)
     assert "timeout" not in query
 
@@ -177,7 +187,7 @@ def _record_native_deadlines(monkeypatch):
 
 
 def test_native_default_deadline_is_timeout_not_connect_timeout(monkeypatch):
-    transport = _native_transport(monkeypatch, connect_timeout=31, timeout=600)
+    transport = _native_transport(monkeypatch, timeout=Timeout(600, connect=31))
     seen = _record_native_deadlines(monkeypatch)
     transport.run("Write-Output x")
     assert seen == [600]
@@ -198,15 +208,24 @@ def test_native_timeout_none_sets_no_deadline(monkeypatch):
     assert seen == [None]
 
 
+def test_native_run_timeout_none_is_no_limit_despite_the_configured_total(
+    monkeypatch,
+):
+    transport = _native_transport(monkeypatch, timeout=600)
+    seen = _record_native_deadlines(monkeypatch)
+    transport.run("Write-Output x", timeout=None)
+    assert seen == [None]
+
+
 def test_native_connect_timeout_bounds_opening_the_session(monkeypatch):
-    transport = _native_transport(monkeypatch, connect_timeout=45.5)
+    transport = _native_transport(monkeypatch, timeout=Timeout(connect=45.5))
     wrapper = transport._leg.session._wrapper("Write-Output x")
     assert "New-PSSessionOption -OpenTimeout 45500;" in wrapper
     assert "SessionOption=$so" in wrapper
 
 
 def test_native_connect_timeout_none_leaves_powershells_default(monkeypatch):
-    transport = _native_transport(monkeypatch, connect_timeout=None)
+    transport = _native_transport(monkeypatch, timeout=Timeout(connect=None))
     wrapper = transport._leg.session._wrapper("Write-Output x")
     assert "-OpenTimeout" not in wrapper
 
@@ -228,7 +247,7 @@ def test_native_open_timeout_joins_the_certificate_options():
 
 
 def test_native_expiry_reports_the_deadline_it_enforced(monkeypatch):
-    transport = _native_transport(monkeypatch, connect_timeout=31, timeout=7)
+    transport = _native_transport(monkeypatch, timeout=Timeout(7, connect=31))
 
     def fake_run(argv, **kwargs):
         raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
@@ -359,13 +378,13 @@ def test_pywinrm_leg_uses_the_internal_request_timing(monkeypatch):
 
 def test_pywinrm_leg_splits_connect_from_read(monkeypatch):
     _fake_winrm_session(monkeypatch)
-    session = _pywinrm_transport(connect_timeout=4.5)._leg.session
+    session = _pywinrm_transport(timeout=Timeout(connect=4.5))._leg.session
     assert session._protocol.transport.read_timeout_sec == (4.5, _READ_TIMEOUT)
 
 
 def test_pywinrm_connect_timeout_none_keeps_pywinrms_single_timeout(monkeypatch):
     _fake_winrm_session(monkeypatch)
-    session = _pywinrm_transport(connect_timeout=None)._leg.session
+    session = _pywinrm_transport(timeout=Timeout(connect=None))._leg.session
     assert session._protocol.transport.read_timeout_sec == _READ_TIMEOUT
 
 
@@ -439,7 +458,7 @@ def _real_pywinrm_transport(port, connect_timeout):
             auth="basic",
             cleartext_auth=True,
             provider="pywinrm",
-            connect_timeout=connect_timeout,
+            timeout=Timeout(connect=connect_timeout),
         )
     )
 
@@ -620,7 +639,9 @@ def test_psrp_polls_never_outlast_the_deadline(_fake_pypsrp):
 @pytest.mark.parametrize(("value", "expected"), [(7.5, 7.5), (None, 30)])
 def test_psrp_pool_takes_connect_timeout_and_the_internal_timing(value, expected):
     pytest.importorskip("pypsrp.powershell")
-    config = WinRMConfig("h", username="u", password="p", connect_timeout=value)
+    config = WinRMConfig(
+        "h", username="u", password="p", timeout=Timeout(connect=value)
+    )
     wsman = RunspaceSession(config)._make_pool().connection
     # `None` is pypsrp's own default, which is 30 s.
     assert wsman.transport.connection_timeout == expected
@@ -657,7 +678,8 @@ def test_psrp_executor_applies_the_default_and_the_per_call_timeout():
     executor = PSRPExecutor(lambda: _Session(), lambda: 30.0)
     executor("x")
     executor("x", timeout=4)
-    assert seen == [30.0, 4]
+    executor("x", timeout=None)
+    assert seen == [30.0, 4, None]
 
 
 def test_psrp_executor_names_the_command_in_its_timeout():

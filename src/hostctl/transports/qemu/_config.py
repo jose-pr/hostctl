@@ -14,6 +14,15 @@ from ...shell import shell_flavour
 from ...host._config import HostConfig
 from ...host._dispatch import _keyword_only
 from ...host._selection import PathnameSelection, ShellSelection
+from ...host._timeout import (
+    DEFAULT,
+    Timeout,
+    _URI_TIMEOUT_KEYS,
+    _TimeoutField,
+    _refuse_renamed_keys,
+    _timeout_from_query,
+    _timeout_query,
+)
 from ...uri._parse import (
     pathname_label,
     pathname_selection,
@@ -48,12 +57,19 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         "path_helper",
     )
 
+    #: `connect` resolves to the reply limit, and only where hostctl opens
+    #: the agent stream itself; see `timeouts`.
+    _timeout_defaults = {"total": None, "connect": DEFAULT, "read": 10.0}
+
     domain: str
     transport: QEMUTransport = "libvirt"
     connection: typing.Optional[str] = None
     socket_path: typing.Optional[str] = None
     ssh: typing.Optional[SSHConfig] = dataclasses.field(default=None, repr=False)
-    agent_timeout: float = 10.0
+    #: `total` is the default of `run(timeout=)` (none); `read` bounds one
+    #: guest-agent reply (10 s); `connect` opening the agent stream and its
+    #: guest-sync on the unix and ssh transports (the `read` value).
+    timeout: _TimeoutField = _TimeoutField()
     #: Largest QGA reply this host will accept, in bytes. qemu-ga caps its
     #: own captured output at 16 MiB per stream and sends it Base64-encoded
     #: inside JSON, so a command producing that much needed roughly 21 MiB
@@ -85,8 +101,15 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             raise ValueError("domain must not be empty or contain NUL")
         if self.transport not in typing.get_args(QEMUTransport):
             raise ValueError(f"unsupported QEMU transport: {self.transport}")
-        if self.agent_timeout <= 0:
-            raise ValueError("agent_timeout must be positive")
+        if self.timeout.connect is not DEFAULT and not self._opens_agent_stream:
+            raise ValueError(
+                "QEMUConfig: timeout.connect is not supported with "
+                + (
+                    "transport_factory"
+                    if self.transport_factory is not None
+                    else "transport='libvirt'"
+                )
+            )
         if self.max_reply_size <= 0:
             raise ValueError("max_reply_size must be positive")
         if self.transport == "unix" and not self.socket_path:
@@ -100,15 +123,27 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         self.pathname = pathname_selection(self.pathname, allow_auto=True)
 
     @property
+    def _opens_agent_stream(self) -> bool:
+        """Whether hostctl connects the agent stream (unix, ssh) itself."""
+        return self.transport != "libvirt" and self.transport_factory is None
+
+    @property
+    def timeouts(self) -> Timeout:
+        timeouts = super().timeouts
+        if timeouts.connect is DEFAULT and self._opens_agent_stream:
+            return dataclasses.replace(timeouts, connect=timeouts.read)
+        return timeouts
+
+    @property
     def connection_uri(self) -> str:
         shell = "auto" if self.shell == "auto" else str(self.shell)
         pathname = pathname_label(self.pathname)
         query: typing.Dict[str, object] = {
-            "agent_timeout": self.agent_timeout,
             "max_reply_size": self.max_reply_size,
             "shell": shell,
             "pathname": pathname,
         }
+        query.update(_timeout_query(self.timeout))
         if self.transport == "libvirt":
             if self.connection is not None:
                 query["connection"] = self.connection
@@ -160,18 +195,16 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
                 "max_reply_size",
                 "pathname",
                 "socket_path",
+                *_URI_TIMEOUT_KEYS,
             ),
         )
-        try:
-            timeout = float(query.get("agent_timeout", "10"))
-        except ValueError as exc:
-            raise ValueError("agent_timeout must be numeric") from exc
+        _refuse_renamed_keys(query, {"agent_timeout": "timeout_read"})
         try:
             max_reply_size = int(query.get("max_reply_size", cls.max_reply_size))
         except ValueError as exc:
             raise ValueError("max_reply_size must be an integer") from exc
         common = {
-            "agent_timeout": timeout,
+            "timeout": _timeout_from_query(query),
             "max_reply_size": max_reply_size,
             "shell": (
                 "auto"

@@ -68,6 +68,16 @@ def _keyword_only(positional: int = 1) -> _ty.Callable[[_ty.Type[_T]], _ty.Type[
             p.replace(kind=_inspect.Parameter.KEYWORD_ONLY)
             for p in parameters[positional + 1 :]
         ]
+        # A descriptor-typed field accepts what its `__set__` takes, which is
+        # what a caller passes: show that, not the descriptor's own type.
+        annotations = dict(getattr(original, "__annotations__", {}))
+        for index, parameter in enumerate(rest):
+            accepted = getattr(
+                cls.__dict__.get(parameter.name), "init_annotation", None
+            )
+            if accepted is not None:
+                rest[index] = parameter.replace(annotation=accepted)
+                annotations[parameter.name] = accepted
         name = cls.__name__
         plural = "" if positional == 1 else "s"
 
@@ -81,6 +91,7 @@ def _keyword_only(positional: int = 1) -> _ty.Callable[[_ty.Type[_T]], _ty.Type[
             original(self, *args, **kwargs)
 
         setattr(__init__, "__signature__", signature.replace(parameters=keep + rest))
+        __init__.__annotations__ = annotations
         setattr(cls, "__init__", __init__)
         return cls
 

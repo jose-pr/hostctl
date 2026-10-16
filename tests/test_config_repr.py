@@ -124,6 +124,12 @@ def test_a_password_in_a_uri_does_not_reach_the_repr():
             "PosixConfig(authority='nas.example', shell=None, "
             "executor=('ssh',), path=('sftp',))",
         ),
+        (LocalConfig(timeout=5), "LocalConfig(timeout=Timeout(total=5.0))"),
+        (
+            PosixConfig("nas.example", timeout=None),
+            "PosixConfig(authority='nas.example', shell=None, "
+            "executor=(), path=(), timeout=Timeout(total=None))",
+        ),
     ],
 )
 def test_a_non_dataclass_config_repr_reads_like_its_constructor(config, expected):

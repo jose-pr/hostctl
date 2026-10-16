@@ -11,6 +11,15 @@ from ._providers import LocalExecutorProvider, LocalPathProvider
 from ...system._host import SystemHost
 from ...host._config import HostConfig
 from ...host._info import HostInfo, normalize_os_family
+from ...host._timeout import (
+    Timeout,
+    _URI_TIMEOUT_KEYS,
+    _TimeoutField,
+    _timeout_from_query,
+    _timeout_query,
+)
+from ...uri._parse import strict_uri_query
+from urllib.parse import urlencode
 from pathapi import Path
 from ...executor import StrPath
 from ...shell import POSIX_SHELL, POWERSHELL
@@ -29,7 +38,8 @@ class LocalConfig(HostConfig, schemes=("local",)):
     """This machine, addressed as `local:`.
 
     It takes no host, no port and no credentials -- there is nothing to
-    connect to -- so it is the one config whose URI is a bare scheme.
+    connect to -- so its URI is a bare scheme, with `?timeout=` when the
+    default of `run(timeout=)` is set.
     """
 
     #: Declared rather than enforced inside `_from_parsed_uri`, so the
@@ -38,23 +48,33 @@ class LocalConfig(HostConfig, schemes=("local",)):
     #: is accepted. The base dispatcher enforces it.
     uri_credentials = ()
 
-    def __init__(self) -> None:
+    _timeout_defaults = {"total": None}
+
+    #: `total` is the default of `run(timeout=)` (none).
+    timeout = _TimeoutField()
+
+    def __init__(self, *, timeout: _ty.Union[float, None, Timeout] = Timeout()) -> None:
         super().__init__()
+        self.timeout = timeout  # type: ignore[assignment]
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}()"
+        if self.timeout == Timeout():
+            return f"{type(self).__name__}()"
+        return f"{type(self).__name__}(timeout={self.timeout!r})"
 
     @property
     def connection_uri(self) -> str:
-        return "local:"
+        pairs = _timeout_query(self.timeout)
+        return "local:" + (f"?{urlencode(pairs)}" if pairs else "")
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> LocalConfig:
-        if parsed.netloc or parsed.path or parsed.query:
+        if parsed.netloc or parsed.path:
             # `local://` is the same URI with an empty authority, so the
             # message names both spellings.
             raise ValueError("local URI must be 'local:' or 'local://'")
-        return cls()
+        query = strict_uri_query(parsed, _URI_TIMEOUT_KEYS)
+        return cls(timeout=_timeout_from_query(query))
 
     def _create_host(self) -> LocalHost:
         return LocalHost(self)

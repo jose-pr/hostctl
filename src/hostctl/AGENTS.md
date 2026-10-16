@@ -120,7 +120,7 @@ and `PosixHost` subclass is in
 
 ```python
 hostctl.host_schemes() -> tuple[str, ...]
-Host.run(*cmds, bufsize=-1, executable=None, stdin=None, stdout=None, stderr=None, cwd=None, env=None, capture_output=True, check=True, encoding=None, errors=None, input=None, timeout=None, text=None) -> subprocess.CompletedProcess
+Host.run(*cmds, bufsize=-1, executable=None, stdin=None, stdout=None, stderr=None, cwd=None, env=None, capture_output=True, check=True, encoding=None, errors=None, input=None, timeout=..., text=None) -> subprocess.CompletedProcess
 Host.path(*segments, backend=None) -> pathapi.Path
 Host.spawn(*cmds, executable=None, cwd=None, env=None, terminal=None, encoding=None, errors=None) -> Process
 Host.info() -> HostInfo
@@ -203,6 +203,60 @@ DEFAULT
 - `DEFAULT` is a singleton compared with `is`; its `repr` is `DEFAULT`, and
   it pickles and copies to itself.
 
+```python
+HostConfig.timeouts -> Timeout
+```
+
+- **Every config takes `timeout=`**, keyword-only: a number or `None` (which
+  sets `total` only, `SSHConfig("nas", timeout=60).timeout ==
+  Timeout(total=60)`), or a `Timeout`. The config stores the value as a
+  `Timeout` (`Timeout.coerce`), on construction, on assignment and through
+  `dataclasses.replace()`, so `config.timeout` is always a `Timeout` and
+  equal spellings make equal configs.
+- A field the transport cannot honour raises `ValueError("SSHConfig:
+  timeout.write is not supported")` when set to anything but `DEFAULT`,
+  `None` included: nothing is silently ignored.
+- `config.timeouts` is the resolved value: each supported `DEFAULT` replaced
+  by what the transport applies. An unsupported field stays `DEFAULT`, and so
+  does a system config's `total`, which the selected provider decides; a
+  config without a `timeout` attribute (a third-party `HostConfig`) reports
+  `Timeout()`.
+
+| config | `total` (`run()` default) | `connect` | `read` | `write` |
+| --- | --- | --- | --- | --- |
+| `LocalConfig` | none | -- | -- | -- |
+| `SSHConfig` | none | 30 s: TCP, key exchange and authentication (asyncssh `connect_timeout`; `None` leaves asyncssh's own) | -- | -- |
+| `WinRMConfig` | 30 s, every leg | 30 s: native `-OpenTimeout`, PSRP `connection_timeout`, pywinrm the connect half of each request (`None` leaves each library's own) | -- | -- |
+| `ContainerConfig` | -- | 60 s: the Docker SDK client's request timeout, which bounds connecting to the Engine and each API reply | -- | -- |
+| `QEMUConfig` | none | the `read` value: opening the agent stream and its guest-sync (unix and ssh transports only) | 10 s: one guest-agent reply | -- |
+| `SerialConfig` | none | -- | 0.1 s: one pyserial read | 10 s: one write |
+| `PosixConfig`, `WindowsConfig`, `IOSConfig` | the selected provider's own | -- | -- | -- |
+
+"--" is unsupported. "none" is no limit. A container has no `total`: an
+Engine exec has no cancel, so `run(timeout=<n>)` raises
+`NotImplementedError`. QEMU's `connect` is refused with `transport='libvirt'`
+(`virConnectOpen` takes no timeout) and with `transport_factory`; a
+`qga+ssh` tunnel's SSH connection is bounded by its `ssh=` config's own
+`timeout.connect`. Serial's `inter_byte_timeout` stays a separate field: it
+is pyserial's gap between two bytes of one read, a framing setting rather
+than a bound on an operation. A provider-composed system config's
+connection timeouts belong to the transport configs in its
+`provider_options`.
+
+- **URI keys**, on every scheme: `timeout` (`total`), `timeout_connect`,
+  `timeout_read`, `timeout_write`, in seconds. An empty value is `None`; an
+  absent key is `DEFAULT`. `connection_uri` renders only the fields that are
+  not `DEFAULT`, so a config round-trips through `HostConfig(str(config))`.
+  An unsupported key raises as the keyword does; a removed key raises
+  `ValueError("unknown connection parameter: connect_timeout; use
+  timeout_connect")` (also `agent_timeout` -> `timeout_read`, serial
+  `read_timeout`/`write_timeout` -> `timeout_read`/`timeout_write`).
+- **`run(timeout=)`** on every host: seconds for this call, `None` for no
+  limit. Left out (shown `timeout=...` in the signatures below), it is the
+  config's `timeout.total`; when that is `DEFAULT`, the transport's own
+  default (the table). `host.shell.run(timeout=None)` passes `None` on.
+  `Process.wait(timeout=)` is unchanged: `None` waits forever.
+
 ## URIs (`hostctl.uri`)
 
 ```python
@@ -282,10 +336,10 @@ returns a `PosixHost` or `WindowsHost` composed of that transport's providers;
 the transport itself is private.
 
 ```python
-SystemConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None)
-PosixConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None)
-WindowsConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None)
-IOSConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None)
+SystemConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None, timeout=Timeout())
+PosixConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None, timeout=Timeout())
+WindowsConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None, timeout=Timeout())
+IOSConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None, timeout=Timeout())
 ```
 
 The `posix://`, `windows://` and `ios://` configs compose a system host from
@@ -337,7 +391,7 @@ without importing them.
 ## Local (`hostctl.transports.local`)
 
 ```python
-LocalConfig()
+LocalConfig(*, timeout=Timeout())
 LocalHost(config=None, *, executor_providers=(), path_providers=(), **options)
 local_providers() -> tuple[ExecutorProvider, PathProvider]
 LocalExecutor.__call__(command, *args, bufsize=-1, stdin=None, stdout=None, stderr=None, cwd=None, env=None, capture_output=True, check=True, encoding=None, errors=None, input=None, timeout=None, text=None, **options) -> subprocess.CompletedProcess
@@ -362,7 +416,7 @@ LocalExecutor.__call__(command, *args, bufsize=-1, stdin=None, stdout=None, stde
 ## SSH (`hostctl.transports.ssh`)
 
 ```python
-SSHConfig(host, *, port=22, username=None, password=None, client_keys=None, executable=None, known_hosts=(), shell=POSIX_SHELL, pathname=PosixPathname, login_shell='auto', connect_timeout=30.0, ssh_config=None, connect_options={})
+SSHConfig(host, *, port=22, username=None, password=None, client_keys=None, executable=None, known_hosts=(), shell=POSIX_SHELL, pathname=PosixPathname, login_shell='auto', timeout=Timeout(), ssh_config=None, connect_options={})
 ssh_providers(config) -> tuple[ExecutorProvider, PathProvider]
 ```
 
@@ -392,9 +446,11 @@ an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
   stock server hands it to `cmd.exe /c`. `"auto"` reads the dialect (a Windows
   path flavour means `cmd.exe`); name it (`"posix"`, `"cmd"`, `"powershell"`)
   when the server's `DefaultShell` has been changed.
-- `connect_timeout` bounds establishing the connection, in seconds (`None`
-  keeps asyncssh's default; otherwise it must be > 0); it is the URI key
-  `connect_timeout`, omitted from `connection_uri` at 30.
+- `timeout` (see "Timeouts"): `total` is the default of `run(timeout=)`,
+  none unless set; `connect` bounds establishing the connection (TCP, key
+  exchange, authentication), 30 s, and `None` there keeps asyncssh's own
+  (an ssh_config `ConnectTimeout`, else the OS connect timeout plus
+  asyncssh's 2-minute login timeout). `read`/`write` raise.
 - `ssh_config` is the one way to read an ssh_config, and both legs read it.
   Without it neither leg reads one -- both get `config=None`, so an alias,
   `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in `~/.ssh/config` is
@@ -403,7 +459,8 @@ an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
 - `connect_options` are extra `asyncssh.connect` keywords for both legs, kept
   out of the URI and `repr()`; a key hostctl owns (`host`, `port`,
   `username`, `password`, `client_keys`, `known_hosts`, `config`,
-  `connect_timeout`) raises and names the field to use.
+  `connect_timeout`) raises and names the keyword to use
+  (`timeout=Timeout(connect=...)` for `connect_timeout`).
 - `ssh_providers(config)` returns the `(executor_provider, path_provider)`
   pair sharing one transport, for a host you assemble yourself; building them
   separately would open two connections and close one.
@@ -478,7 +535,7 @@ Behaviour:
 ## WinRM (`hostctl.transports.winrm`)
 
 ```python
-WinRMConfig(host, *, username, password=None, auth='ntlm', port=None, tls=False, verify=True, message_encryption='auto', timeout=30.0, connect_timeout=30.0, provider='auto', cleartext_auth=False)
+WinRMConfig(host, *, username, password=None, auth='ntlm', port=None, tls=False, verify=True, message_encryption='auto', timeout=Timeout(), provider='auto', cleartext_auth=False)
 winrm_providers(config) -> tuple[ExecutorProvider, PathProvider]
 ```
 
@@ -493,20 +550,20 @@ are a `CompositeWindowsPath` over the WinRM path backend.
   `?cleartext_auth=true`).
 - `tls=True` is HTTPS; `verify=False` (`?verify=false`) skips the server
   certificate check. `str(config)` omits an unset port.
-- Two timeouts, float seconds; each is a URI key (empty for `None`) omitted
-  from `connection_uri` at 30. `timeout` is the default for `run(timeout=)`:
-  the same total deadline per command, which a per-call `timeout=`
-  overrides, on every leg; `None` sets no default. `connect_timeout` bounds
-  establishing the connection, as on `SSHConfig`: native
-  `New-PSSessionOption -OpenTimeout`, PSRP pypsrp's `connection_timeout`,
-  pywinrm the connect half of every HTTP request's `(connect, read)`
-  timeout. `None` keeps each library's default: PowerShell's 180 s, pypsrp's
-  30 s, and on pywinrm the 30 s read limit bounds connecting too.
+- `timeout` (see "Timeouts") honours two fields. `total`, 30 s, is the
+  default of `run(timeout=)`: the same total deadline per command on every
+  leg, which a per-call `timeout=` overrides; `None` sets no default.
+  `connect`, 30 s, bounds establishing the connection, as on `SSHConfig`:
+  native `New-PSSessionOption -OpenTimeout`, PSRP pypsrp's
+  `connection_timeout`, pywinrm the connect half of every HTTP request's
+  `(connect, read)` timeout. `None` there keeps each library's default:
+  PowerShell's 180 s, pypsrp's 30 s, and on pywinrm the 30 s read limit
+  bounds connecting too. `read`/`write` raise.
 - Per-request timing is fixed: the server holds a silent Receive up to 20 s
   (WS-Man `OperationTimeout`) and one HTTP read may take 30 s.
-  `read_timeout=`/`operation_timeout=` raise `TypeError`; those URI keys
-  (and 0.3's `*_timeout_sec`) raise `ValueError` naming `connect_timeout`
-  and `timeout`.
+  `read_timeout=`/`operation_timeout=`/`connect_timeout=` raise `TypeError`;
+  the first two as URI keys (and 0.3's `*_timeout_sec`) raise `ValueError`
+  naming `timeout_connect` and `timeout`.
 - `provider` is `auto`, `native`, `pywinrm` or `psrp`. `auto` picks a
   password-free config on a Windows client as `native` (current-context
   PowerShell remoting, see "Environment variables"); otherwise PSRP when
@@ -533,12 +590,12 @@ Behaviour:
   the WinRS terminate signal and its shell deleted. PSRP: each Receive is
   shortened to the time left, then the pipeline is sent PSRP's stop signal.
   Termination is requested, never confirmed.
-- An expired `connect_timeout` is not a deadline: it raises
+- An expired `timeout.connect` is not a deadline: it raises
   `ConnectionError`. On PSRP the runspace opens before dispatch, so that is
   `OperationNotStartedError`; pywinrm connects per request, so it may come
   mid-command, with the command's effect unknown.
-- `timeout=None` with no `run(timeout=)` waits for the command however long
-  it takes, and on the native leg a host that stops answering after the
+- `timeout=None` (on the config or the call) waits for the command however
+  long it takes, and on the native leg a host that stops answering after the
   session opened can block the call indefinitely.
 - On the native leg `verify=False` becomes `New-PSSessionOption -SkipCACheck
   -SkipCNCheck`, and the remote exit code is carried back explicitly.
@@ -564,7 +621,7 @@ A PSRP runspace with typed PowerShell streams and state, reached through
 `invoke(script, *args)` renders its arguments with the PowerShell flavour's
 `structured_command` and returns typed objects in `PipelineResult.output`.
 `invoke(timeout=)` is a total deadline in seconds; it has no default (the
-config's `timeout` applies to `run()`), and on expiry the pipeline is sent
+config's `timeout.total` applies to `run()`), and on expiry the pipeline is sent
 the stop signal and `TimeoutExpired` (`orphaned=True`) is raised. An
 injected `pool` is caller-owned: `close()` leaves it open and the session stays
 reopenable.
@@ -572,7 +629,7 @@ reopenable.
 ## Containers (`hostctl.transports.container`)
 
 ```python
-ContainerConfig(container, *, engine_url=None, username=None, workdir=None, executable=None, shell='auto', pathname='auto', client_factory=None)
+ContainerConfig(container, *, engine_url=None, username=None, workdir=None, executable=None, shell='auto', pathname='auto', timeout=Timeout(), client_factory=None)
 ContainerHost(config, *, executor_providers=(), path_providers=())
 ```
 
@@ -604,7 +661,7 @@ Windows paths. `client_factory` builds the Docker client (default:
 ## QEMU guest agent (`hostctl.transports.qemu`)
 
 ```python
-QEMUConfig(domain, *, transport='libvirt', connection=None, socket_path=None, ssh=None, agent_timeout=10.0, max_reply_size=48*1024*1024, shell='auto', pathname='auto', transport_factory=None, serial_console=None, path_helper=None)
+QEMUConfig(domain, *, transport='libvirt', connection=None, socket_path=None, ssh=None, timeout=Timeout(), max_reply_size=48*1024*1024, shell='auto', pathname='auto', transport_factory=None, serial_console=None, path_helper=None)
 QEMUHost(config)
 QEMUHost.open_serial(*, encoding=None, errors=None) -> Process
 ```
@@ -623,9 +680,14 @@ its enabled command list.
   `.pid` is kept. `run(stderr=STDOUT)` interleaves the streams on qemu-ga 8.0+
   with a non-Windows guest and otherwise returns stdout then stderr. Results
   carry `stdout_truncated`/`stderr_truncated` and warn when set.
-- `max_reply_size` bounds one QGA reply; `agent_timeout` bounds one round trip
-  independently of a command's `timeout=`: an agent that stops answering
-  raises `ConnectionError`, not a command timeout.
+- `max_reply_size` bounds one QGA reply. `timeout.read` (10 s) bounds one
+  guest-agent round trip independently of a command's `timeout=`: an agent
+  that stops answering raises `ConnectionError`, not a command timeout;
+  `None` waits for each reply without a limit (libvirt's
+  `VIR_DOMAIN_QEMU_AGENT_COMMAND_BLOCK`). `timeout.connect` bounds opening a
+  unix or ssh agent stream and its guest-sync; left `DEFAULT` it shares the
+  first request's reply deadline. `timeout.total` (none) is the default of
+  `run(timeout=)`. `timeout.write` raises.
 - `shell="auto"`/`pathname="auto"` need positive evidence of the guest family
   (`guest-get-osinfo`, or a family-exclusive command in `guest-info`) and
   raise rather than default to POSIX. `info().os_family` comes from
@@ -697,7 +759,7 @@ injected `stream` (one from `stream_factory` is always closed).
 ## Serial consoles (`hostctl.transports.serial`)
 
 ```python
-SerialConfig(device, *, baudrate=115200, bytesize=8, parity='N', stopbits=1, xonxoff=False, rtscts=False, dsrdtr=False, read_timeout=0.1, write_timeout=10, inter_byte_timeout=None, exclusive=None, profile=RawConsoleProfile(), serial_factory=None, serial_port=None)
+SerialConfig(device, *, baudrate=115200, bytesize=8, parity='N', stopbits=1, xonxoff=False, rtscts=False, dsrdtr=False, timeout=Timeout(), inter_byte_timeout=None, exclusive=None, profile=RawConsoleProfile(), serial_factory=None, serial_port=None)
 SerialHost(config)
 ```
 
@@ -715,7 +777,11 @@ same device. `serial_factory` (a `SerialFactory`, returning a `SerialLike`)
 and `serial_port` are supported injection seams: a caller that passes
 `serial_port=` keeps ownership of it. `SerialConfig` takes no
 `username`/`password`; console credentials are the profile's `login=` steps.
-RFC 2217 URLs are not encrypted.
+RFC 2217 URLs are not encrypted. `timeout` (see "Timeouts"): `read` is
+pyserial's read timeout (0.1 s), `write` its write timeout (10 s), `total`
+the default of `run(timeout=)` (none); `connect` raises. A non-blocking read
+(pyserial `timeout=0`) is not expressible: zero is not a valid `Timeout`
+value. `inter_byte_timeout` is pyserial's own, separate field.
 
 - `run()` frames each command as its own profile exchange, only when the
   profile advertises it; it refuses a structured (argv) command (the host
@@ -765,7 +831,7 @@ to a host or executor.
 
 ```python
 Shell(flavour, executor, *, cwd=None, env=None, encoding=None, errors=None)
-Shell.run(*cmds, stdin=None, stdout=None, stderr=None, cwd=None, env={}, capture_output=None, check=None, encoding=None, errors=None, input=None, timeout=None, text=None)
+Shell.run(*cmds, stdin=None, stdout=None, stderr=None, cwd=None, env={}, capture_output=None, check=None, encoding=None, errors=None, input=None, timeout=..., text=None)
 Shell.session(*cmds, executable=None, cwd=None, env={}, terminal=None, encoding=None, errors=None) -> ShellSession
 Shell.configure(*, cwd=None, env={}, encoding=None, errors=None) -> Shell
 Shell.__call__(*args, cwd=None, env={}, encoding=None, errors=None) -> Shell
@@ -1228,13 +1294,14 @@ dependency may (asyncssh, pywinrm, docker), as documented by that package.
   anything is sent (`OperationNotStartedError`). A command that may have
   started is never retried on another provider, so a `ConnectionError`
   mid-command means its effect on the target is unknown.
-- **Timeouts are not all total deadlines.** `run(timeout=)` bounds the call on
-  local, SSH, QEMU and every WinRM leg, and `WinRMConfig(timeout=)` is its
-  default there (30 s; `None` for none). `SSHConfig(connect_timeout=)` and
-  `WinRMConfig(connect_timeout=)` bound only establishing the connection;
-  `QEMUConfig(agent_timeout=)` one agent round trip; a container's `run()`
-  refuses `timeout=`; `SerialConfig(read_timeout=, write_timeout=)` bound
-  one read and one write.
+- **A config's `timeout=` number is the total only.** `SSHConfig(h,
+  timeout=60)` bounds each `run()`, not connecting: that is
+  `timeout=Timeout(60, connect=10)`. Only `total` is a whole-command
+  deadline; `connect`, `read` and `write` bound one step each. WinRM is the
+  one transport whose `total` defaults to a number (30 s); `run(timeout=None)`
+  lifts it for one call. A container has no `total` at all and refuses
+  `run(timeout=<n>)`. A field the transport does not support raises rather
+  than being ignored (the table in "Timeouts").
 - **Loggers.** Every module logs through `logging.getLogger(__name__)`, so
   every logger is a child of `hostctl`: configure that one (at `DEBUG` it
   shows provider selection and dispatch, redacted). Child names follow the
