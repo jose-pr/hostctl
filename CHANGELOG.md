@@ -191,8 +191,11 @@ Every row ships in 0.4.0. No old name is kept as an alias.
   - An all-digit scheme given through `scheme=`, `defaults=` or `replace()` is
     read as a port, and one outside 0-65535 raises `ValueError` where it gave
     an object with no port.
-  - netimps 0.4 refuses to import when `NETIMPS_NO_SOCKET_PATCH` is set, and
-    `import hostctl` imports netimps; set `NETIMPS_SOCKET_PATCH=0` instead.
+  - netimps 0.4 refuses to import when `NETIMPS_NO_SOCKET_PATCH` is set; set
+    `NETIMPS_SOCKET_PATCH=0` instead. `import hostctl` does not import
+    netimps and changes no stdlib module: only the first call that needs it
+    (a default port, a bracketed IPv6 authority, `ConnectionString`) imports
+    it, and with it netimps's `socket` patch on Windows.
 - The sdist no longer ships the contributor `AGENTS.md` or `benchmarks/`, and
   neither artifact ships a `CLAUDE*` file.
 - Extras ranges follow the dependency rule: `container` accepts docker 7.0

@@ -165,3 +165,71 @@ def test_no_module_references_an_undefined_global(module):
 
     scan(top)
     assert missing == set(), f"{module.name}: {sorted(missing)}"
+
+
+#: What a fresh interpreter reports before and after `import hostctl`.
+_SIDE_EFFECT_PROBE = """
+import json, os, socket, sys
+before = (hasattr(os, "sysconf"), hasattr(socket.socket, "recvmsg"), sorted(dir(socket)))
+import hostctl
+after = (hasattr(os, "sysconf"), hasattr(socket.socket, "recvmsg"), sorted(dir(socket)))
+print(json.dumps({
+    "changed": [list(map(str, b)) for b in zip(before, after) if b[0] != b[1]],
+    "modules": sorted({name.split(".")[0] for name in sys.modules}),
+}))
+"""
+
+#: Optional dependencies and the CLI framework `import hostctl` must not load.
+_NOT_ON_IMPORT = (
+    "netimps",
+    "asyncssh",
+    "sftppath",
+    "winrm",
+    "pypsrp",
+    "docker",
+    "serial",
+    "libvirt",
+    "duho",
+)
+
+
+def _probe_import(extra_env=None):
+    import json
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        filter(None, (str(SOURCE.parent), env.get("PYTHONPATH")))
+    )
+    env.update(extra_env or {})
+    # Not `-I`: isolated mode ignores PYTHONPATH, so the child would import
+    # an installed hostctl instead of this checkout.
+    result = subprocess.run(
+        [sys.executable, "-c", _SIDE_EFFECT_PROBE],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_import_has_no_process_side_effects():
+    """`import hostctl` patches no stdlib module and loads no optional
+    dependency: netimps, for one, patches `socket` and `os` on Windows at its
+    own import."""
+    report = _probe_import()
+
+    assert report["changed"] == []
+    assert sorted(set(_NOT_ON_IMPORT) & set(report["modules"])) == []
+
+
+def test_import_does_not_depend_on_netimps_environment():
+    """netimps refuses to import while `NETIMPS_NO_SOCKET_PATCH` is set; a
+    package import that reached it would fail the same way."""
+    report = _probe_import({"NETIMPS_NO_SOCKET_PATCH": "1"})
+
+    assert report["changed"] == []
