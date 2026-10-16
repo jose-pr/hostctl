@@ -9,7 +9,7 @@ import json
 import pytest
 
 from hostctl.exceptions import QGACommandError, QGATimeoutError
-from hostctl.executor._qga import (
+from hostctl.transports.qemu._qga import (
     SSHUnixGuestAgentTransport,
     UnixSocketGuestAgentTransport,
     guest_oserror,

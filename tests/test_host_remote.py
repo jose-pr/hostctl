@@ -11,17 +11,12 @@ from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 import pytest
 from pathapi import Path as NextPath, PosixPathname, WindowsPathname
 
-from hostctl import (
-    BASH,
-    CMD,
-    POWERSHELL,
-    PWSH,
-    HostConfig,
-    Shell,
-    SSHConfig,
-)
-from hostctl.shell import PowerShellFlavour
-from hostctl.host._ssh import _SSHTransport
+from hostctl.shell import BASH, CMD, POWERSHELL, PWSH
+from hostctl.host._contracts import HostConfig
+from hostctl.shell._flavour import Shell
+from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.shell._powershell import PowerShellFlavour
+from hostctl.transports.ssh._transport import _SSHTransport
 
 
 class _Result:
@@ -124,8 +119,8 @@ def _compose(config, stub):
     `host.transport` is the shared transport, for assertions about it.
     """
     from hostctl import _async
-    from hostctl.host import PosixHost, WindowsHost
-    from hostctl.host._ssh import ssh_providers
+    from hostctl.system._system import PosixHost, WindowsHost
+    from hostctl.transports.ssh._transport import ssh_providers
 
     executor, paths = ssh_providers(config)
     transport = executor.transport

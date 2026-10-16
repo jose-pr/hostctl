@@ -57,7 +57,8 @@ def _measure(name, call, *, samples=7, iterations=2000):
 
 
 def _shell_cases():
-    from hostctl.shell import CMD, POSIX_SHELL, POWERSHELL, PowerShellFlavour
+    from hostctl.shell import CMD, POSIX_SHELL, POWERSHELL
+    from hostctl.shell._powershell import PowerShellFlavour
 
     argv = ("tool.exe", "value with spaces", 'a "quoted" value', "%PATH%", "a&b")
     script = "printf '%s' hello; echo done"
@@ -85,8 +86,8 @@ def _shell_cases():
 
 def _path_cases():
     from pathapi.mempath import MemPath, MemPathBackend
-    from hostctl.host import PosixHost
-    from hostctl.provider import PathProvider
+    from hostctl.system._system import PosixHost
+    from hostctl.provider._contracts import PathProvider
 
     backend = MemPathBackend()
     MemPath("bench", backend=backend).mkdir()

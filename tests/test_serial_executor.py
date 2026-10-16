@@ -8,13 +8,13 @@ import time
 
 import pytest
 
-from hostctl.executor.serial import (
+from hostctl.transports.serial._executor import (
     SerialExecutor,
     SerialSettings,
     normalize_serial_error,
 )
 from hostctl.process import Process
-from hostctl.process.serial import SerialProcess
+from hostctl.transports.serial._process import SerialProcess
 
 
 class _Serial:

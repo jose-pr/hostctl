@@ -9,9 +9,9 @@ import threading
 import pytest
 
 from hostctl.exceptions import QGAProtocolError
-from hostctl.executor.qemu import QEMUExecutor
-from hostctl.host import HostConfig
-from hostctl.host.qemu import QEMUConfig, QEMUHost
+from hostctl.transports.qemu._executor import QEMUExecutor
+from hostctl.host._contracts import HostConfig
+from hostctl.transports.qemu._host import QEMUConfig, QEMUHost
 
 
 class _Transport:

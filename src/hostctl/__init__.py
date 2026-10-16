@@ -27,39 +27,52 @@ from .executor import (
     ExecutorCapability as ExecutorCapability,
     ExecutorCommand as ExecutorCommand,
     ExecutionOptions as ExecutionOptions,
-    LocalExecutor as LocalExecutor,
+)
+from .transports.local._executor import LocalExecutor as LocalExecutor
+from .transports.winrm._psrp import (
     pypsrp_available as pypsrp_available,
     require_pypsrp as require_pypsrp,
 )
-from .host import (
+from .transports.container._host import (
     ContainerConfig as ContainerConfig,
-    ConnectionString as ConnectionString,
-    Cmdlet as Cmdlet,
     ContainerHost as ContainerHost,
-    Exec as Exec,
-    PSParam as PSParam,
+)
+from .uri._connection import ConnectionString as ConnectionString
+from .shell._grammar import Cmdlet as Cmdlet, Exec as Exec, PSParam as PSParam
+from .host._contracts import (
     Host as Host,
     HostConfig as HostConfig,
     HostInfo as HostInfo,
-    HostPath as HostPath,
+)
+from pathapi import Path as HostPath
+from .transports.local._host import (
     LocalConfig as LocalConfig,
     LocalHost as LocalHost,
     local_providers as local_providers,
+)
+from .uri._parse import (
     parse_credentials as parse_credentials,
     redact_uri as redact_uri,
-    ssh_providers as ssh_providers,
     strict_uri_credentials as strict_uri_credentials,
     strict_uri_query as strict_uri_query,
     uri_host as uri_host,
     uri_hostname as uri_hostname,
-    winrm_providers as winrm_providers,
-    QEMUConfig as QEMUConfig,
-    QEMUHost as QEMUHost,
+)
+from .transports.ssh._transport import (
+    ssh_providers as ssh_providers,
     SSHConfig as SSHConfig,
-    SerialConfig as SerialConfig,
-    SerialHost as SerialHost,
+)
+from .transports.winrm._transport import (
+    winrm_providers as winrm_providers,
     WinRMConfig as WinRMConfig,
     WinRMPath as WinRMPath,
+)
+from .transports.qemu._host import QEMUConfig as QEMUConfig, QEMUHost as QEMUHost
+from .transports.serial._host import (
+    SerialConfig as SerialConfig,
+    SerialHost as SerialHost,
+)
+from .system._system import (
     SystemConfig as SystemConfig,
     SystemHost as SystemHost,
     PosixConfig as PosixConfig,
@@ -68,13 +81,15 @@ from .host import (
     WindowsHost as WindowsHost,
     register_system_provider as register_system_provider,
     system_provider_names as system_provider_names,
-    host_schemes as host_schemes,
     IOSConfig as IOSConfig,
     IOSHost as IOSHost,
+)
+from ._registry import host_schemes as host_schemes
+from .paths._composite import (
     CompositePosixPath as CompositePosixPath,
     CompositeWindowsPath as CompositeWindowsPath,
 )
-from .provider import (
+from .provider._contracts import (
     ExecutorProvider as ExecutorProvider,
     PathProvider as PathProvider,
     ProviderProbe as ProviderProbe,
@@ -93,11 +108,8 @@ from .exceptions import (
     QGATimeoutError as QGATimeoutError,
     TransportError as TransportError,
 )
-from .process import (
-    Process as Process,
-    TerminalOptions as TerminalOptions,
-)
-from .serial import (
+from .process import Process as Process, TerminalOptions as TerminalOptions
+from .transports.serial._console import (
     LoginStep as LoginStep,
     PromptConsoleProfile as PromptConsoleProfile,
     RawConsoleProfile as RawConsoleProfile,
@@ -116,13 +128,15 @@ from .shell import (
     POSIX_SHELL as POSIX_SHELL,
     PWSH as PWSH,
     ZSH as ZSH,
+    register_shell_flavour as register_shell_flavour,
+    shell_flavour as shell_flavour,
+    shell_flavour_names as shell_flavour_names,
+)
+from .shell._flavour import (
     Shell as Shell,
     ShellFlavour as ShellFlavour,
     ShellOperator as ShellOperator,
     ShellSession as ShellSession,
-    register_shell_flavour as register_shell_flavour,
-    shell_flavour as shell_flavour,
-    shell_flavour_names as shell_flavour_names,
 )
 
 __all__ = [

@@ -10,35 +10,36 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from hostctl import (
+from hostctl.shell import (
     BASH,
     CMD,
-    ContainerConfig,
-    Cmdlet,
     FISH,
-    Executor,
-    ExecutorCapability,
-    ExecutorCommand,
-    ExecutionOptions,
-    LocalConfig,
     POSIX_SHELL,
     POWERSHELL,
     PWSH,
-    QEMUConfig,
-    Shell,
-    ShellOperator,
-    ShellSession,
-    SSHConfig,
-    WinRMConfig,
     ZSH,
     register_shell_flavour,
     shell_flavour,
 )
-from hostctl.host._ssh import _SSHTransport
-from hostctl.host._winrm import _WinRMTransport
-from hostctl.executor.psrp import PSRPExecutor
+from hostctl.transports.container._host import ContainerConfig
+from hostctl.shell._grammar import Cmdlet
+from hostctl.executor import (
+    Executor,
+    ExecutorCapability,
+    ExecutorCommand,
+    ExecutionOptions,
+)
+from hostctl.transports.local._host import LocalConfig
+from hostctl.transports.qemu._host import QEMUConfig
+from hostctl.shell._flavour import Shell, ShellOperator, ShellSession
+from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.transports.ssh._transport import _SSHTransport
+from hostctl.transports.winrm._transport import _WinRMTransport
+from hostctl.transports.winrm._psrp import PSRPExecutor
 from hostctl.executor import Executor as ModuleExecutor
-from hostctl.executor import SSHExecutor, WinRMExecutor
+from hostctl.transports.ssh._executor import SSHExecutor
+from hostctl.transports.winrm._pywinrm import WinRMExecutor
 
 
 def test_shell_callable_executor_receives_one_script():
@@ -521,7 +522,7 @@ def test_a_cmd_configured_windows_host_runs_structured_commands(value):
     """The public consequence: a WindowsHost with shell='cmd' over an
     args-capable provider could not run a structured command at all --
     it reported success while the child saw carets and backslashes."""
-    from hostctl import HostConfig
+    from hostctl.host._contracts import HostConfig
 
     host = HostConfig("windows://node?executor=local&shell=cmd")._create_host()
     code = "import sys; print(ascii(sys.argv[1]))"
@@ -854,7 +855,8 @@ def test_host_bound_shell_detects_native_cwd_and_env_support():
     always False: the double-render guard never fired and a host with native
     cwd/env still got a rendered `cd`/`export` prefix in the script.
     """
-    from hostctl import ExecutorProvider, PosixHost
+    from hostctl.provider._contracts import ExecutorProvider
+    from hostctl.system._system import PosixHost
 
     seen = []
 
@@ -1094,7 +1096,8 @@ def test_setting_a_default_on_host_shell_is_refused_not_discarded():
 def test_host_shell_run_hands_the_provider_what_host_run_does():
     """`Shell.run` rendered the epilogue on its own, so a status-managing
     provider got `exit ...` that ended its runspace before the status marker."""
-    from hostctl import ExecutorProvider, WindowsHost
+    from hostctl.provider._contracts import ExecutorProvider
+    from hostctl.system._system import WindowsHost
 
     scripts = []
 
@@ -1129,7 +1132,7 @@ def test_host_shell_configured_env_reaches_the_command():
 
 
 def test_a_shell_over_an_executor_runs_through_the_executors_argv():
-    from hostctl.executor import LocalExecutor
+    from hostctl.transports.local._executor import LocalExecutor
 
     if os.name == "nt":
         shell, text = Shell(POWERSHELL, LocalExecutor()), "Write-Output hi"
@@ -1140,7 +1143,7 @@ def test_a_shell_over_an_executor_runs_through_the_executors_argv():
 
 
 def test_a_shell_over_an_executor_embeds_what_the_executor_cannot_carry():
-    from hostctl.executor import LocalExecutor
+    from hostctl.transports.local._executor import LocalExecutor
 
     if os.name == "nt":
         shell = Shell(POWERSHELL, LocalExecutor())

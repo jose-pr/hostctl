@@ -8,8 +8,12 @@ import sys
 import pytest
 
 import hostctl
-from hostctl import ConnectionString, HostConfig, PosixConfig, SSHConfig, WinRMConfig
-from hostctl.host.qemu import QEMUConfig
+from hostctl.uri._connection import ConnectionString
+from hostctl.host._contracts import HostConfig
+from hostctl.system._system import PosixConfig
+from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.transports.qemu._host import QEMUConfig
 
 
 def test_importing_hostctl_does_not_import_netimps():

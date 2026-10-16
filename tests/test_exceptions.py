@@ -8,7 +8,9 @@ import pytest
 
 import hostctl
 from hostctl import exceptions
-from hostctl import ExecutorProvider, PosixHost, SSHConfig
+from hostctl.provider._contracts import ExecutorProvider
+from hostctl.system._system import PosixHost
+from hostctl.transports.ssh._transport import SSHConfig
 from hostctl.exceptions import (
     ConsoleProtocolError,
     HostctlError,
@@ -80,7 +82,7 @@ def test_qga_command_error_keeps_the_agent_fields():
 
 
 def _refused_ssh_provider():
-    from hostctl.host._ssh import SSHExecutorProvider, _SSHTransport
+    from hostctl.transports.ssh._transport import SSHExecutorProvider, _SSHTransport
 
     transport = _SSHTransport(SSHConfig("refused.invalid", username="root"))
 

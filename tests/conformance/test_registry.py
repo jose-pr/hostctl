@@ -10,7 +10,7 @@ the whole premise of the battery.
 
 from __future__ import annotations
 
-from hostctl.host import LocalHost
+from hostctl.transports.local._host import LocalHost
 
 from .providers import contract_providers, deterministic_providers
 

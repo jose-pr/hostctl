@@ -6,7 +6,7 @@ import sys
 
 from duho import CommandError
 
-from ..host import Exec
+from ..shell._grammar import Exec
 from ._common import FAILED, HostCommand, write
 
 

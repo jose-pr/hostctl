@@ -3,7 +3,7 @@
 import typing
 from importlib import metadata as _metadata
 
-from ._common import (
+from ._flavour import (
     Shell as Shell,
     ShellCommand as ShellCommand,
     ShellFlavour as ShellFlavour,
@@ -14,14 +14,14 @@ from ._common import (
     wants_epilogue as wants_epilogue,
 )
 from ._grammar import Cmdlet as Cmdlet, PSParam as PSParam
-from .cmd import CmdShellFlavour as CmdShellFlavour
-from .fish import FishShellFlavour as FishShellFlavour
-from .posix import (
+from ._cmd import CmdShellFlavour as CmdShellFlavour
+from ._fish import FishShellFlavour as FishShellFlavour
+from ._posix import (
     BashShellFlavour as BashShellFlavour,
     PosixShellFlavour as PosixShellFlavour,
     ZshShellFlavour as ZshShellFlavour,
 )
-from .powershell import PowerShellFlavour as PowerShellFlavour
+from ._powershell import PowerShellFlavour as PowerShellFlavour
 
 POSIX_SHELL = PosixShellFlavour()
 BASH = BashShellFlavour()

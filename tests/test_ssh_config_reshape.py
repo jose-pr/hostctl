@@ -10,8 +10,9 @@ import pytest
 
 pytest.importorskip("asyncssh")
 
-from hostctl import HostConfig, SSHConfig
-from hostctl.host import PosixHost, WindowsHost
+from hostctl.host._contracts import HostConfig
+from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.system._system import PosixHost, WindowsHost
 from conformance.inprocess_ssh import InProcessSSHServer
 
 
@@ -101,7 +102,7 @@ def test_connect_options_reach_both_legs_and_stay_out_of_the_repr_and_uri():
     options = config.connect_opts()
     assert options["keepalive_interval"] == 5
 
-    from hostctl.host._ssh import _SSHTransport
+    from hostctl.transports.ssh._transport import _SSHTransport
 
     transport = _SSHTransport(config)
     transport.path("/x")
@@ -143,8 +144,8 @@ def test_auto_path_flavor_refuses_an_answer_it_cannot_classify():
 def test_a_root_default_is_gone_from_the_source():
     import pathlib
 
-    import hostctl.host._ssh as ssh
-    import hostctl.host.qemu as qemu
+    import hostctl.transports.ssh._transport as ssh
+    import hostctl.transports.qemu._host as qemu
 
     for module in (ssh, qemu):
         assert '"root"' not in pathlib.Path(module.__file__).read_text()

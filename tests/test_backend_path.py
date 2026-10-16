@@ -6,10 +6,14 @@ import tarfile
 
 import pytest
 
-from hostctl.host._backend_path import BackendPathMixin
-from hostctl.host._winrm import _SCRIPT_BUDGET, WinRMPath, WinRMPathBackend
-from hostctl.host.container_path import ContainerPathBackend, PosixContainerPath
-from hostctl.host.qemu import PosixQEMUPath
+from hostctl.paths._backend import BackendPathMixin
+from hostctl.transports.winrm._transport import (
+    _SCRIPT_BUDGET,
+    WinRMPath,
+    WinRMPathBackend,
+)
+from hostctl.transports.container._path import ContainerPathBackend, PosixContainerPath
+from hostctl.transports.qemu._host import PosixQEMUPath
 from tests.conformance.path_fakes import WinRMFilesystemRunner
 from tests.conformance.providers import FakeQEMUHost
 

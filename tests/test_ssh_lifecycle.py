@@ -10,7 +10,8 @@ import pytest
 
 pytest.importorskip("asyncssh")
 
-from hostctl import HostConfig, SSHConfig
+from hostctl.host._contracts import HostConfig
+from hostctl.transports.ssh._transport import SSHConfig
 from hostctl import _async
 from hostctl.exceptions import OperationNotStartedError
 
@@ -81,7 +82,7 @@ def test_connect_with_nothing_connected_raises():
 
 
 def test_close_in_a_forked_child_leaves_the_parent_connection(monkeypatch):
-    from hostctl.host._ssh import _SSHTransport
+    from hostctl.transports.ssh._transport import _SSHTransport
 
     class _Connection:
         closed = False

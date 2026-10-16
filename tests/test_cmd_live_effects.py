@@ -16,7 +16,8 @@ from pathlib import PureWindowsPath
 
 import pytest
 
-from hostctl.shell import CMD, ShellOperator
+from hostctl.shell import CMD
+from hostctl.shell._flavour import ShellOperator
 
 pytestmark = pytest.mark.skipif(
     shutil.which("cmd.exe") is None, reason="requires cmd.exe"

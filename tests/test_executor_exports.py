@@ -26,7 +26,7 @@ def test_stream_helpers_are_exported():
     Regression test for a real gap: `capture_streams` was exported while
     `write_output`, `normalize_input`, and `dispatch_output` -- its neighbours
     in `_common.py`, used on the same call path -- were not, so consumers
-    imported them from `hostctl.executor._common`.
+    imported them from `hostctl.executor`.
     """
 
     for name in (
@@ -47,7 +47,7 @@ def test_exported_helpers_are_the_implementations_themselves():
     helpers exist to prevent.
     """
 
-    from hostctl.executor import _common
+    from hostctl import executor as _common
 
     for name in (
         "capture_streams",

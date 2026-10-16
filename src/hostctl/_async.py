@@ -73,7 +73,7 @@ def normalize_asyncssh_error(
     # into `OperationNotStartedError` for the next provider.
     if isinstance(exc, (TimeoutError, _asyncio.TimeoutError, module.TimeoutError)):
         if command is not None:
-            from .executor._common import expired
+            from .executor import expired
 
             # One payload shape for every transport: `.orphaned` and `.pid`
             # always exist, and the output defaults to `b''` rather than

@@ -21,7 +21,8 @@ import stat
 import pytest
 from pathapi.mempath import MemPath, MemPathBackend
 
-from hostctl import PathProvider, PosixHost
+from hostctl.provider._contracts import PathProvider
+from hostctl.system._system import PosixHost
 
 FULL = PathProvider.DEFAULT_CAPABILITIES | {"symlink_to", "readlink", "scandir"}
 
@@ -115,7 +116,7 @@ def test_chown_reaches_the_backend_without_a_composite_method(host):
     if not hasattr(PnPath, "chown"):
         pytest.skip("installed pathapi predates chown()")
 
-    from hostctl.host import composite_path
+    from hostctl.paths import _composite as composite_path
 
     assert "def chown" not in inspect.getsource(composite_path)
 
@@ -144,7 +145,7 @@ def test_a_composite_argument_keeps_its_backend(tmp_path):
     """
     import os
 
-    from hostctl.host._winrm import WinRMPath
+    from hostctl.transports.winrm._transport import WinRMPath
 
     class _Backend:
         """A backend whose stat carries st_dev/st_ino, as a real one may.
@@ -179,7 +180,7 @@ def test_a_download_provider_answers_the_stat_predicates_it_derives():
     pinned download path answered `stat()` and `is_symlink()` and refused
     `is_file()` -- and every pathapi helper that asks `is_dir()` first
     broke on it."""
-    from hostctl.provider.transports import READ_ONLY_PATH_OPERATIONS
+    from hostctl.provider._contracts import READ_ONLY_PATH_OPERATIONS
 
     backend = MemPathBackend()
     MemPath("payload", backend=backend).write_bytes(b"value")
@@ -202,7 +203,7 @@ def test_a_read_only_provider_can_still_copy_out(tmp_path):
     read-only provider could not copy OUT at all -- although only reads
     happen on the source -- while `read_bytes()` on the same path worked."""
     from pathapi import Path as LocalPath
-    from hostctl.provider.transports import READ_ONLY_PATH_OPERATIONS
+    from hostctl.provider._contracts import READ_ONLY_PATH_OPERATIONS
 
     backend = MemPathBackend()
     MemPath("payload", backend=backend).write_bytes(b"value")

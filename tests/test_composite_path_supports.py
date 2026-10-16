@@ -20,8 +20,9 @@ from pathapi.protocols import (
     supports,
 )
 
-from hostctl import PathProvider, PosixHost
-from hostctl.provider.transports import FULL_PATH_OPERATIONS, READ_ONLY_PATH_OPERATIONS
+from hostctl.provider._contracts import PathProvider
+from hostctl.system._system import PosixHost
+from hostctl.provider._contracts import FULL_PATH_OPERATIONS, READ_ONLY_PATH_OPERATIONS
 
 _MUTATIONS = (Create, Remove, Move, Chmod, Symlink)
 
@@ -77,7 +78,7 @@ def test_a_protocol_the_composite_does_not_forward_is_the_class_answer():
 def _local_host():
     from pathapi import LocalPath
 
-    from hostctl import WindowsHost
+    from hostctl.system._system import WindowsHost
 
     provider = PathProvider("local", LocalPath, capabilities=FULL_PATH_OPERATIONS)
     host_class = WindowsHost if os.name == "nt" else PosixHost

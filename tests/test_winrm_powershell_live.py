@@ -20,9 +20,9 @@ import subprocess
 import pytest
 
 from conformance.providers import LocalWinRSProtocol
-from hostctl import WinRMConfig
-from hostctl.executor.winrm import _PywinrmStdinSession
-from hostctl.host._winrm import _SCRIPT_BUDGET, _WinRMTransport
+from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.transports.winrm._pywinrm import _PywinrmStdinSession
+from hostctl.transports.winrm._transport import _SCRIPT_BUDGET, _WinRMTransport
 
 pytestmark = pytest.mark.skipif(
     shutil.which("powershell.exe") is None or shutil.which("cmd.exe") is None,
@@ -102,7 +102,7 @@ def test_reading_a_missing_file_raises_file_not_found(backend, tmp_path):
 
 def test_appending_to_a_missing_file_creates_it(backend, tmp_path):
     """The consequence of the classification bug, end to end."""
-    from hostctl.host._staged_io import staged_open
+    from hostctl.paths._staged_io import staged_open
 
     target = str(tmp_path / "audit.log")
 
@@ -226,7 +226,7 @@ def test_exists_answers_from_metadata(backend, tmp_path):
 
 def test_exclusive_open_of_an_existing_file_downloads_nothing(transport, tmp_path):
     """`open("xb")` read the whole existing file just to learn it was there."""
-    from hostctl.host._winrm import WinRMPath
+    from hostctl.transports.winrm._transport import WinRMPath
 
     target = tmp_path / "big.bin"
     target.write_bytes(os.urandom(1 << 20))

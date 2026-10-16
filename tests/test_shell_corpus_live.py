@@ -34,21 +34,13 @@ from _adversarial import (
     WINDOWS_HOSTILE,
     fs_names,
 )
-from hostctl.executor import CommandLine, LocalExecutor
+from hostctl.executor import CommandLine
+from hostctl.transports.local._executor import LocalExecutor
 from hostctl.process import Process
-from hostctl.shell.cmd import _batch_token
-from hostctl.shell.powershell import _binder_wraps, _crt_escape
-from hostctl.shell import (
-    BASH,
-    CMD,
-    FISH,
-    POSIX_SHELL,
-    POWERSHELL,
-    PWSH,
-    ZSH,
-    ShellOperator,
-    ShellSession,
-)
+from hostctl.shell._cmd import _batch_token
+from hostctl.shell._powershell import _binder_wraps, _crt_escape
+from hostctl.shell import BASH, CMD, FISH, POSIX_SHELL, POWERSHELL, PWSH, ZSH
+from hostctl.shell._flavour import ShellOperator, ShellSession
 
 NT = os.name == "nt"
 CHUNK = 25

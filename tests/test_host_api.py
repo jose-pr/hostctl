@@ -8,22 +8,14 @@ from urllib.parse import quote, urlsplit
 import pytest
 from pathapi import WindowsPathname
 
-from hostctl import (
-    POWERSHELL,
-    Host,
-    HostConfig,
-    HostInfo,
-    LocalConfig,
-    LocalHost,
-    PosixHost,
-    WindowsHost,
-    SSHConfig,
-    WinRMConfig,
-    parse_credentials,
-    redact_uri,
-    uri_hostname,
-)
-from hostctl.host._common import _encode_stripped_characters
+from hostctl.shell import POWERSHELL
+from hostctl.host._contracts import Host, HostConfig, HostInfo
+from hostctl.transports.local._host import LocalConfig, LocalHost
+from hostctl.system._system import PosixHost, WindowsHost
+from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.uri._parse import parse_credentials, redact_uri, uri_hostname
+from hostctl.uri._parse import _encode_stripped_characters
 
 
 class _UnsupportedHost(Host):
@@ -182,7 +174,8 @@ def test_transport_system_hosts_have_safe_info_fallback_without_connection(
     TCP timeout per transport) and a reachable example.com:22 would have made
     a unit test attempt a real handshake as root.
     """
-    from hostctl.host import _ssh, _winrm
+    from hostctl.transports.ssh import _transport as _ssh
+    from hostctl.transports.winrm import _transport as _winrm
 
     dialled = []
 
@@ -435,7 +428,7 @@ def test_uri_helpers_are_public_for_custom_configs():
     # A config implementing the documented extension point must be able to
     # follow the same pattern hostctl's own configs use, without private
     # imports.
-    from hostctl import strict_uri_credentials, strict_uri_query, uri_host
+    from hostctl.uri._parse import strict_uri_credentials, strict_uri_query, uri_host
 
     assert uri_host("::1") == "[::1]"
     assert uri_host("host") == "host"
@@ -446,8 +439,8 @@ def test_uri_helpers_are_public_for_custom_configs():
 
 
 def test_ssh_providers_share_one_transport_for_composition():
-    from hostctl import ssh_providers
-    from hostctl.provider import ExecutorProvider, PathProvider
+    from hostctl.transports.ssh._transport import ssh_providers
+    from hostctl.provider._contracts import ExecutorProvider, PathProvider
 
     executor, path = ssh_providers(SSHConfig("nas.example.com", username="root"))
 
@@ -460,8 +453,8 @@ def test_ssh_providers_share_one_transport_for_composition():
 
 
 def test_winrm_providers_share_one_transport_for_composition():
-    from hostctl import winrm_providers
-    from hostctl.provider import ExecutorProvider, PathProvider
+    from hostctl.transports.winrm._transport import winrm_providers
+    from hostctl.provider._contracts import ExecutorProvider, PathProvider
 
     executor, path = winrm_providers(
         WinRMConfig("win.example.com", "admin", password="x")
@@ -499,7 +492,7 @@ def test_external_subclass_scheme_and_custom_matcher_dispatch():
 
 
 def test_entry_point_loading_is_lazy_and_cache_can_be_refreshed(monkeypatch):
-    import hostctl.host._common as host_module
+    import hostctl._registry as host_module
 
     class _EntryPoints:
         def select(self, **kwargs):
@@ -568,7 +561,7 @@ def test_base_unsupported_operations_fail_immediately():
 
 
 def test_local_info_uses_reported_values_without_guessing(monkeypatch):
-    import hostctl.host._local as local_module
+    import hostctl.transports.local._host as local_module
 
     monkeypatch.setattr(local_module._platform, "node", lambda: "")
     monkeypatch.setattr(local_module._platform, "system", lambda: "")
@@ -663,7 +656,7 @@ def test_an_unsupported_session_raises_not_implemented_not_a_runtime_error():
     is available" is an `OperationNotStartedError` -- a RuntimeError -- so a caller
     catching NotImplementedError to fall back to `run()` crashed instead.
     """
-    from hostctl.host.system import IOSHost
+    from hostctl.system._system import IOSHost
 
     host = IOSHost()
 
@@ -677,7 +670,8 @@ def test_spawn_looks_past_a_provider_that_cannot_open_sessions():
     """Selecting blind meant the first provider ended the search."""
     import subprocess
 
-    from hostctl import ExecutorProvider, PosixHost
+    from hostctl.provider._contracts import ExecutorProvider
+    from hostctl.system._system import PosixHost
 
     def execute(command, *args, **options):
         return subprocess.CompletedProcess((command,), 0, b"", b"")
@@ -729,7 +723,7 @@ def test_a_upn_username_survives_the_same_path():
 
 PLUGIN_SOURCE = """import time
 
-from hostctl.host._common import HostConfig
+from hostctl.host import HostConfig
 
 time.sleep(0.4)
 
@@ -950,7 +944,7 @@ def test_the_host_executor_treats_argv_as_argv():
 
 def test_host_shell_is_a_shell_by_isinstance():
     """`Host.shell` is annotated `-> Shell`; the proxy answered False."""
-    from hostctl import Shell
+    from hostctl.shell._flavour import Shell
 
     host = LocalConfig()._create_host()
 

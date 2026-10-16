@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from hostctl.process.qemu_serial import QEMUSerialProcess
+from hostctl.transports.qemu._console import QEMUSerialProcess
 
 
 class _Stream:

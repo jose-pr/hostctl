@@ -13,7 +13,7 @@ import typing
 
 import asyncssh
 
-from hostctl import SSHConfig
+from hostctl.transports.ssh._transport import SSHConfig
 
 
 class _Server(asyncssh.SSHServer):

@@ -9,8 +9,8 @@ import subprocess
 import pytest
 from pathapi import WindowsPathname
 
-from hostctl import SSHConfig
-from hostctl.executor.ssh import _clixml_text
+from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.transports.ssh._executor import _clixml_text
 from hostctl.shell import CMD, POWERSHELL
 
 ONE_LINE = (("Write-Output", "hi"),)
@@ -88,8 +88,8 @@ class _Connection:
 
 def _host():
     from hostctl import _async
-    from hostctl.host import WindowsHost
-    from hostctl.host._ssh import ssh_providers
+    from hostctl.system._system import WindowsHost
+    from hostctl.transports.ssh._transport import ssh_providers
 
     config = SSHConfig("h", dialect=POWERSHELL, path_flavor=WindowsPathname)
     executor, paths = ssh_providers(config)

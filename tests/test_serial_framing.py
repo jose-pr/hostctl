@@ -14,13 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from hostctl import (
-    ConsoleProtocolError,
-    LoginStep,
-    PromptConsoleProfile,
-    SerialConfig,
-    SerialHost,
-)
+from hostctl.exceptions import ConsoleProtocolError
+from hostctl.transports.serial._console import LoginStep, PromptConsoleProfile
+from hostctl.transports.serial._host import SerialConfig, SerialHost
 
 
 class _Console:
@@ -236,7 +232,7 @@ def test_a_command_timeout_is_enforced_across_a_blocking_read():
 def test_login_timeout_bounds_a_silent_console():
     import time
 
-    from hostctl import ConsoleProtocolError
+    from hostctl.exceptions import ConsoleProtocolError
 
     profile = PromptConsoleProfile(rb"login: ", login_timeout=0.2)
     host = SerialHost(SerialConfig("loop://", protocol=profile))

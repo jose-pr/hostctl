@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from hostctl import Cmdlet, Exec
+from hostctl.shell._grammar import Cmdlet, Exec
 
 from .providers import (
     contract_providers,

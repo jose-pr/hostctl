@@ -8,10 +8,10 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from hostctl import Exec
-from hostctl.host._common import HostConfig
-from hostctl.executor.container import normalize_container_error
-from hostctl.host.container import ContainerConfig, ContainerHost
+from hostctl.shell._grammar import Exec
+from hostctl.host._contracts import HostConfig
+from hostctl.transports.container._executor import normalize_container_error
+from hostctl.transports.container._host import ContainerConfig, ContainerHost
 from hostctl.shell import POWERSHELL, POSIX_SHELL
 
 
@@ -234,7 +234,7 @@ def test_container_sdk_errors_are_normalized(name, expected):
 def test_spawn_refuses_an_executable_with_a_direct_command():
     """`run()` refuses this; spawning ignored it, so the same call meant two
     different things at two entry points."""
-    from hostctl import Exec
+    from hostctl.shell._grammar import Exec
 
     host, _client, _container = _host()
 
@@ -258,7 +258,7 @@ def test_a_requested_terminal_sends_its_term_type():
     actually read."""
     host, client, _container = _host()
 
-    from hostctl import TerminalOptions
+    from hostctl.process import TerminalOptions
 
     host.spawn("top", terminal=TerminalOptions(term_type="xterm-256color"))
 
@@ -292,7 +292,7 @@ def test_spawn_dispatches_through_the_provider_like_run_does():
 
 @pytest.mark.parametrize("spelling", ("auto", "posix", "windows"))
 def test_container_path_flavor_strings_round_trip_through_the_uri(spelling):
-    from hostctl import HostConfig
+    from hostctl.host._contracts import HostConfig
 
     config = ContainerConfig("web", path_flavor=spelling)
     restored = HostConfig(config.connection_uri)

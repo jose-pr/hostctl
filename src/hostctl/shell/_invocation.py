@@ -5,7 +5,7 @@ from __future__ import annotations
 import typing
 
 from ..executor import CommandLine, Environment, PathLike
-from ._common import ShellCommand, ShellFlavour, ShellToken
+from ._flavour import ShellCommand, ShellFlavour, ShellToken
 
 
 def render_command(

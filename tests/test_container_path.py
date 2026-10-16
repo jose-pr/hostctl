@@ -7,7 +7,7 @@ import tarfile
 import pytest
 from pathapi import Path
 
-from hostctl.host.container_path import (
+from hostctl.transports.container._path import (
     ContainerPathBackend,
     PosixContainerPath,
     WindowsContainerPath,
@@ -346,7 +346,7 @@ def test_rfc3339nano_timestamps_parse_on_every_supported_python(value, expected_
     """
     import datetime
 
-    from hostctl.host.container_path import _parse_rfc3339
+    from hostctl.transports.container._path import _parse_rfc3339
 
     parsed = _parse_rfc3339(value)
 
@@ -358,7 +358,7 @@ def test_rfc3339nano_timestamps_parse_on_every_supported_python(value, expected_
 
 
 def test_an_unparseable_timestamp_is_still_zero():
-    from hostctl.host.container_path import _parse_rfc3339
+    from hostctl.transports.container._path import _parse_rfc3339
 
     assert _parse_rfc3339("not a timestamp") == 0
 
@@ -488,8 +488,8 @@ def test_a_composed_archive_provider_can_reach_symlink_operations():
     """The provider implements `symlink_to`/`readlink` -- a `SYMTYPE` tar
     member is a faithful representation -- and did not declare them, so a
     composed host refused operations its backend performs."""
-    from hostctl import PosixHost
-    from hostctl.provider.transports import ContainerArchivePathProvider
+    from hostctl.system._system import PosixHost
+    from hostctl.transports.container._providers import ContainerArchivePathProvider
 
     container = _Container()
     container.archives["/links/link"] = _tar_entries(
@@ -529,7 +529,7 @@ def test_the_archive_root_is_a_legal_member_name():
     """`"."` is what Docker sends for the container's own root, and
     rejecting it as a traversal attempt made `host.path()` with no segments
     unlistable."""
-    from hostctl.host.container_path import _safe_name
+    from hostctl.transports.container._path import _safe_name
 
     assert _safe_name(".") == ()
     assert _safe_name("./") == ()

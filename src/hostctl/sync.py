@@ -11,8 +11,8 @@ import typing
 from pathapi import LocalPath
 from pathapi.sync import PathAndStat
 
-from .host import Host
-from .host.system import SystemHost
+from .host._contracts import Host
+from .system._system import SystemHost
 
 _REMOTE_ALGORITHMS = frozenset(("md5", "sha1", "sha256", "sha384", "sha512"))
 _HEX_DIGEST = re.compile(r"^[0-9a-fA-F]+$")

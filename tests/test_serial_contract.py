@@ -6,15 +6,14 @@ import subprocess
 
 import pytest
 
-from hostctl import (
-    Host,
+from hostctl.host._contracts import Host
+from hostctl.transports.serial._console import (
     LoginStep,
     PromptConsoleProfile,
     RawConsoleProfile,
-    SerialConfig,
-    SerialHost,
 )
-from hostctl.serial import ConsoleProtocolError
+from hostctl.transports.serial._host import SerialConfig, SerialHost
+from hostctl.exceptions import ConsoleProtocolError
 
 
 class _Console:

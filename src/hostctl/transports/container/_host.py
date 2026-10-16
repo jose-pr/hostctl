@@ -1,0 +1,620 @@
+"""Docker Engine container host implementation."""
+
+from __future__ import annotations
+
+import dataclasses
+import subprocess
+import typing
+from pathlib import PurePath, PureWindowsPath
+from urllib.parse import quote, unquote, urlencode
+
+from pathapi import Pathname
+
+from ._executor import (
+    ContainerExecutor,
+    ContainerLike,
+    _is_not_found,
+    normalize_container_error,
+)
+from ...executor import normalize_environment
+from ...executor import command_text, raise_normalized
+from ...exceptions import OperationNotStartedError
+from ...provider._contracts import ProviderSelector
+from ._providers import ContainerArchivePathProvider, ContainerExecutorProvider
+from ._process import ContainerProcess
+from ...process import Process, TerminalRequest, terminal_options
+from ...shell import POWERSHELL, POSIX_SHELL, ShellFlavourSelection, shell_flavour
+from ...shell._flavour import ShellFlavour
+from ...executor import CaptureOutput, Environment, FileHandle, Input, PathLike
+from ...shell._grammar import Command, starts_direct_command
+from ...host._contracts import Host, HostConfig, HostInfo, parse_host_info
+from pathapi import Path as HostPath
+from ...uri._parse import (
+    _refuse_uri,
+    path_flavor_name,
+    path_flavor_selection,
+    strict_uri_query,
+)
+from ._path import ContainerPathBackend, PosixContainerPath, WindowsContainerPath
+
+PathnameConstructor = typing.Type[typing.Union[PurePath, Pathname]]
+ContainerShellSelection = typing.Union[ShellFlavourSelection, typing.Literal["auto"]]
+ContainerPathSelection = typing.Union[PathnameConstructor, typing.Literal["auto"]]
+
+
+@dataclasses.dataclass
+class ContainerConfig(HostConfig, schemes=("docker",)):
+    """Docker Engine target and in-container execution defaults."""
+
+    #: Declared rather than enforced inside `_from_parsed_uri`, so the
+    #: whitelist can be read before a config is built: an ambient
+    #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
+    #: is accepted. The base dispatcher enforces it.
+    uri_credentials = ("client_factory",)
+
+    container: str
+    engine_url: typing.Optional[str] = None
+    user: typing.Optional[str] = None
+    workdir: typing.Optional[str] = None
+    executable: typing.Optional[str] = None
+    dialect: ContainerShellSelection = "auto"
+    path_flavor: ContainerPathSelection = "auto"
+    client_factory: typing.Optional[typing.Callable[..., object]] = dataclasses.field(
+        default=None, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        HostConfig.__init__(self)
+        if not self.container:
+            raise ValueError("container must not be empty")
+        _refuse_uri("ContainerConfig", self.container)
+        if self.dialect != "auto":
+            self.dialect = shell_flavour(self.dialect)
+        elif self.executable is not None:
+            raise ValueError("executable cannot be combined with dialect='auto'")
+        self.path_flavor = path_flavor_selection(self.path_flavor, allow_auto=True)
+
+    @property
+    def connection_uri(self) -> str:
+        query: typing.Dict[str, object] = {
+            "dialect": self.dialect,
+            "path_flavor": path_flavor_name(self.path_flavor),
+        }
+        for name in ("engine_url", "user", "workdir", "executable"):
+            value = getattr(self, name)
+            if value is not None:
+                query[name] = value
+        return f"docker://{quote(self.container, safe='')}" + (
+            f"?{urlencode(query)}" if query else ""
+        )
+
+    @classmethod
+    def _from_parsed_uri(cls, parsed, **credentials: object) -> ContainerConfig:
+        query = strict_uri_query(
+            parsed,
+            {
+                "engine_url",
+                "user",
+                "workdir",
+                "executable",
+                "dialect",
+                "path_flavor",
+            },
+        )
+        if not parsed.netloc or parsed.path not in ("", "/"):
+            raise ValueError("Docker URI requires a container and no path")
+        if parsed.username or parsed.password or parsed.port:
+            raise ValueError("Docker URI authority must contain only a container name")
+        return cls(
+            container=unquote(parsed.netloc),
+            engine_url=query.get("engine_url") or None,
+            user=query.get("user") or None,
+            workdir=query.get("workdir") or None,
+            executable=query.get("executable") or None,
+            dialect=(
+                "auto"
+                if query.get("dialect", "auto") == "auto"
+                else shell_flavour(query["dialect"])
+            ),
+            path_flavor=path_flavor_selection(
+                query.get("path_flavor", "auto"), allow_auto=True
+            ),
+            client_factory=typing.cast(
+                typing.Optional[typing.Callable[..., object]],
+                credentials.get("client_factory"),
+            ),
+        )
+
+    def _create_host(self) -> ContainerHost:
+        return ContainerHost(self)
+
+
+def _close_hijacked(stream: object) -> None:
+    """Close a hijacked docker connection, socket included.
+
+    docker-py hands back a `socket.SocketIO` whose `close()` leaves the
+    underlying socket open, so closing only the wrapper leaked the daemon
+    connection until the garbage collector broke its reference cycle.
+    """
+    for attribute in ("_sock", "_socket", "sock"):
+        raw = getattr(stream, attribute, None)
+        close = getattr(raw, "close", None)
+        if close is not None:
+            try:
+                close()
+            except Exception:
+                pass
+    close = getattr(stream, "close", None)
+    if close is not None:
+        try:
+            close()
+        except Exception:
+            pass
+
+
+class ContainerHost(Host):
+    """A running container reached through the Docker Engine API.
+
+    Commands and paths are assembled from ordered providers
+    (:class:`ContainerExecutorProvider` and
+    :class:`ContainerArchivePathProvider`) without changing the public API.
+    The archive provider declares only the operations the Docker archive API
+    can perform, so an unsupported mutation is rejected outright instead of
+    falling through to another provider.
+    """
+
+    def __init__(
+        self,
+        config: ContainerConfig,
+        *,
+        executor_providers: typing.Iterable[object] = (),
+        path_providers: typing.Iterable[object] = (),
+    ) -> None:
+        self.config = config
+        self._client: typing.Optional[object] = None
+        self._container: typing.Optional[ContainerLike] = None
+        #: The one archive backend handed to every path, so `close()` can
+        #: refuse the paths already out.
+        self._path_backend: typing.Optional[ContainerPathBackend] = None
+        self._attrs: typing.Optional[typing.Mapping[str, object]] = None
+        self._executor = ContainerExecutor(
+            lambda: self.container,
+            user=config.user,
+            workdir=config.workdir,
+        )
+        self._executor_provider_selector = ProviderSelector(
+            tuple(executor_providers)
+            or (
+                ContainerExecutorProvider(
+                    self._executor,
+                    connect=lambda: self.container,
+                    close=self._close_client,
+                ),
+            )
+        )
+        self._path_provider_selector = ProviderSelector(
+            tuple(path_providers) or (ContainerArchivePathProvider(self._archive_path),)
+        )
+
+    @property
+    def executor_providers(self) -> typing.Tuple[object, ...]:
+        """The ordered command providers backing :meth:`run`."""
+        return self._executor_provider_selector.providers
+
+    @property
+    def path_providers(self) -> typing.Tuple[object, ...]:
+        """The ordered filesystem providers backing :meth:`path`."""
+        return self._path_provider_selector.providers
+
+    def _run_selector(self) -> ProviderSelector:
+        return self._executor_provider_selector
+
+    @property
+    def capabilities(self) -> typing.FrozenSet[str]:
+        values = set()
+        if any(
+            self._executor_provider_selector.probe(provider).usable
+            for provider in self._executor_provider_selector.providers
+        ):
+            values.update(("run", "spawn", "tty"))
+        if any(
+            self._path_provider_selector.probe(provider).usable
+            for provider in self._path_provider_selector.providers
+        ):
+            values.add("path")
+        return frozenset(values)
+
+    @property
+    def client(self) -> object:
+        if self._client is None:
+            factory = self.config.client_factory
+            if factory is None:
+                try:
+                    import docker
+                except ImportError as exc:
+                    raise ImportError(
+                        "container support requires the 'container' extra: "
+                        "pip install hostctl[container]"
+                    ) from exc
+                factory = (
+                    docker.DockerClient if self.config.engine_url else docker.from_env
+                )
+            self._client = (
+                factory(base_url=self.config.engine_url)
+                if self.config.engine_url is not None
+                else factory()
+            )
+        return self._client
+
+    @property
+    def container(self) -> ContainerLike:
+        if self._container is None:
+            try:
+                container = self.client.containers.get(self.config.container)
+                container.reload()
+            except Exception as exc:
+                if _is_not_found(exc):
+                    raise ConnectionError(
+                        f"container {self.config.container!r} not found"
+                    ) from exc
+                raise_normalized(exc, normalize_container_error)
+            attrs = typing.cast(typing.Mapping[str, object], container.attrs)
+            state = typing.cast(typing.Mapping[str, object], attrs.get("State", {}))
+            if not state.get("Running", False):
+                raise ConnectionError(
+                    f"container {self.config.container!r} is not running"
+                )
+            self._container = typing.cast(ContainerLike, container)
+            self._attrs = attrs
+        return self._container
+
+    @property
+    def inspected_os(self) -> str:
+        _ = self.container
+        attrs = self._attrs or {}
+        value = str(attrs.get("Platform") or attrs.get("Os") or "").casefold()
+        if not value:
+            image = getattr(self._container, "image", None)
+            value = str(getattr(image, "attrs", {}).get("Os", "")).casefold()
+        if value not in ("linux", "windows"):
+            raise RuntimeError(
+                "unsupported or undetected container OS: " f"{value or '<empty>'}"
+            )
+        return value
+
+    @property
+    def shell_flavour(self) -> ShellFlavour:
+        if self.config.dialect != "auto":
+            return typing.cast(ShellFlavour, self.config.dialect)
+        return POWERSHELL if self.inspected_os == "windows" else POSIX_SHELL
+
+    @property
+    def executor(self) -> ContainerExecutor:
+        return self._executor_provider_selector.select().provider.executor
+
+    def connect(self) -> None:
+        _ = self.container
+
+    def _close_client(self) -> None:
+        backend, self._path_backend = self._path_backend, None
+        if backend is not None:
+            # docker-py reopens a closed client on the next request, so a path
+            # obtained earlier would otherwise quietly leak a new connection.
+            backend.invalidate()
+        self._container = None
+        self._attrs = None
+        if self._client is not None:
+            client, self._client = self._client, None
+            close = getattr(client, "close", None)
+            if close is not None:
+                close()
+
+    def close(self) -> None:
+        first_error: typing.Optional[BaseException] = None
+        closed: typing.List[int] = []
+        for provider in (
+            *self._executor_provider_selector.providers,
+            *self._path_provider_selector.providers,
+        ):
+            if id(provider) in closed:
+                continue
+            closed.append(id(provider))
+            close = getattr(provider, "close", None)
+            if close is None:
+                continue
+            try:
+                close()
+            except BaseException as exc:  # pragma: no cover - defensive
+                if first_error is None:
+                    first_error = exc
+        self._close_client()
+        self._executor_provider_selector.invalidate()
+        self._path_provider_selector.invalidate()
+        if first_error is not None:  # pragma: no cover - defensive
+            raise first_error
+
+    def info(self) -> HostInfo:
+        result = self.run(self.shell_flavour.info_script, check=False, encoding="utf-8")
+        info = parse_host_info(result.stdout)
+        attrs = self._attrs or {}
+        return HostInfo(
+            hostname=info.hostname,
+            os_family=info.os_family or self.inspected_os,
+            os_name=info.os_name,
+            os_version=info.os_version,
+            architecture=info.architecture
+            or typing.cast(typing.Optional[str], attrs.get("Architecture")),
+        )
+
+    def path(
+        self, *segments: PathLike, backend: typing.Optional[str] = None
+    ) -> HostPath:
+        names = {provider.name for provider in self._path_provider_selector.providers}
+        if backend is not None and backend not in (names | {"docker"}):
+            raise ValueError(f"unsupported container path backend: {backend!r}")
+        if backend in (None, "docker"):
+            provider = self._path_provider_selector.select().provider
+        else:
+            provider = next(
+                item
+                for item in self._path_provider_selector.providers
+                if item.name == backend
+            )
+            if not provider.probe().usable:
+                raise OperationNotStartedError(
+                    f"path provider {backend!r} is unavailable"
+                )
+        return provider.path(*segments)
+
+    def _archive_path(self, *segments: PathLike) -> HostPath:
+        """Build a Docker-archive-backed path with the configured flavour."""
+        selection = self.config.path_flavor
+        windows = (
+            self.inspected_os == "windows"
+            if selection == "auto"
+            else issubclass(
+                typing.cast(PathnameConstructor, selection), PureWindowsPath
+            )
+        )
+        container = self.container
+        flavour = "windows" if windows else "posix"
+        path_backend = self._path_backend
+        if (
+            path_backend is None
+            or path_backend.container is not container
+            or path_backend.path_flavor != flavour
+        ):
+            path_backend = self._path_backend = ContainerPathBackend(
+                container, path_flavor=flavour
+            )
+        if windows:
+            values = segments or ("C:\\",)
+            return WindowsContainerPath(*values, backend=path_backend)
+        values = segments or ("/",)
+        return PosixContainerPath(*values, backend=path_backend)
+
+    def run(
+        self,
+        *cmds: Command,
+        bufsize: int = -1,
+        executable: typing.Optional[str] = None,
+        stdin: typing.Optional[FileHandle] = None,
+        stdout: typing.Optional[FileHandle] = None,
+        stderr: typing.Optional[FileHandle] = None,
+        cwd: typing.Optional[PathLike] = None,
+        env: typing.Optional[Environment] = None,
+        capture_output: CaptureOutput = True,
+        check: bool = True,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
+        input: Input = None,
+        timeout: typing.Optional[float] = None,
+        text: typing.Optional[bool] = None,
+    ) -> subprocess.CompletedProcess:
+        excluded: typing.List[str] = []
+        while True:
+            provider = self._executor_provider_selector.select(
+                exclude=excluded
+            ).provider
+            try:
+                return self._run_with_provider(
+                    provider,
+                    cmds,
+                    bufsize=bufsize,
+                    executable=executable,
+                    stdin=stdin,
+                    stdout=stdout,
+                    stderr=stderr,
+                    cwd=cwd,
+                    env=env,
+                    capture_output=capture_output,
+                    check=check,
+                    encoding=encoding,
+                    errors=errors,
+                    input=input,
+                    timeout=timeout,
+                    text=text,
+                )
+            except OperationNotStartedError as exc:
+                # Only a proven pre-dispatch refusal may reach another
+                # provider; a dispatched exec is never replayed.
+                self._executor_provider_selector.decline(provider.name, str(exc))
+                excluded.append(provider.name)
+
+    def _run_with_provider(
+        self,
+        provider,
+        cmds: typing.Sequence[Command],
+        *,
+        bufsize: int,
+        executable: typing.Optional[str],
+        stdin,
+        stdout,
+        stderr,
+        cwd,
+        env,
+        capture_output,
+        check,
+        encoding,
+        errors,
+        input,
+        timeout,
+        text,
+    ) -> subprocess.CompletedProcess:
+        direct = starts_direct_command(cmds)
+        if direct is not None:
+            command, args = direct
+            if executable is not None:
+                raise NotImplementedError(
+                    "executable cannot be combined with a direct command"
+                )
+            return provider.execute(
+                command,
+                *args,
+                bufsize=bufsize,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                cwd=cwd,
+                env=env,
+                capture_output=capture_output,
+                check=check,
+                encoding=encoding,
+                errors=errors,
+                input=input,
+                timeout=timeout,
+                text=text,
+            )
+        script = self.shell_flavour.script(cmds, cwd=None, env=None)
+        invocation = self.shell_flavour.invocation(
+            script, executable=executable or self.config.executable
+        )
+        return provider.execute(
+            invocation[0],
+            *invocation[1:],
+            bufsize=bufsize,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            cwd=cwd,
+            env=env,
+            capture_output=capture_output,
+            check=check,
+            encoding=encoding,
+            errors=errors,
+            input=input,
+            timeout=timeout,
+            text=text,
+        )
+
+    def spawn(
+        self,
+        *cmds: Command,
+        executable: typing.Optional[str] = None,
+        cwd: typing.Optional[PathLike] = None,
+        env: typing.Optional[Environment] = None,
+        terminal: TerminalRequest = None,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
+    ) -> Process:
+        """Start a persistent Docker exec process with an optional TTY."""
+        # Either `errors=` or `encoding=` selects text mode, the rule every
+        # transport follows (`executor.wants_text`), so `errors="replace"`
+        # alone applies to undecodable output.
+        if errors is not None and encoding is None:
+            encoding = "utf-8"
+        direct = starts_direct_command(cmds)
+        if direct is not None:
+            command, args = direct
+            if executable is not None:
+                # `run()` refuses this too, so the same call means one thing
+                # at both entry points.
+                raise NotImplementedError(
+                    "executable cannot be combined with a direct command"
+                )
+            invocation = [command_text(command), *(command_text(v) for v in args)]
+            environment = normalize_environment(env)
+        elif cmds:
+            script = self.shell_flavour.script(cmds, cwd=None, env=None)
+            invocation = self.shell_flavour.invocation(
+                script, executable=executable or self.config.executable
+            )
+            environment = normalize_environment(env)
+        else:
+            if cwd is not None or env is not None:
+                raise ValueError("cwd and env require a command when spawning")
+            selected = executable or self.config.executable
+            invocation = (
+                [selected] if selected else [self.shell_flavour.default_executable]
+            )
+            environment = None
+
+        selected_terminal = terminal_options(terminal)
+        tty = selected_terminal is not None
+        # Through the provider, as `run()` goes: it inspects the container
+        # before dispatch, so a stopped or vanished container is a proven
+        # pre-dispatch refusal (`OperationNotStartedError`/`ConnectionError`)
+        # rather than the `FileNotFoundError` the raw API answers with --
+        # two different errors for one condition, depending on which entry
+        # point the caller used.
+        provider = self._executor_provider_selector.select().provider
+        connect = getattr(provider, "connect", None)
+        if callable(connect):
+            connect()
+        api = typing.cast(typing.Any, self.client).api
+        selected_workdir = str(cwd) if cwd is not None else self.config.workdir
+        options: typing.Dict[str, object] = {
+            "cmd": list(invocation),
+            "stdin": True,
+            "stdout": True,
+            "stderr": True,
+            "tty": tty,
+        }
+        if selected_terminal is not None and selected_terminal.term_type:
+            # `term_type` was accepted and never sent. Docker's exec API has
+            # no TERM field, so it travels as the environment variable every
+            # program actually reads -- without clobbering a caller's own.
+            environment = dict(environment or {})
+            environment.setdefault("TERM", selected_terminal.term_type)
+        if environment is not None:
+            options["environment"] = environment
+        if selected_workdir is not None:
+            options["workdir"] = selected_workdir
+        if self.config.user is not None:
+            options["user"] = self.config.user
+        try:
+            created = api.exec_create(
+                getattr(self.container, "id", self.config.container),
+                **options,
+            )
+            exec_id = created["Id"] if isinstance(created, dict) else created
+            stream = api.exec_start(exec_id, socket=True, tty=tty)
+            if selected_terminal is not None:
+                try:
+                    api.exec_resize(
+                        exec_id,
+                        height=selected_terminal.rows,
+                        width=selected_terminal.columns,
+                    )
+                except Exception:
+                    _close_hijacked(stream)
+                    raise
+        except Exception as exc:
+            raise_normalized(exc, normalize_container_error)
+        try:
+            return ContainerProcess(
+                api,
+                str(exec_id),
+                stream,
+                tty=tty,
+                command=list(invocation),
+                encoding=encoding,
+                errors=errors,
+            )
+        except Exception:
+            # The exec has already started, so the hijacked daemon connection
+            # is live, and this construction can raise (a bad `encoding` gives
+            # LookupError). `SocketIO.close()` does not close the underlying
+            # socket, which would then stay open until a GC pass.
+            _close_hijacked(stream)
+            raise

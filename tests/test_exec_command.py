@@ -11,9 +11,12 @@ from pathlib import PurePosixPath
 import pytest
 from pathapi import PosixPathname
 
-from hostctl import Exec, LocalExecutor, LocalHost, POSIX_SHELL, POWERSHELL
-from hostctl.executor._common import command_text
-from hostctl.host._common import starts_direct_command
+from hostctl.shell._grammar import Exec
+from hostctl.transports.local._executor import LocalExecutor
+from hostctl.transports.local._host import LocalHost
+from hostctl.shell import POSIX_SHELL, POWERSHELL
+from hostctl.executor import command_text
+from hostctl.shell._grammar import starts_direct_command
 
 
 def test_exec_accepts_str_bytes_and_path_programs():

@@ -7,8 +7,8 @@ import zipfile
 
 import pytest
 
-from hostctl.host import HostConfig
-from hostctl.host.qemu import QEMUConfig, QEMUHost
+from hostctl.host._contracts import HostConfig
+from hostctl.transports.qemu._host import QEMUConfig, QEMUHost
 
 _FILE_COMMANDS = (
     "guest-file-open",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from hostctl import ConnectionString
+from hostctl.uri._connection import ConnectionString
 
 
 def test_a_bare_host_parses_with_a_supplied_scheme():

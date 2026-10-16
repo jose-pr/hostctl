@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 from pathapi import Path as NextPath
 
-from hostctl import Host, LocalHost
+from hostctl.host._contracts import Host
+from hostctl.transports.local._host import LocalHost
 
 
 def test_host_is_abstract():
@@ -68,7 +69,7 @@ def test_local_run_text_input_and_check():
     ids=["bytes-text", "str-text", "bytes-binary", "str-binary"],
 )
 def test_local_input_is_normalized_to_the_stream_mode(value, encoding, expected):
-    from hostctl.executor import LocalExecutor
+    from hostctl.transports.local._executor import LocalExecutor
 
     result = LocalExecutor()(
         sys.executable,
@@ -96,7 +97,7 @@ def test_local_input_is_normalized_to_the_stream_mode(value, encoding, expected)
     ],
 )
 def test_normalize_input_matches_the_requested_mode(value, text_mode, expected):
-    from hostctl.executor._common import normalize_input
+    from hostctl.executor import normalize_input
 
     assert normalize_input(value, text_mode=text_mode) == expected
 
@@ -104,14 +105,14 @@ def test_normalize_input_matches_the_requested_mode(value, text_mode, expected):
 @pytest.mark.parametrize("value", (3, subprocess.DEVNULL, 1.5, ["x"]))
 def test_normalize_input_refuses_what_is_not_a_payload(value):
     """An int reached `subprocess`' writer thread: a hang on 3.14."""
-    from hostctl.executor._common import normalize_input
+    from hostctl.executor import normalize_input
 
     with pytest.raises(TypeError, match="input must be"):
         normalize_input(value, text_mode=False)
 
 
 def test_normalize_input_honours_encoding_and_errors():
-    from hostctl.executor._common import normalize_input
+    from hostctl.executor import normalize_input
 
     # Undecodable bytes would raise under strict; the caller's policy applies.
     assert normalize_input(b"\xff", text_mode=True, errors="replace") == "�"
@@ -222,7 +223,7 @@ def test_local_path_no_longer_injects_the_working_directory():
     """
     import os
 
-    from hostctl import LocalHost
+    from hostctl.transports.local._host import LocalHost
 
     path = LocalHost().path()
 
@@ -233,8 +234,8 @@ def test_local_path_no_longer_injects_the_working_directory():
 def test_local_host_is_a_system_host():
     """One implementation of a system host, so local and remote cannot
     diverge."""
-    from hostctl import LocalHost
-    from hostctl.host.system import SystemHost
+    from hostctl.transports.local._host import LocalHost
+    from hostctl.system._system import SystemHost
 
     host = LocalHost()
 
@@ -266,7 +267,8 @@ def test_output_written_around_a_dispatch_keeps_its_order():
 
 
 def test_an_invalid_environment_name_is_refused_before_any_provider_runs():
-    from hostctl import ExecutorProvider, PosixHost
+    from hostctl.provider._contracts import ExecutorProvider
+    from hostctl.system._system import PosixHost
 
     called = []
 
@@ -286,7 +288,7 @@ def test_an_invalid_environment_name_is_refused_before_any_provider_runs():
 def test_a_non_payload_input_fails_at_once_instead_of_hanging():
     import time
 
-    from hostctl.executor import LocalExecutor
+    from hostctl.transports.local._executor import LocalExecutor
 
     started = time.monotonic()
     with pytest.raises(TypeError, match="input must be"):
@@ -331,7 +333,7 @@ def test_an_unsupported_local_os_still_builds_a_host(monkeypatch):
     """Only NAMING the shell was ever refused, not constructing the host."""
     import os
 
-    from hostctl import LocalHost
+    from hostctl.transports.local._host import LocalHost
 
     monkeypatch.setattr(os, "name", "")
     host = LocalHost()
@@ -355,8 +357,8 @@ def test_local_host_still_lists_its_providers():
 
 def test_local_providers_returns_the_local_pair():
     import hostctl
-    from hostctl.provider.transports import (
-        FULL_PATH_OPERATIONS,
+    from hostctl.provider._contracts import FULL_PATH_OPERATIONS
+    from hostctl.transports.local._providers import (
         LocalExecutorProvider,
         LocalPathProvider,
     )

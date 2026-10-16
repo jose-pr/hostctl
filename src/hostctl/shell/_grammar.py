@@ -2,12 +2,9 @@
 
 This lives beside the shell flavours rather than with the hosts because it
 IS the command language -- `ShellFlavour.command_text` dispatches on it, and
-`Exec` exists precisely to say "no shell layer". `host/_common.py` imported
-it the other way round for historical reasons, which made the grammar depend
-on host orchestration and `hostctl.shell` unimportable on its own.
-
-`hostctl.Exec` and `hostctl.host.Exec` are unchanged: both re-export from
-here.
+`Exec` exists precisely to say "no shell layer". Host orchestration imports
+it from here, never the other way round, so `hostctl.shell` imports on its
+own. `hostctl.Exec` re-exports it.
 """
 
 from __future__ import annotations

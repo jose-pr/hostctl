@@ -17,7 +17,7 @@ import sys
 import pytest
 from pathapi import PosixPathname, WindowsPathname
 
-from hostctl import SSHConfig
+from hostctl.transports.ssh._transport import SSHConfig
 from hostctl.shell import CMD, FISH, POSIX_SHELL, POWERSHELL
 
 #: The values that separate a working rule from a plausible one. Measured
@@ -142,7 +142,7 @@ class _Recording:
 
 def _transport(**config):
     from hostctl import _async
-    from hostctl.host._ssh import _SSHTransport
+    from hostctl.transports.ssh._transport import _SSHTransport
 
     transport = _SSHTransport(SSHConfig("h", **config))
     transport._ssh = _Recording()
@@ -243,7 +243,7 @@ def test_a_line_survives_every_posix_family_login_shell(login, dialect, tmp_path
 
 
 def test_the_portable_join_quotes_what_fish_and_sh_read_differently():
-    from hostctl.shell._common import login_join
+    from hostctl.shell._flavour import login_join
 
     assert login_join(["a", "b c"]) == "a 'b c'"
     assert login_join(["x\\"]) == "'x'\\\\"
@@ -254,7 +254,7 @@ def test_the_portable_join_quotes_what_fish_and_sh_read_differently():
 
 
 def test_the_uri_carries_the_setting():
-    from hostctl.host import HostConfig
+    from hostctl.host._contracts import HostConfig
 
     config = SSHConfig("h", path_flavor=WindowsPathname, login_shell="powershell")
     restored = HostConfig(config.connection_uri)

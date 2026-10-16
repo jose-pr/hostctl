@@ -5,7 +5,7 @@ Needs the `ssh` extra: pip install hostctl[ssh]
 
 import os
 
-from hostctl import SSHConfig
+from hostctl.transports.ssh._transport import SSHConfig
 
 config = SSHConfig(
     host=os.environ.get("HOSTCTL_EXAMPLE_HOST", "example.com"),

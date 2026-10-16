@@ -6,15 +6,15 @@ import warnings
 import pytest
 
 import hostctl
-from hostctl import (
-    ExecutorProvider,
-    HostConfig,
+from hostctl.provider._contracts import ExecutorProvider
+from hostctl.host._contracts import HostConfig
+from hostctl.system._system import (
     PosixConfig,
-    host_schemes,
     register_system_provider,
     system_provider_names,
 )
-from hostctl.host import system as system_module
+from hostctl._registry import host_schemes
+from hostctl.system import _system as system_module
 
 
 class _EntryPoint:

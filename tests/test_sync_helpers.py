@@ -6,7 +6,8 @@ import pytest
 from pathapi.mempath import MemPath, MemPathBackend
 from pathapi.sync import PathAndStat, PathSyncer
 
-from hostctl import ExecutorProvider, PathProvider, PosixHost, WindowsHost
+from hostctl.provider._contracts import ExecutorProvider, PathProvider
+from hostctl.system._system import PosixHost, WindowsHost
 from hostctl.sync import ProgressReader, host_checksum, stat_checksum
 
 
@@ -484,7 +485,7 @@ def test_a_local_host_hashes_in_process(tmp_path):
     directly."""
     import hashlib
 
-    from hostctl import LocalHost
+    from hostctl.transports.local._host import LocalHost
 
     spawned = []
 
@@ -522,7 +523,8 @@ def test_a_windows_shell_is_handed_a_windows_spelling_of_the_backend_path(
     reads a `/`-led argument as an option."""
     from pathlib import PureWindowsPath
 
-    from hostctl import CMD, POWERSHELL, SSHConfig
+    from hostctl.shell import CMD, POWERSHELL
+    from hostctl.transports.ssh._transport import SSHConfig
     from hostctl.sync import _remote_checksum
 
     dialect = {"cmd": CMD, "powershell": POWERSHELL}[dialect_name]
@@ -553,7 +555,7 @@ def test_a_composed_local_host_hashes_in_process(tmp_path, monkeypatch):
     import hashlib
 
     import hostctl.sync as sync_module
-    from hostctl import HostConfig
+    from hostctl.host._contracts import HostConfig
 
     payload = b"local payload"
     target = tmp_path / "f.bin"

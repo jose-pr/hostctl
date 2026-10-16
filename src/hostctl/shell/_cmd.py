@@ -1,0 +1,366 @@
+"""Windows CMD/BAT shell flavour."""
+
+from __future__ import annotations
+
+import typing
+from pathlib import PureWindowsPath
+
+from ..executor import Environment, PathLike
+from ._flavour import (
+    ShellCommand,
+    ShellFlavour,
+    ShellOperator,
+    ShellTarget,
+    ShellToken,
+    program_target,
+)
+from ._grammar import PSParam
+
+
+def _argument(value: str) -> str:
+    """Quote one argv value for cmd.exe and a C-runtime child program."""
+    if value and not any(char.isspace() or char in '&|<>()@^"%!' for char in value):
+        return value
+    value = value.replace("^", "^^").replace("%", "^%").replace("!", "^!")
+    for character in "&|<>()":
+        value = value.replace(character, f"^{character}")
+    escaped = []
+    backslashes = 0
+    for char in value:
+        if char == "\\":
+            backslashes += 1
+        elif char == '"':
+            # The caret preserves the quote through cmd.exe; the extra
+            # backslash makes the child C argv parser retain it as data.
+            escaped.append("\\" * (backslashes * 2 + 1) + '^"')
+            backslashes = 0
+        else:
+            escaped.append("\\" * backslashes + char)
+            backslashes = 0
+    escaped.append("\\" * (backslashes * 2))
+    # The delimiters must survive cmd.exe so the child C runtime, rather
+    # than cmd itself, consumes them as argv quoting.
+    return '^"' + "".join(escaped) + '^"'
+
+
+def _echo_argument(value: str) -> str:
+    """Escape data for `echo`, which prints quotes rather than consuming them."""
+    text = value.replace("^", "^^")
+    for character in '&|<>()"%!':
+        text = text.replace(character, f"^{character}")
+    return text
+
+
+#: Characters a builtin argument may carry unquoted. A whitelist, because
+#: cmd splits a builtin's operands on far more than whitespace -- `,`, `;` and
+#: `=` are separators too, and `del /q a=b.txt` deleted `a` and `b.txt` while
+#: the named file survived.
+_BUILTIN_SAFE = frozenset("._-:\\/")
+
+
+def _builtin_argument(text: str) -> str:
+    """Quote and escape data for a cmd.exe builtin, which has no C argv parser.
+
+    Caret escaping alone is not enough: a builtin's operands are split on
+    whitespace, `,`, `;` and `=`, and a caret does not stop that. The value is
+    therefore wrapped in double quotes, which builtins strip and which do stop
+    the split. Inside a quoted span cmd ignores carets but still expands
+    `%VAR%` and would end the span on a `"`, so those two characters are
+    emitted caret-escaped *outside* the quotes instead.
+    """
+    if text and all(char.isalnum() or char in _BUILTIN_SAFE for char in text):
+        return text
+
+    parts: typing.List[str] = []
+    span: typing.List[str] = []
+    for char in text:
+        if char in '%"':
+            if span:
+                parts.append('"' + "".join(span) + '"')
+                span = []
+            parts.append(f"^{char}")
+        else:
+            span.append(char)
+    if span or not parts:
+        parts.append('"' + "".join(span) + '"')
+    return "".join(parts)
+
+
+def _batch_token(text: str) -> str:
+    r"""Quote one value for a batch file's `%*`/`%1`, which cmd parses again.
+
+    Wrapped in `"`, with `"` doubled to `""` (backslashes before it doubled,
+    as are trailing ones) and `%` written `%%cd:~,%`, which cmd expands back
+    to a literal percent sign. Inside the span cmd treats `& | < > ^` as data,
+    and a Microsoft C runtime reads `""` as one `"`. A consumer using
+    `CommandLineToArgvW` (node, most system tools) may split a value that has
+    whitespace after a quote; it never executes it.
+    """
+    pieces = []
+    backslashes = 0
+    for char in text:
+        if char == "\\":
+            backslashes += 1
+            continue
+        if char == '"':
+            pieces.append("\\" * (backslashes * 2) + '""')
+        elif char == "%":
+            pieces.append("\\" * backslashes + "%%cd:~,%")
+        else:
+            pieces.append("\\" * backslashes + char)
+        backslashes = 0
+    pieces.append("\\" * (backslashes * 2))
+    return '"' + "".join(pieces) + '"'
+
+
+def _program(path: str) -> str:
+    r"""Quote the PROGRAM of a command line, which cmd never parses.
+
+    `CreateProcess` reads this token, so it takes C-runtime quoting -- plain
+    double quotes. Rendered with `_argument`'s caret form, a path with a
+    space came out as `^"C:\Program Files\...^"` and Windows looked for a
+    program literally named `^`.
+    """
+    if '"' in path:
+        raise ValueError(f"cmd executable path must not contain a quote: {path!r}")
+    if any(character.isspace() for character in path):
+        return f'"{path}"'
+    return path
+
+
+class CmdShellFlavour(ShellFlavour):
+    """Windows ``cmd.exe`` and BAT-compatible command construction."""
+
+    name = "cmd"
+    default_executable = "cmd.exe"
+    argv_invocation = False
+    command_separator = "&"
+    path_flavor = PureWindowsPath
+    info_script = (
+        "echo hostname=%COMPUTERNAME%&"
+        "echo os_family=windows&"
+        "echo os_name=%OS%&"
+        "echo architecture=%PROCESSOR_ARCHITECTURE%"
+    )
+    builtins = frozenset(
+        (
+            "assoc",
+            "break",
+            "cd",
+            "chdir",
+            "cls",
+            "color",
+            "copy",
+            "date",
+            "del",
+            "dir",
+            "echo",
+            "endlocal",
+            "erase",
+            "exit",
+            "md",
+            "mkdir",
+            "mklink",
+            "move",
+            "path",
+            "pause",
+            "popd",
+            "prompt",
+            "pushd",
+            "rd",
+            "ren",
+            "rename",
+            "rmdir",
+            "set",
+            "setlocal",
+            "shift",
+            "time",
+            "title",
+            "type",
+            "ver",
+            "verify",
+            "vol",
+        )
+    )
+
+    def quote(self, value: object) -> str:
+        """The default layering: cmd, then the child's C runtime."""
+        return _argument(self._text(value))
+
+    def argument(
+        self, value: object, *, target: ShellTarget = ShellTarget.NATIVE
+    ) -> str:
+        """Three genuinely different parsers, named.
+
+        This is the flavour the distinction exists for: cmd splits a
+        builtin's operands itself and never involves a C runtime, a child
+        program re-parses the line cmd rebuilt, and the program slot is read
+        by `CreateProcess` before cmd runs at all. One rule cannot serve
+        three, and picking the wrong one has cost data -- `del /q "a b.txt"`
+        deleting two other files, and a spaced `cmd.exe` path that would not
+        launch at all.
+        """
+        text = self._text(value)
+        if target is ShellTarget.PROGRAM:
+            return _program(text)
+        if target is ShellTarget.SHELL:
+            return _builtin_argument(text)
+        if target is ShellTarget.BATCH:
+            return _batch_token(text)
+        if target is ShellTarget.UNRESOLVED and '"' in text:
+            raise ValueError(
+                "a quote in an argument to a program of unknown type could be "
+                "re-parsed by cmd if the program is a batch file; name the "
+                "program with its .exe or .bat suffix"
+            )
+        return _argument(text)
+
+    def escape_for_one_parse(self, text: str) -> str:
+        """Caret-escape a whole command line for one more cmd parse.
+
+        Measured against a real `cmd.exe` standing in for a stock Windows
+        OpenSSH server (which runs `cmd.exe /c <string>`), over the
+        adversarial set `a b`, `%OS%`, `a&b`, `say "hi"`, `c^d`, `(x)`,
+        `100%`, `x|y`:
+
+        - unescaped, 4 of 8 survive -- `%OS%` expands to `Windows_NT`,
+          `c^d` arrives as `cd`, and `a&b` and `x|y` INJECT (rc 1 and 255);
+        - quoting the whole line instead: 0 of 8, because the outer cmd
+          strips the quotes and the inner `/c "..."` falls apart;
+        - this rule: 8 of 8.
+
+        `echo`'s escaping is the same operation -- escape data so cmd hands
+        it back rather than consuming it -- so it is the same helper.
+        """
+        return _echo_argument(text)
+
+    def command_target(self, values: typing.Sequence[object]) -> ShellTarget:
+        """Classify the program by its name: builtin, `.exe`/`.com`, batch file.
+
+        Anything else -- a bare name, a script type PATHEXT knows -- might
+        resolve to a batch file, which re-parses its arguments with cmd.
+        """
+        if not values:
+            return ShellTarget.NATIVE
+        return program_target(self._text(values[0]), self.builtins)
+
+    def structured_command(self, values: typing.Iterable[object]) -> str:
+        values = tuple(values)
+        if any(isinstance(value, PSParam) for value in values):
+            raise TypeError("PSParam is a PowerShell token; cmd has no use for it")
+        if values and self._text(values[0]).casefold() == "echo":
+            # `echo` is not a different TARGET -- it is a different escape
+            # for the same one. Alone among the builtins it does not consume
+            # quotes, it prints them, so quoting would change the output it
+            # exists to produce, while its tail is still one operand.
+            # `echo(` prints its operand verbatim, where a bare `echo off`,
+            # `echo /?` or `echo` alone would switch echo off, print help, or
+            # print the echo state.
+            return "echo(" + " ".join(
+                _echo_argument(self._text(value)) for value in values[1:]
+            )
+        if not values:
+            return ""
+        word = self._text(values[0]).casefold()
+        if word == "call":
+            raise ValueError(
+                "cmd's call re-expands % and doubles ^ in its arguments, so no "
+                "quoting survives it; run the program directly (a .bat/.cmd "
+                "gets the batch rule without call)"
+            )
+        if word == "start":
+            # `start` takes its first quoted word as a window title, so the
+            # title is always an explicit empty one and the rest is a program
+            # line, whose arguments a C runtime reads.
+            return " ".join(
+                ['start ""']
+                + [
+                    self.argument(value, target=ShellTarget.NATIVE)
+                    for value in values[1:]
+                ]
+            )
+        target = self.command_target(values)
+        # The first element is the program, never argv data: cmd splits it as
+        # a command word, so it takes the quoting a builtin operand takes.
+        head = self.argument(values[0], target=ShellTarget.SHELL)
+        return " ".join(
+            [head] + [self.argument(value, target=target) for value in values[1:]]
+        )
+
+    def group(self, command: str) -> str:
+        """cmd groups with parentheses."""
+        return "(" + command + ")"
+
+    def operator(self, value: ShellOperator) -> str:
+        return {
+            ShellOperator.PIPE: "|",
+            ShellOperator.AND: "&&",
+            ShellOperator.OR: "||",
+            ShellOperator.REDIRECT: " > ",
+            ShellOperator.APPEND: " >> ",
+            ShellOperator.SEQUENCE: self.command_separator,
+        }[value]
+
+    def environment_assignment(self, key: str, value: object) -> str:
+        """Render `set KEY=VALUE`, caret-escaping the value.
+
+        Deliberately *not* the quoted `set "KEY=VALUE"` form. cmd does not
+        process carets inside a quoted span, so escaping there put the carets
+        into the child's environment verbatim (`100%` arrived as `100^%`),
+        while `%VAR%` still expanded and a `"` in the value ended the
+        assignment early -- leaving the rest of it to run as a command.
+        Unquoted, every metacharacter is caret-escapable, which round-trips
+        all of `100%`, `%OS%`, `c^d`, `a!b`, `x&y`, `a|b`, `(x)` and
+        `say "hi"` through a real cmd.exe.
+
+        A value of `""` is beyond cmd: `set KEY=` deletes the variable, and
+        cmd has no spelling for an empty one. The variable arrives unset.
+        """
+        return "set " + key + "=" + _echo_argument(self._text(value))
+
+    def change_directory(self, cwd: PathLike) -> str:
+        return f"cd /d {_builtin_argument(self._text(cwd))}"
+
+    def command(
+        self,
+        cmds: typing.Iterable[ShellToken],
+        *,
+        executable: typing.Optional[str] = None,
+        cwd: typing.Optional[PathLike] = None,
+        env: typing.Optional[Environment] = None,
+        login_shell: typing.Optional[str] = None,
+    ) -> ShellCommand:
+        script = self.script(cmds, cwd=cwd, env=env)
+        # Bound out of the f-string on purpose: a multi-line expression
+        # inside one is PEP 701, which the 3.9 floor does not parse.
+        program = self.argument(
+            executable or self.default_executable,
+            target=ShellTarget.PROGRAM,
+        )
+        line = f'{program} /d /v:off /s /c "{script}"'
+        if login_shell == "cmd":
+            # The login shell parses the line once before this /c does. Any
+            # other login shell either does not parse it or could not run it.
+            line = self.escape_for_one_parse(line)
+        return ShellCommand(line, None)
+
+    def invocation(
+        self, script: str, *, executable: typing.Optional[str] = None
+    ) -> typing.Sequence[str]:
+        """cmd has no argv spelling; render with `command()` instead.
+
+        An argv would carry a script quoted for *cmd's* own
+        parser (`^"`, `^&`, `^%`). Every consumer delivers argv through an
+        exec-style API, and on Windows that means `CreateProcess` quoting:
+        the script element is wrapped in quotes and each inner `"` is escaped
+        with a backslash, which cmd passes to the child as literal data.
+        Measured against a real `cmd.exe`, 14 of 16 adversarial values came
+        back corrupted -- and there is provably no argv element whose encoded
+        form yields an unescaped quote, so this is not a fixable escaping
+        rule but a missing spelling.
+        """
+        raise NotImplementedError(
+            "cmd cannot be invoked as argv: CreateProcess quoting escapes the "
+            "quotes a cmd script needs. Render with command() and submit the "
+            "result as an executor.CommandLine."
+        )

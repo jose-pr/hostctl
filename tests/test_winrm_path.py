@@ -11,8 +11,8 @@ import pytest
 from pathapi import Path
 from pathapi import FileStat
 
-from hostctl import WinRMPath
-from hostctl.host._winrm import _SCRIPT_BUDGET, WinRMPathBackend
+from hostctl.transports.winrm._transport import WinRMPath
+from hostctl.transports.winrm._transport import _SCRIPT_BUDGET, WinRMPathBackend
 
 
 class _MemoryBackend:

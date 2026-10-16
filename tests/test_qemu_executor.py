@@ -10,9 +10,9 @@ from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
-from hostctl.executor._qga import QGACommandError
+from hostctl.exceptions import QGACommandError
 from hostctl.exceptions import QGAProtocolError
-from hostctl.executor.qemu import QEMUExecutor
+from hostctl.transports.qemu._executor import QEMUExecutor
 
 
 def _encoded(value):

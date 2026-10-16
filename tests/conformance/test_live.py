@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from hostctl import Exec
+from hostctl.shell._grammar import Exec
 
 from .providers import live_providers, provider_context
 

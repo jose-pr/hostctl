@@ -6,15 +6,13 @@ import sys
 
 import pytest
 
-from hostctl import (
-    Host,
-    HostConfig,
+from hostctl.host._contracts import Host, HostConfig
+from hostctl.transports.serial._console import (
     LoginStep,
     PromptConsoleProfile,
     RawConsoleProfile,
-    SerialConfig,
-    SerialHost,
 )
+from hostctl.transports.serial._host import SerialConfig, SerialHost
 
 
 class _Console:

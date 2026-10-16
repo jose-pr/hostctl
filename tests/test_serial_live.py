@@ -6,7 +6,8 @@ import os
 
 import pytest
 
-from hostctl import HostConfig, SerialConfig
+from hostctl.host._contracts import HostConfig
+from hostctl.transports.serial._host import SerialConfig
 
 
 @pytest.mark.skipif(

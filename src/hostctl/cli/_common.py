@@ -11,7 +11,9 @@ import typing
 
 from duho import Cmd, CommandError, LoggingArgs, running_mode
 
-from ..host import Host, HostConfig, HostPath, redact_uri
+from ..host._contracts import Host, HostConfig
+from pathapi import Path as HostPath
+from ..uri._parse import redact_uri
 
 _URI_OPERAND = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 

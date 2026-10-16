@@ -9,7 +9,8 @@ import threading
 import duho
 import pytest
 
-from hostctl.cli import Hostctl, main
+from hostctl.cli._root import Hostctl
+from hostctl.cli import main
 
 
 class _IdleSession:

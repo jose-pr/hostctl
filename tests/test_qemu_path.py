@@ -6,8 +6,8 @@ import pytest
 from pathapi import Path
 from pathapi import FileStat
 
-from hostctl.host.qemu import PosixQEMUPath, QGAPathBackend, WindowsQEMUPath
-from hostctl.executor._qga import QGACommandError
+from hostctl.transports.qemu._host import PosixQEMUPath, QGAPathBackend, WindowsQEMUPath
+from hostctl.exceptions import QGACommandError
 
 FILE_COMMANDS = {
     "guest-file-open",
@@ -460,7 +460,7 @@ class _OversizedReads(_Transport):
 
 
 def test_an_oversized_read_reply_is_a_protocol_error_on_both_read_paths():
-    from hostctl.executor._qga import QGAProtocolError
+    from hostctl.exceptions import QGAProtocolError
 
     transport = _OversizedReads()
     transport.files["/f"] = bytearray(b"data")
@@ -508,8 +508,8 @@ def test_a_windows_listing_drops_names_windows_would_misread():
 
 
 def test_a_helperless_provider_still_answers_exists_through_the_composite():
-    from hostctl import PosixHost
-    from hostctl.provider.transports import QGAPathProvider
+    from hostctl.system._system import PosixHost
+    from hostctl.transports.qemu._providers import QGAPathProvider
 
     transport = _Transport()
     transport.files["/etc/hostname"] = bytearray(b"vm\n")

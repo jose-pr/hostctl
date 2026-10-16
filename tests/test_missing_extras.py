@@ -38,20 +38,20 @@ def hide(monkeypatch):
 
 
 def _ssh_run():
-    from hostctl import SSHConfig
+    from hostctl.transports.ssh._transport import SSHConfig
 
     SSHConfig("nas.example", known_hosts=None).open().run("true")
 
 
 def _ssh_path():
-    from hostctl import SSHConfig
-    from hostctl.host._ssh import ssh_providers
+    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._transport import ssh_providers
 
     ssh_providers(SSHConfig("nas.example", known_hosts=None))[1].path("/")
 
 
 def _winrm_run():
-    from hostctl import WinRMConfig
+    from hostctl.transports.winrm._transport import WinRMConfig
 
     WinRMConfig(
         "win.example", username="u", password="p", provider="pywinrm"
@@ -59,25 +59,25 @@ def _winrm_run():
 
 
 def _psrp():
-    from hostctl.executor.psrp import require_pypsrp
+    from hostctl.transports.winrm._psrp import require_pypsrp
 
     require_pypsrp()
 
 
 def _container_run():
-    from hostctl import ContainerConfig
+    from hostctl.transports.container._host import ContainerConfig
 
     ContainerConfig("web").open().run("true")
 
 
 def _serial_open():
-    from hostctl.executor.serial import _default_serial_factory
+    from hostctl.transports.serial._executor import _default_serial_factory
 
     _default_serial_factory("loop://")
 
 
 def _libvirt():
-    from hostctl.executor._qga import LibvirtGuestAgentTransport
+    from hostctl.transports.qemu._qga import LibvirtGuestAgentTransport
 
     LibvirtGuestAgentTransport("vm", connection_uri="qemu:///system").connect()
 
@@ -112,8 +112,8 @@ def test_a_missing_dependency_names_the_extra_to_install(hide, extra, modules, c
 
 
 def test_a_probe_reports_an_incomplete_ssh_extra(hide):
-    from hostctl.host._ssh import SFTPPathProvider, ssh_providers
-    from hostctl import SSHConfig
+    from hostctl.transports.ssh._transport import SFTPPathProvider, ssh_providers
+    from hostctl.transports.ssh._transport import SSHConfig
 
     hide("sftppath")
     _, paths = ssh_providers(SSHConfig("nas.example"))

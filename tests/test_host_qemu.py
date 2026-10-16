@@ -4,8 +4,10 @@ import base64
 
 import pytest
 
-from hostctl import HostConfig, QEMUConfig, QEMUHost, SSHConfig
-from hostctl.host.qemu import PosixQEMUPath, WindowsQEMUPath
+from hostctl.host._contracts import HostConfig
+from hostctl.transports.qemu._host import QEMUConfig, QEMUHost
+from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.transports.qemu._host import PosixQEMUPath, WindowsQEMUPath
 
 
 class _Transport:
@@ -128,7 +130,7 @@ def test_direct_qga_argv_refuses_env_rather_than_replacing_it():
     """There is no shell to embed additive assignments into, and QGA's own
     env list would wipe PATH/HOME. Refusing is the honest answer, and it
     matches the rule already applied to cwd."""
-    from hostctl import Exec
+    from hostctl.shell._grammar import Exec
 
     host, _ = _host()
 
@@ -253,7 +255,7 @@ def test_a_supplied_path_helper_reaches_the_backend_and_lifts_the_degradation():
 
 
 def test_open_serial_forwards_text_mode_to_the_console():
-    from hostctl.process.qemu_serial import QEMUSerialConsole
+    from hostctl.transports.qemu._console import QEMUSerialConsole
 
     class _Stream:
         def __init__(self):

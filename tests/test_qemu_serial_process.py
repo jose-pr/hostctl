@@ -8,7 +8,7 @@ import subprocess
 import pytest
 
 from hostctl.process import Process
-from hostctl.process.qemu_serial import (
+from hostctl.transports.qemu._console import (
     QEMUSerialConsole,
     QEMUSerialProcess,
     normalize_qemu_console_error,

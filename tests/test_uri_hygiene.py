@@ -9,15 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from hostctl import (
-    ConnectionString,
-    ContainerConfig,
-    HostConfig,
-    PosixConfig,
-    SSHConfig,
-    WinRMConfig,
-    redact_uri,
-)
+from hostctl.uri._connection import ConnectionString
+from hostctl.transports.container._host import ContainerConfig
+from hostctl.host._contracts import HostConfig
+from hostctl.system._system import PosixConfig
+from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.uri._parse import redact_uri
 
 
 @pytest.mark.parametrize("code", ("\x00", "\x1b", "\x0b", "\x7f"))

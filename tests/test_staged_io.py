@@ -19,10 +19,10 @@ import pytest
 
 from pathapi.providers import CommitOnClose
 
-from hostctl.host._staged_io import staged_open, validate_open_mode
-from hostctl.host._winrm import WinRMPath
-from hostctl.host.container_path import PosixContainerPath
-from hostctl.host.qemu import PosixQEMUPath
+from hostctl.paths._staged_io import staged_open, validate_open_mode
+from hostctl.transports.winrm._transport import WinRMPath
+from hostctl.transports.container._path import PosixContainerPath
+from hostctl.transports.qemu._host import PosixQEMUPath
 
 
 class _RecordingBackend:
@@ -356,7 +356,7 @@ def test_copy_from_follows_the_stdlib_contract(tmp_path):
     passes, and opened a directory `"rb"`."""
     from pathapi import Path as LocalPath
 
-    from hostctl.host._staged_io import copy_from
+    from hostctl.paths._staged_io import copy_from
 
     source = LocalPath(str(tmp_path / "source.bin"))
     source.write_bytes(b"new")
@@ -380,7 +380,7 @@ def test_copy_from_follows_the_stdlib_contract(tmp_path):
 def test_copy_from_still_honours_an_explicit_no_overwrite(tmp_path):
     from pathapi import Path as LocalPath
 
-    from hostctl.host._staged_io import copy_from
+    from hostctl.paths._staged_io import copy_from
 
     source = LocalPath(str(tmp_path / "source.bin"))
     source.write_bytes(b"new")
@@ -465,7 +465,11 @@ class _Tree(_Child):
 
 
 def _windows_destination(tmp_path):
-    from hostctl.host._winrm import _SCRIPT_BUDGET, WinRMPath, WinRMPathBackend
+    from hostctl.transports.winrm._transport import (
+        _SCRIPT_BUDGET,
+        WinRMPath,
+        WinRMPathBackend,
+    )
     from tests.conformance.path_fakes import WinRMFilesystemRunner
 
     runner = WinRMFilesystemRunner()
@@ -475,7 +479,7 @@ def _windows_destination(tmp_path):
 
 @pytest.mark.parametrize("name", ["..\\escaped.txt", "..", "a/b", "C:evil"])
 def test_copy_from_refuses_a_child_name_that_is_not_one_component(tmp_path, name):
-    from hostctl.host._staged_io import copy_from
+    from hostctl.paths._staged_io import copy_from
 
     runner, destination = _windows_destination(tmp_path)
     try:
@@ -487,7 +491,7 @@ def test_copy_from_refuses_a_child_name_that_is_not_one_component(tmp_path, name
 
 
 def test_copy_from_refuses_an_existing_destination_directory(tmp_path):
-    from hostctl.host._staged_io import copy_from
+    from hostctl.paths._staged_io import copy_from
 
     runner, destination = _windows_destination(tmp_path)
     try:
@@ -520,7 +524,7 @@ def test_stdlib_copy_into_a_windows_host_path_cannot_escape(tmp_path):
 def test_copy_from_preserves_mode_and_mtime_where_the_destination_can(tmp_path):
     import stat as _stat
 
-    from hostctl.host._staged_io import copy_from
+    from hostctl.paths._staged_io import copy_from
 
     calls = []
 

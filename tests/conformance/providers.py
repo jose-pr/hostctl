@@ -17,9 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
 
-from hostctl import HostInfo, HostPath, LocalHost
-from hostctl.host._common import starts_direct_command
-from hostctl.executor import LocalExecutor
+from hostctl.host._contracts import HostInfo
+from pathapi import Path as HostPath
+from hostctl.transports.local._host import LocalHost
+from hostctl.shell._grammar import starts_direct_command
+from hostctl.transports.local._executor import LocalExecutor
 from hostctl.shell import POSIX_SHELL, POWERSHELL
 import pytest
 
@@ -663,8 +665,9 @@ class FakeSSHHost:
     transport = "ssh"
 
     def __new__(cls):
-        from hostctl import PosixHost, SSHConfig
-        from hostctl.host._ssh import (
+        from hostctl.system._system import PosixHost
+        from hostctl.transports.ssh._transport import SSHConfig
+        from hostctl.transports.ssh._transport import (
             SFTPPathProvider,
             SSHExecutorProvider,
             _SSHTransport,
@@ -699,9 +702,10 @@ class FakeWinRMHost:
     transport = "winrm"
 
     def __new__(cls):
-        from hostctl import WindowsHost, WinRMConfig
-        from hostctl.executor.winrm import _PywinrmStdinSession
-        from hostctl.host._winrm import (
+        from hostctl.system._system import WindowsHost
+        from hostctl.transports.winrm._transport import WinRMConfig
+        from hostctl.transports.winrm._pywinrm import _PywinrmStdinSession
+        from hostctl.transports.winrm._transport import (
             WinRMExecutorProvider,
             WinRMPathProvider,
             _WinRMTransport,
@@ -733,7 +737,8 @@ class FakeContainerHost:
     transport = "container"
 
     def __new__(cls):
-        from hostctl import ContainerConfig, ContainerHost, HostPath
+        from hostctl.transports.container._host import ContainerConfig, ContainerHost
+        from pathapi import Path as HostPath
 
         client = _FakeDockerClient(LocalExecutor())
         config = ContainerConfig("fake", client_factory=lambda **_: client)
@@ -746,7 +751,7 @@ class FakeQEMUHost:
     flavour = "posix"
 
     def __new__(cls):
-        from hostctl import QEMUConfig, QEMUHost
+        from hostctl.transports.qemu._host import QEMUConfig, QEMUHost
 
         # The shipped helper is probed through `guest-exec`, which the
         # transport answers by interpreting GNU or PowerShell commands over
@@ -770,7 +775,8 @@ class FakeSerialHost:
 
     def __new__(cls):
         import serial
-        from hostctl import RawConsoleProfile, SerialConfig
+        from hostctl.transports.serial._console import RawConsoleProfile
+        from hostctl.transports.serial._host import SerialConfig
 
         port = serial.serial_for_url("loop://", timeout=0.1, write_timeout=1)
         return SerialConfig(
@@ -1093,7 +1099,7 @@ def live_providers() -> tuple[Provider, ...]:
 
 
 def _uri_live(uri: str) -> tuple[object, Callable[[], None]]:
-    from hostctl import HostConfig
+    from hostctl.host._contracts import HostConfig
 
     options = {}
     scheme = uri.split(":", 1)[0].casefold()
@@ -1120,7 +1126,7 @@ def _ssh_local() -> tuple[object, Callable[[], None]]:
     """
     from pathapi import PosixPathname, WindowsPathname
 
-    from hostctl import SSHConfig
+    from hostctl.transports.ssh._transport import SSHConfig
     from hostctl.shell import CMD, POSIX_SHELL
 
     windows = os.environ.get("HOSTCTL_TEST_SSH_FLAVOUR", "posix") == "windows"
@@ -1146,7 +1152,8 @@ def _ssh_local() -> tuple[object, Callable[[], None]]:
 
 def _loop_serial() -> tuple[object, Callable[[], None]]:
     import serial
-    from hostctl import RawConsoleProfile, SerialConfig
+    from hostctl.transports.serial._console import RawConsoleProfile
+    from hostctl.transports.serial._host import SerialConfig
 
     port = serial.serial_for_url("loop://", timeout=0.1, write_timeout=1)
     config = SerialConfig(
@@ -1160,7 +1167,7 @@ def _loop_serial() -> tuple[object, Callable[[], None]]:
 
 
 def _docker_live() -> tuple[object, Callable[[], None]]:
-    from hostctl import ContainerConfig
+    from hostctl.transports.container._host import ContainerConfig
 
     config = ContainerConfig(
         os.environ.get("HOSTCTL_TEST_DOCKER_CONTAINER", "hostctl-conformance"),

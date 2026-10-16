@@ -17,16 +17,15 @@ import subprocess
 import pathapi
 import pytest
 
-from hostctl import (
+from hostctl.provider._contracts import (
     ExecutorProvider,
-    LocalHost,
-    OperationNotStartedError,
     PathProvider,
-    PosixHost,
     ProviderProbe,
     ProviderSelector,
-    WindowsHost,
 )
+from hostctl.transports.local._host import LocalHost
+from hostctl.exceptions import OperationNotStartedError
+from hostctl.system._system import PosixHost, WindowsHost
 
 
 def _executor(name, fault=None, **options):
@@ -105,9 +104,9 @@ def test_library_installs_no_handler_and_does_not_configure_logging():
     """A library must leave handler policy entirely to the application."""
     for name in (
         "hostctl.provider",
-        "hostctl.provider.transports",
-        "hostctl.host.ssh",
-        "hostctl.host.winrm",
+        "hostctl.system",
+        "hostctl.transports.ssh",
+        "hostctl.transports.winrm",
     ):
         logger = logging.getLogger(name)
         assert logger.handlers == [], f"{name} installed a handler"

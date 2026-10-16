@@ -6,15 +6,13 @@ import types
 
 import pytest
 
-from hostctl import (
-    ExecutorProvider,
-    HostConfig,
-    WinRMConfig,
-    WindowsHost,
-)
-from hostctl.executor.psrp import PSRPExecutor, pypsrp_available
-from hostctl.process import RunspaceSession
-from hostctl.process.psrp import PipelineResult, PipelineStreams
+from hostctl.provider._contracts import ExecutorProvider
+from hostctl.host._contracts import HostConfig
+from hostctl.transports.winrm._transport import WinRMConfig
+from hostctl.system._system import WindowsHost
+from hostctl.transports.winrm._psrp import PSRPExecutor, pypsrp_available
+from hostctl.transports.winrm._psrp import RunspaceSession
+from hostctl.transports.winrm._psrp import PipelineResult, PipelineStreams
 
 
 def test_provider_uri_roundtrip_and_secret_safety():
@@ -26,7 +24,7 @@ def test_provider_uri_roundtrip_and_secret_safety():
 
 def test_explicit_psrp_has_actionable_error_when_missing(monkeypatch):
     monkeypatch.setattr(
-        "hostctl.process.psrp.require_pypsrp",
+        "hostctl.transports.winrm._psrp.require_pypsrp",
         lambda: (_ for _ in ()).throw(
             ImportError("PSRP requires hostctl[psrp] on Python 3.10+")
         ),
@@ -133,7 +131,8 @@ def test_runspace_structured_arguments_use_powershell_literals(monkeypatch):
 
     # A parameter name is a `PSParam`, rendered bare as on every other leg:
     # the binder does not read a quoted string as a parameter name.
-    from hostctl.shell import POWERSHELL, PSParam
+    from hostctl.shell import POWERSHELL
+    from hostctl.shell._grammar import PSParam
 
     values = ("Get-ChildItem", PSParam("-LiteralPath"), r"C:\Windows\win.ini")
     result = session.invoke(*values)
@@ -348,7 +347,7 @@ def test_runspace_without_a_status_line_fails_when_the_pipeline_had_errors(
 def test_the_status_expression_is_the_flavours():
     """Every leg reports one status; the PowerShell flavour's epilogue is the
     other copy of the expression."""
-    from hostctl.executor.winrm import POWERSHELL_STATUS
+    from hostctl.executor import POWERSHELL_STATUS
     from hostctl.shell import POWERSHELL
 
     assert POWERSHELL.execution_epilogue == (
@@ -365,7 +364,7 @@ def real_pypsrp():
 def test_psrp_ssl_transport_is_basic_over_https(real_pypsrp):
     """pywinrm's `ssl` is Basic over HTTPS; it mapped to certificate auth,
     which raised at the first send because the config carries no certificate."""
-    from hostctl import WinRMConfig
+    from hostctl.transports.winrm._transport import WinRMConfig
 
     config = WinRMConfig("h", "u", "p", transport="ssl", ssl=True)
     transport = RunspaceSession(config)._make_pool().connection.transport
@@ -375,7 +374,7 @@ def test_psrp_ssl_transport_is_basic_over_https(real_pypsrp):
 
 
 def test_psrp_allow_cleartext_turns_message_encryption_off(real_pypsrp, monkeypatch):
-    from hostctl import WinRMConfig
+    from hostctl.transports.winrm._transport import WinRMConfig
     import pypsrp.wsman
 
     built = []
@@ -401,7 +400,7 @@ def test_psrp_allow_cleartext_turns_message_encryption_off(real_pypsrp, monkeypa
 def test_the_runspace_marker_is_per_call():
     """The fixed marker is a string any command may print, and the line after
     it was removed from the output and read as the exit status."""
-    from hostctl.executor.winrm import exit_marker
+    from hostctl.transports.winrm._pywinrm import exit_marker
 
     assert exit_marker() != exit_marker()
 
@@ -503,7 +502,10 @@ def test_winrm_provider_backed_host_never_double_wraps_powershell(
     single layer, which is the seam the bare-``ExecutorProvider`` test above
     does not cover.
     """
-    from hostctl.host._winrm import WinRMExecutorProvider, _WinRMTransport
+    from hostctl.transports.winrm._transport import (
+        WinRMExecutorProvider,
+        _WinRMTransport,
+    )
 
     if provider == "psrp":
         pytest.importorskip(

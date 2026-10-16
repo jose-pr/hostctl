@@ -2,7 +2,9 @@
 
 from pathapi.mempath import MemPath, MemPathBackend
 
-from hostctl import HostPath, PathProvider, PosixHost, ProviderProbe
+from pathapi import Path as HostPath
+from hostctl.provider._contracts import PathProvider, ProviderProbe
+from hostctl.system._system import PosixHost
 
 
 def _memory_provider(name, backend, **options):
@@ -152,7 +154,7 @@ def test_a_joined_composite_does_not_borrow_its_parents_backend_path():
     It inherited the parent's cached backend path, so every operation went to
     the parent -- `rm(recursive=True)` on the "child" deleted the parent tree.
     """
-    from hostctl import CompositePosixPath
+    from hostctl.paths._composite import CompositePosixPath
 
     backend = MemPathBackend()
     for directory in ("srv", "srv/app", "srv/app/cache"):
@@ -179,7 +181,7 @@ def test_a_plain_copy_keeps_the_backend_path_it_was_built_for():
     host = PosixHost(path_providers=(_memory_provider("mem", backend),))
     original = host.path("srv")
 
-    from hostctl import CompositePosixPath
+    from hostctl.paths._composite import CompositePosixPath
 
     copy = CompositePosixPath(original)
 
@@ -190,7 +192,7 @@ def test_a_uri_backed_path_reports_a_filesystem_logical_path():
     """An SSH host's logical paths are paths on the target, never a URI:
     used as the logical path, `sftp://host:22/...` sent I/O to
     `/sftp:/host:22/...`."""
-    from hostctl import SSHConfig
+    from hostctl.transports.ssh._transport import SSHConfig
 
     host = SSHConfig("h", username="root").open()
 
@@ -204,7 +206,7 @@ def test_a_uri_backed_path_reports_a_filesystem_logical_path():
 def test_logical_text_prefers_the_filesystem_spelling():
     from sftppath import SFTPPath
 
-    from hostctl.host.composite_path import _logical_text
+    from hostctl.paths._composite import _logical_text
 
     assert _logical_text(SFTPPath("/usr/lib/jvm/java", host="h")) == "/usr/lib/jvm/java"
     # A backend with no filesystem spelling keeps its own text.

@@ -10,21 +10,11 @@ from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
-from hostctl.executor._common import ExecutorCapability, normalize_input
-from hostctl.shell import (
-    CMD,
-    POSIX_SHELL,
-    PWSH,
-    ZSH,
-    Cmdlet,
-    POWERSHELL,
-    PowerShellFlavour,
-    PSParam,
-    Shell,
-    ShellOperator,
-    ShellSession,
-    ShellTarget,
-)
+from hostctl.executor import ExecutorCapability, normalize_input
+from hostctl.shell import CMD, POSIX_SHELL, PWSH, ZSH, POWERSHELL
+from hostctl.shell._grammar import Cmdlet, PSParam
+from hostctl.shell._powershell import PowerShellFlavour
+from hostctl.shell._flavour import Shell, ShellOperator, ShellSession, ShellTarget
 
 
 class _Recorder:
@@ -74,7 +64,7 @@ def test_send_appends_a_newline_and_no_separator(script, expected):
     """`send()` appended `;` unconditionally, which broke ordinary shell text
     that already ended in a terminator (`echo hi;;`, `sleep 5 &;`), a heredoc
     delimiter, and an open pipeline. A newline ends a command in every shell."""
-    from hostctl.shell._common import ShellSession
+    from hostctl.shell._flavour import ShellSession
 
     process = _Process()
     session = ShellSession(POSIX_SHELL, process)
@@ -220,7 +210,7 @@ def test_a_powershell_structured_argument_reaches_a_real_program(value, version)
     sees the native-command re-quoting PowerShell 5 applies. This sends the
     argument to a real native program and asks the child what it got.
     """
-    from hostctl.shell import PowerShellFlavour
+    from hostctl.shell._powershell import PowerShellFlavour
 
     flavour = PowerShellFlavour(version)
     if shutil.which(flavour.default_executable) is None:
@@ -244,7 +234,7 @@ def test_a_flavour_names_the_parser_each_token_meets():
     a vector, nothing re-parses -- so every target renders alike. On Windows
     they genuinely differ, which is what the distinction exists for.
     """
-    from hostctl.shell import ShellTarget
+    from hostctl.shell._flavour import ShellTarget
 
     value = "a b.txt"
     posix = {
@@ -268,7 +258,8 @@ def test_powershell_5_escapes_for_a_native_line_and_not_for_a_cmdlet():
     Applied to a cmdlet argument the C-runtime layer would be visible in the
     bound parameter.
     """
-    from hostctl.shell import PowerShellFlavour, ShellTarget
+    from hostctl.shell._powershell import PowerShellFlavour
+    from hostctl.shell._flavour import ShellTarget
 
     five = PowerShellFlavour(5)
     value = 'a "quoted" value'
@@ -303,7 +294,8 @@ def test_the_cwd_guard_covers_the_whole_payload_by_declaration():
     PowerShell's order puts `env` between `cwd` and `command`, and its
     `join_cwd` override must still apply.
     """
-    from hostctl.shell import BASH, FISH, PowerShellFlavour
+    from hostctl.shell import BASH, FISH
+    from hostctl.shell._powershell import PowerShellFlavour
 
     # Fused onto a GROUPED payload: the AND has to cover `b`, not just `a`.
     for flavour in (POSIX_SHELL, BASH, FISH, CMD):

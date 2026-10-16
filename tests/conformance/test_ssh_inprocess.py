@@ -18,7 +18,7 @@ pytest.importorskip("asyncssh")
 
 from sftppath import AsyncSSHBackend  # noqa: E402
 
-from hostctl import Exec  # noqa: E402
+from hostctl.shell._grammar import Exec  # noqa: E402
 
 from .providers import (  # noqa: E402
     conformance_path,

@@ -17,23 +17,17 @@ from hostctl import _async
 import pytest
 from pathapi.mempath import MemPath, MemPathBackend
 
-from hostctl import (
-    ContainerConfig,
-    ContainerHost,
-    ExecutorProvider,
-    LocalHost,
-    OperationNotStartedError,
-    PathProvider,
-    PosixHost,
-    ProviderProbe,
-)
-from hostctl.provider.transports import (
+from hostctl.transports.container._host import ContainerConfig, ContainerHost
+from hostctl.provider._contracts import ExecutorProvider, PathProvider, ProviderProbe
+from hostctl.transports.local._host import LocalHost
+from hostctl.exceptions import OperationNotStartedError
+from hostctl.system._system import PosixHost
+from hostctl.transports.container._providers import (
     ARCHIVE_PATH_OPERATIONS,
     ContainerArchivePathProvider,
-    READ_ONLY_PATH_OPERATIONS,
-    LocalExecutorProvider,
-    LocalPathProvider,
 )
+from hostctl.provider._contracts import READ_ONLY_PATH_OPERATIONS
+from hostctl.transports.local._providers import LocalExecutorProvider, LocalPathProvider
 
 
 class FaultInjector:
@@ -664,8 +658,8 @@ def test_a_dns_failure_declines_to_the_next_provider():
     """
     import socket
 
-    from hostctl import SSHConfig
-    from hostctl.host._ssh import SSHExecutorProvider, _SSHTransport
+    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._transport import SSHExecutorProvider, _SSHTransport
 
     transport = _SSHTransport(SSHConfig("no-such-host.invalid", username="root"))
 
@@ -687,8 +681,8 @@ def test_a_dns_failure_declines_to_the_next_provider():
 def test_a_routing_failure_declines_to_the_next_provider():
     import errno
 
-    from hostctl import SSHConfig
-    from hostctl.host._ssh import SSHExecutorProvider, _SSHTransport
+    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._transport import SSHExecutorProvider, _SSHTransport
 
     transport = _SSHTransport(SSHConfig("10.0.0.1", username="root"))
 
@@ -716,8 +710,8 @@ def test_a_connect_timeout_declines_to_the_next_provider():
     fallback never ran."""
     import asyncio
 
-    from hostctl import SSHConfig
-    from hostctl.host._ssh import SSHExecutorProvider, _SSHTransport
+    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._transport import SSHExecutorProvider, _SSHTransport
 
     transport = _SSHTransport(SSHConfig("firewalled.example", username="root"))
 
@@ -788,9 +782,9 @@ def test_path_falls_back_over_every_candidate_not_just_one():
     """`run()` loops over every provider; `path()` fell back exactly once, so
     three ordered providers with the first two offline failed on a host where
     the identical `run()` succeeded."""
-    from hostctl import PosixHost
+    from hostctl.system._system import PosixHost
     from hostctl.exceptions import OperationNotStartedError
-    from hostctl.provider import PathProvider
+    from hostctl.provider._contracts import PathProvider
     from pathapi import Path as LocalPath
 
     def offline(name):
@@ -820,8 +814,8 @@ def _served_by_memory(text="served"):
 
 
 def _sftp_that_cannot_connect(*, connect=None, warm=None):
-    from hostctl import SSHConfig
-    from hostctl.host._ssh import SFTPPathProvider, _SSHTransport
+    from hostctl.transports.ssh._transport import SSHConfig
+    from hostctl.transports.ssh._transport import SFTPPathProvider, _SSHTransport
 
     transport = _SSHTransport(SSHConfig("nas.example", username="root"))
     refuse = connect or warm or (lambda: None)
@@ -957,7 +951,7 @@ def test_two_threads_selecting_do_not_share_a_trace():
     import sys
     import threading
 
-    from hostctl.provider import ProviderSelector
+    from hostctl.provider._contracts import ProviderSelector
 
     providers = tuple(
         ExecutorProvider(f"p{index}", lambda *a, **k: None) for index in range(6)
@@ -1005,8 +999,8 @@ def test_decline_and_invalidate_racing_select_raise_only_operation_not_started()
     import sys
     import threading
 
-    from hostctl import OperationNotStartedError
-    from hostctl.provider import ProviderSelector
+    from hostctl.exceptions import OperationNotStartedError
+    from hostctl.provider._contracts import ProviderSelector
 
     providers = tuple(
         ExecutorProvider(f"p{index}", lambda *a, **k: None) for index in range(50)

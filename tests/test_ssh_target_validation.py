@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from hostctl import HostConfig, SSHConfig
+from hostctl.host._contracts import HostConfig
+from hostctl.transports.ssh._transport import SSHConfig
 
 PASSWORD = "dummyPW"
 

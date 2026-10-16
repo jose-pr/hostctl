@@ -7,8 +7,8 @@ import subprocess
 
 import pytest
 
-from hostctl.executor.ssh import SSHExecutor
-from hostctl.process.ssh import SSHProcess
+from hostctl.transports.ssh._executor import SSHExecutor
+from hostctl.transports.ssh._process import SSHProcess
 
 
 class _Result:

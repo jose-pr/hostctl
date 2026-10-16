@@ -13,9 +13,10 @@ from pathlib import PureWindowsPath
 import pytest
 
 from pathapi import Path as NextPath
-from hostctl import Shell, WinRMConfig, WinRMPath
-from hostctl.host._winrm import _SCRIPT_BUDGET, _WinRMTransport
-from hostctl.executor.winrm import NativeWinRMSession, _PywinrmStdinSession
+from hostctl.shell._flavour import Shell
+from hostctl.transports.winrm._transport import WinRMConfig, WinRMPath
+from hostctl.transports.winrm._transport import _SCRIPT_BUDGET, _WinRMTransport
+from hostctl.transports.winrm._pywinrm import NativeWinRMSession, _PywinrmStdinSession
 
 
 class _Response:
@@ -171,7 +172,9 @@ def test_winrm_config_exposes_secure_transport_settings():
 
 @pytest.mark.parametrize("provider", ["pywinrm", "psrp"])
 def test_every_leg_uses_one_script_budget(monkeypatch, provider):
-    monkeypatch.setattr("hostctl.host._winrm.pypsrp_available", lambda: True)
+    monkeypatch.setattr(
+        "hostctl.transports.winrm._transport.pypsrp_available", lambda: True
+    )
     transport = _WinRMTransport(
         WinRMConfig("host", "user", "secret", provider=provider)
     )
@@ -271,7 +274,7 @@ def test_a_forged_error_line_in_remote_stderr_is_only_stderr(monkeypatch):
         "run",
         lambda *args, **kwargs: _native_result(stderr=forged, returncode=5),
     )
-    from hostctl.executor.winrm import WinRMExecutor
+    from hostctl.transports.winrm._pywinrm import WinRMExecutor
 
     result = WinRMExecutor(lambda: NativeWinRMSession("server.example"))(
         "Write-Output x", check=False
@@ -281,7 +284,7 @@ def test_a_forged_error_line_in_remote_stderr_is_only_stderr(monkeypatch):
 
 
 def test_a_line_with_another_calls_marker_is_only_stderr(monkeypatch):
-    from hostctl.executor.winrm import WinRMExecutor, exit_marker
+    from hostctl.transports.winrm._pywinrm import WinRMExecutor, exit_marker
 
     other = f"{exit_marker()}:error:auth:{base64.b64encode(b'x').decode()}".encode()
     monkeypatch.setattr(
@@ -297,9 +300,9 @@ def test_a_line_with_another_calls_marker_is_only_stderr(monkeypatch):
     ("kind", "error"), [("auth", PermissionError), ("transport", ConnectionError)]
 )
 def test_a_marked_error_line_raises_by_kind(monkeypatch, kind, error):
-    from hostctl.executor.winrm import WinRMExecutor
+    from hostctl.transports.winrm._pywinrm import WinRMExecutor
 
-    import hostctl.executor.winrm as module
+    import hostctl.transports.winrm._pywinrm as module
 
     monkeypatch.setattr(module, "exit_marker", lambda: "MARK_TEST")
     session = NativeWinRMSession("server.example")
@@ -335,7 +338,7 @@ def test_only_the_native_leg_accepts_a_per_call_timeout(monkeypatch):
             seen.append(timeout)
             return _Response()
 
-    from hostctl.executor.winrm import WinRMExecutor
+    from hostctl.transports.winrm._pywinrm import WinRMExecutor
 
     with pytest.raises(NotImplementedError):
         WinRMExecutor(lambda: _Timed())("hostname", timeout=3)
@@ -344,7 +347,7 @@ def test_only_the_native_leg_accepts_a_per_call_timeout(monkeypatch):
 
 
 def test_manages_status_is_an_instance_capability():
-    from hostctl.executor.winrm import WinRMExecutor
+    from hostctl.transports.winrm._pywinrm import WinRMExecutor
 
     plain = WinRMExecutor(lambda: None)
     managed = WinRMExecutor(lambda: None, manages_status=True)
@@ -409,7 +412,7 @@ def test_native_winrm_cert_ignore_survives_both_port_spellings(port):
 
 
 def test_native_winrm_carries_the_remote_exit_code_through_a_marker():
-    from hostctl.executor.winrm import exit_marker, status_epilogue
+    from hostctl.transports.winrm._pywinrm import exit_marker, status_epilogue
 
     marker = exit_marker()
     wrapper = NativeWinRMSession("server.example")._wrapper("cmd /c exit 7", marker)
@@ -428,7 +431,7 @@ def test_the_exit_marker_is_per_call_so_output_cannot_forge_it():
     """`__HOSTCTL_LASTEXITCODE__` is a string any command may print -- a log
     line, a grep over the sources -- and the wrapper removed that line from
     stdout and took the number after it as the exit status."""
-    from hostctl.executor.winrm import exit_marker
+    from hostctl.transports.winrm._pywinrm import exit_marker
 
     first, second = exit_marker(), exit_marker()
 
@@ -454,7 +457,7 @@ def test_native_winrm_wrapper_filters_the_marker_and_exits_with_it(compose):
     to prove. It also drives the composed payload every real dispatch sends,
     not just the bare one.
     """
-    from hostctl import Cmdlet
+    from hostctl.shell._grammar import Cmdlet
     from hostctl.shell import POWERSHELL
 
     # `epilogue=False` is what a real dispatch renders for this provider:
@@ -550,7 +553,7 @@ def test_native_remote_errors_are_statuses_not_exceptions(
 ):
     """A remote error is a status, not ConnectionError, so `check=False` can
     inspect it and `Get-Item missing` is not an outage."""
-    from hostctl.executor.winrm import WinRMExecutor
+    from hostctl.transports.winrm._pywinrm import WinRMExecutor
     from hostctl.shell import POWERSHELL
 
     _through_a_job(monkeypatch)
@@ -571,7 +574,7 @@ def test_native_remote_errors_are_statuses_not_exceptions(
 
 @_WINDOWS_ONLY
 def test_native_relay_returns_every_line_in_order(monkeypatch):
-    from hostctl.executor.winrm import WinRMExecutor
+    from hostctl.transports.winrm._pywinrm import WinRMExecutor
 
     _through_a_job(monkeypatch)
     executor = WinRMExecutor(
@@ -595,7 +598,7 @@ def test_native_relay_returns_every_line_in_order(monkeypatch):
 def test_native_transport_failures_raise_by_kind(error_id, error):
     """The hop writes the error record `Invoke-Command` writes when the
     session cannot be established."""
-    from hostctl.executor.winrm import WinRMExecutor
+    from hostctl.transports.winrm._pywinrm import WinRMExecutor
 
     session = NativeWinRMSession("server.example", timeout=120)
     needle = "Invoke-Command @o -ScriptBlock $b"
@@ -651,7 +654,7 @@ def test_native_winrm_declares_that_it_manages_status():
     comes back, the status stays 0, and `check=True` passes for a command that
     failed by exit status.
     """
-    from hostctl.host._winrm import WinRMExecutorProvider
+    from hostctl.transports.winrm._transport import WinRMExecutorProvider
 
     native = _WinRMTransport(WinRMConfig("server.example", "operator"))
     assert "manages_status" in native.capabilities
@@ -665,7 +668,7 @@ def test_pywinrm_does_not_claim_to_manage_status():
     Pinned on the pywinrm provider explicitly: PSRP manages status on its own,
     so with pypsrp installed "auto" would hide the distinction.
     """
-    from hostctl.host._winrm import WinRMExecutorProvider
+    from hostctl.transports.winrm._transport import WinRMExecutorProvider
 
     remote = _WinRMTransport(
         WinRMConfig("server.example", "operator", password="secret", provider="pywinrm")
@@ -676,7 +679,8 @@ def test_pywinrm_does_not_claim_to_manage_status():
 
 def test_a_status_managing_provider_gets_a_script_without_the_epilogue():
     """The consequence the capability exists for, at the flavour boundary."""
-    from hostctl.shell import POWERSHELL, wants_epilogue
+    from hostctl.shell import POWERSHELL
+    from hostctl.shell._flavour import wants_epilogue
 
     epilogue = POWERSHELL.execution_epilogue
     assert POWERSHELL.script(("cmd /c exit 7",)).endswith(epilogue)
@@ -689,7 +693,7 @@ def test_auto_prefers_the_native_path_a_password_free_config_documents(monkeypat
     """The guide says a password-free WinRM config on Windows uses native
     current-context remoting. Installing `hostctl[psrp]` silently took that
     away: PSRP won every `auto`, and PSRP needs a credential."""
-    import hostctl.host._winrm as winrm_module
+    import hostctl.transports.winrm._transport as winrm_module
 
     monkeypatch.setattr(winrm_module, "pypsrp_available", lambda: True)
     monkeypatch.setattr(winrm_module.os, "name", "nt")
@@ -708,7 +712,7 @@ def test_auto_prefers_the_native_path_a_password_free_config_documents(monkeypat
 def test_the_native_session_gets_the_configured_deadline(monkeypatch):
     """`timeout=None` left the native path with no deadline at all, while
     the config validated one."""
-    import hostctl.host._winrm as winrm_module
+    import hostctl.transports.winrm._transport as winrm_module
 
     monkeypatch.setattr(winrm_module.os, "name", "nt")
     built = {}
@@ -737,7 +741,7 @@ def test_the_transports_own_run_applies_the_manages_status_rule(monkeypatch):
     that reports its own status; this path composes its own script and used
     a different rule -- so the native wrapper's `exit` ended the remote
     pipeline before its marker line could be emitted."""
-    import hostctl.host._winrm as winrm_module
+    import hostctl.transports.winrm._transport as winrm_module
 
     monkeypatch.setattr(winrm_module.os, "name", "nt")
     monkeypatch.setenv("USERNAME", "admin")
@@ -769,7 +773,7 @@ def test_basic_credentials_over_http_are_refused(transport):
     password in clear or not depending only on which extra was installed."""
     with pytest.raises(ValueError, match="cleartext"):
         WinRMConfig("host", "user", "secret", transport=transport)
-    from hostctl import HostConfig
+    from hostctl.host._contracts import HostConfig
 
     with pytest.raises(ValueError, match="cleartext"):
         HostConfig(f"winrm://user@host?transport={transport}")
@@ -777,7 +781,7 @@ def test_basic_credentials_over_http_are_refused(transport):
 
 @pytest.mark.parametrize("transport", ["basic", "plaintext", "ssl"])
 def test_basic_over_https_and_an_explicit_opt_in_build(transport):
-    from hostctl import HostConfig
+    from hostctl.host._contracts import HostConfig
 
     assert WinRMConfig("host", "user", "secret", transport=transport, ssl=True)
     config = WinRMConfig(
@@ -793,7 +797,7 @@ def test_basic_over_https_and_an_explicit_opt_in_build(transport):
     [("1", True), ("TRUE", True), ("on", True), ("0", False), ("No", False)],
 )
 def test_allow_cleartext_query_is_a_strict_boolean(value, expected):
-    from hostctl import HostConfig
+    from hostctl.host._contracts import HostConfig
 
     config = HostConfig(
         f"winrm://user@host?transport=basic&allow_cleartext={value}"
@@ -823,7 +827,7 @@ def test_allow_cleartext_query_is_a_strict_boolean(value, expected):
 def test_one_rule_picks_the_leg(
     monkeypatch, provider, password, os_name, psrp, transport, leg
 ):
-    import hostctl.host._winrm as winrm_module
+    import hostctl.transports.winrm._transport as winrm_module
 
     monkeypatch.setattr(winrm_module.os, "name", os_name)
     monkeypatch.setattr(winrm_module, "pypsrp_available", lambda: psrp)
@@ -836,7 +840,7 @@ def test_one_rule_picks_the_leg(
 
 
 def test_auto_without_a_password_off_windows_needs_a_password(monkeypatch):
-    import hostctl.host._winrm as winrm_module
+    import hostctl.transports.winrm._transport as winrm_module
 
     monkeypatch.setattr(winrm_module.os, "name", "posix")
     with pytest.raises(ValueError, match="pass password="):
@@ -844,7 +848,7 @@ def test_auto_without_a_password_off_windows_needs_a_password(monkeypatch):
 
 
 def test_provider_native_means_no_password_and_pywinrm_psrp_need_one():
-    from hostctl import HostConfig
+    from hostctl.host._contracts import HostConfig
 
     with pytest.raises(ValueError, match="current Windows logon"):
         WinRMConfig("server", "admin", "secret", provider="native")
@@ -859,7 +863,7 @@ def test_provider_native_means_no_password_and_pywinrm_psrp_need_one():
 
 
 def test_a_config_without_a_port_survives_its_own_uri():
-    from hostctl import HostConfig
+    from hostctl.host._contracts import HostConfig
 
     config = WinRMConfig("h", "u")
     assert HostConfig(str(config)) == config
@@ -878,7 +882,7 @@ def test_the_psrp_leg_manages_its_own_status():
             pass
 
         def invoke(self, script, *, raw=False, capture_exit=False, format_text=False):
-            from hostctl.process.psrp import PipelineResult, PipelineStreams
+            from hostctl.transports.winrm._psrp import PipelineResult, PipelineStreams
 
             scripts.append(script)
             return PipelineResult((), PipelineStreams(), "Completed", False, 7)
@@ -900,7 +904,7 @@ def test_two_threads_open_one_runspace_and_close_closes_it():
     import threading
     import time
 
-    import hostctl.host._winrm as winrm_module
+    import hostctl.transports.winrm._transport as winrm_module
 
     opened, closed = [], []
 

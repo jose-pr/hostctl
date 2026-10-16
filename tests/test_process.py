@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from hostctl import SSHConfig
-from hostctl.host._ssh import _SSHTransport
-from hostctl.process import Process, SSHProcess, TerminalOptions
+from hostctl.transports.ssh._transport import SSHConfig
+from hostctl.transports.ssh._transport import _SSHTransport
+from hostctl.process import Process, TerminalOptions
+from hostctl.transports.ssh._process import SSHProcess
 
 
 class _Reader:
@@ -173,7 +174,8 @@ def test_a_binary_session_takes_the_str_a_shell_renders():
     channel. asyncssh does `bytearray(data)` on an unencoded channel, so the
     str a `ShellSession` renders raised `TypeError: string argument without
     an encoding` from inside a third party."""
-    from hostctl.shell import POSIX_SHELL, ShellSession
+    from hostctl.shell import POSIX_SHELL
+    from hostctl.shell._flavour import ShellSession
 
     remote = _Process()
     session = ShellSession(POSIX_SHELL, SSHProcess(remote, "command"))

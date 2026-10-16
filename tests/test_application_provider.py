@@ -1,5 +1,7 @@
-from hostctl import HostPath, OperationNotStartedError, PosixHost
-from hostctl.provider import PathProvider, ProviderProbe
+from pathapi import Path as HostPath
+from hostctl.exceptions import OperationNotStartedError
+from hostctl.system._system import PosixHost
+from hostctl.provider._contracts import PathProvider, ProviderProbe
 import pytest
 from pathapi.mempath import MemPath, MemPathBackend
 from examples.application_provider import (

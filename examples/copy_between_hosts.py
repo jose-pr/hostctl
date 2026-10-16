@@ -4,7 +4,8 @@ import os
 
 from pathapi.sync import PathSyncer
 
-from hostctl import Host, host_checksum
+from hostctl.host._contracts import Host
+from hostctl.sync import host_checksum
 
 
 def copy_file(source_uri, source_name, target_uri, target_name):

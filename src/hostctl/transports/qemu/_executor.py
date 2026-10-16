@@ -1,0 +1,378 @@
+"""Buffered command execution through the QEMU Guest Agent."""
+
+from __future__ import annotations
+
+import base64
+import os
+import subprocess
+import time
+import warnings
+import typing
+
+from ...exceptions import QGACommandError, QGAProtocolError
+from ._qga import GuestAgentTransport, guest_oserror
+from ...executor import (
+    expired,
+    CaptureOutput,
+    command_text,
+    CommandArgument,
+    Environment,
+    Executor,
+    ExecutorCapability,
+    ExecutorCommand,
+    FileHandle,
+    Input,
+    PathLike,
+    dispatch_output,
+    normalize_environment,
+    normalize_input,
+    capture_streams,
+    reject_stdin_conflict,
+    wants_text,
+)
+
+
+def _read_input(
+    stream: FileHandle,
+    *,
+    encoding: typing.Optional[str],
+    errors: typing.Optional[str],
+) -> bytes:
+    if stream == subprocess.DEVNULL:
+        return b""
+    if stream == subprocess.PIPE:
+        raise ValueError("stdin=subprocess.PIPE requires input")
+    if isinstance(stream, int):
+        with os.fdopen(os.dup(stream), "rb") as duplicate:
+            value = duplicate.read()
+    else:
+        value = stream.read()
+    if isinstance(value, str):
+        return value.encode(encoding or "utf-8", errors or "strict")
+    return value
+
+
+def _decode_output(value: object, field: str) -> bytes:
+    if value is None:
+        return b""
+    if not isinstance(value, str):
+        raise QGAProtocolError(f"{field} must be Base64 text")
+    try:
+        return base64.b64decode(value, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise QGAProtocolError(f"{field} is not valid Base64") from exc
+
+
+class QEMUExecutor(Executor[subprocess.CompletedProcess]):
+    """Execute direct argv through QGA's buffered ``guest-exec`` RPC.
+
+    ``ENV`` is deliberately **not** declared. ``guest-exec`` does carry an
+    ``env`` list, but the guest agent hands it to
+    ``g_spawn_async_with_pipes`` as ``envp``, which *replaces* the child
+    environment rather than augmenting it -- a guest process would start with
+    no ``PATH``, ``HOME`` or ``SystemRoot``. hostctl's cross-transport
+    contract is that ``env`` is additive (docs/guide/contracts.md), so any
+    host layer above this executor embeds the assignments in the rendered
+    script instead. Passing ``env=`` straight to this executor still sends
+    the native list, with QGA's replacing semantics.
+    """
+
+    executor_capabilities = frozenset((ExecutorCapability.ARGS,))
+
+    def __init__(
+        self,
+        transport: typing.Callable[[], GuestAgentTransport],
+        *,
+        agent_timeout: typing.Optional[float] = None,
+        poll_interval: float = 0.01,
+        max_poll_interval: float = 0.25,
+        clock: typing.Callable[[], float] = time.monotonic,
+        sleep: typing.Callable[[float], None] = time.sleep,
+        merged_capture: typing.Optional[typing.Callable[[], bool]] = None,
+    ) -> None:
+        if poll_interval <= 0:
+            raise ValueError("poll_interval must be positive")
+        if max_poll_interval < poll_interval:
+            raise ValueError("max_poll_interval must be at least poll_interval")
+        if agent_timeout is not None and agent_timeout <= 0:
+            raise ValueError("agent_timeout must be positive")
+        #: How long ONE guest-agent round trip may take. Every RPC here
+        #: answers immediately when the agent is healthy -- `guest-exec`
+        #: returns a pid, `guest-exec-status` a snapshot -- so a request
+        #: that does not come back is a wedged agent, not a slow command.
+        #: Passing the command's whole `timeout=` down meant a `timeout=600`
+        #: build could not notice a dead agent for ten minutes.
+        self._agent_timeout = agent_timeout
+        self._transport = transport
+        #: Answers whether the agent can capture stderr merged into stdout.
+        self._merged_capture = merged_capture
+        self._poll_interval = poll_interval
+        self._max_poll_interval = max_poll_interval
+        self._clock = clock
+        self._sleep = sleep
+
+    def __call__(
+        self,
+        command: ExecutorCommand,
+        *args: CommandArgument,
+        bufsize: int = -1,
+        stdin: typing.Optional[FileHandle] = None,
+        stdout: typing.Optional[FileHandle] = None,
+        stderr: typing.Optional[FileHandle] = None,
+        cwd: typing.Optional[PathLike] = None,
+        env: typing.Optional[Environment] = None,
+        capture_output: CaptureOutput = True,
+        check: bool = True,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
+        input: Input = None,
+        timeout: typing.Optional[float] = None,
+        text: typing.Optional[bool] = None,
+        **options: object,
+    ) -> subprocess.CompletedProcess:
+        del bufsize
+        if options:
+            raise TypeError(f"unsupported QEMU executor option: {sorted(options)[0]}")
+        if cwd is not None:
+            raise NotImplementedError(
+                "QGA guest-exec has no native working-directory support"
+            )
+        reject_stdin_conflict(input, stdin)
+        program = command_text(command)
+        if not program:
+            raise ValueError("QGA guest-exec path must not be empty")
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must not be negative")
+        if text and encoding is None:
+            encoding = "utf-8"
+
+        stdout, stderr = capture_streams(capture_output, stdout, stderr)
+        argv = [
+            command_text(value, encoding=encoding or "utf-8", errors=errors or "strict")
+            for value in args
+        ]
+        arguments: typing.Dict[str, object] = {
+            "path": program,
+            "arg": argv,
+            "capture-output": True,
+        }
+        if stderr is subprocess.STDOUT and self._merged_capture is not None:
+            if self._merged_capture():
+                arguments["capture-output"] = "merged"
+        normalized_env = normalize_environment(env)
+        if normalized_env is not None:
+            arguments["env"] = [
+                f"{key}={value}" for key, value in normalized_env.items()
+            ]
+        if input is not None:
+            # QGA carries stdin base64-encoded, so this leg is always binary.
+            payload = normalize_input(
+                input, text_mode=False, encoding=encoding, errors=errors
+            )
+            arguments["input-data"] = base64.b64encode(
+                typing.cast(bytes, payload)
+            ).decode("ascii")
+        elif stdin is not None:
+            payload = _read_input(
+                stdin,
+                encoding=encoding,
+                errors=errors,
+            )
+            arguments["input-data"] = base64.b64encode(payload).decode("ascii")
+
+        deadline = None if timeout is None else self._clock() + timeout
+        command_display = [program, *argv]
+        started = self._execute(
+            {"execute": "guest-exec", "arguments": arguments},
+            deadline,
+            command_display,
+            timeout=timeout,
+        )
+        if not isinstance(started, typing.Mapping):
+            raise QGAProtocolError("guest-exec returned a non-object result")
+        pid = started.get("pid")
+        if not isinstance(pid, int) or isinstance(pid, bool):
+            raise QGAProtocolError("guest-exec did not return an integer PID")
+
+        status = self._wait(pid, deadline, command_display, timeout)
+        out = _decode_output(status.get("out-data"), "out-data")
+        err = _decode_output(status.get("err-data"), "err-data")
+        returncode = status.get("exitcode")
+        if not isinstance(returncode, int) or isinstance(returncode, bool):
+            signal = status.get("signal")
+            if isinstance(signal, int) and not isinstance(signal, bool):
+                returncode = -signal
+            else:
+                raise QGAProtocolError(
+                    "completed guest-exec status has no integer exit code or signal"
+                )
+
+        if wants_text(text, encoding, errors):
+            codec = encoding or "utf-8"
+            out = out.decode(codec, errors or "strict")
+            err = err.decode(codec, errors or "strict")
+        if stderr is subprocess.STDOUT:
+            out += err
+            err = None
+        out, err = dispatch_output(
+            stdout,
+            stderr,
+            out,
+            err,
+            encoding=encoding,
+            errors=errors,
+        )
+        completed = subprocess.CompletedProcess(
+            command_display,
+            returncode,
+            out,
+            err,
+        )
+        completed.pid = pid
+        completed.stdout_truncated = bool(status.get("out-truncated", False))
+        completed.stderr_truncated = bool(status.get("err-truncated", False))
+        if completed.stdout_truncated or completed.stderr_truncated:
+            # qemu-ga caps what it captures and says so in the status reply.
+            # Recorded on the result and nowhere else, a silently shortened
+            # transcript looked exactly like a complete one -- and a caller
+            # who never heard of these attributes had no way to tell.
+            streams = ", ".join(
+                name
+                for name, flag in (
+                    ("stdout", completed.stdout_truncated),
+                    ("stderr", completed.stderr_truncated),
+                )
+                if flag
+            )
+            warnings.warn(
+                f"the guest agent truncated captured {streams} for pid {pid}: "
+                "the result is incomplete",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        if check:
+            completed.check_returncode()
+        return completed
+
+    def _execute(
+        self,
+        request: typing.Mapping[str, object],
+        deadline: typing.Optional[float],
+        command: typing.Sequence[str],
+        timeout: typing.Optional[float] = None,
+    ) -> object:
+        remaining = self._remaining(deadline, command, timeout=timeout)
+        budget = remaining
+        if self._agent_timeout is not None:
+            budget = (
+                self._agent_timeout
+                if remaining is None
+                else min(remaining, self._agent_timeout)
+            )
+        try:
+            return self._transport().execute(request, timeout=budget)
+        except (TimeoutError, subprocess.TimeoutExpired) as exc:
+            if remaining is None or (budget is not None and budget < remaining):
+                # The agent's own deadline expired while the command still
+                # had time left: the guest agent is not answering. That is a
+                # different failure from "the command ran too long", and
+                # reporting it as a command timeout hid a wedged agent
+                # behind whatever deadline the caller happened to pass.
+                raise ConnectionError(
+                    "the guest agent stopped responding to "
+                    f"{request.get('execute')!r} within {budget}s"
+                ) from exc
+            raise expired(
+                command,
+                remaining,
+                orphaned=request.get("execute") == "guest-exec",
+            ) from exc
+        except QGACommandError as exc:
+            # The guest refused the command. `run()` of a missing program is
+            # a `FileNotFoundError` on every other transport; raised as the
+            # QGA-specific `QGACommandError` it was, `except FileNotFoundError`
+            # around a portable `host.run()` simply did not fire.
+            raise guest_oserror(exc, command[0] if command else "") from exc
+
+    def _wait(
+        self,
+        pid: int,
+        deadline: typing.Optional[float],
+        command: typing.Sequence[str],
+        timeout: typing.Optional[float],
+    ) -> typing.Mapping[str, object]:
+        interval = self._poll_interval
+        partial_out = b""
+        partial_err = b""
+        while True:
+            try:
+                result = self._execute(
+                    {
+                        "execute": "guest-exec-status",
+                        "arguments": {"pid": pid},
+                    },
+                    deadline,
+                    command,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                self._annotate_timeout(exc, pid, timeout, partial_out, partial_err)
+                raise
+            except QGAProtocolError as exc:
+                if "size limit" not in str(exc):
+                    raise
+                # The reply was refused whole, so the captured output is
+                # gone -- there is no second chance to ask for it, and the
+                # bare "reply exceeded size limit" named neither the
+                # process nor the setting that would have admitted it.
+                raise QGAProtocolError(
+                    f"the guest-exec-status reply for pid {pid} exceeded the "
+                    "QGA reply size limit and its captured output was lost; "
+                    "raise max_reply_size on the host config"
+                ) from exc
+            if not isinstance(result, typing.Mapping):
+                raise QGAProtocolError("guest-exec-status returned a non-object result")
+            if not isinstance(result.get("exited"), bool):
+                raise QGAProtocolError("guest-exec-status has no boolean exited field")
+            if "out-data" in result:
+                partial_out = _decode_output(result.get("out-data"), "out-data")
+            if "err-data" in result:
+                partial_err = _decode_output(result.get("err-data"), "err-data")
+            if result.get("exited") is True:
+                return result
+            try:
+                remaining = self._remaining(deadline, command, pid, timeout)
+            except subprocess.TimeoutExpired as exc:
+                self._annotate_timeout(exc, pid, timeout, partial_out, partial_err)
+                raise
+            delay = interval if remaining is None else min(interval, remaining)
+            self._sleep(delay)
+            interval = min(interval * 2, self._max_poll_interval)
+
+    @staticmethod
+    def _annotate_timeout(
+        exc: subprocess.TimeoutExpired,
+        pid: int,
+        timeout: typing.Optional[float],
+        stdout: bytes,
+        stderr: bytes,
+    ) -> None:
+        exc.timeout = timeout
+        exc.pid = pid
+        exc.orphaned = True
+        exc.output = stdout
+        exc.stderr = stderr
+
+    def _remaining(
+        self,
+        deadline: typing.Optional[float],
+        command: typing.Sequence[str],
+        pid: typing.Optional[int] = None,
+        timeout: typing.Optional[float] = None,
+    ) -> typing.Optional[float]:
+        if deadline is None:
+            return None
+        remaining = deadline - self._clock()
+        if remaining > 0:
+            return remaining
+        raise expired(command, timeout, orphaned=pid is not None, pid=pid)

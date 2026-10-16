@@ -9,7 +9,8 @@ guard the whole derivation surface rather than one method.
 import pytest
 from pathapi.mempath import MemPath, MemPathBackend
 
-from hostctl import PathProvider, PosixHost
+from hostctl.provider._contracts import PathProvider
+from hostctl.system._system import PosixHost
 
 
 @pytest.fixture
