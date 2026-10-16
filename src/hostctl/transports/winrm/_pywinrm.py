@@ -175,6 +175,10 @@ class WinRMExecutor(Executor[subprocess.CompletedProcess]):
     deadline (`None` for none); without it a `timeout=` is refused. An
     omitted `timeout` leaves the session's own. `transport_timeout` names the
     deadline a timeout raised without one is reported against.
+
+    Not a `BufferedExecutor`: an omitted timeout here is not resolved to a
+    number but left out of `run_ps` for the session to apply, and the
+    session may refuse a given one (`accepts_timeout`).
     """
 
     executor_capabilities = frozenset((ExecutorCapability.SCRIPT,))

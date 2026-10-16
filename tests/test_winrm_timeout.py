@@ -694,6 +694,16 @@ def test_psrp_executor_names_the_command_in_its_timeout():
     assert raised.value.orphaned is True
 
 
+def test_psrp_timeout_payload_has_the_call_s_output_type():
+    class _Session:
+        def invoke(self, script, **options):
+            raise subprocess.TimeoutExpired("win.example", 4)
+
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        PSRPExecutor(lambda: _Session())("Get-Date", timeout=4, text=True)
+    assert (raised.value.output, raised.value.stderr) == ("", "")
+
+
 def test_psrp_leg_passes_the_configured_timeout(monkeypatch):
     seen = []
 

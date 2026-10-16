@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import os
 import subprocess
 import time
 import warnings
@@ -12,6 +11,7 @@ import typing
 from ...exceptions import QGACommandError, QGAProtocolError
 from ._qga import GuestAgentTransport, guest_oserror
 from ...executor import (
+    _read_stdin,
     expired,
     CaptureOutput,
     command_text,
@@ -30,26 +30,6 @@ from ...executor import (
     reject_stdin_conflict,
     wants_text,
 )
-
-
-def _read_input(
-    stream: StreamTarget,
-    *,
-    encoding: typing.Optional[str],
-    errors: typing.Optional[str],
-) -> bytes:
-    if stream == subprocess.DEVNULL:
-        return b""
-    if stream == subprocess.PIPE:
-        raise ValueError("stdin=subprocess.PIPE requires input")
-    if isinstance(stream, int):
-        with os.fdopen(os.dup(stream), "rb") as duplicate:
-            value = duplicate.read()
-    else:
-        value = stream.read()
-    if isinstance(value, str):
-        return value.encode(encoding or "utf-8", errors or "strict")
-    return value
 
 
 def _decode_output(value: object, field: str) -> bytes:
@@ -75,6 +55,10 @@ class QEMUExecutor(Executor[subprocess.CompletedProcess]):
     host layer above this executor embeds the assignments in the rendered
     script instead. Passing ``env=`` straight to this executor still sends
     the native list, with QGA's replacing semantics.
+
+    Not a ``BufferedExecutor``: the agent reports cumulative output snapshots
+    while it polls, bounds each RPC by its own deadline apart from the
+    command's, and returns a pid and truncation flags on the result.
     """
 
     executor_capabilities = frozenset((ExecutorCapability.ARGS,))
@@ -173,7 +157,7 @@ class QEMUExecutor(Executor[subprocess.CompletedProcess]):
                 typing.cast(bytes, payload)
             ).decode("ascii")
         elif stdin is not None:
-            payload = _read_input(
+            payload = _read_stdin(
                 stdin,
                 encoding=encoding,
                 errors=errors,

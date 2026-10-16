@@ -2,26 +2,9 @@
 
 from __future__ import annotations
 
-import subprocess
 import typing
 
-from ...executor import (
-    CaptureOutput,
-    raise_normalized,
-    command_text,
-    CommandArgument,
-    CommandEnvironment,
-    Executor,
-    ExecutorCapability,
-    CommandLike,
-    StreamTarget,
-    CommandInput,
-    StrPath,
-    dispatch_output,
-    normalize_environment,
-    capture_streams,
-    wants_text,
-)
+from ...executor import BufferedExecutor, ExecutorCapability, ExecutorRequest
 
 
 class ContainerLike(typing.Protocol):
@@ -30,11 +13,15 @@ class ContainerLike(typing.Protocol):
     def exec_run(self, command: typing.Sequence[str], **options: object) -> object: ...
 
 
-class ContainerExecutor(Executor[subprocess.CompletedProcess]):
+class ContainerExecutor(BufferedExecutor):
     """Execute argv directly through a Docker Engine container exec."""
 
     executor_capabilities = frozenset(
         (ExecutorCapability.ARGS, ExecutorCapability.CWD, ExecutorCapability.ENV)
+    )
+    input_unsupported = "buffered container execution does not yet support stdin/input"
+    timeout_unsupported = (
+        "Docker Engine exec does not provide a cancellable command timeout"
     )
 
     def __init__(
@@ -48,99 +35,34 @@ class ContainerExecutor(Executor[subprocess.CompletedProcess]):
         self._user = user
         self._workdir = workdir
 
-    def __call__(
-        self,
-        command: CommandLike,
-        *args: CommandArgument,
-        bufsize: int = -1,
-        stdin: typing.Optional[StreamTarget] = None,
-        stdout: typing.Optional[StreamTarget] = None,
-        stderr: typing.Optional[StreamTarget] = None,
-        cwd: typing.Optional[StrPath] = None,
-        env: typing.Optional[CommandEnvironment] = None,
-        capture_output: CaptureOutput = True,
-        check: bool = True,
-        encoding: typing.Optional[str] = None,
-        errors: typing.Optional[str] = None,
-        input: CommandInput = None,
-        timeout: typing.Optional[float] = None,
-        text: typing.Optional[bool] = None,
-        **options: object,
-    ) -> subprocess.CompletedProcess:
-        del bufsize
-        if options:
-            raise TypeError(
-                f"unsupported container executor option: {sorted(options)[0]}"
-            )
-        if stdin is not None or input is not None:
-            raise NotImplementedError(
-                "buffered container execution does not yet support stdin/input"
-            )
-        if timeout is not None:
-            raise NotImplementedError(
-                "Docker Engine exec does not provide a cancellable command timeout"
-            )
-
-        stdout, stderr = capture_streams(capture_output, stdout, stderr)
-        argv = [command_text(command)]
-        argv.extend(command_text(value) for value in args)
-        merge_stderr = stderr is subprocess.STDOUT
+    def _exchange(self, request: ExecutorRequest):
         exec_options: typing.Dict[str, object] = {
             "stdout": True,
             "stderr": True,
             # Docker's demux=False stream preserves stdout/stderr ordering,
             # which is required when callers request STDERR->STDOUT.
-            "demux": not merge_stderr,
+            "demux": not request.merge_stderr,
         }
-        normalized_env = normalize_environment(env)
-        if normalized_env is not None:
-            exec_options["environment"] = normalized_env
-        selected_workdir = str(cwd) if cwd is not None else self._workdir
-        if selected_workdir is not None:
-            exec_options["workdir"] = selected_workdir
+        if request.env is not None:
+            exec_options["environment"] = request.env
+        workdir = request.cwd if request.cwd is not None else self._workdir
+        if workdir is not None:
+            exec_options["workdir"] = workdir
         if self._user is not None:
             exec_options["user"] = self._user
-
-        try:
-            result = self._container().exec_run(argv, **exec_options)
-        except Exception as exc:
-            if _is_not_found(exc):
-                raise ConnectionError("container not found") from exc
-            raise_normalized(exc, normalize_container_error)
-
-        # docker-py documents a null ExitCode, and `CompletedProcess`
-        # treats `None` as success. -1, which the SSH executor also reports
-        # for a missing exit status, makes `check=True` raise instead.
-        exit_code = getattr(result, "exit_code")
-        returncode = -1 if exit_code is None else typing.cast(int, exit_code)
-        output = getattr(result, "output")
-        if isinstance(output, tuple):
-            out, err = output
-        else:
-            out, err = output, None
-        if out is None:
-            out = b""
-        if err is None and not merge_stderr:
-            err = b""
-        if wants_text(text, encoding, errors):
-            codec = encoding or "utf-8"
-            out = (
-                out.decode(codec, errors or "strict") if isinstance(out, bytes) else out
-            )
-            err = (
-                err.decode(codec, errors or "strict") if isinstance(err, bytes) else err
-            )
-        if merge_stderr:
-            if err:
-                out = out + err
-            err = None
-        out, err = dispatch_output(
-            stdout, stderr, out, err, encoding=encoding, errors=errors
+        result = self._container().exec_run(
+            [request.command, *request.args], **exec_options
         )
-        completed = subprocess.CompletedProcess(argv, returncode, out, err)
-        if check:
-            completed.check_returncode()
-        return completed
+        # docker-py documents a null ExitCode; the base reports it as -1 so
+        # that `check=True` raises.
+        output = getattr(result, "output")
+        out, err = output if isinstance(output, tuple) else (output, None)
+        return out, err, getattr(result, "exit_code")
+
+    def _normalize_error(self, exc: Exception) -> Exception:
+        if _is_not_found(exc):
+            return ConnectionError("container not found")
+        return normalize_container_error(exc)
 
 
 def normalize_container_error(exc: Exception) -> Exception:

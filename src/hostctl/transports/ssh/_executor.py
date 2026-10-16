@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import io
 import inspect
-import os
 import re
 import subprocess
 import typing
 import xml.etree.ElementTree as ElementTree
 
 from ...executor import (
+    _read_stdin,
     CaptureOutput,
     command_text,
     CommandArgument,
@@ -56,18 +56,7 @@ def _input_buffer(
     encoding: typing.Optional[str],
     errors: typing.Optional[str],
 ) -> io.BytesIO:
-    if stream == subprocess.DEVNULL:
-        return io.BytesIO()
-    if stream == subprocess.PIPE:
-        raise ValueError("stdin=subprocess.PIPE requires input")
-    if isinstance(stream, int):
-        with os.fdopen(os.dup(stream), "rb") as duplicate:
-            value = duplicate.read()
-    else:
-        value = stream.read()
-    if isinstance(value, str):
-        value = value.encode(encoding or "utf-8", errors or "strict")
-    return io.BytesIO(value)
+    return io.BytesIO(_read_stdin(stream, encoding=encoding, errors=errors))
 
 
 #: Seconds to wait for the channel to close after TERM; with `_CLOSE_GRACE` it
@@ -131,7 +120,12 @@ def _clixml_text(
 
 
 class SSHExecutor(Executor[subprocess.CompletedProcess]):
-    """Execute finalized command strings through an AsyncSSH connection."""
+    """Execute finalized command strings through an AsyncSSH connection.
+
+    Not a ``BufferedExecutor``: AsyncSSH runs the whole exchange on the
+    shared event loop, reads ``bufsize`` as its stdin chunk size, and the
+    PowerShell CLIXML stderr is decoded here before it is routed.
+    """
 
     executor_capabilities: typing.FrozenSet[ExecutorCapability] = frozenset()
 

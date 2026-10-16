@@ -3,35 +3,25 @@
 from __future__ import annotations
 
 import math
-import subprocess
 import time
 import typing
 import types
 
 from ..._extras import _require
 from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT
-from ...executor import _OMITTED, _Omitted
 from ...host._timeout import DEFAULT, _config_timeouts
 from ...executor import (
-    CaptureOutput,
-    command_text,
-    CommandArgument,
-    Executor,
+    BufferedExecutor,
     ExecutorCapability,
-    CommandLike,
-    StreamTarget,
-    CommandInput,
-    capture_streams,
-    dispatch_output,
+    ExecutorRequest,
     expired,
-    wants_text,
 )
 
 import dataclasses
 import threading
 
 
-class PSRPExecutor(Executor[subprocess.CompletedProcess]):
+class PSRPExecutor(BufferedExecutor):
     """Execute finalized PowerShell scripts in fresh PSRP pipelines.
 
     `default_timeout` supplies the deadline of a call made without
@@ -44,6 +34,7 @@ class PSRPExecutor(Executor[subprocess.CompletedProcess]):
     executor_capabilities = frozenset(
         (ExecutorCapability.SCRIPT, ExecutorCapability.MANAGES_STATUS)
     )
+    input_unsupported = "PSRP does not provide raw stdin for run()"
 
     def __init__(
         self,
@@ -53,81 +44,33 @@ class PSRPExecutor(Executor[subprocess.CompletedProcess]):
         ] = None,
     ) -> None:
         self._session = session
-        self._default_timeout = default_timeout
+        self._default_timeout_of = default_timeout
 
-    def __call__(
-        self,
-        command: CommandLike,
-        *args: CommandArgument,
-        bufsize: int = -1,
-        stdin: typing.Optional[StreamTarget] = None,
-        stdout: typing.Optional[StreamTarget] = None,
-        stderr: typing.Optional[StreamTarget] = None,
-        capture_output: CaptureOutput = True,
-        check: bool = True,
-        encoding: typing.Optional[str] = None,
-        errors: typing.Optional[str] = None,
-        input: CommandInput = None,
-        timeout: typing.Union[float, None, _Omitted] = _OMITTED,
-        text: typing.Optional[bool] = None,
-        **options: object,
-    ) -> subprocess.CompletedProcess:
-        del bufsize
-        if options:
-            raise TypeError(f"unsupported PSRP executor option: {sorted(options)[0]}")
-        if args:
-            raise NotImplementedError("PSRP executor receives a finalized script")
-        if stdin is not None or input is not None:
-            raise NotImplementedError("PSRP does not provide raw stdin for run()")
-        if timeout is _OMITTED:
-            timeout = (
-                self._default_timeout() if self._default_timeout is not None else None
-            )
-        stdout, stderr = capture_streams(capture_output, stdout, stderr)
-        try:
-            result = self._session().invoke(
-                command_text(command),
-                raw=False,
-                capture_exit=True,
-                format_text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise expired(command_text(command), exc.timeout, orphaned=True) from exc
-        codec = encoding or "utf-8"
+    def _default_timeout(self) -> typing.Optional[float]:
+        if self._default_timeout_of is None:
+            return None
+        return self._default_timeout_of()
+
+    def _exchange(self, request: ExecutorRequest):
+        # A timeout raised here is the session's: it requested the stop and
+        # cannot confirm it, which the base reports as orphaned.
+        result = self._session().invoke(
+            request.command,
+            raw=False,
+            capture_exit=True,
+            format_text=True,
+            timeout=request.timeout,
+        )
         # `invoke(capture_exit=True)` already consumed the
         # `__HOSTCTL_LASTEXITCODE__` line and folded it into `returncode`;
         # the session is the only parser of that marker.
-        returncode = result.returncode
         # Output is already console text (`format_text`), one item per line;
         # the other legs deliver CRLF, so this one does too.
         out_text = "\r\n".join(str(item) for item in result.output)
         err_text = "\r\n".join(str(item) for item in result.streams.error)
         if out_text:
             out_text += "\r\n"
-        as_text = wants_text(text, encoding, errors)
-        out: typing.Union[str, bytes] = out_text if as_text else out_text.encode(codec)
-        err: typing.Union[str, bytes] = err_text if as_text else err_text.encode(codec)
-        if stderr is subprocess.STDOUT:
-            out = out + err
-            err = None
-        out, err = dispatch_output(
-            stdout,
-            stderr,
-            out,
-            err,
-            encoding=encoding,
-            errors=errors,
-        )
-        completed = subprocess.CompletedProcess(
-            args=command_text(command),
-            returncode=returncode,
-            stdout=out,
-            stderr=err,
-        )
-        if check:
-            completed.check_returncode()
-        return completed
+        return out_text, err_text, result.returncode
 
 
 @dataclasses.dataclass(frozen=True)

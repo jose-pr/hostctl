@@ -211,7 +211,11 @@ def _batch_safe(argv):
 
 
 class LocalExecutor(Executor[subprocess.CompletedProcess]):
-    """Execute direct argv or finalized shell invocations locally."""
+    """Execute direct argv or finalized shell invocations locally.
+
+    Not a ``BufferedExecutor``: ``subprocess`` is the contract that base
+    reproduces, and it hands the child real descriptors rather than buffers.
+    """
 
     executor_capabilities = frozenset(
         (ExecutorCapability.ARGS, ExecutorCapability.CWD, ExecutorCapability.ENV)
