@@ -300,6 +300,12 @@ collection until pytruenas ports to these names.
 
 ### Fixed
 
+- WinRM, container and QEMU paths keep their backend through `with_name()`,
+  `with_stem()`, `with_suffix()`, `relative_to()` and `parents` on Python 3.9 to
+  3.11, where pathlib built them without one; an overwriting copy onto such a
+  path failed with `AttributeError: _backend` under pathapi 0.1.1.
+- Closing a container process releases the exec socket's descriptor; it
+  stayed open behind the response and socket file docker-py keeps on it.
 - A shell flavour's `repr()` names it (`<PosixShellFlavour 'posix'>`), so a
   config's `repr()` no longer embeds `<... object at 0x...>`. This ships in
   0.4.0.
