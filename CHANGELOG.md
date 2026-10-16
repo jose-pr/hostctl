@@ -41,6 +41,8 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `ExecutorCommand`; `executor.PathLike`, `Input`, `Environment`, `FileHandle` | `CommandLike`; `StrPath`, `CommandInput`, `CommandEnvironment`, `StreamTarget` |
 | `pypsrp_available()`, `require_pypsrp()` | `has_psrp()` (and new `has_ssh()`); the guard is internal |
 | `host.path(p, backend=name)` re-selecting a provider per operation | pinned to `name`, as `.via(name)`; `host.path(p)` selects per operation |
+| `register_system_provider(name, resolver)` with `resolver(config, kind)` returning one provider | `resolver(host)` returning `(executor provider or None, path provider or None)`; the config is `host.config`. One resolver reached by two names runs once per host, so its two legs share a transport. A two-argument resolver raises `TypeError` at registration |
+| `SystemConfig(executor=(), path=())` meaning "none" | `executor=None`/`path=None` (the defaults) take the host class's `default_providers()`, which is empty for the built-in hosts; `()` still composes none. `config.executors`/`config.paths` are `None` when not named |
 | `serial:///dev/ttyUSB0` (any `serial:///NAME`, `serial:/NAME`) naming the relative device `dev/ttyUSB0` / `NAME`; `serial:////dev/x` naming `dev/x` | the absolute `/dev/ttyUSB0` / `/NAME`; a relative device is `serial:NAME`; `serial:////...` raises `ValueError`; `COMn`, `\\.\...`, pyserial URLs and the encoded `serial:///%2Fdev%2Fx` are unchanged |
 | `CompositePosixPath.from_path(backend_path, provider, factory, ...)` (undocumented) | `CompositePosixPath.over(providers, *segments, backend=None)`; the same for `CompositeWindowsPath` |
 | `SSHConfig(known_hosts=None)`, `HostConfig(uri, known_hosts=None)` (no host-key check) | `SSHConfig(verify=False)`, `?verify=false`; `known_hosts=None` raises `ValueError` |
@@ -53,6 +55,17 @@ against 0.4.0; `test.yml`'s informative `downstream-pytruenas` job fails at
 collection until pytruenas ports to these names.
 
 ### Added
+
+- **Host-bound provider descriptors**, in 0.4.0. A `SystemHost` subclass
+  declares its own descriptors in `provider_resolvers` (name ->
+  `resolver(host)`), merged up the MRO ahead of `register_system_provider`'s
+  global ones; mapping a name to `None` hides it. `default_providers()` names
+  the descriptors used when the config names none, and drops a default
+  `ssh`/`sftp` when the `ssh` extra is missing (a name the config gives is
+  kept, and fails at use with the install hint). `resolve_providers()` turns
+  names into providers, for `replace_providers()`; an unknown name raises
+  `ValueError` listing the names the host knows. `PosixHost(config)` built
+  directly now resolves the config's descriptors, which it used to ignore.
 
 - `hostctl.transports.ssh.SSHExecutorProvider` is public, with
   `.connection` (the asyncssh connection `run()` uses, opened on first

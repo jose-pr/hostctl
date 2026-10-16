@@ -371,10 +371,10 @@ returns a `PosixHost` or `WindowsHost` composed of that transport's providers;
 the transport itself is private.
 
 ```python
-SystemConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None, timeout=Timeout())
-PosixConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None, timeout=Timeout())
-WindowsConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None, timeout=Timeout())
-IOSConfig(authority='localhost', *, shell=None, executor=(), path=(), provider_options=None, initializer=None, timeout=Timeout())
+SystemConfig(authority='localhost', *, shell=None, executor=None, path=None, provider_options=None, initializer=None, timeout=Timeout())
+PosixConfig(authority='localhost', *, shell=None, executor=None, path=None, provider_options=None, initializer=None, timeout=Timeout())
+WindowsConfig(authority='localhost', *, shell=None, executor=None, path=None, provider_options=None, initializer=None, timeout=Timeout())
+IOSConfig(authority='localhost', *, shell=None, executor=None, path=None, provider_options=None, initializer=None, timeout=Timeout())
 ```
 
 The `posix://`, `windows://` and `ios://` configs compose a system host from
@@ -382,15 +382,20 @@ provider descriptors instead of owning a transport. `executor=` and `path=`
 are sequences of descriptor names (a bare string raises `TypeError`); the
 built-ins are `local`, `ssh`, `sftp` and `winrm`, and a transport descriptor
 needs its config in `provider_options` (`{"ssh": SSHConfig(...)}`), which
-never serializes credentials into the canonical URI. `initializer` is a
-`SessionInitializer` or callable run once per connection generation.
+never serializes credentials into the canonical URI. Left out (`None`), a
+kind takes the host class's `default_providers()`; `()` composes none.
+`initializer` is a `SessionInitializer` or callable run once per connection
+generation.
 
 ```python
-SystemHost(config=None, *, executor_providers=(), path_providers=(), shell=None, info=None, initializer=None)
-PosixHost(config=None, *, executor_providers=(), path_providers=(), shell=None, info=None, initializer=None)
-WindowsHost(config=None, *, executor_providers=(), path_providers=(), shell=None, info=None, initializer=None)
-IOSHost(config=None, *, executor_providers=(), path_providers=(), shell=None, info=None, initializer=None)
+SystemHost(config=None, *, executor_providers=None, path_providers=None, shell=None, info=None, initializer=None)
+PosixHost(config=None, *, executor_providers=None, path_providers=None, shell=None, info=None, initializer=None)
+WindowsHost(config=None, *, executor_providers=None, path_providers=None, shell=None, info=None, initializer=None)
+IOSHost(config=None, *, executor_providers=None, path_providers=None, shell=None, info=None, initializer=None)
 SystemHost.replace_providers(*, executor=None, path=None)
+SystemHost.resolve_providers(executor=None, path=None) -> tuple[tuple[ExecutorProvider, ...], tuple[PathProvider, ...]]
+SystemHost.default_providers() -> tuple[tuple[str, ...], tuple[str, ...]]
+SystemHost.provider_resolvers: ClassVar[Mapping[str, resolver | None]] = {}
 SystemHost.runspace()
 ```
 
@@ -401,7 +406,26 @@ SystemHost.runspace()
   grammar, so `path()` raises.
 - `executor_providers` and `path_providers` are the ordered tuples the host
   was composed from; `provider_details` reports availability without
-  dispatching.
+  dispatching. Left out (`None`), a kind is resolved from the config's
+  descriptor names (its `executors`/`paths` attributes) by
+  `resolve_providers()`.
+- `resolve_providers(executor=None, path=None)` builds providers from
+  descriptor names in order; `None` takes the config's names, or
+  `default_providers()` when the config names none. Each resolver runs once
+  per call, so the two legs of one transport share it: pass both sets of one
+  call to `replace_providers()`. An unknown name raises `ValueError` listing
+  the names this host knows; a descriptor offering no provider of the kind
+  raises `ValueError`.
+- `default_providers()` returns `(executor_names, path_names)`, empty for the
+  built-in hosts; override it per host class (it may read `self.config`). A
+  default `ssh`/`sftp` is dropped when `has_ssh()` is false; a name the config
+  gives is kept and fails at use with the install hint.
+- `provider_resolvers` maps a descriptor name to `resolver(host) ->
+  (executor provider or None, path provider or None)`. Merged up the MRO (the
+  most derived class wins) and consulted before the global registry; `None`
+  hides an inherited or global name. The resolver is handed the host at the
+  end of `SystemHost.__init__`, with `config` and the subclass's own
+  attributes set.
 - `replace_providers()` swaps either set (`None` keeps it), closes each
   replaced transport once unless a kept provider shares it, and starts a new
   connection generation, so the initializer runs again. Duplicate names raise
@@ -416,12 +440,15 @@ register_system_provider(name, resolver, *, replace=False)
 system_provider_names() -> tuple[str, ...]
 ```
 
-`register_system_provider` adds a descriptor: `resolver(config, kind)` returns
-the provider for `kind` (`"executor"` or `"path"`) or `None`. A name already
-registered raises `ValueError` unless `replace=True`; an unknown descriptor
-loads the `hostctl.system_providers` entry point of that name.
-`system_provider_names()` lists what is registered, entry points included
-without importing them.
+`register_system_provider` adds a descriptor every system host accepts:
+`resolver(host)` returns `(executor provider or None, path provider or None)`
+(`ssh_providers(config)`, `winrm_providers(config)` and `local_providers()`
+already have that shape). A resolver taking more than the host raises
+`TypeError`. A name already registered raises `ValueError` unless
+`replace=True`; an unknown descriptor loads the `hostctl.system_providers`
+entry point of that name. `system_provider_names()` lists the global names,
+entry points included without importing them; a class's
+`provider_resolvers` add to and hide from that list.
 
 ## Local (`hostctl.transports.local`)
 

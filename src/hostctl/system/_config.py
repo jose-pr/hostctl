@@ -55,8 +55,8 @@ class SystemConfig(HostConfig):
         authority: str = "localhost",
         *,
         shell: object = None,
-        executor: typing.Iterable[str] = (),
-        path: typing.Iterable[str] = (),
+        executor: typing.Optional[typing.Iterable[str]] = None,
+        path: typing.Optional[typing.Iterable[str]] = None,
         provider_options: typing.Optional[typing.Mapping[str, object]] = None,
         initializer: typing.Optional[typing.Callable[..., object]] = None,
         timeout: typing.Union[float, None, Timeout] = Timeout(),
@@ -72,8 +72,10 @@ class SystemConfig(HostConfig):
                 )
         self.authority = authority or "localhost"
         self.shell = shell
-        self.executors = tuple(executor)
-        self.paths = tuple(path)
+        #: Descriptor names in precedence order; `None` takes the host
+        #: class's `default_providers()`, `()` composes none.
+        self.executors = None if executor is None else tuple(executor)
+        self.paths = None if path is None else tuple(path)
         self.options = {
             key: value
             for key, value in (
@@ -89,29 +91,12 @@ class SystemConfig(HostConfig):
         # options carry a transport's password.
         return (
             f"{type(self).__name__}(authority={self.authority!r}, "
-            f"shell={self.shell!r}, executor={self.executors!r}, "
-            f"path={self.paths!r}"
+            f"shell={self.shell!r}"
+            + ("" if self.executors is None else f", executor={self.executors!r}")
+            + ("" if self.paths is None else f", path={self.paths!r}")
             + ("" if self.timeout == Timeout() else f", timeout={self.timeout!r}")
             + ")"
         )
-
-    def _build_providers(self, kind: str):
-        from ._resolvers import _SYSTEM_PROVIDER_RESOLVERS, _load_system_provider
-
-        descriptors = self.executors if kind == "executor" else self.paths
-        result = []
-        for descriptor in descriptors:
-            key = str(descriptor).casefold()
-            resolver = _SYSTEM_PROVIDER_RESOLVERS.get(key) or _load_system_provider(key)
-            if resolver is None:
-                raise ValueError(f"unknown {kind} provider descriptor: {descriptor!r}")
-            provider = resolver(self, kind)
-            if provider is None:
-                raise ValueError(
-                    f"provider descriptor {descriptor!r} does not support {kind}"
-                )
-            result.append(provider)
-        return tuple(result)
 
     @property
     def connection_uri(self) -> str:
@@ -123,9 +108,9 @@ class SystemConfig(HostConfig):
                 f"{type(self).__name__} is abstract and has no connection URI"
             )
         query: typing.List[typing.Tuple[str, str]] = [
-            ("executor", value) for value in self.executors
+            ("executor", value) for value in self.executors or ()
         ]
-        query += [("path", value) for value in self.paths]
+        query += [("path", value) for value in self.paths or ()]
         if self.shell is not None:
             query.append(("shell", getattr(self.shell, "name", str(self.shell))))
         query += _timeout_query(self.timeout)
@@ -152,8 +137,11 @@ class SystemConfig(HostConfig):
             ("executor", "path", "shell", *_URI_TIMEOUT_KEYS),
             repeatable=("executor", "path"),
         )
-        executors = typing.cast(typing.Tuple[str, ...], query.get("executor", ()))
-        paths = typing.cast(typing.Tuple[str, ...], query.get("path", ()))
+        # An absent key is "not named", so the host's defaults apply.
+        executors = typing.cast(
+            typing.Optional[typing.Tuple[str, ...]], query.get("executor")
+        )
+        paths = typing.cast(typing.Optional[typing.Tuple[str, ...]], query.get("path"))
         # The whole netloc, userinfo included, is unquoted below, so a
         # percent-encoded control character there would arrive decoded.
         reject_control_characters(parsed.netloc)
@@ -172,8 +160,6 @@ class SystemConfig(HostConfig):
         )
 
     def _create_host(self):
-        from ._resolvers import _TRANSPORTS
-
         if self.host_type is None:
             from ._kinds import IOSConfig, PosixConfig, WindowsConfig
 
@@ -184,17 +170,5 @@ class SystemConfig(HostConfig):
                 f"{type(self).__name__} is abstract and creates no host; "
                 f"use a concrete system configuration ({names})"
             )
-        # A fresh transport cache per call: one host's executor and path
-        # providers share a connection, and two hosts never do -- either one's
-        # `close()` would tear down the connection the other is using.
-        token = _TRANSPORTS.set({})
-        try:
-            executor_providers = self._build_providers("executor")
-            path_providers = self._build_providers("path")
-        finally:
-            _TRANSPORTS.reset(token)
-        return self.host_type(
-            self,
-            executor_providers=executor_providers,
-            path_providers=path_providers,
-        )
+        # The host resolves the descriptors itself: resolvers receive it.
+        return self.host_type(self)

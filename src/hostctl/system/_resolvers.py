@@ -1,58 +1,88 @@
-"""System provider descriptors and the transports they resolve to."""
+"""Provider descriptors: the names a system host resolves into providers."""
 
 from __future__ import annotations
 
 
+import inspect
+import logging
 import typing
-from contextvars import ContextVar
 
 
+from .._extras import _available
 from .._registry import entry_points_in
-from ._config import SystemConfig
+from ..provider._contracts import ExecutorProvider, PathProvider
 
-_SYSTEM_PROVIDER_RESOLVERS = {}
+log = logging.getLogger(__name__)
+
+#: What a resolver returns: the executor and path provider a descriptor
+#: offers, either of them `None`.
+ProviderPair = typing.Tuple[
+    typing.Optional[ExecutorProvider], typing.Optional[PathProvider]
+]
+
+#: `resolver(host) -> (executor | None, path | None)`.
+ProviderResolver = typing.Callable[["SystemHost"], ProviderPair]
+
+_SYSTEM_PROVIDER_RESOLVERS: typing.Dict[str, ProviderResolver] = {}
+
+#: Descriptors a host's DEFAULTS drop when the extra serving them is missing,
+#: by descriptor name, whichever resolver serves the name.
+_DESCRIPTOR_EXTRAS = {"ssh": "ssh", "sftp": "ssh"}
+
+_ENTRY_POINT_GROUP = "hostctl.system_providers"
+
+
+def _key(name: object) -> str:
+    return str(name).casefold().strip()
 
 
 def register_system_provider(
     name: str,
-    resolver: typing.Callable[["SystemConfig", str], typing.Any],
+    resolver: ProviderResolver,
     *,
     replace: bool = False,
 ) -> None:
-    """Register a provider descriptor resolver for :class:`SystemConfig`.
+    """Register a provider descriptor every system host accepts.
 
-    `resolver(config, kind)` returns the provider for `kind` (`"executor"` or
-    `"path"`), or `None` when the descriptor offers none. A name registered
-    already raises `ValueError` unless `replace=True`.
+    `resolver(host)` returns the `(executor, path)` pair the descriptor
+    offers, either of them `None`. A class's own `provider_resolvers` win over
+    this registry. A name registered already raises `ValueError` unless
+    `replace=True`.
     """
-    key = str(name).casefold().strip()
+    key = _key(name)
     if not key or not callable(resolver):
         raise ValueError("provider name and callable resolver are required")
+    try:
+        inspect.signature(resolver).bind(None)
+    except TypeError:
+        raise TypeError(
+            f"system provider resolver {key!r} must take one argument, the host, "
+            "and return (executor provider or None, path provider or None)"
+        ) from None
+    except ValueError:
+        # No introspectable signature (a builtin): judged when it is called.
+        pass
     if key in _SYSTEM_PROVIDER_RESOLVERS and not replace:
         raise ValueError(f"system provider is already registered: {key}")
     _SYSTEM_PROVIDER_RESOLVERS[key] = resolver
 
 
 def system_provider_names() -> typing.Tuple[str, ...]:
-    """Every provider descriptor `SystemConfig` accepts, sorted.
+    """Every globally registered provider descriptor, sorted.
 
     The registered names plus the `hostctl.system_providers` entry points,
-    which are listed and not imported.
+    which are listed and not imported. A host class may add or hide names
+    with its own `provider_resolvers`.
     """
     names = set(_SYSTEM_PROVIDER_RESOLVERS)
-    names.update(
-        str(point.name).casefold() for point in entry_points_in(_ENTRY_POINT_GROUP)
-    )
+    names.update(_key(point.name) for point in entry_points_in(_ENTRY_POINT_GROUP))
     return tuple(sorted(names))
 
 
-_ENTRY_POINT_GROUP = "hostctl.system_providers"
-
-
-def _load_system_provider(key: str):
+def _load_system_provider(key: str) -> typing.Optional[ProviderResolver]:
     """Load, register and return the plugin resolver named `key`, if any."""
     for point in entry_points_in(_ENTRY_POINT_GROUP):
-        if str(point.name).casefold() != key:
+        if _key(point.name) != key:
             continue
         try:
             resolver = point.load()
@@ -63,83 +93,131 @@ def _load_system_provider(key: str):
     return None
 
 
-def _provider_option(config: "SystemConfig", name: str):
-    values = config.options.get("provider_options", {})
-    if isinstance(values, dict):
-        return values.get(name)
-    return None
+def _class_resolvers(
+    host_type: type,
+) -> typing.Dict[str, typing.Optional[ProviderResolver]]:
+    """`provider_resolvers` merged up the MRO, the most derived class winning."""
+    merged: typing.Dict[str, typing.Optional[ProviderResolver]] = {}
+    for klass in reversed(host_type.__mro__):
+        own = vars(klass).get("provider_resolvers")
+        if own:
+            merged.update((_key(name), value) for name, value in own.items())
+    return merged
 
 
-def _local_provider(config, kind):
-    del config
-    from ..transports.local._providers import LocalExecutorProvider, LocalPathProvider
-
-    return LocalExecutorProvider() if kind == "executor" else LocalPathProvider()
+def _known_names(own: typing.Mapping[str, object]) -> typing.List[str]:
+    names = set(system_provider_names()) | set(own)
+    return sorted(name for name in names if own.get(name, True) is not None)
 
 
-#: The transports one `_create_host()` call has built, by option key. Scoped to
-#: the call (and so to its thread), because the executor and path providers of
-#: ONE host must share a connection and two hosts must not.
-_TRANSPORTS: "ContextVar[typing.Optional[dict]]" = ContextVar(
-    "hostctl_transports", default=None
-)
+def _default_names(names: typing.Iterable[str], kind: str) -> typing.Tuple[str, ...]:
+    """Default descriptors whose extra is installed.
 
-
-def _shared_transport(key, build):
-    """The transport for `key` within this `_create_host()` call, built once."""
-    cache = _TRANSPORTS.get()
-    if cache is None:
-        return build()
-    if key not in cache:
-        cache[key] = build()
-    return cache[key]
-
-
-def _transport_provider(config, kind, option, label, load):
-    """Resolve one provider of a transport-backed pair from `provider_options`.
-
-    `load()` imports lazily: (config type, transport type, executor provider
-    type, path provider type).
+    Only defaults degrade: a name the caller chose is kept, and fails at use
+    with the install hint rather than being silently served by another.
     """
-    config_type, transport_type, executor_type, path_type = load()
-    value = _provider_option(config, option)
+    kept = []
+    for name in names:
+        extra = _DESCRIPTOR_EXTRAS.get(_key(name))
+        if extra is not None and not _available(extra):
+            log.debug(
+                "default %s provider %s dropped: the %r extra is not installed",
+                kind,
+                name,
+                extra,
+            )
+            continue
+        kept.append(name)
+    return tuple(kept)
+
+
+def _resolve(
+    host: "SystemHost",
+    executor: typing.Iterable[str],
+    path: typing.Iterable[str],
+) -> typing.Tuple[tuple, tuple]:
+    """Resolve descriptor names into `(executor providers, path providers)`.
+
+    One pass: each resolver is called once however many names reach it, so
+    the executor and path legs of one transport share it, and two passes (two
+    hosts) never do.
+    """
+    own = _class_resolvers(type(host))
+    results: typing.Dict[int, typing.Tuple[ProviderResolver, ProviderPair]] = {}
+
+    def provider(descriptor: str, kind: str, index: int):
+        key = _key(descriptor)
+        if key in own:
+            resolver = own[key]
+        else:
+            resolver = _SYSTEM_PROVIDER_RESOLVERS.get(key) or _load_system_provider(key)
+        if resolver is None:
+            raise ValueError(
+                f"unknown {kind} provider descriptor: {descriptor!r} "
+                f"(known: {', '.join(_known_names(own))})"
+            )
+        if id(resolver) not in results:
+            pair = resolver(host)
+            if not isinstance(pair, tuple) or len(pair) != 2:
+                raise TypeError(
+                    f"provider descriptor {descriptor!r} must resolve to "
+                    f"(executor provider or None, path provider or None), "
+                    f"not {type(pair).__name__}"
+                )
+            results[id(resolver)] = (resolver, pair)
+        value = results[id(resolver)][1][index]
+        if value is None:
+            raise ValueError(
+                f"provider descriptor {descriptor!r} does not support {kind}"
+            )
+        return value
+
+    return (
+        tuple(provider(name, "executor", 0) for name in executor),
+        tuple(provider(name, "path", 1) for name in path),
+    )
+
+
+def _provider_option(config, name: str, config_type: type, label: str):
+    values = getattr(config, "options", {}).get("provider_options", {})
+    value = values.get(name) if isinstance(values, dict) else None
     if not isinstance(value, config_type):
         raise ValueError(
             f"system {label} descriptors require "
-            f"provider_options={{'{option}': {config_type.__name__}(...)}}"
+            f"provider_options={{'{name}': {config_type.__name__}(...)}}"
         )
-    transport = _shared_transport(option, lambda: transport_type(value))
-    return executor_type(transport) if kind == "executor" else path_type(transport)
+    return value
 
 
-def _load_ssh():
-    from ..transports.ssh._providers import SFTPPathProvider, SSHExecutorProvider
+def _local_pair(host):
+    from ..transports.local._host import local_providers
+
+    return local_providers()
+
+
+def _ssh_pair(host):
     from ..transports.ssh._config import SSHConfig
-    from ..transports.ssh._transport import _SSHTransport
+    from ..transports.ssh._providers import ssh_providers
 
-    return SSHConfig, _SSHTransport, SSHExecutorProvider, SFTPPathProvider
+    return ssh_providers(_provider_option(host.config, "ssh", SSHConfig, "SSH"))
 
 
-def _load_winrm():
+def _winrm_pair(host):
     from ..transports.winrm._config import WinRMConfig
-    from ..transports.winrm._providers import WinRMExecutorProvider, WinRMPathProvider
-    from ..transports.winrm._transport import _WinRMTransport
+    from ..transports.winrm._providers import winrm_providers
 
-    return WinRMConfig, _WinRMTransport, WinRMExecutorProvider, WinRMPathProvider
-
-
-def _ssh_provider(config, kind):
-    return _transport_provider(config, kind, "ssh", "SSH", _load_ssh)
+    return winrm_providers(_provider_option(host.config, "winrm", WinRMConfig, "WinRM"))
 
 
-def _winrm_provider(config, kind):
-    return _transport_provider(config, kind, "winrm", "WinRM", _load_winrm)
+register_system_provider("local", _local_pair)
+
+register_system_provider("ssh", _ssh_pair)
+
+register_system_provider("sftp", _ssh_pair)
+
+register_system_provider("winrm", _winrm_pair)
 
 
-register_system_provider("local", _local_provider)
-
-register_system_provider("ssh", _ssh_provider)
-
-register_system_provider("sftp", _ssh_provider)
-
-register_system_provider("winrm", _winrm_provider)
+# Bound last: `_host` imports this module inside its methods, so either may be
+# imported first.
+from ._host import SystemHost  # noqa: E402

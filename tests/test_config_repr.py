@@ -128,7 +128,7 @@ def test_a_password_in_a_uri_does_not_reach_the_repr():
         (
             PosixConfig("nas.example", timeout=None),
             "PosixConfig(authority='nas.example', shell=None, "
-            "executor=(), path=(), timeout=Timeout(total=None))",
+            "timeout=Timeout(total=None))",
         ),
     ],
 )

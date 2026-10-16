@@ -57,9 +57,10 @@ ordered, percent-encoded, secret-free provider descriptors in repeated
 ```python
 from hostctl import HostConfig, PathProvider, SSHConfig, register_system_provider
 
-# `sftp` is built in; `rpc` resolves only once something registers it.
-def rpc(config, kind):
-    return PathProvider("rpc", rpc_path) if kind == "path" else None
+# `sftp` is built in; `rpc` resolves only once something registers it. A
+# resolver is handed the host and returns its (executor, path) pair.
+def rpc(host):
+    return None, PathProvider("rpc", rpc_path)
 
 register_system_provider("rpc", rpc)
 
@@ -72,6 +73,14 @@ config = HostConfig(
 Descriptor order round-trips exactly. Credentials are **constructor-only** and
 never appear in `connection_uri` or a `repr()`; reconstructing a URI accepts
 only `provider_options=` and `initializer=`.
+
+A name `register_system_provider` adds is known to every system host. A host
+class can keep its own instead: `provider_resolvers` on the class maps names to
+resolvers, merged up the MRO ahead of the global names, and `None` hides one.
+`default_providers()` names what a host uses when its config names nothing (a
+default `ssh`/`sftp` is dropped when the `ssh` extra is missing), and an
+unknown name raises `ValueError` listing the names that host knows. A worked
+example is in [Extending](extending.md#a-worked-application-host).
 
 ## The no-replay safety rule
 

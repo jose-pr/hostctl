@@ -997,13 +997,16 @@ def test_concurrent_hosts_from_one_config_do_not_share_a_transport(monkeypatch):
     from hostctl.transports.ssh._config import SSHConfig
     from hostctl.system import _resolvers as system_module
 
-    real = system_module._ssh_provider
+    real = system_module._ssh_pair
 
-    def slow_sftp(config, kind):
-        time.sleep(0.02)  # widen the window between the executor and path legs
-        return real(config, kind)
+    def slow_ssh(host):
+        time.sleep(0.02)  # widen the window between the two hosts' builds
+        return real(host)
 
-    monkeypatch.setitem(system_module._SYSTEM_PROVIDER_RESOLVERS, "sftp", slow_sftp)
+    # One resolver for both names, as the built-ins are: that is what makes
+    # the executor and path legs of one host share a transport.
+    monkeypatch.setitem(system_module._SYSTEM_PROVIDER_RESOLVERS, "ssh", slow_ssh)
+    monkeypatch.setitem(system_module._SYSTEM_PROVIDER_RESOLVERS, "sftp", slow_ssh)
     config = PosixConfig(
         "node",
         executor=("ssh",),

@@ -137,8 +137,8 @@ def test_replace_takes_a_scheme_over_from_its_owner(registry):
 
 
 def test_a_duplicate_system_provider_is_refused_unless_replaced():
-    def resolver(config, kind):
-        return None
+    def resolver(host):
+        return None, None
 
     with pytest.raises(ValueError, match="already registered"):
         register_system_provider("ssh", resolver)
@@ -156,8 +156,8 @@ def test_an_unknown_descriptor_loads_the_system_provider_plugin(monkeypatch):
     def execute(command, *args, **options):
         return subprocess.CompletedProcess((command,), 0, b"", b"")
 
-    def resolver(config, kind):
-        return ExecutorProvider("regplug", execute) if kind == "executor" else None
+    def resolver(host):
+        return ExecutorProvider("regplug", execute), None
 
     loads = {}
     monkeypatch.setattr(

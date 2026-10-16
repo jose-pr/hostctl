@@ -62,7 +62,7 @@ through an entry-point group, and a listing returns the sorted names.
 | kind | register | entry-point group | listing |
 | ---- | -------- | ----------------- | ------- |
 | URI scheme | `class C(HostConfig, schemes=(...))` | `hostctl.configs` | `host_schemes()` |
-| system provider | `register_system_provider(name, resolver)` | `hostctl.system_providers` | `system_provider_names()` |
+| system provider | `register_system_provider(name, resolver)`, or a host class's `provider_resolvers` | `hostctl.system_providers` | `system_provider_names()` |
 | shell flavour | `register_shell_flavour(flavour)` | `hostctl.shell_flavours` | |
 
 A second config claiming a scheme that is already registered raises
@@ -137,27 +137,30 @@ class ApplianceConfig(HostConfig, schemes=("appliance",)):
         return ApplianceHost(self)
 
 
+def _ssh(host):
+    config = host.config
+    ssh = SSHConfig(
+        config.host,
+        port=config.port,
+        username=config.username,
+        password=config.password,
+    )
+    # One call, so both providers share one SSH transport.
+    return ssh_providers(ssh)
+
+
+def _api(host):
+    return None, PathProvider("api", host._api_path, capabilities={"open_read", "read"})
+
+
 class ApplianceHost(PosixHost):
     """POSIX semantics over SSH, plus what only this appliance has."""
 
     config_type = ApplianceConfig
+    provider_resolvers = {"ssh": _ssh, "sftp": _ssh, "api": _api}
 
-    def __init__(self, config, **options):
-        ssh = SSHConfig(
-            config.host,
-            port=config.port,
-            username=config.username,
-            password=config.password,
-        )
-        # One call, so both providers share one SSH transport.
-        executor, sftp = ssh_providers(ssh)
-        api = PathProvider("api", self._api_path, capabilities={"open_read", "read"})
-        super().__init__(
-            config,
-            executor_providers=(executor,),
-            path_providers=(sftp, api),
-            **options,
-        )
+    def default_providers(self):
+        return ("ssh",), ("sftp", "api")
 
     def _api_path(self, *segments):
         raise NotImplementedError("the appliance's file API")
@@ -193,12 +196,20 @@ What each piece does:
   case where `parsed.hostname` would fold it.
 - `_create_host` is what `config.open()` and `with config as host` call.
 - `config_type` names the config class the host belongs to.
-- `ssh_providers()` returns the executor and SFTP path providers sharing one
-  transport; building them separately would open two connections. Further
-  providers follow in order: a path operation the SFTP provider declines
-  before dispatch goes to `api`, and nothing that may have started is ever
-  retried. `host.path_providers` and `host.last_selection` show what was
-  composed and chosen.
+- `provider_resolvers` names the descriptors this host class resolves:
+  each resolver is handed the host and returns its `(executor, path)` pair,
+  `None` for a kind it does not offer. They are the class's own, so
+  `PosixHost` does not learn `api`; a subclass may add names or hide one by
+  mapping it to `None`. `_ssh` is reached by both `ssh` and `sftp` and runs
+  once per host, so the two providers `ssh_providers()` returns share one
+  transport; building them separately would open two connections.
+- `default_providers()` is the order used when the config names no
+  descriptors (this config never does). A default `ssh`/`sftp` is dropped
+  when the `ssh` extra is not installed. Further providers follow in order: a
+  path operation the SFTP provider declines before dispatch goes to `api`,
+  and nothing that may have started is ever retried. `host.path_providers`
+  and `host.last_selection` show what was composed and chosen;
+  `host.resolve_providers()` builds a fresh set for `replace_providers()`.
 - `firmware()` is the application's own operation, built on the inherited
   `run()`.
 

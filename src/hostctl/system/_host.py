@@ -24,6 +24,7 @@ from ..executor import (
     StrPath,
 )
 from ..exceptions import OperationNotStartedError
+from ..provider._contracts import ExecutorProvider, PathProvider
 from ..provider._selector import ProviderSelector
 from ..shell import shell_flavour
 from ..shell._flavour import ShellFlavour
@@ -39,6 +40,9 @@ from ..paths._composite import CompositePosixPath, CompositeWindowsPath
 from ._config import SystemConfig
 from ._shell_plan import _ShellContext, _shell_invocation
 
+if typing.TYPE_CHECKING:
+    from ._resolvers import ProviderResolver
+
 log = logging.getLogger(__name__)
 
 
@@ -51,12 +55,20 @@ class SystemHost(Host):
     #: Bound by each concrete family below, once those classes exist.
     config_type: typing.ClassVar[typing.Type[SystemConfig]]
 
+    #: Provider descriptors this class resolves, by name: `resolver(host)`
+    #: returns `(executor provider or None, path provider or None)`. Merged up
+    #: the MRO, the most derived class winning, ahead of the names
+    #: `register_system_provider` adds for every host; `None` hides a name.
+    provider_resolvers: typing.ClassVar[
+        typing.Mapping[str, typing.Optional["ProviderResolver"]]
+    ] = {}
+
     def __init__(
         self,
         config: typing.Optional[SystemConfig] = None,
         *,
-        executor_providers=(),
-        path_providers=(),
+        executor_providers: typing.Optional[typing.Iterable[ExecutorProvider]] = None,
+        path_providers: typing.Optional[typing.Iterable[PathProvider]] = None,
         shell=None,
         info: typing.Optional[HostInfo] = None,
         initializer=None,
@@ -75,8 +87,6 @@ class SystemHost(Host):
                 f"not {type(config).__name__}"
             )
         self.config = config if config is not None else self.config_type()
-        self._executor_selector = ProviderSelector(executor_providers)
-        self._path_selector = ProviderSelector(path_providers)
         self._shell_resolver = (
             shell if callable(shell) and not isinstance(shell, type) else None
         )
@@ -134,6 +144,63 @@ class SystemHost(Host):
         # dispatch itself -- `run()`, `path()`, `spawn()` -- stays outside the
         # lock, so this never serializes actual remote work.
         self._lifecycle_lock = threading.RLock()
+        # Last: a resolver is handed this host, so it sees it fully set up.
+        if executor_providers is None or path_providers is None:
+            resolved_executors, resolved_paths = self.resolve_providers(
+                executor=None if executor_providers is None else (),
+                path=None if path_providers is None else (),
+            )
+            if executor_providers is None:
+                executor_providers = resolved_executors
+            if path_providers is None:
+                path_providers = resolved_paths
+        self._executor_selector = ProviderSelector(executor_providers)
+        self._path_selector = ProviderSelector(path_providers)
+
+    def default_providers(
+        self,
+    ) -> typing.Tuple[typing.Tuple[str, ...], typing.Tuple[str, ...]]:
+        """The `(executor, path)` descriptor names used when the config names none.
+
+        Override per host class; it may read `self.config`. A default
+        `ssh`/`sftp` is dropped when the `ssh` extra is missing.
+        """
+        return (), ()
+
+    def resolve_providers(
+        self,
+        executor: typing.Optional[typing.Iterable[str]] = None,
+        path: typing.Optional[typing.Iterable[str]] = None,
+    ) -> typing.Tuple[
+        typing.Tuple[ExecutorProvider, ...], typing.Tuple[PathProvider, ...]
+    ]:
+        """Build providers from descriptor names, in order.
+
+        `None` takes the config's `executors`/`paths`, or `default_providers()`
+        when the config names none. Each resolver runs once per call, so the
+        two legs of one transport share it: replace both sets with one call's
+        result. An unknown name raises `ValueError` listing the known ones.
+        """
+        from ._resolvers import _default_names, _resolve
+
+        defaults = None
+        names = []
+        for index, (given, attribute, kind) in enumerate(
+            ((executor, "executors", "executor"), (path, "paths", "path"))
+        ):
+            if given is None:
+                given = getattr(self.config, attribute, None)
+            if given is None:
+                if defaults is None:
+                    defaults = self.default_providers()
+                given = _default_names(defaults[index], kind)
+            elif isinstance(given, (str, bytes)):
+                raise TypeError(
+                    f"{kind} descriptors are a sequence of names, e.g. ('local',), "
+                    "not a string"
+                )
+            names.append(tuple(given))
+        return _resolve(self, names[0], names[1])
 
     @property
     def executor_providers(self) -> typing.Tuple[object, ...]:
