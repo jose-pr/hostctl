@@ -101,10 +101,12 @@ def test_library_installs_no_handler_and_does_not_configure_logging():
     import hostctl.transports.ssh._transport
     import hostctl.transports.winrm._transport
 
+    # The module loggers only: `hostctl` itself is the application's to
+    # configure, and the command line's `-v` does exactly that.
     names = sorted(
         name
         for name in logging.Logger.manager.loggerDict
-        if name == "hostctl" or name.startswith("hostctl.")
+        if name.startswith("hostctl.")
     )
     assert "hostctl.provider._contracts" in names
     assert "hostctl.transports.ssh._transport" in names
