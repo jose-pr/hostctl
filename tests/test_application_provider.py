@@ -1,4 +1,4 @@
-from hostctl import HostPath, OperationNotStarted, PosixHost
+from hostctl import HostPath, OperationNotStartedError, PosixHost
 from hostctl.provider import PathProvider, ProviderProbe
 import pytest
 from pathapi.mempath import MemPath, MemPathBackend
@@ -34,7 +34,7 @@ def test_application_provider_operation_selection_and_pinning():
 
     def sftp(*parts):
         calls.append("sftp")
-        raise OperationNotStarted("SFTP preflight unavailable")
+        raise OperationNotStartedError("SFTP preflight unavailable")
 
     def download(*parts):
         calls.append("download")

@@ -16,7 +16,7 @@ does, which is why the composed case can trust them.
 
 None of these adapters retries.  A backend failure is reported as-is; only a
 proven pre-dispatch refusal is raised as
-:class:`~hostctl.provider.OperationNotStarted`.
+:class:`~hostctl.provider.OperationNotStartedError`.
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ import typing
 
 from pathapi import Path
 
+from ..exceptions import OperationNotStartedError
 from ._common import (
     ExecutorProvider,
-    OperationNotStarted,
     PathProvider,
     ProviderProbe,
     ProviderSelector,
@@ -153,6 +153,8 @@ class ContainerExecutorProvider(ExecutorProvider):
         log.debug("inspecting container before dispatch")
         try:
             self._connect()
+        except OperationNotStartedError:
+            raise
         # OSError, not just ConnectionError: a DNS failure (socket.gaierror)
         # and a routing failure (EHOSTUNREACH/ENETUNREACH) are OSError but not
         # ConnectionError, and they are unambiguously pre-dispatch -- no
@@ -164,7 +166,7 @@ class ContainerExecutorProvider(ExecutorProvider):
                 type(exc).__name__,
                 ProviderSelector.redact(exc),
             )
-            raise OperationNotStarted(
+            raise OperationNotStartedError(
                 "container is unavailable before dispatch", cause=exc
             ) from exc
         log.debug("container is running and ready for dispatch")
@@ -202,6 +204,8 @@ class ContainerArchivePathProvider(PathProvider):
             return ProviderProbe("available", capabilities=self.capabilities)
         try:
             usable = self._probe_hook()
+        except OperationNotStartedError:
+            raise
         except (ConnectionError, TimeoutError, OSError) as exc:
             return ProviderProbe("unavailable", type(exc).__name__)
         if isinstance(usable, ProviderProbe):

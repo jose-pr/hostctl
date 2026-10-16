@@ -86,16 +86,16 @@ Falling through to the next provider is permitted in exactly two cases:
 
 1. The provider **declines during probe or preflight** — it was never dispatched
    to at all.
-2. The provider raises **`OperationNotStarted`**, which a provider may raise
+2. The provider raises **`OperationNotStartedError`**, which a provider may raise
    *only when it can prove* no remote operation began.
 
 ```python
-from hostctl import OperationNotStarted
+from hostctl import OperationNotStartedError
 
 def execute(command, *args, **options):
     if not transport.is_connected():
         # Provably nothing was sent, so fallback is safe.
-        raise OperationNotStarted("transport not connected")
+        raise OperationNotStartedError("transport not connected")
     return transport.run(command, *args, **options)
 ```
 
@@ -112,7 +112,7 @@ dialling, so one transient refusal cannot brick a single-provider host.
 
 Paths and commands connect the same way: a composite path calls the provider's
 `connect()` before each dispatch, which is where a refused port or an untrusted
-host key becomes `OperationNotStarted`. A path provider's `connect()` must
+host key becomes `OperationNotStartedError`. A path provider's `connect()` must
 therefore be idempotent and cheap once connected.
 
 ## Selection traces
@@ -340,8 +340,9 @@ selection and pinning, see [`examples/application_provider.py`](https://github.c
 
 `hostctl.provider` exports the *authoring* contracts, and only those:
 `ExecutorProvider`, `PathProvider`, `ProviderProbe`, `ProviderSelection`,
-`ProviderSelector`, `SessionInitializer`, and `OperationNotStarted`. They are
-also re-exported from top-level `hostctl`, so the two spellings agree.
+`ProviderSelector` and `SessionInitializer`. The exception that permits
+fallback, `OperationNotStartedError`, lives in `hostctl.exceptions`. All of
+them are also re-exported from top-level `hostctl`, so the spellings agree.
 
 `hostctl.provider.transports` holds the adapters the built-in hosts assemble
 themselves from — `LocalExecutorProvider`, `LocalPathProvider`,

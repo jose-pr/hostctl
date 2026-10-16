@@ -19,6 +19,8 @@ import typing
 
 from pathapi.providers import CommitOnClose, is_safe_child_name, is_windows_flavoured
 
+from ..exceptions import OperationNotStartedError
+
 
 def copy_from(
     destination,
@@ -72,20 +74,28 @@ def copy_from(
         while chunk := reader.read(1024 * 1024):
             writer.write(chunk)
     if preserve_metadata:
+        # `OperationNotStartedError` is an OSError; a composite path whose
+        # providers all declined must say so, not skip the metadata.
         try:
             info = source.stat()
+        except OperationNotStartedError:
+            raise
         except (OSError, NotImplementedError):
             return destination
         mode = getattr(info, "st_mode", None)
         if mode:
             try:
                 destination.chmod(stat.S_IMODE(mode))
+            except OperationNotStartedError:
+                raise
             except (OSError, NotImplementedError):
                 pass
         mtime = getattr(info, "st_mtime", None)
         if mtime is not None:
             try:
                 destination._utime(mtime=mtime)
+            except OperationNotStartedError:
+                raise
             except (OSError, NotImplementedError):
                 pass
     return destination

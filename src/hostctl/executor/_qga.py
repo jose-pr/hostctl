@@ -16,45 +16,21 @@ import threading
 import time
 import typing
 
-
-class QgaError(Exception):
-    """Base class for QEMU Guest Agent failures."""
-
-
-class QgaProtocolError(QgaError, ConnectionError):
-    """The guest agent returned malformed or inconsistent protocol data."""
-
-
-class QgaDisconnectedError(QgaError, ConnectionError):
-    """The guest-agent transport disconnected before producing a reply."""
+from ..exceptions import (
+    HostctlError,
+    QGACommandError,
+    QGADisconnectedError,
+    QGAProtocolError,
+    QGATimeoutError,
+)
 
 
-class QgaTimeoutError(QgaError, TimeoutError):
-    """A guest-agent request did not complete before its deadline."""
-
-
-class _QgaRequestNotSerializable(QgaError, ValueError):
+class _QGARequestNotSerializable(ValueError):
     """The request never reached the wire, so the stream is untouched.
 
     A `ValueError` to every caller; a distinct type only so `execute()` can
     tell "nothing was sent" from "something failed mid-stream".
     """
-
-
-class QgaCommandError(QgaError):
-    """A structured QGA command error returned by the guest."""
-
-    def __init__(
-        self,
-        error_class: str,
-        description: str,
-        *,
-        data: typing.Optional[typing.Mapping[str, object]] = None,
-    ) -> None:
-        super().__init__(f"{error_class}: {description}")
-        self.error_class = error_class
-        self.description = description
-        self.data = dict(data or {})
 
 
 #: Guest-error classification, keyed on the `strerror` tail.
@@ -112,7 +88,7 @@ def guest_oserror(exc: Exception, path: str) -> OSError:
     program a `guest-exec` tried to start. The result carries `.errno` and
     `.filename`, so a caller can branch on the errno instead of the text.
     """
-    if isinstance(exc, (QgaTimeoutError, QgaDisconnectedError)):
+    if isinstance(exc, (QGATimeoutError, QGADisconnectedError)):
         return exc
     if isinstance(exc, OSError) and exc.errno is not None:
         # Already classified BY THE OS, which knows better than a text
@@ -122,7 +98,7 @@ def guest_oserror(exc: Exception, path: str) -> OSError:
         # needle matched, and a perfectly good `IsADirectoryError` was
         # downgraded to a bare `OSError`. Windows hid it, because it
         # raises EACCES for opening a directory and "denied" happens to
-        # match. The text ladder below is for `QgaCommandError`, which is
+        # match. The text ladder below is for `QGACommandError`, which is
         # the guest's own words and carries no errno at all.
         return exc
     name = str(
@@ -207,7 +183,7 @@ class _QgaFramedSession:
                 payload["id"] = request_id
                 self._send(payload, deadline)
                 return self._unwrap(self._correlated_reply(request_id, deadline))
-            except (QgaCommandError, _QgaRequestNotSerializable):
+            except (QGACommandError, _QGARequestNotSerializable):
                 # The guest answered, or nothing was ever sent. Either way
                 # the stream sits at a frame boundary and the connection is
                 # healthy -- tearing it down made every "no such file" cost a
@@ -265,7 +241,7 @@ class _QgaFramedSession:
                 request, ensure_ascii=False, separators=(",", ":")
             ).encode("utf-8")
         except (TypeError, ValueError) as exc:
-            raise _QgaRequestNotSerializable(
+            raise _QGARequestNotSerializable(
                 "QGA request is not JSON serializable"
             ) from exc
         self._send_raw(prefix + encoded + b"\n", deadline)
@@ -277,7 +253,7 @@ class _QgaFramedSession:
                 del self._buffer[: position + 1]
                 return
             if len(self._buffer) > self.max_reply_size:
-                raise QgaProtocolError("QGA synchronization data exceeded size limit")
+                raise QGAProtocolError("QGA synchronization data exceeded size limit")
             self._receive(deadline)
 
     def _correlated_reply(
@@ -297,7 +273,7 @@ class _QgaFramedSession:
             newline = self._buffer.find(b"\n")
             if newline < 0:
                 if len(self._buffer) > self.max_reply_size:
-                    raise QgaProtocolError("QGA reply exceeded size limit")
+                    raise QGAProtocolError("QGA reply exceeded size limit")
                 self._receive(deadline)
                 continue
             frame = bytes(self._buffer[:newline]).lstrip(b"\xff")
@@ -305,22 +281,22 @@ class _QgaFramedSession:
             if not frame:
                 continue
             if len(frame) > self.max_reply_size:
-                raise QgaProtocolError("QGA reply exceeded size limit")
+                raise QGAProtocolError("QGA reply exceeded size limit")
             try:
                 reply = json.loads(frame.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
                 # A deeply nested reply exhausts the parser's stack.
-                raise QgaProtocolError("QGA returned malformed JSON") from exc
+                raise QGAProtocolError("QGA returned malformed JSON") from exc
             if not isinstance(reply, dict):
-                raise QgaProtocolError("QGA reply must be a JSON object")
+                raise QGAProtocolError("QGA reply must be a JSON object")
             return typing.cast(typing.Mapping[str, object], reply)
 
     def _receive(self, deadline: float) -> None:
         chunk = self._recv_raw(min(65536, self.max_reply_size + 1), deadline)
         if not isinstance(chunk, bytes):
-            raise QgaProtocolError("QGA transport returned non-byte data")
+            raise QGAProtocolError("QGA transport returned non-byte data")
         if not chunk:
-            raise QgaDisconnectedError("QGA disconnected before replying")
+            raise QGADisconnectedError("QGA disconnected before replying")
         self._buffer.extend(chunk)
 
     @staticmethod
@@ -328,25 +304,25 @@ class _QgaFramedSession:
         if "error" in reply:
             error = reply["error"]
             if not isinstance(error, dict):
-                raise QgaProtocolError("QGA error reply must contain an object")
+                raise QGAProtocolError("QGA error reply must contain an object")
             error_class = error.get("class", "GenericError")
             description = error.get("desc", "QGA command failed")
             if not isinstance(error_class, str) or not isinstance(description, str):
-                raise QgaProtocolError("QGA error fields must be strings")
-            raise QgaCommandError(
+                raise QGAProtocolError("QGA error fields must be strings")
+            raise QGACommandError(
                 error_class,
                 description,
                 data={k: v for k, v in error.items() if k not in {"class", "desc"}},
             )
         if "return" not in reply:
-            raise QgaProtocolError("QGA reply has neither 'return' nor 'error'")
+            raise QGAProtocolError("QGA reply has neither 'return' nor 'error'")
         return reply["return"]
 
     @staticmethod
     def _remaining(deadline: float) -> float:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise QgaTimeoutError("QGA request deadline expired")
+            raise QGATimeoutError("QGA request deadline expired")
         return remaining
 
     def _connect_raw(self, deadline: float) -> None:
@@ -405,7 +381,7 @@ def normalize_libvirt_error(error: BaseException) -> BaseException:
         # `ConnectionError`, an ordinary "no such file" looked like a dead
         # link: the caller retried, `_qga_error` never saw it, and the two
         # transport families disagreed about what a guest error even is.
-        return QgaCommandError("GenericError", relayed.group("desc").strip())
+        return QGACommandError("GenericError", relayed.group("desc").strip())
     code = None
     get_error_code = getattr(error, "get_error_code", None)
     if callable(get_error_code):
@@ -415,7 +391,7 @@ def normalize_libvirt_error(error: BaseException) -> BaseException:
             code = None
     if isinstance(code, int):
         if code in (_LIBVIRT_OPERATION_TIMEOUT, _LIBVIRT_AGENT_UNRESPONSIVE):
-            return QgaTimeoutError(message)
+            return QGATimeoutError(message)
         if code in (_LIBVIRT_ACCESS_DENIED, _LIBVIRT_AUTH_FAILED):
             return PermissionError(message)
         if code == _LIBVIRT_NO_DOMAIN:
@@ -434,7 +410,7 @@ def normalize_libvirt_error(error: BaseException) -> BaseException:
     ):
         return FileNotFoundError(message)
     if "timed out" in folded or "timeout" in folded:
-        return QgaTimeoutError(message)
+        return QGATimeoutError(message)
     return ConnectionError(message)
 
 
@@ -583,7 +559,7 @@ class LibvirtGuestAgentTransport:
             # libvirtd restarted, the socket went away, the domain vanished.
             # Keeping the handle made one restart fatal for the life of the
             # process, while the framed transports reconnect transparently on
-            # the next request. A QgaCommandError is the guest answering and
+            # the next request. A QGACommandError is the guest answering and
             # keeps the connection.
             if isinstance(
                 normalized, (ConnectionError, FileNotFoundError, PermissionError)
@@ -598,11 +574,11 @@ class LibvirtGuestAgentTransport:
         try:
             reply = json.loads(raw)
         except (TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise QgaProtocolError("libvirt returned malformed QGA JSON") from exc
+            raise QGAProtocolError("libvirt returned malformed QGA JSON") from exc
         if not isinstance(reply, dict):
-            raise QgaProtocolError("QGA reply must be a JSON object")
+            raise QGAProtocolError("QGA reply must be a JSON object")
         if reply.get("id") not in (None, request_id):
-            raise QgaProtocolError("libvirt returned a mismatched QGA reply")
+            raise QGAProtocolError("libvirt returned a mismatched QGA reply")
         return _QgaFramedSession._unwrap(reply)
 
 
@@ -646,7 +622,7 @@ class UnixSocketGuestAgentTransport(_QgaFramedSession):
             connection.connect(self.path)
         except socket.timeout as exc:
             self._drop_socket(connection)
-            raise QgaTimeoutError(
+            raise QGATimeoutError(
                 f"timed out connecting to the QGA socket {self.path}"
             ) from exc
         except OSError as exc:
@@ -657,7 +633,7 @@ class UnixSocketGuestAgentTransport(_QgaFramedSession):
             # `staged_open` read that as "'a' creates what is missing", staged
             # an empty buffer, and truncated the guest file on close.
             self._drop_socket(connection)
-            raise QgaDisconnectedError(
+            raise QGADisconnectedError(
                 f"cannot reach the QGA socket {self.path}"
             ) from exc
         except Exception:
@@ -676,9 +652,9 @@ class UnixSocketGuestAgentTransport(_QgaFramedSession):
             connection.settimeout(self._remaining(deadline))
             connection.sendall(data)
         except socket.timeout as exc:
-            raise QgaTimeoutError("timed out sending a QGA request") from exc
+            raise QGATimeoutError("timed out sending a QGA request") from exc
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as exc:
-            raise QgaDisconnectedError("QGA disconnected while sending") from exc
+            raise QGADisconnectedError("QGA disconnected while sending") from exc
 
     def _recv_raw(self, size: int, deadline: float) -> bytes:
         connection = self._require_socket()
@@ -686,9 +662,9 @@ class UnixSocketGuestAgentTransport(_QgaFramedSession):
             connection.settimeout(self._remaining(deadline))
             return connection.recv(size)
         except socket.timeout as exc:
-            raise QgaTimeoutError("timed out waiting for a QGA reply") from exc
+            raise QGATimeoutError("timed out waiting for a QGA reply") from exc
         except (ConnectionResetError, ConnectionAbortedError) as exc:
-            raise QgaDisconnectedError("QGA disconnected while receiving") from exc
+            raise QGADisconnectedError("QGA disconnected while receiving") from exc
 
     def _close_raw(self) -> None:
         connection, self._socket = self._socket, None
@@ -700,7 +676,7 @@ class UnixSocketGuestAgentTransport(_QgaFramedSession):
 
     def _require_socket(self) -> socket.socket:
         if self._socket is None:
-            raise QgaDisconnectedError("QGA transport is not connected")
+            raise QGADisconnectedError("QGA transport is not connected")
         return self._socket
 
 
@@ -785,17 +761,17 @@ class SshUnixGuestAgentTransport(_QgaFramedSession):
         Written out three times, the connect leg was missing the timeout
         branch -- and on the 3.9 floor asyncio.TimeoutError is a distinct
         class from the builtin, so a connect deadline escaped raw where a
-        send or receive deadline raised QgaTimeoutError. One condition, two
+        send or receive deadline raised QGATimeoutError. One condition, two
         exception types, decided by which Python was running.
         """
         try:
             yield
-        except QgaError:
+        except (HostctlError, _QGARequestNotSerializable):
             # Already in this vocabulary -- a deadline _remaining() noticed,
             # for instance. Re-wrapping would relabel it.
             raise
         except (asyncio.TimeoutError, TimeoutError) as exc:
-            raise QgaTimeoutError(timed_out) from exc
+            raise QGATimeoutError(timed_out) from exc
         except Exception as exc:
             normalized = self._normalize_ssh_error(exc, command)
             if normalized is exc:
@@ -852,12 +828,12 @@ class SshUnixGuestAgentTransport(_QgaFramedSession):
 
     def _require_reader(self) -> _Reader:
         if self._reader is None:
-            raise QgaDisconnectedError("QGA transport is not connected")
+            raise QGADisconnectedError("QGA transport is not connected")
         return self._reader
 
     def _require_writer(self) -> _Writer:
         if self._writer is None:
-            raise QgaDisconnectedError("QGA transport is not connected")
+            raise QGADisconnectedError("QGA transport is not connected")
         return self._writer
 
     @staticmethod
@@ -866,7 +842,7 @@ class SshUnixGuestAgentTransport(_QgaFramedSession):
 
         normalized = _async.normalize_asyncssh_error(exc, command=command)
         if isinstance(normalized, subprocess.TimeoutExpired):
-            return QgaTimeoutError(str(normalized))
+            return QGATimeoutError(str(normalized))
         if isinstance(normalized, ConnectionError):
-            return QgaDisconnectedError(str(normalized))
+            return QGADisconnectedError(str(normalized))
         return normalized

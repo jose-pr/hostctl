@@ -12,7 +12,7 @@ pytest.importorskip("asyncssh")
 
 from hostctl import HostConfig, SshConfig
 from hostctl import _async
-from hostctl.provider import OperationNotStarted
+from hostctl.exceptions import OperationNotStartedError
 
 
 def _causes(exc):
@@ -52,7 +52,7 @@ def test_connect_timeout_bounds_a_silent_server():
             known_hosts=None,
         ).open()
         started = time.monotonic()
-        with pytest.raises(OperationNotStarted) as raised:
+        with pytest.raises(OperationNotStartedError) as raised:
             host.connect()
         elapsed = time.monotonic() - started
     finally:
@@ -69,14 +69,14 @@ def test_connect_timeout_bounds_a_silent_server():
 def test_connect_with_nothing_connected_raises():
     host = SshConfig("127.0.0.1", port=_closed_port(), known_hosts=None).open()
 
-    with pytest.raises(OperationNotStarted, match="no provider connected"):
+    with pytest.raises(OperationNotStartedError, match="no provider connected"):
         host.connect()
     assert host._connected is False
-    with pytest.raises(OperationNotStarted):
+    with pytest.raises(OperationNotStartedError):
         with host:
             pass
     # Nothing was remembered: a second attempt tries again.
-    with pytest.raises(OperationNotStarted, match="no provider connected"):
+    with pytest.raises(OperationNotStartedError, match="no provider connected"):
         host.connect()
 
 

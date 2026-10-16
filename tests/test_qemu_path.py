@@ -7,7 +7,7 @@ from pathapi import Path
 from pathapi import FileStat
 
 from hostctl.host.qemu import PosixQemuPath, QgaPathBackend, WindowsQemuPath
-from hostctl.executor._qga import QgaCommandError
+from hostctl.executor._qga import QGACommandError
 
 FILE_COMMANDS = {
     "guest-file-open",
@@ -184,14 +184,14 @@ def test_read_error_is_normalized_and_handle_is_closed():
 def test_structured_qga_error_is_normalized(error_class, description, expected):
     class _DeniedTransport:
         def execute(self, request, timeout=None):
-            raise QgaCommandError(error_class, description)
+            raise QGACommandError(error_class, description)
 
     backend = QgaPathBackend(_DeniedTransport(), supported_commands=FILE_COMMANDS)
 
     with pytest.raises(expected, match=description) as caught:
         backend.read_bytes("/secret")
 
-    assert isinstance(caught.value.__cause__, QgaCommandError)
+    assert isinstance(caught.value.__cause__, QGACommandError)
 
 
 def test_commands_and_helpers_are_capability_gated():
@@ -460,17 +460,17 @@ class _OversizedReads(_Transport):
 
 
 def test_an_oversized_read_reply_is_a_protocol_error_on_both_read_paths():
-    from hostctl.executor._qga import QgaProtocolError
+    from hostctl.executor._qga import QGAProtocolError
 
     transport = _OversizedReads()
     transport.files["/f"] = bytearray(b"data")
     backend = QgaPathBackend(transport, supported_commands=FILE_COMMANDS)
     path = PosixQemuPath("/f", backend=backend)
 
-    with pytest.raises(QgaProtocolError, match="more bytes"):
+    with pytest.raises(QGAProtocolError, match="more bytes"):
         with path.open("rb") as stream:
             stream.read(10)
-    with pytest.raises(QgaProtocolError, match="more bytes"):
+    with pytest.raises(QGAProtocolError, match="more bytes"):
         path.read_bytes()
     assert transport.handles == {}
 

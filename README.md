@@ -171,7 +171,7 @@ exposed until its required certificate/key configuration is part of the API.
 Use `PosixHost`, `WindowsHost`, or `IosHost` when system semantics should be
 independent of the transport. Providers are tried in declaration order during
 preflight; a provider may be retried only when it raises
-`OperationNotStarted`, which guarantees that no remote operation was sent.
+`OperationNotStartedError`, which guarantees that no remote operation was sent.
 `IosHost` is deliberately session- and command-only: it configures no shell
 flavour and no path grammar, so commands must be `Exec(...)` (or raw text the
 device understands) and `path()` raises `NotImplementedError` until an IOS

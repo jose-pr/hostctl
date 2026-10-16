@@ -28,9 +28,9 @@ from ..executor import (
 )
 from ..executor.winrm import _b64, _PywinrmStdinSession
 from ..process import RunspaceSession
+from ..exceptions import OperationNotStartedError
 from ..provider import (
     ExecutorProvider,
-    OperationNotStarted,
     PathProvider,
     ProviderProbe,
     ProviderSelector,
@@ -1065,6 +1065,8 @@ class WinRMExecutorProvider(ExecutorProvider):
     def connect(self):
         try:
             self.transport.connect()
+        except OperationNotStartedError:
+            raise
         # OSError, not just ConnectionError: a DNS failure (socket.gaierror)
         # and a routing failure (EHOSTUNREACH/ENETUNREACH) are OSError but not
         # ConnectionError, and they are unambiguously pre-dispatch -- no
@@ -1076,7 +1078,7 @@ class WinRMExecutorProvider(ExecutorProvider):
                 type(exc).__name__,
                 ProviderSelector.redact(exc),
             )
-            raise OperationNotStarted(
+            raise OperationNotStartedError(
                 "WinRM connection failed before dispatch", cause=exc
             ) from exc
 

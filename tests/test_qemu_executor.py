@@ -10,8 +10,9 @@ from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
-from hostctl.executor._qga import QgaCommandError
-from hostctl.executor.qemu import GuestAgentProtocolError, QemuExecutor
+from hostctl.executor._qga import QGACommandError
+from hostctl.exceptions import QGAProtocolError
+from hostctl.executor.qemu import QemuExecutor
 
 
 def _encoded(value):
@@ -190,15 +191,15 @@ def test_qemu_executor_normalizes_transport_timeout_and_bad_replies():
 
     bad_pid = _Transport([])
     bad_pid.execute = lambda request, timeout=None: {"pid": "bad"}
-    with pytest.raises(GuestAgentProtocolError, match="PID"):
+    with pytest.raises(QGAProtocolError, match="PID"):
         QemuExecutor(lambda: bad_pid)("program")
 
     invalid_output = _Transport([{"exited": True, "exitcode": 0, "out-data": "!"}])
-    with pytest.raises(GuestAgentProtocolError, match="Base64"):
+    with pytest.raises(QGAProtocolError, match="Base64"):
         QemuExecutor(lambda: invalid_output)("program")
 
     invalid_status = _Transport([{"exitcode": 0}])
-    with pytest.raises(GuestAgentProtocolError, match="boolean exited"):
+    with pytest.raises(QGAProtocolError, match="boolean exited"):
         QemuExecutor(lambda: invalid_status)("program")
 
 
@@ -209,7 +210,7 @@ class _RefusingTransport:
         self.description = description
 
     def execute(self, request, timeout=None):
-        raise QgaCommandError("GenericError", self.description)
+        raise QGACommandError("GenericError", self.description)
 
 
 def test_a_missing_guest_program_is_a_filenotfounderror():
@@ -217,7 +218,7 @@ def test_a_missing_guest_program_is_a_filenotfounderror():
 
     Every other transport answers a missing program with a
     FileNotFoundError, so portable code guards host.run() with one. Raised
-    as QgaCommandError, that guard simply did not fire, and the failure
+    as QGACommandError, that guard simply did not fire, and the failure
     escaped as an exception the caller had no reason to expect.
     """
     executor = QemuExecutor(

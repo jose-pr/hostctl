@@ -70,7 +70,7 @@ def normalize_asyncssh_error(
     # `login_timeout`). Matching neither arm, it escaped `host.run()`
     # verbatim: the documented `except (ConnectionError, TimeoutError)` did
     # not catch it, and `SshExecutorProvider.connect()` could not turn it
-    # into `OperationNotStarted` for the next provider.
+    # into `OperationNotStartedError` for the next provider.
     if isinstance(exc, (TimeoutError, _asyncio.TimeoutError, module.TimeoutError)):
         if command is not None:
             from .executor._common import expired

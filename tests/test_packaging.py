@@ -103,7 +103,7 @@ def test_the_shipped_header_names_every_public_export():
     and declares itself the stable surface -- "hosts and configs you
     construct, exceptions you catch, types you annotate with, and the
     provider/shell contracts you implement". It named 52 of 76: the entire
-    provider-authoring contract was missing, `OperationNotStarted`'s
+    provider-authoring contract was missing, `OperationNotStartedError`'s
     no-replay rule included, so a consuming agent reading the header instead
     of the source could not write a provider at all.
     """

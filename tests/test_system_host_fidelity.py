@@ -9,7 +9,7 @@ from hostctl import (
     HostConfig,
     HostInfo,
     IosHost,
-    OperationNotStarted,
+    OperationNotStartedError,
     PathProvider,
     PosixHost,
     ProviderProbe,

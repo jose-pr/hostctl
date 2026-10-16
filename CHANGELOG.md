@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Migrating from 0.3
+
+Every row ships in 0.4.0. No old name is kept as an alias.
+
+| 0.3 | 0.4.0 |
+| --- | --- |
+| `OperationNotStarted` (a `RuntimeError`) | `OperationNotStartedError` (a `ConnectionError`) |
+| `QgaCommandError`, `QgaProtocolError`, `executor.GuestAgentProtocolError` | `QGACommandError`, `QGAProtocolError` |
+| `QgaTimeoutError`, `QgaDisconnectedError`, `QgaError` (private module) | `QGATimeoutError`, `QGADisconnectedError`; catch `HostctlError` |
+| `ConsoleProtocolError` from `hostctl.serial` | same name, `hostctl.exceptions`, under `HostctlError` |
+
 ### Added
 
+- `hostctl.HostctlError` is the base of every exception hostctl raises, in
+  the new `hostctl.exceptions` module with `TransportError` and
+  `ProtocolError` (both `ConnectionError`s) as categories; every class is
+  re-exported from `hostctl`. This ships in 0.4.0.
 - `SshConfig(ssh_config=)` reads one ssh_config on both legs (neither reads one
   by default; it is a keyword only, never a URI key), `SshConfig(connect_options=)` passes extra keywords to
   `asyncssh.connect` on both legs, and `SshConfig(path_flavor="auto")` asks the
@@ -61,6 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Breaking, 0.4.0: `OperationNotStartedError` is a `ConnectionError`, not
+  a `RuntimeError`.** It is raised only before anything was sent, so an
+  `except ConnectionError` retry around a refused SSH port now catches it.
+  An `except RuntimeError` written for it no longer does. The QGA errors
+  are renamed (`QGA*`), `GuestAgentProtocolError` is folded into
+  `QGAProtocolError`, and the exceptions leave `hostctl.provider`,
+  `hostctl.executor` and `hostctl.serial` for `hostctl.exceptions`; see
+  "Migrating from 0.3".
 - A Windows QGA guest's path helper starts `powershell.exe -NoProfile
   -NonInteractive -Command -` and sends the script as the call's `input-data`,
   instead of a base64 `-EncodedCommand` argument. Endpoint-protection

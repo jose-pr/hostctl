@@ -19,7 +19,8 @@ from ..executor._common import (
     run_displayed,
     validate_environment_names,
 )
-from ..provider import OperationNotStarted, ProviderSelector
+from ..exceptions import OperationNotStartedError
+from ..provider import ProviderSelector
 from ..shell import POWERSHELL, POSIX_SHELL, ShellFlavour, shell_flavour
 from ..shell._invocation import render_command, shell_invocation
 from ..shell._common import wants_epilogue
@@ -622,21 +623,21 @@ class SystemHost(Host):
         # that fails on its first use.
         candidates = 0
         declined: typing.List[str] = []
-        first_decline: typing.Optional[OperationNotStarted] = None
+        first_decline: typing.Optional[OperationNotStartedError] = None
         try:
             for selector in (self._executor_selector, self._path_selector):
                 excluded = []
                 while True:
                     try:
                         provider = selector.select(exclude=excluded).provider
-                    except OperationNotStarted:
+                    except OperationNotStartedError:
                         break
                     candidates += 1
                     try:
                         connect = getattr(provider, "connect", None)
                         if connect:
                             connect()
-                    except OperationNotStarted as exc:
+                    except OperationNotStartedError as exc:
                         excluded.append(provider.name)
                         declined.append(
                             f"{ProviderSelector.redact(provider.name)}: "
@@ -655,7 +656,7 @@ class SystemHost(Host):
                     close()
             raise
         if candidates and not connected:
-            raise OperationNotStarted(
+            raise OperationNotStartedError(
                 "no provider connected: " + "; ".join(declined),
                 cause=first_decline,
             ) from first_decline
@@ -792,7 +793,7 @@ class SystemHost(Host):
             # swallowed programming errors, so a broken provider reported
             # "no information available" instead of its own traceback.
             except (
-                OperationNotStarted,
+                OperationNotStartedError,
                 ConnectionError,
                 TimeoutError,
                 PermissionError,
@@ -872,7 +873,9 @@ class SystemHost(Host):
             # turns a probe that raises into "unavailable" instead of letting a
             # transport error escape from a routing choice.
             if not self._path_selector.probe(provider).usable:
-                raise OperationNotStarted(f"path provider {backend!r} is unavailable")
+                raise OperationNotStartedError(
+                    f"path provider {backend!r} is unavailable"
+                )
         path_type = self._composite_path_type()
         excluded: typing.List[str] = []
         while True:
@@ -885,7 +888,7 @@ class SystemHost(Host):
                 # the connection lived until process exit.
                 self._note_provider_in_use(provider)
                 value = provider.path(*segments)
-            except OperationNotStarted as exc:
+            except OperationNotStartedError as exc:
                 if backend is not None:
                     raise
                 # Every candidate, not just one. Falling back exactly once
@@ -981,7 +984,7 @@ class SystemHost(Host):
                     timeout=timeout,
                     text=text,
                 )
-            except OperationNotStarted as exc:
+            except OperationNotStartedError as exc:
                 # Providers may be retried only when they prove no operation
                 # was dispatched; planning is repeated for the next provider.
                 self._executor_selector.decline(provider.name, str(exc), cause=exc)
@@ -1205,15 +1208,13 @@ class SystemHost(Host):
     def _select_capable(self, capability: str, operation: str):
         """Select an executor provider offering `capability`.
 
-        `run()` and `path()` report an unsupported operation as
-        `NotImplementedError`, which is the documented contract. `spawn()` and
-        `runspace()` went straight to `select()`, whose "no provider is
-        available" is an `OperationNotStarted` -- a RuntimeError -- so a caller
-        catching NotImplementedError to fall back crashed instead.
+        An unsupported operation is `NotImplementedError`, the documented
+        contract `run()` and `path()` also follow; `select()` alone would
+        report it as `OperationNotStartedError`.
         """
         try:
             return self._executor_selector.select(capability=capability).provider
-        except OperationNotStarted as exc:
+        except OperationNotStartedError as exc:
             raise NotImplementedError(
                 f"{type(self).__name__} does not provide the {operation!r} capability"
             ) from exc

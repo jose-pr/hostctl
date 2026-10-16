@@ -660,7 +660,7 @@ def test_an_unsupported_session_raises_not_implemented_not_a_runtime_error():
     """AGENTS.md: unsupported run()/path()/spawn() raise NotImplementedError.
 
     `spawn()` and `runspace()` went straight to `select()`, whose "no provider
-    is available" is an `OperationNotStarted` -- a RuntimeError -- so a caller
+    is available" is an `OperationNotStartedError` -- a RuntimeError -- so a caller
     catching NotImplementedError to fall back to `run()` crashed instead.
     """
     from hostctl.host.system import IosHost

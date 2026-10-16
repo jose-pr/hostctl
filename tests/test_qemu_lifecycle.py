@@ -8,8 +8,8 @@ import threading
 
 import pytest
 
-from hostctl.executor._qga import QgaProtocolError
-from hostctl.executor.qemu import GuestAgentProtocolError, QemuExecutor
+from hostctl.exceptions import QGAProtocolError
+from hostctl.executor.qemu import QemuExecutor
 from hostctl.host import HostConfig
 from hostctl.host.qemu import QemuConfig, QemuHost
 
@@ -184,14 +184,14 @@ class _OversizedTransport:
     def execute(self, request, timeout=None):
         if request["execute"] == "guest-exec":
             return {"pid": 11}
-        raise QgaProtocolError("QGA reply exceeded size limit")
+        raise QGAProtocolError("QGA reply exceeded size limit")
 
 
 def test_a_rejected_status_reply_names_the_process_and_the_setting():
     """The output is already gone; the bare protocol error said nothing."""
     executor = QemuExecutor(lambda: _OversizedTransport(), sleep=lambda _: None)
 
-    with pytest.raises(GuestAgentProtocolError) as caught:
+    with pytest.raises(QGAProtocolError) as caught:
         executor("/bin/cat", "/dev/urandom")
 
     assert "pid 11" in str(caught.value)

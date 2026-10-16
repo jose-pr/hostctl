@@ -15,9 +15,9 @@ from urllib.parse import quote, unquote, urlencode
 from pathapi import Pathname, PosixPathname, WindowsPathname
 
 from ..executor import SshConnection, SshExecutor
+from ..exceptions import OperationNotStartedError
 from ..provider import (
     ExecutorProvider,
-    OperationNotStarted,
     PathProvider,
     ProviderProbe,
     ProviderSelector,
@@ -765,6 +765,8 @@ class SshExecutorProvider(ExecutorProvider):
     def connect(self):
         try:
             self.transport.connect()
+        except OperationNotStartedError:
+            raise
         # OSError, not just ConnectionError: a DNS failure (socket.gaierror)
         # and a routing failure (EHOSTUNREACH/ENETUNREACH) are OSError but not
         # ConnectionError, and they are unambiguously pre-dispatch -- no
@@ -776,7 +778,7 @@ class SshExecutorProvider(ExecutorProvider):
                 type(exc).__name__,
                 ProviderSelector.redact(exc),
             )
-            raise OperationNotStarted(
+            raise OperationNotStartedError(
                 "SSH connection failed before dispatch", cause=exc
             ) from exc
 
@@ -840,6 +842,8 @@ class SftpPathProvider(PathProvider):
             client = getattr(self.transport._backend(), "client", None)
             if client is not None:
                 client()
+        except OperationNotStartedError:
+            raise
         except Exception as exc:
             # sftppath translates asyncssh's errors but not its timeouts: on
             # 3.9 a connect timeout is `asyncio.TimeoutError`, not the builtin.
@@ -851,7 +855,7 @@ class SftpPathProvider(PathProvider):
                 type(mapped).__name__,
                 ProviderSelector.redact(mapped),
             )
-            raise OperationNotStarted(
+            raise OperationNotStartedError(
                 "SFTP connection failed before dispatch", cause=mapped
             ) from exc
 

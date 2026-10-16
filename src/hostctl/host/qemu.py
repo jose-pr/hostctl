@@ -21,11 +21,11 @@ from pathapi import FileStat
 from pathapi.protocols import Chmod, Create, Listing, Move, Remove, Stat
 from pathapi.providers import notimplemented
 
+from ..exceptions import QGAProtocolError
 from ..executor import QemuExecutor
 from ..executor._qga import (
     GuestAgentTransport,
     LibvirtGuestAgentTransport,
-    QgaProtocolError,
     guest_oserror,
     SshUnixGuestAgentTransport,
     UnixSocketGuestAgentTransport,
@@ -849,7 +849,7 @@ class QgaPathBackend:
         except (ValueError, binascii.Error) as exc:
             raise OSError("QGA guest-file-read returned invalid Base64") from exc
         if len(data) > count:
-            raise QgaProtocolError(
+            raise QGAProtocolError(
                 "QGA guest-file-read returned more bytes than requested"
             )
         actual = value.get("count", len(data))

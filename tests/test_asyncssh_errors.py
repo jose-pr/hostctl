@@ -89,7 +89,7 @@ def test_an_asyncio_connect_timeout_crosses_as_a_builtin_timeout():
     it escaped `host.run()` verbatim: the documented
     `except (ConnectionError, TimeoutError)` did not catch it, and
     `SshExecutorProvider.connect()` could not turn it into
-    `OperationNotStarted` for the next provider."""
+    `OperationNotStartedError` for the next provider."""
     import asyncio
 
     result = _async.normalize_asyncssh_error(asyncio.TimeoutError("timed out"))

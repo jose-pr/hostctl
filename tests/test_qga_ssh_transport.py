@@ -8,11 +8,8 @@ import threading
 
 import pytest
 
-from hostctl.executor._qga import (
-    QgaCommandError,
-    QgaProtocolError,
-    SshUnixGuestAgentTransport,
-)
+from hostctl.exceptions import QGACommandError, QGAProtocolError
+from hostctl.executor._qga import SshUnixGuestAgentTransport
 
 
 def _frame(value):
@@ -105,13 +102,13 @@ def test_ssh_unix_qga_bounds_and_structured_errors():
         lambda: oversized,
         max_reply_size=32,
     )
-    with pytest.raises(QgaProtocolError, match="size"):
+    with pytest.raises(QGAProtocolError, match="size"):
         transport.execute({"execute": "guest-info"})
     assert oversized.writer.closed
 
     failed = _Connection(command_error=True)
     transport = SshUnixGuestAgentTransport("/run/qga.sock", lambda: failed)
-    with pytest.raises(QgaCommandError) as raised:
+    with pytest.raises(QGACommandError) as raised:
         transport.execute({"execute": "guest-file-open"})
     assert raised.value.error_class == "CommandDisabled"
 

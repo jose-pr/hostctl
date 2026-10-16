@@ -16,7 +16,8 @@ import typing
 
 from pathapi import Path, PosixPathname, WindowsPathname
 
-from ..provider import OperationNotStarted, PathProvider, ProviderSelector
+from ..exceptions import OperationNotStartedError
+from ..provider import PathProvider, ProviderSelector
 from pathapi.protocols import (
     BinaryOpen,
     Chmod,
@@ -190,7 +191,7 @@ def _primed(entries: typing.Iterable) -> typing.Iterator:
     Every backend `_scandir` is a generator, so `iter(path._scandir())` ran
     NOTHING inside the dispatch: a listing that refuses raised during
     iteration, outside the try, and the row's `retry_on_not_implemented` and
-    the `OperationNotStarted` fallback never applied to listing at all.
+    the `OperationNotStartedError` fallback never applied to listing at all.
     """
     iterator = iter(entries)
     try:
@@ -619,7 +620,7 @@ class _CompositePathMixin:
                     # operation layer, so select in order and apply the
                     # operation check locally.
                     selected = self._selector.select(exclude=excluded, pin=pin)
-                except OperationNotStarted:
+                except OperationNotStartedError:
                     return
                 self._selection_trace = selected.trace
                 provider = selected.provider
@@ -652,7 +653,7 @@ class _CompositePathMixin:
         candidates = self._providers_in_order(operation, pin=pin)
         attempted = False
         not_implemented: typing.Optional[NotImplementedError] = None
-        not_started: typing.Optional[OperationNotStarted] = None
+        not_started: typing.Optional[OperationNotStartedError] = None
         for provider in candidates:
             attempted = True
             old = (self._provider, self._backend_path, self._factory, self._pinned)
@@ -666,7 +667,7 @@ class _CompositePathMixin:
                 backend_path = self._provider_path(provider)
                 if pin:
                     # A write/open operation owns the provider choice before
-                    # dispatch.  OperationNotStarted is the only safe way to
+                    # dispatch.  OperationNotStartedError is the only safe way to
                     # undo this and try the next provider.
                     self._adopt(provider, backend_path, pinned=True)
                 result = callback(backend_path)
@@ -691,7 +692,7 @@ class _CompositePathMixin:
                 # read failed with "no path provider supports open_read".
                 # `excluded` already stops us retrying it for this call.
                 continue
-            except OperationNotStarted as exc:
+            except OperationNotStartedError as exc:
                 not_started = exc
                 if pin:
                     self._provider, self._backend_path, self._factory, self._pinned = (
@@ -710,7 +711,7 @@ class _CompositePathMixin:
             raise NotImplementedError(f"no path provider supports {operation}")
         if not_implemented is not None:
             # Every candidate declined by saying it cannot do this at all.
-            # Surfacing OperationNotStarted here would rename a permanent
+            # Surfacing OperationNotStartedError here would rename a permanent
             # "no backend implements this" into a transient "nothing started",
             # which reads as retryable and hides the real cause -- most
             # visibly with a single provider, where "try the next one" has
@@ -723,7 +724,7 @@ class _CompositePathMixin:
         if not_started is not None:
             reason = f"{not_started}: {cause}" if cause is not None else not_started
             detail = f" ({ProviderSelector.redact(reason)})"
-        raise OperationNotStarted(
+        raise OperationNotStartedError(
             f"no path provider completed {operation}{detail}", cause=cause
         ) from (cause or not_started)
 
@@ -740,7 +741,7 @@ class _CompositePathMixin:
             # escape from what is documented as a pure routing choice.
             probe = self._selector.probe(provider)
             if not probe.usable:
-                raise OperationNotStarted(f"path provider {name!r} is unavailable")
+                raise OperationNotStartedError(f"path provider {name!r} is unavailable")
         backend = self._provider_path(provider)
         return type(self).from_path(
             backend,
@@ -755,7 +756,7 @@ class _CompositePathMixin:
     def _child(self, *segments: str):
         # No backend path is built here. `p / "name"` is pure-path syntax:
         # calling the provider factory eagerly meant a join raised the
-        # factory's `OperationNotStarted` after a provider declined -- while
+        # factory's `OperationNotStartedError` after a provider declined -- while
         # `with_name()` and `host.path()` fell over to the next one -- and it
         # built 2N backend paths merely to answer `parents`.
         # `_provider_path()` builds one from this path's own text on first
@@ -1074,7 +1075,7 @@ class _CompositePathMixin:
                     retry_on_not_implemented=True,
                 )
             )
-        except (NotImplementedError, AttributeError, OperationNotStarted):
+        except (NotImplementedError, AttributeError, OperationNotStartedError):
             return True
 
     def _rename_compatible(self, target: "Path") -> bool:

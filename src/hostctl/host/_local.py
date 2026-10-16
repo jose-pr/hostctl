@@ -6,7 +6,7 @@ import os as _os
 import platform as _platform
 import typing as _ty
 
-from ..provider import OperationNotStarted
+from ..exceptions import OperationNotStartedError
 from ..provider.transports import LocalExecutorProvider, LocalPathProvider
 from .system import SystemHost
 from ._common import (
@@ -135,7 +135,9 @@ class LocalHost(SystemHost):
                 item for item in self._path_selector.providers if item.name == backend
             )
             if not provider.probe().usable:
-                raise OperationNotStarted(f"path provider {backend!r} is unavailable")
+                raise OperationNotStartedError(
+                    f"path provider {backend!r} is unavailable"
+                )
         return provider.path(*segments)
 
     def info(self) -> HostInfo:

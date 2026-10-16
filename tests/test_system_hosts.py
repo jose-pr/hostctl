@@ -10,7 +10,7 @@ from pathapi.mempath import MemPath, MemPathBackend
 from hostctl import (
     Exec,
     HostConfig,
-    OperationNotStarted,
+    OperationNotStartedError,
     PathProvider,
     ProviderProbe,
     ExecutorProvider,
@@ -137,7 +137,7 @@ def test_provider_selector_rejects_unavailable_without_replay():
 
     def declined(*args, **kwargs):
         calls.append("declined")
-        raise OperationNotStarted("preflight")
+        raise OperationNotStartedError("preflight")
 
     def selected(*args, **kwargs):
         calls.append("selected")
@@ -216,7 +216,7 @@ def test_executor_fallback_replans_capabilities_before_retrying():
 
     def declined(command, *args, **options):
         calls.append(("first", command, args, options))
-        raise OperationNotStarted("offline before dispatch")
+        raise OperationNotStartedError("offline before dispatch")
 
     def selected(command, *args, **options):
         calls.append(("second", command, args, options))
@@ -326,7 +326,7 @@ def test_system_host_retries_pre_dispatch_connect_failure():
 
     first = ExecutorProvider("first", lambda *args, **kwargs: None)
     first.connect = lambda: (_ for _ in ()).throw(
-        OperationNotStarted("connection unavailable")
+        OperationNotStartedError("connection unavailable")
     )
     second = ExecutorProvider("second", lambda *args, **kwargs: None)
     second.connect = lambda: events.append("second")
@@ -1076,7 +1076,7 @@ def test_a_probe_narrows_the_declared_capabilities_everywhere():
     narrowed = _probing("narrowed", ("spawn", "tty"), ("args",))
     host = PosixHost(executor_providers=(narrowed,))
 
-    with pytest.raises(OperationNotStarted):
+    with pytest.raises(OperationNotStartedError):
         host._executor_selector.select(capability="spawn")
     assert host.capabilities == frozenset({"run"})
     assert host.executor_capabilities == frozenset()
@@ -1090,7 +1090,7 @@ def test_a_probe_cannot_invent_a_capability():
     invented = _probing("invented", (), ("spawn",))
     host = PosixHost(executor_providers=(invented,))
 
-    with pytest.raises(OperationNotStarted):
+    with pytest.raises(OperationNotStartedError):
         host._executor_selector.select(capability="spawn")
     assert "spawn" not in host.capabilities
 
@@ -1132,7 +1132,7 @@ def test_path_backend_probes_through_the_selector_once():
     host = PosixHost(path_providers=(provider,))
 
     for _ in range(2):
-        with pytest.raises(OperationNotStarted):
+        with pytest.raises(OperationNotStartedError):
             host.path("/x", backend="a")
 
     assert len(calls) == 1

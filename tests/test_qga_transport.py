@@ -7,12 +7,14 @@ import socket
 
 import pytest
 
+from hostctl.exceptions import (
+    QGACommandError,
+    QGADisconnectedError,
+    QGAProtocolError,
+    QGATimeoutError,
+)
 from hostctl.executor._qga import (
     LibvirtGuestAgentTransport,
-    QgaCommandError,
-    QgaDisconnectedError,
-    QgaProtocolError,
-    QgaTimeoutError,
     UnixSocketGuestAgentTransport,
 )
 
@@ -110,7 +112,7 @@ def test_unix_qga_idless_parse_error_is_immediate():
     transport = UnixSocketGuestAgentTransport(
         "/run/qga.sock", socket_factory=lambda *args: stream
     )
-    with pytest.raises(QgaCommandError, match="bad"):
+    with pytest.raises(QGACommandError, match="bad"):
         transport.execute({"execute": "example"})
 
 
@@ -122,7 +124,7 @@ def test_unix_qga_timeout_closes_and_resynchronizes_next_connection():
         "/run/qga.sock", socket_factory=lambda *args: next(streams)
     )
 
-    with pytest.raises(QgaTimeoutError):
+    with pytest.raises(QGATimeoutError):
         transport.execute({"execute": "slow"}, timeout=0.1)
     assert first.closed
     assert transport.execute({"execute": "retry"}) == {"value": 7}
@@ -144,7 +146,7 @@ def test_a_deeply_nested_reply_is_a_protocol_error_not_a_recursion_error():
         socket_factory=lambda *args: _NestingBombSocket(),
     )
 
-    with pytest.raises(QgaProtocolError, match="malformed") as raised:
+    with pytest.raises(QGAProtocolError, match="malformed") as raised:
         transport.execute({"execute": "bomb"})
 
     assert isinstance(raised.value, ConnectionError)
@@ -156,7 +158,7 @@ def test_unix_qga_bounds_and_structured_errors():
         max_reply_size=32,
         socket_factory=lambda *args: _Socket(oversized=True),
     )
-    with pytest.raises(QgaProtocolError, match="size"):
+    with pytest.raises(QGAProtocolError, match="size"):
         oversized.execute({"execute": "large"})
 
     stream = _Socket()
@@ -172,7 +174,7 @@ def test_unix_qga_bounds_and_structured_errors():
             }
         )
     )
-    with pytest.raises(QgaCommandError) as raised:
+    with pytest.raises(QGACommandError) as raised:
         transport.execute({"execute": "blocked"})
     assert raised.value.error_class == "CommandDisabled"
 
@@ -247,7 +249,7 @@ def test_libvirt_transport_rejects_inactive_and_command_error():
         connect_factory=lambda uri: connection,
         command_factory=command,
     )
-    with pytest.raises(QgaCommandError, match="offline"):
+    with pytest.raises(QGACommandError, match="offline"):
         transport.execute({"execute": "guest-ping"})
 
 
@@ -320,7 +322,7 @@ def test_an_unreachable_qga_socket_is_a_transport_error(error):
     )
 
     with pytest.raises(
-        QgaDisconnectedError, match="cannot reach the QGA socket"
+        QGADisconnectedError, match="cannot reach the QGA socket"
     ) as raised:
         transport.execute({"execute": "example"})
 
@@ -387,9 +389,9 @@ def test_libvirt_transport_keeps_the_connection_for_a_guest_error():
     transport = LibvirtGuestAgentTransport(
         "guest", connect_factory=connect, command_factory=command
     )
-    with pytest.raises(QgaCommandError):
+    with pytest.raises(QGACommandError):
         transport.execute({"execute": "guest-ping"})
-    with pytest.raises(QgaCommandError):
+    with pytest.raises(QGACommandError):
         transport.execute({"execute": "guest-ping"})
 
     assert len(connections) == 1

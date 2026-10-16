@@ -232,7 +232,7 @@ def test_a_string_prefix_divides_into_a_composite_path(host):
 
 def test_joining_does_not_dial_the_provider():
     """`p / "name"` is pure-path syntax, and `_child` called the provider
-    factory eagerly: a join raised the factory's `OperationNotStarted` after
+    factory eagerly: a join raised the factory's `OperationNotStartedError` after
     a provider declined, while `with_name()` and `host.path()` fell over."""
     calls = []
 

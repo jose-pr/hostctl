@@ -8,9 +8,8 @@ import json
 
 import pytest
 
+from hostctl.exceptions import QGACommandError, QGATimeoutError
 from hostctl.executor._qga import (
-    QgaCommandError,
-    QgaTimeoutError,
     SshUnixGuestAgentTransport,
     UnixSocketGuestAgentTransport,
     guest_oserror,
@@ -30,7 +29,7 @@ def test_a_guest_path_that_spells_an_error_is_not_classified_as_one():
     permission failure, which then looked to `staged_open` like a file it
     could create.
     """
-    denied = QgaCommandError(
+    denied = QGACommandError(
         "GenericError",
         "Failed to open file '/var/log/notfound.log': Permission denied",
     )
@@ -42,7 +41,7 @@ def test_a_guest_path_that_spells_an_error_is_not_classified_as_one():
 
 
 def test_a_mapped_guest_error_carries_an_errno_and_a_filename():
-    missing = QgaCommandError(
+    missing = QGACommandError(
         "GenericError",
         "Failed to open file '/tmp/absent': No such file or directory",
     )
@@ -80,7 +79,7 @@ def test_libvirt_relays_a_guest_error_as_a_guest_error():
 
     normalized = normalize_libvirt_error(relayed)
 
-    assert isinstance(normalized, QgaCommandError)
+    assert isinstance(normalized, QGACommandError)
     assert normalized.description.endswith("No such file or directory")
     assert isinstance(
         guest_oserror(normalized, "/tmp/x"),
@@ -98,10 +97,10 @@ def test_a_libvirt_failure_is_classified_by_code_not_by_the_guest_path():
     assert type(normalize_libvirt_error(internal)) is ConnectionError
 
     timed_out = _LibvirtError("operation aborted", 68)  # VIR_ERR_OPERATION_TIMEOUT
-    assert isinstance(normalize_libvirt_error(timed_out), QgaTimeoutError)
+    assert isinstance(normalize_libvirt_error(timed_out), QGATimeoutError)
 
     unresponsive = _LibvirtError("agent gone", 86)  # VIR_ERR_AGENT_UNRESPONSIVE
-    assert isinstance(normalize_libvirt_error(unresponsive), QgaTimeoutError)
+    assert isinstance(normalize_libvirt_error(unresponsive), QGATimeoutError)
 
 
 class _ErrorSocket:
@@ -161,7 +160,7 @@ def test_a_guest_error_reply_keeps_the_connection():
     )
 
     for _ in range(3):
-        with pytest.raises(QgaCommandError):
+        with pytest.raises(QGACommandError):
             transport.execute({"execute": "guest-file-open"})
 
     assert socket_.connects == 1
@@ -195,7 +194,7 @@ def test_connect_resynchronizes_past_an_abandoned_session():
         "/run/qga.sock", socket_factory=lambda *a, **k: socket_
     )
 
-    with pytest.raises(QgaCommandError):
+    with pytest.raises(QGACommandError):
         transport.execute({"execute": "guest-file-open"})
 
     assert socket_.connects == 1
@@ -216,7 +215,7 @@ def test_an_ssh_connect_deadline_is_a_qga_timeout_on_every_python():
     builtin, and the connect leg carried no timeout branch of its own --
     but measured on 3.9.13, `normalize_asyncssh_error` maps it to
     `subprocess.TimeoutExpired` and `_normalize_ssh_error` then answers
-    `QgaTimeoutError`, so the symptom never reached a caller. The three
+    `QGATimeoutError`, so the symptom never reached a caller. The three
     legs now share one ladder that says so directly; this test pins the
     behaviour to the contract rather than to that chain.
     """
@@ -224,7 +223,7 @@ def test_an_ssh_connect_deadline_is_a_qga_timeout_on_every_python():
         "/run/qga.sock", lambda: _SlowConnection(), timeout=0.05
     )
 
-    with pytest.raises(QgaTimeoutError):
+    with pytest.raises(QGATimeoutError):
         transport.execute({"execute": "guest-ping"})
 
 
@@ -248,9 +247,9 @@ def test_an_oserror_that_already_knows_what_it_is_is_kept():
 
 
 def test_a_guest_error_without_an_errno_is_still_classified_by_text():
-    """`QgaCommandError` is the guest's own words and carries no errno."""
+    """`QGACommandError` is the guest's own words and carries no errno."""
     mapped = guest_oserror(
-        QgaCommandError("GenericError", "Failed to open '/x': Is a directory"),
+        QGACommandError("GenericError", "Failed to open '/x': Is a directory"),
         "/x",
     )
 
@@ -273,7 +272,7 @@ def test_a_guest_error_without_an_errno_is_still_classified_by_text():
     ),
 )
 def test_gnu_directory_errors_keep_their_errno(description, expected, code):
-    mapped = guest_oserror(QgaCommandError("GenericError", description), "x")
+    mapped = guest_oserror(QGACommandError("GenericError", description), "x")
 
     assert type(mapped) is expected
     assert mapped.errno == code

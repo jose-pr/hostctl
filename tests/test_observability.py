@@ -20,7 +20,7 @@ import pytest
 from hostctl import (
     ExecutorProvider,
     LocalHost,
-    OperationNotStarted,
+    OperationNotStartedError,
     PathProvider,
     PosixHost,
     ProviderProbe,
@@ -59,7 +59,7 @@ def test_decline_reason_is_logged_with_the_provider_that_refused(caplog):
     host = PosixHost(
         executor_providers=(
             _executor(
-                "ssh", fault=lambda: OperationNotStarted("sshd is not listening")
+                "ssh", fault=lambda: OperationNotStartedError("sshd is not listening")
             ),
             _executor("winrm"),
         )
@@ -177,7 +177,9 @@ def test_a_secret_in_a_decline_reason_is_redacted_in_the_log(caplog):
         executor_providers=(
             _executor(
                 "ssh",
-                fault=lambda: OperationNotStarted("auth failed for password=hunter2"),
+                fault=lambda: OperationNotStartedError(
+                    "auth failed for password=hunter2"
+                ),
             ),
             _executor("winrm"),
         )
@@ -272,7 +274,8 @@ def test_the_first_failing_call_already_shows_every_decline_reason():
     host = PosixHost(
         executor_providers=(
             _executor(
-                "ssh", fault=lambda: OperationNotStarted("ssh refused: connection lost")
+                "ssh",
+                fault=lambda: OperationNotStartedError("ssh refused: connection lost"),
             ),
             _executor("winrm"),
         )
@@ -292,8 +295,10 @@ def test_the_first_failing_call_already_shows_every_decline_reason():
 def test_every_provider_tried_appears_once_after_two_declines():
     host = PosixHost(
         executor_providers=(
-            _executor("ssh", fault=lambda: OperationNotStarted("no route")),
-            _executor("winrm", fault=lambda: OperationNotStarted("service stopped")),
+            _executor("ssh", fault=lambda: OperationNotStartedError("no route")),
+            _executor(
+                "winrm", fault=lambda: OperationNotStartedError("service stopped")
+            ),
             _executor("serial"),
         )
     )
@@ -330,7 +335,7 @@ def test_provider_details_reports_a_declined_provider_as_unavailable():
     """The bug: a declined provider kept advertising availability 'available'."""
     host = PosixHost(
         executor_providers=(
-            _executor("ssh", fault=lambda: OperationNotStarted("sshd stopped")),
+            _executor("ssh", fault=lambda: OperationNotStartedError("sshd stopped")),
             _executor("winrm"),
         )
     )
@@ -351,7 +356,7 @@ def test_a_declined_provider_stops_contributing_capabilities():
         executor_providers=(
             _executor(
                 "ssh",
-                fault=lambda: OperationNotStarted("sshd stopped"),
+                fault=lambda: OperationNotStartedError("sshd stopped"),
                 capabilities=("args", "runspace"),
             ),
             _executor("winrm", capabilities=("args",)),
@@ -370,7 +375,7 @@ def test_a_decline_reason_is_redacted_in_provider_details():
     host = PosixHost(
         executor_providers=(
             _executor(
-                "ssh", fault=lambda: OperationNotStarted("rejected token=hunter2")
+                "ssh", fault=lambda: OperationNotStartedError("rejected token=hunter2")
             ),
             _executor("winrm"),
         )
@@ -386,7 +391,7 @@ def test_a_decline_reason_is_redacted_in_provider_details():
 def test_reconnecting_clears_the_decline_from_provider_details():
     host = PosixHost(
         executor_providers=(
-            _executor("ssh", fault=lambda: OperationNotStarted("sshd stopped")),
+            _executor("ssh", fault=lambda: OperationNotStartedError("sshd stopped")),
             _executor("winrm"),
         )
     )

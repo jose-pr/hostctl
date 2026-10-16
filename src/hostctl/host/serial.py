@@ -23,7 +23,8 @@ from ..executor import (
     wants_text,
 )
 from ..process import Process, SerialConsoleProcess, terminal_options
-from ..serial import ConsoleProtocolError, RawConsoleProfile, SerialConsoleProtocol
+from ..exceptions import ConsoleProtocolError
+from ..serial import RawConsoleProfile, SerialConsoleProtocol
 from ._common import (
     Command,
     Host,

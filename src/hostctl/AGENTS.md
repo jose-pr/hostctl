@@ -403,7 +403,7 @@ hostctl applies to whatever you return.
   system_hint=None)` is what `probe()` returns: `"available"`, `"degraded"`
   or `"unavailable"`. `usable` is true for the first two. A probe may narrow
   the declared capabilities; it must not invent any.
-- `OperationNotStarted(reason, *, cause=None)` is the **only** way to decline
+- `OperationNotStartedError(reason, *, cause=None)` is the **only** way to decline
   a provider for the generation, and it means exactly one thing: nothing was
   sent, so the operation may be retried on the next provider. Raise it before
   dispatch or not at all -- a possibly-started operation is never replayed.
@@ -538,7 +538,7 @@ sh, dash, ash, ksh, ksh93, mksh, lksh, oksh, yash, posh, bash, zsh and fish
 `SshConfig(connect_timeout=30.0)` bounds establishing the connection in
 seconds (`None` leaves asyncssh's own default; otherwise it must be > 0) and is
 the URI key `connect_timeout`, omitted from `connection_uri` at 30. `connect()`
-and `with host:` raise `OperationNotStarted("no provider connected: ...")`
+and `with host:` raise `OperationNotStartedError("no provider connected: ...")`
 when a selector offered providers and none connected (one that connects is
 enough); a refused exec request is a plain `OSError`, not a `ConnectionError`;
 `close()` in a forked child forgets the parent's connection without closing it.
@@ -674,10 +674,11 @@ raise rather than defaulting to POSIX. `info().os_family` is a family from
 reconnecting. `open("rb")` is seekable where `guest-file-seek` is advertised;
 the exclusive `x` modes are refused by `open()` without a guest helper.
 
-`QgaCommandError` is a guest agent error reply, carrying `.error_class` and
+`QGACommandError` is a guest agent error reply, carrying `.error_class` and
 `.description`; a path operation translates it into the matching `OSError`
-(`FileNotFoundError`, `PermissionError`, ...). `QgaProtocolError` is a
-malformed or oversized reply and is itself a `ConnectionError`.
+(`FileNotFoundError`, `PermissionError`, ...). `QGAProtocolError` is a
+malformed or oversized reply and is itself a `ConnectionError` (see
+"Exceptions").
 An injected `QemuSerialConsole` adds the `serial` capability and
 `QemuHost.open_serial(*, encoding=None, errors=None)`. It is raw, exclusive,
 and makes no shell/status claim; `encoding=` makes the console read and write
@@ -772,6 +773,47 @@ such a path raises `FileExistsError` for an existing directory and
 
 `TerminalOptions(term, columns, rows, pixel_width, pixel_height)` is the
 resolved terminal request `spawn(terminal=...)` produces.
+
+## Exceptions
+
+Every exception hostctl raises of its own lives in `hostctl.exceptions` and
+is re-exported from `hostctl`. Each also inherits the builtin a caller would
+already catch, so `except ConnectionError` and `except TimeoutError` work
+without naming a hostctl class. A bad argument is a plain `ValueError` or
+`TypeError`; transport errors that already describe the failure (an
+`OSError` from a path operation, `subprocess.TimeoutExpired` from `run()`)
+pass through unwrapped.
+
+```text
+HostctlError(Exception)
+├── TransportError(HostctlError, ConnectionError)
+│   ├── OperationNotStartedError
+│   └── QGADisconnectedError
+├── ProtocolError(HostctlError, ConnectionError)
+│   ├── QGAProtocolError
+│   └── ConsoleProtocolError
+├── QGATimeoutError(HostctlError, TimeoutError)
+└── QGACommandError(HostctlError)
+```
+
+- `HostctlError` -- the base; catch it for "anything hostctl raised".
+- `TransportError` -- the connection to the target failed or was never made.
+- `OperationNotStartedError(reason="operation was not started", *,
+  cause=None)` -- a provider declined before anything was sent (`.reason`,
+  `.cause`); see "Provider contract". Raised to the caller when every
+  provider declined, so an `except ConnectionError` retry around it is safe.
+  It is an `OSError`, not a `RuntimeError`.
+- `QGADisconnectedError` -- the guest-agent socket or channel closed, or could
+  not be reached, before a reply.
+- `ProtocolError` -- the peer answered, but not in the protocol's shape.
+- `QGAProtocolError` -- a malformed, oversized or contract-violating guest
+  agent reply.
+- `ConsoleProtocolError` -- a serial console profile did not complete its
+  login, prompt or status exchange.
+- `QGATimeoutError` -- a guest-agent request missed its deadline.
+- `QGACommandError(error_class, description, *, data=None)` -- the guest
+  agent refused a command (`.error_class`, `.description`, `.data`); path
+  operations translate it into the matching `OSError`.
 
 ## Command line
 

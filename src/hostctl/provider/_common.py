@@ -16,6 +16,7 @@ import typing
 
 from pathapi import Path
 
+from ..exceptions import OperationNotStartedError
 from ..executor._common import MASK, dispatch_display
 
 #: Selection, probe, and decline diagnostics.  Library convention: this module
@@ -34,20 +35,6 @@ class ProviderProbe:
     @property
     def usable(self) -> bool:
         return self.availability in ("available", "degraded")
-
-
-class OperationNotStarted(RuntimeError):
-    """A provider declined before a remote operation could start."""
-
-    def __init__(
-        self,
-        reason: str = "operation was not started",
-        *,
-        cause: typing.Optional[Exception] = None,
-    ):
-        super().__init__(reason)
-        self.reason = reason
-        self.cause = cause
 
 
 @dataclasses.dataclass(frozen=True)
@@ -361,7 +348,7 @@ class ProviderSelector:
     ) -> None:
         """Record that a provider refused *before* dispatch this generation.
 
-        A provider which raised ``OperationNotStarted`` proved that nothing
+        A provider which raised ``OperationNotStartedError`` proved that nothing
         started, so it is safe to skip it for the rest of this generation
         rather than re-attempting it on every later operation.  The record is
         cleared by :meth:`invalidate` along with the probe cache.
@@ -579,7 +566,7 @@ class ProviderSelector:
             f"{name}: {reason}" for name, reason in self.declines.items()
         )
         cause = next((causes.get(name) for name in reversed(declined_names)), None)
-        raise OperationNotStarted(
+        raise OperationNotStartedError(
             "no provider is available" + (f" ({detail})" if detail else ""),
             cause=cause,
         ) from cause

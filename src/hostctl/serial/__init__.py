@@ -12,6 +12,7 @@ import re
 import time
 import typing
 
+from ..exceptions import ConsoleProtocolError
 from ..process.serial import SerialProcess
 
 
@@ -36,10 +37,6 @@ class SerialConsoleProtocol(typing.Protocol):
         *,
         timeout: typing.Optional[float] = None,
     ) -> tuple[bytes, int]: ...
-
-
-class ConsoleProtocolError(ConnectionError):
-    """The console did not complete the expected protocol exchange."""
 
 
 @dataclasses.dataclass(frozen=True, repr=False)
@@ -446,7 +443,6 @@ class PromptConsoleProfile:
 
 
 __all__ = [
-    "ConsoleProtocolError",
     "LoginStep",
     "PromptConsoleProfile",
     "RawConsoleProfile",

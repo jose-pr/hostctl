@@ -9,7 +9,8 @@ import time
 import warnings
 import typing
 
-from ._qga import GuestAgentTransport, QgaCommandError, QgaProtocolError, guest_oserror
+from ..exceptions import QGACommandError, QGAProtocolError
+from ._qga import GuestAgentTransport, guest_oserror
 from ._common import (
     expired,
     CaptureOutput,
@@ -29,10 +30,6 @@ from ._common import (
     reject_stdin_conflict,
     wants_text,
 )
-
-
-class GuestAgentProtocolError(QgaProtocolError):
-    """A guest-agent response did not satisfy the QGA command contract."""
 
 
 def _read_input(
@@ -59,11 +56,11 @@ def _decode_output(value: object, field: str) -> bytes:
     if value is None:
         return b""
     if not isinstance(value, str):
-        raise GuestAgentProtocolError(f"{field} must be Base64 text")
+        raise QGAProtocolError(f"{field} must be Base64 text")
     try:
         return base64.b64decode(value, validate=True)
     except (ValueError, TypeError) as exc:
-        raise GuestAgentProtocolError(f"{field} is not valid Base64") from exc
+        raise QGAProtocolError(f"{field} is not valid Base64") from exc
 
 
 class QemuExecutor(Executor[subprocess.CompletedProcess]):
@@ -192,10 +189,10 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
             timeout=timeout,
         )
         if not isinstance(started, typing.Mapping):
-            raise GuestAgentProtocolError("guest-exec returned a non-object result")
+            raise QGAProtocolError("guest-exec returned a non-object result")
         pid = started.get("pid")
         if not isinstance(pid, int) or isinstance(pid, bool):
-            raise GuestAgentProtocolError("guest-exec did not return an integer PID")
+            raise QGAProtocolError("guest-exec did not return an integer PID")
 
         status = self._wait(pid, deadline, command_display, timeout)
         out = _decode_output(status.get("out-data"), "out-data")
@@ -206,7 +203,7 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
             if isinstance(signal, int) and not isinstance(signal, bool):
                 returncode = -signal
             else:
-                raise GuestAgentProtocolError(
+                raise QGAProtocolError(
                     "completed guest-exec status has no integer exit code or signal"
                 )
 
@@ -290,10 +287,10 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
                 remaining,
                 orphaned=request.get("execute") == "guest-exec",
             ) from exc
-        except QgaCommandError as exc:
+        except QGACommandError as exc:
             # The guest refused the command. `run()` of a missing program is
             # a `FileNotFoundError` on every other transport; raised as the
-            # QGA-specific `QgaCommandError` it was, `except FileNotFoundError`
+            # QGA-specific `QGACommandError` it was, `except FileNotFoundError`
             # around a portable `host.run()` simply did not fire.
             raise guest_oserror(exc, command[0] if command else "") from exc
 
@@ -321,26 +318,22 @@ class QemuExecutor(Executor[subprocess.CompletedProcess]):
             except subprocess.TimeoutExpired as exc:
                 self._annotate_timeout(exc, pid, timeout, partial_out, partial_err)
                 raise
-            except QgaProtocolError as exc:
+            except QGAProtocolError as exc:
                 if "size limit" not in str(exc):
                     raise
                 # The reply was refused whole, so the captured output is
                 # gone -- there is no second chance to ask for it, and the
                 # bare "reply exceeded size limit" named neither the
                 # process nor the setting that would have admitted it.
-                raise GuestAgentProtocolError(
+                raise QGAProtocolError(
                     f"the guest-exec-status reply for pid {pid} exceeded the "
                     "QGA reply size limit and its captured output was lost; "
                     "raise max_reply_size on the host config"
                 ) from exc
             if not isinstance(result, typing.Mapping):
-                raise GuestAgentProtocolError(
-                    "guest-exec-status returned a non-object result"
-                )
+                raise QGAProtocolError("guest-exec-status returned a non-object result")
             if not isinstance(result.get("exited"), bool):
-                raise GuestAgentProtocolError(
-                    "guest-exec-status has no boolean exited field"
-                )
+                raise QGAProtocolError("guest-exec-status has no boolean exited field")
             if "out-data" in result:
                 partial_out = _decode_output(result.get("out-data"), "out-data")
             if "err-data" in result:

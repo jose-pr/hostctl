@@ -3,7 +3,7 @@
 After DISPATCH, a failed command or path mutation must fail terminally.  A
 second provider may only be reached when the first declines *before* anything
 could have started: a probe/preflight rejection, or an explicit
-``OperationNotStarted``.
+``OperationNotStartedError``.
 
 Every double here records each invocation, so "the next provider was never
 invoked" is asserted against a call ledger rather than inferred from the raised
@@ -22,7 +22,7 @@ from hostctl import (
     ContainerHost,
     ExecutorProvider,
     LocalHost,
-    OperationNotStarted,
+    OperationNotStartedError,
     PathProvider,
     PosixHost,
     ProviderProbe,
@@ -161,13 +161,13 @@ def test_partial_write_on_a_pinned_stream_is_not_replayed():
 
 
 def test_preflight_rejection_selects_the_next_provider_exactly_once():
-    """OperationNotStarted proves nothing ran, so fallback is permitted."""
+    """OperationNotStartedError proves nothing ran, so fallback is permitted."""
     injector = FaultInjector()
     host = PosixHost(
         executor_providers=(
             injector.executor(
                 "primary",
-                fault=lambda: OperationNotStarted("refused before dispatch"),
+                fault=lambda: OperationNotStartedError("refused before dispatch"),
             ),
             injector.executor("secondary"),
         )
@@ -199,7 +199,9 @@ def test_preflight_rejection_does_not_cascade_past_the_second_provider():
     injector = FaultInjector()
     host = PosixHost(
         executor_providers=(
-            injector.executor("first", fault=lambda: OperationNotStarted("declined")),
+            injector.executor(
+                "first", fault=lambda: OperationNotStartedError("declined")
+            ),
             injector.executor("second"),
             injector.executor("third"),
         )
@@ -220,7 +222,7 @@ def test_path_preflight_rejection_selects_the_next_provider_exactly_once():
             injector.path(
                 "primary",
                 MemPathBackend(),
-                fault=lambda: OperationNotStarted("SFTP subsystem unavailable"),
+                fault=lambda: OperationNotStartedError("SFTP subsystem unavailable"),
             ),
             injector.path("secondary", backend),
             injector.path("tertiary", MemPathBackend()),
@@ -239,7 +241,7 @@ def test_a_decline_is_remembered_for_the_generation_and_cleared_on_reconnect():
     declining = injector.path(
         "primary",
         MemPathBackend(),
-        fault=lambda: OperationNotStarted("subsystem unavailable"),
+        fault=lambda: OperationNotStartedError("subsystem unavailable"),
     )
     host = PosixHost(
         path_providers=(declining, injector.path("secondary", backend)),
@@ -268,7 +270,7 @@ def test_declined_provider_appears_in_the_selection_trace_without_secrets():
             injector.path(
                 "primary",
                 MemPathBackend(),
-                fault=lambda: OperationNotStarted("token=hunter2 rejected"),
+                fault=lambda: OperationNotStartedError("token=hunter2 rejected"),
             ),
             injector.path("secondary", backend),
         )
@@ -289,7 +291,9 @@ def test_dispatched_failure_after_a_declined_provider_is_still_terminal():
     injector = FaultInjector()
     host = PosixHost(
         executor_providers=(
-            injector.executor("first", fault=lambda: OperationNotStarted("declined")),
+            injector.executor(
+                "first", fault=lambda: OperationNotStartedError("declined")
+            ),
             injector.executor(
                 "second", fault=lambda: ConnectionResetError("dropped mid-command")
             ),
@@ -341,7 +345,8 @@ def test_local_assembly_falls_back_only_on_a_proven_pre_dispatch_refusal():
     host = LocalHost(
         executor_providers=(
             injector.executor(
-                "primary", fault=lambda: OperationNotStarted("refused before dispatch")
+                "primary",
+                fault=lambda: OperationNotStartedError("refused before dispatch"),
             ),
             injector.executor("secondary"),
             injector.executor("tertiary"),
@@ -478,7 +483,7 @@ def test_container_assembly_falls_back_once_on_a_pre_dispatch_refusal():
     host, _ = _container_host(
         executor_providers=(
             injector.executor(
-                "primary", fault=lambda: OperationNotStarted("container starting")
+                "primary", fault=lambda: OperationNotStartedError("container starting")
             ),
             injector.executor("secondary"),
             injector.executor("tertiary"),
@@ -742,7 +747,7 @@ def test_a_transient_refusal_does_not_brick_the_host():
 
     def flaky(command, *args, **options):
         if state["failing"]:
-            raise OperationNotStarted(
+            raise OperationNotStartedError(
                 "sshd restarting", cause=ConnectionError("sshd restarting")
             )
         return subprocess.CompletedProcess((command,), 0, b"ok", b"")
@@ -751,7 +756,7 @@ def test_a_transient_refusal_does_not_brick_the_host():
         executor_providers=(ExecutorProvider("ssh", flaky, capabilities=()),)
     )
 
-    with pytest.raises(OperationNotStarted):
+    with pytest.raises(OperationNotStartedError):
         host.run("uptime", check=False)
 
     state["failing"] = False
@@ -762,7 +767,7 @@ def test_the_refusal_names_the_provider_and_keeps_its_cause():
     """It surfaced as a bare "no provider is available" with no __cause__."""
 
     def refuse(command, *args, **options):
-        raise OperationNotStarted(
+        raise OperationNotStartedError(
             "host key is not trusted", cause=ConnectionError("host key is not trusted")
         )
 
@@ -770,7 +775,7 @@ def test_the_refusal_names_the_provider_and_keeps_its_cause():
         executor_providers=(ExecutorProvider("ssh", refuse, capabilities=()),)
     )
 
-    with pytest.raises(OperationNotStarted) as raised:
+    with pytest.raises(OperationNotStartedError) as raised:
         host.run("uptime", check=False)
 
     assert "ssh" in str(raised.value)
@@ -784,12 +789,13 @@ def test_path_falls_back_over_every_candidate_not_just_one():
     three ordered providers with the first two offline failed on a host where
     the identical `run()` succeeded."""
     from hostctl import PosixHost
-    from hostctl.provider import OperationNotStarted, PathProvider
+    from hostctl.exceptions import OperationNotStartedError
+    from hostctl.provider import PathProvider
     from pathapi import Path as LocalPath
 
     def offline(name):
         def factory(*segments):
-            raise OperationNotStarted(f"{name} offline")
+            raise OperationNotStartedError(f"{name} offline")
 
         return PathProvider(name, factory)
 
@@ -881,7 +887,7 @@ def test_a_path_refusal_names_its_cause_when_nothing_is_left():
 
     host = PosixHost(path_providers=(_sftp_that_cannot_connect(connect=refuse),))
 
-    with pytest.raises(OperationNotStarted) as raised:
+    with pytest.raises(OperationNotStartedError) as raised:
         host.path("/etc/hostname").read_text()
 
     assert "Host key is not trusted" in str(raised.value)
@@ -904,7 +910,7 @@ def test_a_path_refusal_does_not_brick_a_single_provider_host():
     provider.factory = lambda *parts: MemPath(*parts, backend=backend)
     host = PosixHost(path_providers=(provider,))
 
-    with pytest.raises(OperationNotStarted):
+    with pytest.raises(OperationNotStartedError):
         host.path("/etc/hostname").read_text()
 
     state["failing"] = False
@@ -919,7 +925,7 @@ def test_a_declined_primary_is_not_redialled_while_the_fallback_serves():
 
     def refuse(command, *args, **options):
         dialled.append(command)
-        raise OperationNotStarted(
+        raise OperationNotStartedError(
             "connection refused", cause=ConnectionRefusedError("refused")
         )
 
@@ -999,7 +1005,7 @@ def test_decline_and_invalidate_racing_select_raise_only_operation_not_started()
     import sys
     import threading
 
-    from hostctl import OperationNotStarted
+    from hostctl import OperationNotStartedError
     from hostctl.provider import ProviderSelector
 
     providers = tuple(
@@ -1015,7 +1021,7 @@ def test_decline_and_invalidate_racing_select_raise_only_operation_not_started()
         while not stop.is_set():
             try:
                 selector.select()
-            except OperationNotStarted:
+            except OperationNotStartedError:
                 pass
             except Exception as exc:  # pragma: no cover - the regression
                 errors.append(exc)

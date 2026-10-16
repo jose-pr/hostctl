@@ -8,7 +8,7 @@ import sys
 
 from duho import AUTO, Cli
 
-from ..provider import OperationNotStarted
+from ..exceptions import OperationNotStartedError
 from .cat import Cat
 from .cp import Cp
 from .info import Info
@@ -51,9 +51,9 @@ _ERRORS = {
     subprocess.TimeoutExpired: 125,
     PermissionError: 126,
     FileNotFoundError: 127,
-    ConnectionError: 125,
     # Raised only before anything was sent: the host was never reached.
-    OperationNotStarted: 125,
+    OperationNotStartedError: 125,
+    ConnectionError: 125,
     OSError: 125,
     ValueError: 125,
     NotImplementedError: 125,

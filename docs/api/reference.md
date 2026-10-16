@@ -45,8 +45,6 @@ without a deprecation cycle.
 ::: hostctl.LocalExecutor
 ::: hostctl.Process
 ::: hostctl.TerminalOptions
-::: hostctl.QgaCommandError
-::: hostctl.QgaProtocolError
 
 ## Shells and sessions
 
@@ -63,7 +61,18 @@ without a deprecation cycle.
 ::: hostctl.RawConsoleProfile
 ::: hostctl.PromptConsoleProfile
 ::: hostctl.LoginStep
+
+## Exceptions
+
+::: hostctl.HostctlError
+::: hostctl.TransportError
+::: hostctl.OperationNotStartedError
+::: hostctl.QGADisconnectedError
+::: hostctl.ProtocolError
+::: hostctl.QGAProtocolError
 ::: hostctl.ConsoleProtocolError
+::: hostctl.QGATimeoutError
+::: hostctl.QGACommandError
 
 ## Provider composition
 
@@ -72,7 +81,6 @@ without a deprecation cycle.
 ::: hostctl.ProviderProbe
 ::: hostctl.ProviderSelection
 ::: hostctl.ProviderSelector
-::: hostctl.OperationNotStarted
 ::: hostctl.SessionInitializer
 ::: hostctl.register_system_provider
 ::: hostctl.system_provider_names

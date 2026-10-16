@@ -76,23 +76,28 @@ from .host import (
 )
 from .provider import (
     ExecutorProvider as ExecutorProvider,
-    OperationNotStarted as OperationNotStarted,
     PathProvider as PathProvider,
     ProviderProbe as ProviderProbe,
     ProviderSelection as ProviderSelection,
     ProviderSelector as ProviderSelector,
     SessionInitializer as SessionInitializer,
 )
-from .executor._qga import (
-    QgaCommandError as QgaCommandError,
-    QgaProtocolError as QgaProtocolError,
+from .exceptions import (
+    ConsoleProtocolError as ConsoleProtocolError,
+    HostctlError as HostctlError,
+    OperationNotStartedError as OperationNotStartedError,
+    ProtocolError as ProtocolError,
+    QGACommandError as QGACommandError,
+    QGADisconnectedError as QGADisconnectedError,
+    QGAProtocolError as QGAProtocolError,
+    QGATimeoutError as QGATimeoutError,
+    TransportError as TransportError,
 )
 from .process import (
     Process as Process,
     TerminalOptions as TerminalOptions,
 )
 from .serial import (
-    ConsoleProtocolError as ConsoleProtocolError,
     LoginStep as LoginStep,
     PromptConsoleProfile as PromptConsoleProfile,
     RawConsoleProfile as RawConsoleProfile,
@@ -168,8 +173,6 @@ __all__ = [
     "require_pypsrp",
     "Process",
     "TerminalOptions",
-    "QgaCommandError",
-    "QgaProtocolError",
     # Shells and sessions
     "Shell",
     "ShellFlavour",
@@ -190,20 +193,28 @@ __all__ = [
     "RawConsoleProfile",
     "PromptConsoleProfile",
     "LoginStep",
-    "ConsoleProtocolError",
     # Provider composition
     "ExecutorProvider",
     "PathProvider",
     "ProviderProbe",
     "ProviderSelection",
     "ProviderSelector",
-    "OperationNotStarted",
     "SessionInitializer",
     "register_system_provider",
     "system_provider_names",
     "host_schemes",
     "CompositePosixPath",
     "CompositeWindowsPath",
+    # Exceptions
+    "HostctlError",
+    "TransportError",
+    "OperationNotStartedError",
+    "QGADisconnectedError",
+    "ProtocolError",
+    "QGAProtocolError",
+    "ConsoleProtocolError",
+    "QGATimeoutError",
+    "QGACommandError",
     # Transfer helpers
     "ProgressReader",
     "host_checksum",

@@ -18,7 +18,8 @@ from ..executor.container import (
 )
 from ..executor import normalize_environment
 from ..executor._common import command_text, raise_normalized
-from ..provider import OperationNotStarted, ProviderSelector
+from ..exceptions import OperationNotStartedError
+from ..provider import ProviderSelector
 from ..provider.transports import (
     ContainerArchivePathProvider,
     ContainerExecutorProvider,
@@ -384,7 +385,9 @@ class ContainerHost(Host):
                 if item.name == backend
             )
             if not provider.probe().usable:
-                raise OperationNotStarted(f"path provider {backend!r} is unavailable")
+                raise OperationNotStartedError(
+                    f"path provider {backend!r} is unavailable"
+                )
         return provider.path(*segments)
 
     def _archive_path(self, *segments: PathLike) -> HostPath:
@@ -456,7 +459,7 @@ class ContainerHost(Host):
                     timeout=timeout,
                     text=text,
                 )
-            except OperationNotStarted as exc:
+            except OperationNotStartedError as exc:
                 # Only a proven pre-dispatch refusal may reach another
                 # provider; a dispatched exec is never replayed.
                 self._executor_provider_selector.decline(provider.name, str(exc))
@@ -574,7 +577,7 @@ class ContainerHost(Host):
         tty = selected_terminal is not None
         # Through the provider, as `run()` goes: it inspects the container
         # before dispatch, so a stopped or vanished container is a proven
-        # pre-dispatch refusal (`OperationNotStarted`/`ConnectionError`)
+        # pre-dispatch refusal (`OperationNotStartedError`/`ConnectionError`)
         # rather than the `FileNotFoundError` the raw API answers with --
         # two different errors for one condition, depending on which entry
         # point the caller used.

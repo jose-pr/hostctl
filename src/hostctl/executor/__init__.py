@@ -36,10 +36,7 @@ from .serial import (
     SerialSettings as SerialSettings,
     normalize_serial_error as normalize_serial_error,
 )
-from .qemu import (
-    GuestAgentProtocolError as GuestAgentProtocolError,
-    QemuExecutor as QemuExecutor,
-)
+from .qemu import QemuExecutor as QemuExecutor
 from .winrm import (
     NativeWinRMSession as NativeWinRMSession,
     WinRMExecutor as WinRMExecutor,
@@ -67,7 +64,6 @@ __all__ = [
     "LocalExecutor",
     "PathLike",
     "QemuExecutor",
-    "GuestAgentProtocolError",
     "NativeWinRMSession",
     "normalize_container_error",
     "normalize_environment",
