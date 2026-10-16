@@ -20,6 +20,7 @@ __all__ = [
     "ConsoleProtocolError",
     "QGATimeoutError",
     "QGACommandError",
+    "BundleError",
 ]
 
 
@@ -88,3 +89,12 @@ class QGACommandError(HostctlError):
         self.error_class = error_class
         self.description = description
         self.data = dict(data or {})
+
+
+class BundleError(HostctlError, RuntimeError):
+    """A deploy bundle cannot be built correctly from what is installed here.
+
+    Raised before anything is sent to the target: a distribution with a
+    compiled extension or nothing importable, a missing ignore file, a source
+    tree without an importable package.
+    """

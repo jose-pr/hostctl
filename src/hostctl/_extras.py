@@ -21,6 +21,7 @@ _EXTRAS: typing.Dict[
     "container": (("docker",), (3, 9)),
     "serial": (("serial",), (3, 9)),
     "qemu-libvirt": (("libvirt",), (3, 9)),
+    "deploy": (("packaging", "pathspec"), (3, 9)),
 }
 
 

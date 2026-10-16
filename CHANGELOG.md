@@ -58,6 +58,22 @@ collection until pytruenas ports to these names.
 
 ### Added
 
+- **`hostctl.deploy`: install a Python program on a host that cannot install
+  it itself**, behind a new `deploy` extra (`packaging`, `pathspec`, and
+  `tomli` before Python 3.11; included in `dev`). `deploy(host, source,
+  path, mode="pyz"|"dir", ...)` probes the target interpreter with a
+  stdlib-only script, bundles only the part of the distribution's installed
+  dependency closure the target lacks (markers evaluated for the target),
+  and installs a reproducible zipapp or tree atomically through `host.run()`
+  and `host.path()`; an unchanged digest writes nothing, a path a deploy did
+  not write is never replaced, and an interrupted tree swap is restored.
+  `bundle()` writes the same layouts locally, `SourceTree` ships a working
+  tree filtered by its ignore files, and `Deployment.command` is the argv
+  that runs the result. POSIX targets only. A bundle that cannot be built
+  raises the new `BundleError` (`HostctlError`, `RuntimeError`), exported
+  from `hostctl`. The code and its tests come from pytruenas's generic
+  bundler, which knew nothing of TrueNAS.
+
 - **Typed selection records, a host name and an audible fallback**, in
   0.4.0. `SelectionStep` and `ProviderDetail` (in `hostctl` and
   `hostctl.provider`) replace the dicts in traces and `provider_details`.

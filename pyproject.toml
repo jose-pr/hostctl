@@ -73,6 +73,17 @@ winrm-kerberos = ["pywinrm[kerberos]>=0.5.0,<0.6"]
 # whose tool-call error result carries the exit status (125/126/127) for an
 # `_errors_` exception, and 0.7.4 is where `_report_error_` begins.
 cli = ["duho>=0.7.5,<0.8"]
+# `hostctl.deploy`: packaging reads requirement lines and markers for the
+# dependency closure; pathspec filters a source tree with gitignore rules (its
+# `gitignore` pattern factory starts at 1.0); tomli reads pyproject.toml
+# where tomllib is missing. packaging is calendar-versioned, so the ceiling is
+# the year after the newest tested (26.x), and the floor is the oldest that
+# `build` in the dev extra accepts, so the floors job can install it.
+deploy = [
+    "packaging>=24.0,<27",
+    "pathspec>=1.0,<2",
+    "tomli>=2.0,<3; python_version < '3.11'",
+]
 # Self-sufficient on purpose: README and the workflows install `.[dev]`
 # rather than re-spelling the transport extras, where a missing one makes a
 # capability test skip silently. `hostctl[...]` is a self-reference, which
@@ -82,7 +93,7 @@ dev = [
     "black",
     "build",
     "pytest",
-    "hostctl[ssh,winrm,psrp,container,serial,cli]",
+    "hostctl[ssh,winrm,psrp,container,serial,cli,deploy]",
 ]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 

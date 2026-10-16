@@ -85,6 +85,7 @@ points and a worked example are in
 ::: hostctl.ConsoleProtocolError
 ::: hostctl.QGATimeoutError
 ::: hostctl.QGACommandError
+::: hostctl.BundleError
 
 ## Provider composition
 
@@ -122,6 +123,16 @@ points and a worked example are in
 ::: hostctl.ProgressReader
 ::: hostctl.host_checksum
 ::: hostctl.stat_checksum
+
+## Deploying Python
+
+`hostctl.deploy` needs the `deploy` extra; see
+[Deploying Python](../guide/deploy.md).
+
+::: hostctl.deploy.deploy
+::: hostctl.deploy.bundle
+::: hostctl.deploy.Deployment
+::: hostctl.deploy.SourceTree
 
 ## Aliases and constants
 

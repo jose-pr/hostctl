@@ -22,6 +22,7 @@ except PackageNotFoundError:  # not installed (e.g. running from a bare checkout
     __version__ = "0.0.0.dev0"
 
 from .exceptions import (
+    BundleError as BundleError,
     ConsoleProtocolError as ConsoleProtocolError,
     HostctlError as HostctlError,
     OperationNotStartedError as OperationNotStartedError,
@@ -224,6 +225,7 @@ __all__ = [
     "ConsoleProtocolError",
     "QGATimeoutError",
     "QGACommandError",
+    "BundleError",
     # Transfer helpers
     "ProgressReader",
     "host_checksum",

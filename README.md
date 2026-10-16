@@ -58,6 +58,7 @@ Optional features/extras:
 | `winrm-credssp` | `pywinrm[credssp]` | WinRM `auth="credssp"` |
 | `winrm-kerberos` | `pywinrm[kerberos]` | WinRM `auth="kerberos"` |
 | `cli` | `duho` | the `hostctl` command |
+| `deploy` | `packaging`, `pathspec` (`tomli` before 3.11) | `hostctl.deploy`: installing a Python program on a host without `pip` |
 
 ## Quick start
 
@@ -255,6 +256,7 @@ program serves every subcommand as an MCP tool over stdio.
 | `hostctl.paths` | `CompositePosixPath`, `CompositeWindowsPath` |
 | `hostctl.shell` | Shell flavours, command markers and persistent sessions |
 | `hostctl.sync` | Remote checksum and byte-progress helpers for `pathapi` |
+| `hostctl.deploy` | Bundle a Python program and install it on a POSIX host; needs the `deploy` extra |
 | `hostctl.transports.local`, `.ssh`, `.winrm`, `.container`, `.qemu`, `.serial` | One package per transport: its config, host and providers |
 | `hostctl.cli` | The `hostctl` command line (`main`); needs the `cli` extra |
 

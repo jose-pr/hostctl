@@ -82,6 +82,15 @@ def _libvirt():
     LibvirtGuestAgentTransport("vm", connection_uri="qemu:///system").connect()
 
 
+def _deploy():
+    import tempfile
+
+    from hostctl.deploy import bundle
+
+    with tempfile.TemporaryDirectory() as scratch:
+        bundle("hostctl", scratch + "/x.pyz")
+
+
 ROWS = (
     pytest.param("ssh", ("asyncssh",), _ssh_run, id="ssh-asyncssh"),
     pytest.param("ssh", ("sftppath",), _ssh_path, id="ssh-sftppath"),
@@ -98,6 +107,8 @@ ROWS = (
     pytest.param("container", ("docker",), _container_run, id="container"),
     pytest.param("serial", ("serial",), _serial_open, id="serial"),
     pytest.param("qemu-libvirt", ("libvirt", "libvirt_qemu"), _libvirt, id="libvirt"),
+    # pathspec, not packaging: pytest itself imports packaging while it runs.
+    pytest.param("deploy", ("pathspec",), _deploy, id="deploy"),
 )
 
 

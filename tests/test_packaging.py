@@ -95,6 +95,35 @@ def test_the_wheel_ships_the_api_header(wheel):
     assert "hostctl/README.md" in names
 
 
+def test_the_wheel_declares_the_deploy_extra(wheel):
+    """pip resolves `hostctl[deploy]` from the wheel's metadata, and `dev`
+    must pull it, or the deploy tests skip instead of running."""
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        metadata = archive.read(
+            next(name for name in names if name.endswith(".dist-info/METADATA"))
+        ).decode("utf-8")
+    lines = [
+        line for line in metadata.splitlines() if line.startswith("Requires-Dist:")
+    ]
+    deploy = [line for line in lines if re.search(r"extra == ['\"]deploy['\"]", line)]
+    required = {
+        re.match(r"Requires-Dist: ([A-Za-z0-9_.-]+)", line)[1] for line in deploy
+    }
+
+    assert "Provides-Extra: deploy" in metadata
+    assert required == {"packaging", "pathspec", "tomli"}
+    # tomllib is in the standard library from 3.11.
+    assert "python_version" in next(line for line in deploy if "tomli" in line)
+    # Hatchling inlines the self-referencing `hostctl[...]` of `dev`.
+    dev = [line for line in lines if re.search(r"extra == ['\"]dev['\"]", line)]
+    dev_required = {
+        re.match(r"Requires-Dist: ([A-Za-z0-9_.-]+)", line)[1] for line in dev
+    }
+    assert {"packaging", "pathspec", "tomli"} <= dev_required
+    assert "hostctl/deploy/__init__.py" in names
+
+
 def test_the_wheel_never_ships_an_unshared_override(wheel, tmp_path):
     names = zipfile.ZipFile(wheel).namelist()
 

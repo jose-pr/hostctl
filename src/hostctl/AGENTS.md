@@ -11,7 +11,7 @@ and configs you construct, exceptions you catch, types you annotate with), or
 from the public module that is each name's home: `hostctl.host`,
 `hostctl.exceptions`, `hostctl.uri`, `hostctl.system`, `hostctl.provider`,
 `hostctl.executor`, `hostctl.process`, `hostctl.paths`, `hostctl.shell`,
-`hostctl.sync`, `hostctl.cli` and `hostctl.transports.local`, `.ssh`,
+`hostctl.sync`, `hostctl.deploy`, `hostctl.cli` and `hostctl.transports.local`, `.ssh`,
 `.winrm`, `.container`, `.qemu`, `.serial`. Every public module declares
 `__all__`; a name outside it, and every module with a `_`-prefixed component,
 is internal and may change without notice. Concrete executors, process
@@ -38,6 +38,7 @@ installed, importing nothing.
 | `winrm-credssp` | CredSSP authentication for pywinrm |
 | `winrm-kerberos` | Kerberos authentication for pywinrm |
 | `cli` | the `hostctl` command line (duho) |
+| `deploy` | `hostctl.deploy`: bundling and installing Python programs (packaging, pathspec; tomli before 3.11) |
 
 `hostctl.__version__` is the installed distribution's version string.
 
@@ -1378,6 +1379,87 @@ has no transfer engine of its own.
   total)` as bytes are read; it is itself a binary reader and a context
   manager.
 
+## Deploying Python (`hostctl.deploy`)
+
+```python
+deploy(host, source, path, *, mode='pyz', package=None, extras=(), skip=(), force=False, python='python3') -> Deployment
+bundle(source, destination, *, mode='pyz', package=None, extras=(), skip=(), python='python3') -> pathlib.Path
+Deployment(path, digest, written, command)
+SourceTree(root, *, ignore_files=None, ignore_patterns=(), pythonpath=None)
+SourceTree.files() -> list[tuple[str, pathlib.Path]]
+SourceTree.requirements(extras=(), *, include=(), exclude=()) -> list[str]
+```
+
+Puts a Python program on a host that cannot install it itself (no `pip`, a
+read-only root, no network). Needs the `deploy` extra; importing
+`hostctl.deploy` does not, and the first `deploy()`, `bundle()` or
+`SourceTree` read without it raises `ImportError` naming the extra.
+
+- `source` is an installed distribution's name (`"mytool"`), whose
+  dependency closure is read from this environment's metadata, or a
+  `SourceTree`. `package` is the import name run with `-m` (default: the
+  distribution name with `-` as `_`; required for a tree, `TypeError`
+  otherwise); it must be a dotted identifier (`ValueError`). `extras` are the
+  distribution's extras to include (a dependency's own extras, like
+  `pkg[fast]`, are always followed); `skip` names distributions never to
+  ship. `python` is the target interpreter: `deploy()` probes with it, a
+  zipapp's `#!` names it (as given when absolute, else via `/usr/bin/env`),
+  a tree's launcher `exec`s it.
+- `mode='pyz'` is one executable zipapp file; `mode='dir'` a directory with
+  `lib/` (the packages) and `bin/<package>`, a `/bin/sh` launcher that puts
+  `lib` first on `PYTHONPATH` (no empty entry, so the working directory is
+  never added). A `SourceTree` ships only as `dir` (`BundleError`: a zipapp
+  needs the package at the archive root). Another `mode` is `ValueError`.
+- `deploy()` runs `python -` on the target with a stdlib-only probe that
+  lists its installed distributions and its PEP 508 marker environment, then
+  ships only what is missing, with markers evaluated for the target. A tree
+  source is not probed: it vendors nothing.
+- Payloads are reproducible (fixed timestamps, modes and ownership), so the
+  SHA-256 `Deployment.digest` is stable across rebuilds. A deploy whose
+  digest matches the one recorded on the target writes nothing
+  (`written=False`) unless `force=True`.
+- `path` is exactly where the zipapp file or the tree goes, and must be
+  absolute (`ValueError`); a trailing `/` is dropped. A zipapp is written to
+  `<path>.new` and renamed over `path`; its digest is `<path>.digest`. A tree
+  is uploaded as `<path>.incoming.tar`, unpacked into `<path>.new` with its
+  digest in `<path>/.digest`, and swapped in by renaming the old tree to
+  `<path>.old`; a tree left only at `<path>.old` by an interrupted deploy is
+  renamed back first. `deploy()` owns those sibling names and removes them.
+- A `path` that exists without the digest marker is not a previous deploy
+  and is never replaced: `FileExistsError`, with or without `force`.
+- `Deployment(path, digest, written, command)`: `command` is the argv that
+  runs the program, `(python, path)` for a zipapp and `(path + '/bin/' +
+  package,)` for a tree; run it with `host.run(Exec(*deployment.command,
+  *args))`.
+- The target must be POSIX (`host.shell_flavour.pathname` is
+  `PurePosixPath`; `NotImplementedError` otherwise, before anything is
+  sent) with `mv`, `rm`, `mkdir`, `chmod` and `tar --strip-components`. Each
+  step is an `Exec` argv with `--` before path operands, so no shell parses
+  a path; a failing step raises `subprocess.CalledProcessError`. Progress is
+  logged on `host.logger`.
+- `BundleError` (before anything is sent): a distribution containing a
+  compiled extension (`.so`, `.pyd`, `.dll`; install it on the target another
+  way and `skip` it), a distribution with nothing importable, a tree without
+  the package. A declared dependency not installed here is left out of the
+  closure, not an error.
+- `bundle()` writes the same layouts locally at `destination` and returns
+  it; with no probe the whole closure ships, markers evaluated for this
+  interpreter.
+- `SourceTree(root, ...)` is a working tree shipped as a clone of it would
+  have it: filtered by `.gitignore`, `.ignore` and `.bundleignore` (gitignore
+  rules; nested files apply below their directory) or by the `ignore_files`
+  named (a named file that is absent is `BundleError`); `ignore_patterns` are
+  layered last, so `!name` re-includes. `.git` at any depth and symbolic
+  links are never shipped. `pythonpath` names the tree's import roots
+  relative to `root`; by default every one of `src`, `lib`, `vendor` and the
+  root holding `<package>` is used. Its own dependencies are not vendored.
+- `files()` lists `(arcname, source)` pairs, each arcname under the root's
+  directory name. `requirements()` returns the declared dependency names
+  from `pyproject.toml` (`dependencies` plus each of `extras`) or else
+  `requirements.txt`, without installing anything; `include`/`exclude` take a
+  name or `"[extra]"`, and `exclude` wins. A tree with neither file raises
+  `BundleError`; `deploy()` then only logs that it declares nothing.
+
 ## Exceptions
 
 Every exception hostctl raises of its own lives in `hostctl.exceptions` and
@@ -1397,7 +1479,8 @@ HostctlError(Exception)
 │   ├── QGAProtocolError
 │   └── ConsoleProtocolError
 ├── QGATimeoutError(HostctlError, TimeoutError)
-└── QGACommandError(HostctlError)
+├── QGACommandError(HostctlError)
+└── BundleError(HostctlError, RuntimeError)
 ```
 
 ```python
@@ -1422,6 +1505,8 @@ QGACommandError(error_class, description, *, data=None)
 - `QGACommandError` -- the guest agent refused a command (`.error_class`,
   `.description`, `.data`); path operations translate it into the matching
   `OSError`.
+- `BundleError` -- `hostctl.deploy` cannot build a correct bundle from what
+  is installed here; raised before anything is sent to the target.
 
 ## Command line
 
