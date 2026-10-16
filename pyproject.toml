@@ -127,6 +127,9 @@ addopts = "-ra --strict-markers --strict-config"
 filterwarnings = ["error"]
 # An expected failure that starts passing fails the run, so it is noticed.
 xfail_strict = true
+# A test still running after this many seconds dumps every thread's stack, so
+# a hang in CI names its test instead of only stopping the job.
+faulthandler_timeout = 300
 
 [tool.black]
 target-version = ["py39"]
