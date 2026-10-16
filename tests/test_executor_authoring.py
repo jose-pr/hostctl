@@ -468,9 +468,7 @@ def test_a_decline_while_sending_moves_to_the_next_provider():
 
     assert result.stdout == b"ok"
     assert refused.abandoned == 0
-    assert [item.provider for item in host.last_selection if item.chosen] == [
-        "second"
-    ]
+    assert [item.provider for item in host.last_selection if item.chosen] == ["second"]
 
 
 def test_a_decline_after_the_command_was_sent_is_not_replayed():
