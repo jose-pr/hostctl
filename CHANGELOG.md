@@ -34,6 +34,7 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `ExecutorCommand`; `executor.PathLike`, `Input`, `Environment`, `FileHandle` | `CommandLike`; `StrPath`, `CommandInput`, `CommandEnvironment`, `StreamTarget` |
 | `pypsrp_available()`, `require_pypsrp()` | `has_psrp()` (and new `has_ssh()`); the guard is internal |
 | `host.path(p, backend=name)` re-selecting a provider per operation | pinned to `name`, as `.via(name)`; `host.path(p)` selects per operation |
+| `serial:///dev/ttyUSB0` (any `serial:///NAME`, `serial:/NAME`) naming the relative device `dev/ttyUSB0` / `NAME`; `serial:////dev/x` naming `dev/x` | the absolute `/dev/ttyUSB0` / `/NAME`; a relative device is `serial:NAME`; `serial:////...` raises `ValueError`; `COMn`, `\\.\...`, pyserial URLs and the encoded `serial:///%2Fdev%2Fx` are unchanged |
 
 pytruenas 0.5.4 and earlier pin `hostctl<0.4` and import the 0.3 paths
 (`from hostctl.host import PosixHost, SshConfig, ...`), so they do not import
@@ -563,6 +564,16 @@ collection until pytruenas ports to these names.
   terminal put ANSI colour codes into formatted tables and error records even
   through a pipe (`run(..., capture_output=True)` returned
   `'\x1b[32;1ma\x1b[0m'` for `a`).
+- A `serial:` URI reads its device the way a `file:` URI reads its path:
+  `serial:///dev/ttyUSB0` and `serial:/dev/ttyUSB0` open `/dev/ttyUSB0`, where
+  they opened `dev/ttyUSB0` relative to the working directory (the CLI help's
+  own example did). A Windows port and a pyserial URL keep no slash
+  (`serial:///COM3` is `COM3`, `serial:///loop://` is `loop://`), the encoded
+  `serial:///%2Fdev%2FttyUSB0` is still `/dev/ttyUSB0`, `serial:ttyUSB0` is a
+  relative device, and `serial:////dev/ttyUSB0` raises `ValueError` naming the
+  three-slash spelling. `str(SerialConfig("/dev/ttyUSB0"))` renders
+  `serial:///dev/ttyUSB0`, percent-encoding only what a URI path cannot hold.
+  This ships in 0.4.0.
 
 ### Security
 

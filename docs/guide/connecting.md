@@ -199,7 +199,7 @@ above; `qga+ssh` defaults `socket_path` to `/run/qemu-server/DOMAIN.qga`.
 
 | | |
 | --- | --- |
-| URI | `serial:///DEVICE[?query]` (the device percent-encoded) |
+| URI | `serial:///dev/ttyUSB0`, `serial:///COM3`, `serial:///loop://` (`[?query]`) |
 | query keys | `baudrate`, `bytesize`, `parity`, `stopbits`, `xonxoff`, `rtscts`, `dsrdtr`, `read_timeout`, `write_timeout`, `inter_byte_timeout`, `exclusive` |
 | credentials | `profile`, `serial_factory`, `serial_port` |
 | extra | `serial` (unless a port is injected) |
@@ -208,8 +208,9 @@ above; `qga+ssh` defaults `socket_path` to `/run/qemu-server/DOMAIN.qga`.
 from hostctl import HostConfig, PromptConsoleProfile, SerialConfig
 
 windows_port = HostConfig("serial:///COM3?baudrate=9600")
-posix_port = HostConfig("serial:///%2Fdev%2FttyUSB0")
+posix_port = HostConfig("serial:///dev/ttyUSB0")
 assert posix_port.device == "/dev/ttyUSB0"
+assert windows_port.device == "COM3"
 network_port = SerialConfig("rfc2217://console.example:4001")
 
 with_login = SerialConfig(
@@ -221,9 +222,19 @@ with_login = SerialConfig(
 )
 ```
 
-A device path must be percent-encoded in the URI: `serial:////dev/ttyUSB0`
-reads as the relative name `dev/ttyUSB0`. `SerialConfig(device)` takes it as
-written, and `str(config)` renders the encoded form. A console has no
+The device reads the way a `file:` URI's path does (RFC 8089):
+`serial:///dev/ttyUSB0` and `serial:/dev/ttyUSB0` are `/dev/ttyUSB0`. A
+device pyserial resolves by name rather than as a path drops the URI's leading
+slash, as `file:///C:/x` is `C:/x`: a Windows port (`serial:///COM3` is
+`COM3`, `serial:///%5C%5C.%5CCOM10` is `\\.\COM10`) and a pyserial URL
+(`serial:///loop://` and `serial:///loop%3A%2F%2F` are both `loop://`). A
+relative device is the opaque form, `serial:ttyUSB0`. Percent-encode only what
+a URI path cannot hold (a space, `?`, `#`); an encoded slash right after the
+leading one is part of the device, so `serial:///%2Fdev%2FttyUSB0` is still
+`/dev/ttyUSB0`. `serial:////dev/ttyUSB0` is refused, naming the three-slash
+spelling. `SerialConfig(device)` takes the device as written, and
+`str(config)` renders the readable form that reads back as the same device. A
+console has no
 username or password of its own; a login is the profile's `login=` steps,
 whose `secret=True` values are redacted from transcripts. RFC 2217 is not
 encrypted.

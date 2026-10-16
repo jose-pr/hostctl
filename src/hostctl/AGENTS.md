@@ -626,8 +626,15 @@ SerialHost(config)
 
 One exclusive byte-stream lease on a serial console; needs the `serial` extra
 unless a port is injected. `device` is what pyserial takes (`"COM3"`,
-`"/dev/ttyUSB0"`, `"rfc2217://host:4001"`); `Host("serial:///COM3")` is the
-URI spelling. `serial_factory` (a `SerialFactory`, returning a `SerialLike`)
+`"/dev/ttyUSB0"`, `"rfc2217://host:4001"`). The URI path reads like a
+`file:` URI's: `serial:///dev/ttyUSB0` (or `serial:/dev/ttyUSB0`) is
+`/dev/ttyUSB0`; a Windows port and a pyserial URL drop the leading slash
+(`serial:///COM3` is `COM3`, `serial:///%5C%5C.%5CCOM10` is `\\.\COM10`,
+`serial:///loop://` is `loop://`); `serial:ttyUSB0` is a relative device; an
+encoded slash after the leading one belongs to the device
+(`serial:///%2Fdev%2FttyUSB0` is `/dev/ttyUSB0`); `serial:////...` raises
+`ValueError`. `connection_uri` renders that readable form and reads back as the
+same device. `serial_factory` (a `SerialFactory`, returning a `SerialLike`)
 and `serial_port` are supported injection seams: a caller that passes
 `serial_port=` keeps ownership of it. `SerialConfig` takes no
 `username`/`password`; console credentials are the profile's `login=` steps.
