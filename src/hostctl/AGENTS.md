@@ -175,6 +175,34 @@ its class, its registered name, or `"auto"`. `PathnameSelection` is what
 `"windows"` or `"auto"`; a bare `PurePath` is refused because it would infer
 the local OS.
 
+## Timeouts (`hostctl.host`)
+
+```python
+Timeout(total=DEFAULT, *, connect=DEFAULT, read=DEFAULT, write=DEFAULT)
+Timeout.coerce(value) -> Timeout
+DEFAULT
+```
+
+- `Timeout` is a frozen, hashable dataclass of four fields, in seconds:
+  `total` bounds a whole command (the default of `run(timeout=)`), `connect`
+  establishing a connection, session or port, `read` one reply or one read,
+  `write` one write. `Timeout(30)` sets `total` only; the other fields are
+  keyword-only.
+- Each field is `DEFAULT` (the transport's own documented default), `None`
+  (no limit) or a positive, finite number, stored as `float`. Anything else
+  raises at construction: `TypeError` for a value that is not a number,
+  `None` or `DEFAULT` (a `bool` included), `ValueError` for zero, a negative
+  number or infinity.
+- `repr()` shows only the fields that are not `DEFAULT` (`Timeout(total=30.0,
+  read=None)`, `Timeout()`) and evaluates back to an equal value.
+  `dataclasses.replace()` validates the new value.
+- `Timeout.coerce(value)` is what a config's `timeout=` does with its
+  argument: a `Timeout` unchanged, a number or `None` as
+  `Timeout(total=value)`, `DEFAULT` as `Timeout()`; anything else raises
+  `TypeError`.
+- `DEFAULT` is a singleton compared with `is`; its `repr` is `DEFAULT`, and
+  it pickles and copies to itself.
+
 ## URIs (`hostctl.uri`)
 
 ```python

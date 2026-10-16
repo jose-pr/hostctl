@@ -38,7 +38,13 @@ from .executor import (
     ExecutorCapability as ExecutorCapability,
     CommandLike as CommandLike,
 )
-from .host import Host as Host, HostConfig as HostConfig, HostInfo as HostInfo
+from .host import (
+    DEFAULT as DEFAULT,
+    Host as Host,
+    HostConfig as HostConfig,
+    HostInfo as HostInfo,
+    Timeout as Timeout,
+)
 from .paths import (
     CompositePosixPath as CompositePosixPath,
     CompositeWindowsPath as CompositeWindowsPath,
@@ -129,6 +135,8 @@ __all__ = [
     "Host",
     "HostConfig",
     "HostInfo",
+    "Timeout",
+    "DEFAULT",
     "LocalConfig",
     "LocalHost",
     "local_providers",
