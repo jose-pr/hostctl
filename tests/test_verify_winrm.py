@@ -181,7 +181,7 @@ def test_native_skips_the_checks_only_for_false():
     def options(verify):
         return NativeWinRMSession("h", ssl=True, verify=verify)._wrapper("x")
 
-    assert "-SkipCACheck -SkipCNCheck" in options(False)
+    assert "-SkipCACheck -SkipCNCheck -SkipRevocationCheck" in options(False)
     assert "SkipCACheck" not in options(True)
 
 

@@ -116,11 +116,12 @@ class NativeWinRMSession:
         if self.port is not None:
             options.append(f"Port={self.port}")
         # `SkipCACheck` and `OpenTimeout` are `New-PSSessionOption`
-        # parameters, not `Invoke-Command` ones.  Both certificate checks are
-        # skipped together to match the pywinrm leg's `verify=False`.
+        # parameters, not `Invoke-Command` ones.  Every certificate check is
+        # skipped, as on the pywinrm and PSRP legs, which never check
+        # revocation at all.
         session_options = []
         if self._skip_ca_check:
-            session_options.append("-SkipCACheck -SkipCNCheck")
+            session_options.append("-SkipCACheck -SkipCNCheck -SkipRevocationCheck")
         if self.open_timeout is not None:
             milliseconds = min(
                 math.ceil(self.open_timeout * 1000), _MAX_SESSION_OPTION_MS

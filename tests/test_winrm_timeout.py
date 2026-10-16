@@ -241,8 +241,9 @@ def test_native_open_timeout_joins_the_certificate_options():
     wrapper = NativeWinRMSession("h", ssl=True, verify=False, open_timeout=3)._wrapper(
         "x"
     )
-    assert "New-PSSessionOption -SkipCACheck -SkipCNCheck -OpenTimeout 3000;" in (
-        wrapper
+    assert (
+        "New-PSSessionOption -SkipCACheck -SkipCNCheck -SkipRevocationCheck -OpenTimeout 3000;"
+        in (wrapper)
     )
 
 
