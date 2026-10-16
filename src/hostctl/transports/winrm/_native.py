@@ -8,6 +8,7 @@ import subprocess
 import uuid
 import typing
 
+from ..._windows import no_window_flags
 from ...executor import POWERSHELL_STATUS, expired
 from ._pywinrm import _Response, _b64
 
@@ -207,6 +208,7 @@ class NativeWinRMSession:
                 stderr=subprocess.PIPE,
                 check=False,
                 timeout=deadline,
+                creationflags=no_window_flags(),
             )
         except subprocess.TimeoutExpired as exc:
             # Never expose the local powershell argv as the remote command.

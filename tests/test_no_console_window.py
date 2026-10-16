@@ -69,3 +69,25 @@ def test_an_explicit_creationflags_wins(monkeypatch):
     )
     flags = subprocess.CREATE_NEW_PROCESS_GROUP
     assert _recorded_flags(monkeypatch, creationflags=flags) == [flags]
+
+
+@windows
+def test_the_native_winrm_relay_starts_without_a_window(monkeypatch):
+    from hostctl.transports.winrm._native import NativeWinRMSession
+
+    seen = []
+
+    class _Completed:
+        returncode, stdout, stderr = 0, b"", b""
+
+    def fake_run(argv, **kwargs):
+        seen.append(kwargs.get("creationflags", 0))
+        return _Completed()
+
+    monkeypatch.setattr(
+        "hostctl.transports.winrm._native.no_window_flags",
+        lambda: subprocess.CREATE_NO_WINDOW,
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    NativeWinRMSession("server.example").run_ps("Write-Output x")
+    assert seen == [subprocess.CREATE_NO_WINDOW]
