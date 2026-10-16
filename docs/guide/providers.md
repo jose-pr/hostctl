@@ -293,6 +293,35 @@ host.path("payload").via("download").write_bytes(b"...")
 That explicit refusal is deliberate. Silently rerouting a mutation would hide
 which channel performed a stateful operation.
 
+## Composite paths without a host
+
+A set of path providers is enough to build a composite path:
+`CompositePosixPath.over(providers, *segments, backend=None)` (or
+`CompositeWindowsPath.over`) is the constructor `host.path()` itself calls, so
+the path falls back per operation, pins with `.via()` or `backend=`, answers
+`supports()` and forwards each call exactly as a host's path does:
+
+```python
+from hostctl import CompositePosixPath, SSHConfig, ssh_providers
+from hostctl.provider import PathProvider, READ_ONLY_PATH_OPERATIONS
+
+run, sftp = ssh_providers(SSHConfig("nas", username="admin"))
+api = PathProvider("api", api_path, capabilities=READ_ONLY_PATH_OPERATIONS)
+
+path = CompositePosixPath.over((sftp, api), "/mnt/tank/report.csv")
+data = path.read_bytes()   # SFTP, or the API when SFTP is unreachable
+run.close()                # the path owns no provider
+```
+
+`providers` is an ordered iterable or a `ProviderSelector`. Paths built over
+one selector share its declines and probe cache, so a provider refused once
+is not dialled again by the next path; an iterable gets a selector of its own
+on each call. Either way, two composites that can route to the same provider
+object are one filesystem, so copying a file onto itself is refused. The path
+closes nothing: close the providers when you are done (for
+`ssh_providers()`, the executor provider's `close()` closes the shared
+transport).
+
 ## Authoring a provider
 
 An executor provider needs a name, a probe, declared capabilities, and an

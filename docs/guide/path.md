@@ -24,8 +24,11 @@ A composite path keeps the logical path and picks a provider per operation;
 `path.provider` is the one selected and `path.via(name)` pins one.
 `host.path(p, backend=name)` builds the path with the named provider and
 returns it pinned there, the same path as `host.path(p).via(name)`: every
-operation on it, and on every path derived from it, goes to that provider. The
-[Systems and providers](providers.md) guide covers selection and pinning.
+operation on it, and on every path derived from it, goes to that provider.
+Without a host, `CompositePosixPath.over(providers, *segments)` builds the same
+path from a set of path providers. The
+[Systems and providers](providers.md) guide covers selection, pinning and
+[composite paths without a host](providers.md#composite-paths-without-a-host).
 
 Container archive paths support metadata, traversal, streaming reads, and
 buffered write/append/exclusive-create without requiring a shell in the image.
