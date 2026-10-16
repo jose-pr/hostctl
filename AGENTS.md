@@ -91,13 +91,17 @@ comments and docs that narrate history.
 Three workflows, one per concern:
 
 - `test.yml` — `workflow_dispatch` (with a `ref` input) and throwaway `ci-*`
-  tags, plus a Linux job that runs the conformance battery against **live**
-  sshd, Docker and serial loopback legs, and an informative
+  tags: the suite on the version/OS matrix, `floors` (3.9 and 3.10 at the
+  declared dependency floors), `package` + `wheel-smoke` (the built wheel in a
+  clean venv on three OSes), a Linux job that runs the conformance battery
+  against **live** sshd, Docker and serial loopback legs, and an informative
   `downstream-pytruenas` job that runs the pytruenas suite against this
-  checkout.
-- `release.yml` — on a `v*` tag: test gate → build → GitHub release → PyPI,
-  plus a strict docs **build** that gates the release without deploying, and a
-  final job that dispatches `docs.yml` at the tag. An `-rc.N` tag publishes a
+  checkout. The test and floor jobs set `HOSTCTL_TEST_COLLECT=1`
+  (`tests/conftest.py`).
+- `release.yml` — on a `v*` tag: test + floors → build (tag/version check,
+  `twine check`) → wheel-smoke → GitHub release → PyPI, plus a strict docs
+  **build** that gates the release without deploying, and a final job that
+  dispatches `docs.yml` at the tag. An `-rc.N` tag publishes a
   PyPI pre-release too (pip installs it only with `--pre`); its docs are not
   deployed.
 - `docs.yml` — owns every Pages deploy: on a push to `main` touching

@@ -284,7 +284,8 @@ needs a Rust toolchain and OpenSSL).
 
 This project follows [Semantic Versioning](https://semver.org/) and keeps a
 [`CHANGELOG.md`](https://github.com/jose-pr/hostctl/blob/main/CHANGELOG.md). Pushing a tag matching `v*` triggers the release
-workflow: test gate → build → publish, with a strict docs build as a gate.
+workflow: tests and dependency floors → build (tag/version and `twine` checks)
+→ installed-wheel smoke → publish, with a strict docs build as a gate.
 The docs site itself is deployed by `docs.yml`, which also redeploys on a push
 to `main` touching docs sources and on manual dispatch -- so a docs fix reaches
 the site without cutting a tag.
