@@ -195,6 +195,8 @@ _LITERAL_OPTIONS = {
     "-mindepth",
     "-printf",
     "-m",
+    "-a",
+    "-d",
     "-f",
     "-T",
     "-n",
@@ -224,6 +226,7 @@ def test_a_dash_leading_path_is_never_an_option(hostile):
     helper.rmdir(hostile)
     helper.chmod(hostile, 0o644)
     helper.rename(hostile, "/b", replace=True)
+    helper.utime(hostile, atime=1, mtime=2)
 
     for program, argv in guest.calls:
         if program == "find":
@@ -279,6 +282,83 @@ def test_a_failing_guest_command_becomes_a_filesystem_error():
         PosixGuestPathHelper(guest).stat("/nope")
 
 
+def test_utime_proves_the_path_exists_then_touches_it():
+    """`touch -c` exits 0 for a missing path, so `stat` runs first."""
+    guest = _Guest({"stat": (0, b"81a4\n", b"")})
+
+    PosixGuestPathHelper(guest).utime("/srv/f", mtime=1_000_000_000.5)
+
+    assert guest.calls == [
+        ("stat", ("-L", "-c", "%f", "--", "/srv/f")),
+        ("touch", ("-c", "-m", "-d", "@1000000000.500000000", "--", "/srv/f")),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("times", "runs"),
+    (
+        ({"atime": 7, "mtime": 7}, [("-c", "-d", "@7", "--", "/f")]),
+        ({"atime": 7}, [("-c", "-a", "-d", "@7", "--", "/f")]),
+        (
+            {"atime": 7, "mtime": 9},
+            [
+                ("-c", "-a", "-d", "@7", "--", "/f"),
+                ("-c", "-m", "-d", "@9", "--", "/f"),
+            ],
+        ),
+    ),
+)
+def test_utime_sets_one_time_without_touching_the_other(times, runs):
+    """`-d` gives both times one value: two values take two runs."""
+    guest = _Guest({"stat": (0, b"81a4\n", b"")})
+
+    PosixGuestPathHelper(guest).utime("/f", **times)
+
+    assert [argv for program, argv in guest.calls if program == "touch"] == runs
+
+
+def test_utime_falls_back_to_whole_seconds_on_busybox():
+    """busybox `touch -d @N.F` is an invalid date; `@N` is not."""
+
+    def touch(args):
+        if "." in args[args.index("-d") + 1]:
+            return 1, b"", b"touch: invalid date '%s'\n" % args[3].encode()
+        return 0, b"", b""
+
+    guest = _Guest({"stat": (0, b"81a4\n", b""), "touch": touch})
+    helper = PosixGuestPathHelper(guest)
+
+    helper.utime("/f", mtime=1_000_000_000.75)
+    helper.utime("/f", mtime=1_000_000_001.25)
+
+    stamps = [argv[3] for program, argv in guest.calls if program == "touch"]
+    # Floored, never rounded into the next second; asked once, then known.
+    assert stamps == ["@1000000000.750000000", "@1000000000", "@1000000001"]
+
+
+def test_utime_of_a_missing_path_touches_nothing():
+    guest = _Guest(
+        {"stat": (1, b"", b"stat: cannot statx '/nope': No such file or directory")}
+    )
+
+    with pytest.raises(FileNotFoundError):
+        PosixGuestPathHelper(guest).utime("/nope", mtime=1)
+
+    assert [program for program, _ in guest.calls] == ["stat"]
+
+
+def test_a_refused_touch_is_a_filesystem_error():
+    guest = _Guest(
+        {
+            "stat": (0, b"81a4\n", b""),
+            "touch": (1, b"", b"touch: setting times of '/f': Permission denied\n"),
+        }
+    )
+
+    with pytest.raises(PermissionError):
+        PosixGuestPathHelper(guest).utime("/f", mtime=1)
+
+
 def test_exists_below_a_regular_file_is_false_not_an_error():
     """GNU stat answers ENOTDIR for `/etc/passwd/child`; pathlib says False."""
     from hostctl.transports.qemu._path import PosixQEMUPath
@@ -327,6 +407,23 @@ def test_the_windows_helper_sends_the_script_on_stdin():
     assert args == ("-NoProfile", "-NonInteractive", "-Command", "-")
     assert "-EncodedCommand" not in args
     assert inputs[-1] == b"exit 0\r\n\r\n"
+
+
+def test_the_windows_helper_sets_times_with_the_winrm_script_on_stdin():
+    guest = _Guest({"powershell.exe": (0, b"", b"")})
+    inputs = []
+    original = guest.__call__
+
+    def recording(program, *args, **options):
+        inputs.append(options.get("input") or b"")
+        return original(program, *args, **options)
+
+    helper = WindowsGuestPathHelper.probe(recording)
+    helper.utime("C:\\f.txt", mtime=0.5)
+
+    assert guest.calls[-1][1] == ("-NoProfile", "-NonInteractive", "-Command", "-")
+    assert b"SetLastWriteTimeUtc($p,[DateTime]::new(621355968005000000," in inputs[-1]
+    assert b"SetLastAccessTimeUtc" not in inputs[-1]
 
 
 def test_the_windows_probe_declines_a_guest_without_powershell():
@@ -512,3 +609,22 @@ def test_scandir_of_a_regular_file_raises_not_a_directory():
 
     with pytest.raises(NotADirectoryError):
         PosixGuestPathHelper(guest).scandir("/tmp/f")
+
+
+def test_utime_support_follows_the_probed_helper():
+    """A guest without a helper has nothing that can set a time."""
+    from pathapi.protocols import Utime, supports
+
+    for answer, expected in (((0, b"41ed\n", b""), True), ((1, b"", b"no"), False)):
+        guest = _Guest({"stat": answer})
+        transport = _QGATransport(
+            guest,
+            osinfo={"id": "ubuntu", "kernel-name": "Linux"},
+            commands=("guest-get-osinfo",),
+        )
+        path = _host(transport).path("/srv/file")
+
+        assert supports(path, Utime) is expected
+        if not expected:
+            with pytest.raises(NotImplementedError):
+                path._utime(mtime=1)

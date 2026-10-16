@@ -10,6 +10,7 @@ import typing
 from pathapi import FileStat
 
 
+from ...paths._utime import Touch
 from ._qga import guest_oserror
 
 
@@ -34,6 +35,14 @@ class GuestPathHelper(typing.Protocol):
     def rename(self, path: str, target: str, *, replace: bool = False) -> None: ...
 
     def chmod(self, path: str, mode: int, *, follow_symlinks: bool = True) -> None: ...
+
+    def utime(
+        self,
+        path: str,
+        *,
+        atime: typing.Optional[float] = None,
+        mtime: typing.Optional[float] = None,
+    ) -> None: ...
 
 
 #: Script bytes one `guest-exec` call carries as its `input-data`; a larger
@@ -81,6 +90,7 @@ class PosixGuestPathHelper:
 
     def __init__(self, run: GuestRunner) -> None:
         self._run = run
+        self._touch = Touch(self._run_touch)
 
     # -- construction ----------------------------------------------------
 
@@ -125,6 +135,11 @@ class PosixGuestPathHelper:
                 _GuestCommandError(self._text(result, stream="stderr")), path
             )
         return result
+
+    def _run_touch(self, argv: typing.Sequence[str]) -> typing.Tuple[int, str]:
+        program, *arguments = argv
+        result = self._run(program, *arguments, capture_output=True, check=False)
+        return result.returncode, self._text(result, stream="stderr")
 
     @staticmethod
     def _text(result: subprocess.CompletedProcess, stream: str = "stdout") -> str:
@@ -249,6 +264,26 @@ class PosixGuestPathHelper:
             )
         self._execute(["chmod", format(mode & 0o7777, "04o"), "--", path], path=path)
 
+    def utime(
+        self,
+        path: str,
+        *,
+        atime: typing.Optional[float] = None,
+        mtime: typing.Optional[float] = None,
+    ) -> None:
+        """Set the times with `touch`, following a link as `touch` does.
+
+        `touch -c` exits 0 for a missing path, so `stat` proves it exists
+        first. GNU keeps nanoseconds; busybox whole seconds (see `Touch`).
+        """
+        self._execute(["stat", "-L", "-c", "%f", "--", path], path=path)
+        self._touch.utime(
+            path,
+            atime=atime,
+            mtime=mtime,
+            error=lambda text: guest_oserror(_GuestCommandError(text), path),
+        )
+
 
 class _GuestCommandError(Exception):
     """A guest command's stderr, shaped for `guest_oserror` to classify."""
@@ -364,6 +399,15 @@ class WindowsGuestPathHelper:
         # Only the write bit maps: NTFS has no POSIX mode, and
         # `WinRMPathBackend.chmod` sets or clears the read-only attribute.
         self._backend.chmod(path, mode)
+
+    def utime(
+        self,
+        path: str,
+        *,
+        atime: typing.Optional[float] = None,
+        mtime: typing.Optional[float] = None,
+    ) -> None:
+        self._backend.utime(path, atime=atime, mtime=mtime)
 
 
 __all__ = [

@@ -18,6 +18,7 @@ from pathapi import FileStat
 
 from ._pywinrm import _b64
 from ...paths._backend import WindowsBackendPath
+from ...paths._utime import dotnet_ticks
 
 
 def _append_operation(encoded: str) -> str:
@@ -429,6 +430,38 @@ class WinRMPathBackend:
             "[IO.FileAttributes]::ReadOnly)}else{[IO.FileAttributes]($i.Attributes "
             "-band (-bnot [IO.FileAttributes]::ReadOnly))};"
             "Set-ItemProperty -LiteralPath $p -Name Attributes -Value $i.Attributes",
+        )
+
+    def utime(
+        self,
+        path: str,
+        *,
+        atime: typing.Optional[float] = None,
+        mtime: typing.Optional[float] = None,
+    ) -> None:
+        """Set the times of an existing entry, to NTFS's 100 ns tick (UTC)."""
+        setters = "".join(
+            f"$k::{name}($p,[DateTime]::new({dotnet_ticks(value)},"
+            "[DateTimeKind]::Utc));"
+            for name, value in (
+                ("SetLastWriteTimeUtc", mtime),
+                ("SetLastAccessTimeUtc", atime),
+            )
+            if value is not None
+        )
+        self._execute(
+            path,
+            "$i=Get-Item -LiteralPath $p -Force;"
+            "$k=if($i.PSIsContainer){[IO.Directory]}else{[IO.File]};"
+            # Windows PowerShell's .NET Framework opens the file for writing
+            # to set a time, which a read-only file refuses; the attribute is
+            # cleared around the call and put back.
+            "$a=$i.Attributes;"
+            "$r=(-not $i.PSIsContainer) -and "
+            "($a -band [IO.FileAttributes]::ReadOnly);"
+            "if($r){[IO.File]::SetAttributes($p,"
+            "$a -bxor [IO.FileAttributes]::ReadOnly)};"
+            "try{" + setters + "}finally{if($r){[IO.File]::SetAttributes($p,$a)}}",
         )
 
 

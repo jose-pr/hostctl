@@ -533,3 +533,52 @@ def test_reparse_failures_carry_an_errno():
 
     with pytest.raises(FileNotFoundError):
         _Dangling().stat(r"C:\l")
+
+
+def test_utime_is_one_literal_script_within_the_budget():
+    scripts = []
+
+    def run(script, **kwargs):
+        scripts.append(script)
+        return subprocess.CompletedProcess(script, 0, "", "")
+
+    backend = WinRMPathBackend(run, max_script_bytes=2048)
+    backend.utime(r"C:\it's [a]*.txt", atime=0.5, mtime=1_000_000_000.1234567)
+
+    (script,) = scripts
+    assert len(script.encode("utf-8")) <= backend.max_script_bytes
+    assert "Get-Item -LiteralPath $p" in script
+    assert "it's [a]" not in script
+    # 0001-01-01 to the epoch is 621355968000000000 ticks of 100 ns.
+    assert "SetLastWriteTimeUtc($p,[DateTime]::new(631355968001234567," in script
+    assert "SetLastAccessTimeUtc($p,[DateTime]::new(621355968005000000," in script
+
+
+def test_utime_leaves_a_time_that_is_none_alone():
+    scripts = []
+
+    def run(script, **kwargs):
+        scripts.append(script)
+        return subprocess.CompletedProcess(script, 0, "", "")
+
+    backend = WinRMPathBackend(run, max_script_bytes=_SCRIPT_BUDGET)
+    backend.utime(r"C:\f.txt", mtime=5)
+
+    assert "SetLastWriteTimeUtc" in scripts[0]
+    assert "SetLastAccessTimeUtc" not in scripts[0]
+
+
+def test_a_winrm_path_supports_utime_and_forwards_it():
+    from pathapi.protocols import Utime, supports
+
+    calls = []
+
+    class Backend(_MemoryBackend):
+        def utime(self, path, *, atime=None, mtime=None):
+            calls.append((path, atime, mtime))
+
+    path = WinRMPath(r"C:\f.txt", backend=Backend())
+
+    assert supports(path, Utime)
+    path._utime(mtime=12.5)
+    assert calls == [(r"C:\f.txt", None, 12.5)]

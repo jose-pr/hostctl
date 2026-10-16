@@ -445,6 +445,9 @@ class _ContainerPathMixin:
     @notimplemented("Docker archive APIs cannot rename paths")
     def rename(self, target): ...
 
+    @notimplemented("Docker archive APIs cannot set times")
+    def _utime(self, *, atime=None, mtime=None): ...
+
 
 class PosixContainerPath(_ContainerPathMixin, PosixBackendPath):
     """A POSIX container path backed by Docker archive operations."""

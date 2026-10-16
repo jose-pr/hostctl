@@ -7,7 +7,7 @@ import typing
 
 
 from pathapi import WindowsPathname
-from pathapi.protocols import Chmod, Create, Listing, Move, Remove, Stat
+from pathapi.protocols import Chmod, Create, Listing, Move, Remove, Stat, Utime
 from pathapi.providers import notimplemented
 
 
@@ -23,6 +23,7 @@ _HELPER_OPERATIONS = {
     Remove: ("unlink", "rmdir"),
     Chmod: ("chmod",),
     Move: ("rename",),
+    Utime: ("utime",),
 }
 
 

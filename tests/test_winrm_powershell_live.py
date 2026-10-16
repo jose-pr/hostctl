@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 
 import pytest
@@ -255,3 +256,44 @@ def test_a_read_from_an_offset_is_one_script(backend, tmp_path):
     assert backend.read_bytes(str(tmp_path / "f"), 123_456) == data[123_456:]
     with pytest.raises(ValueError):
         backend.read_bytes(str(tmp_path / "f"), -1)
+
+
+def test_utime_sets_both_times_to_the_ntfs_tick(backend, tmp_path):
+    """The time lands on the 100 ns tick, truncated, and `None` leaves one."""
+    target = tmp_path / "times[1].txt"
+    target.write_text("kept")
+
+    backend.utime(str(target), mtime=1_000_000_000.1234567)
+    assert target.stat().st_mtime_ns == 1_000_000_000_123_456_700
+    before = target.stat().st_mtime_ns
+    backend.utime(str(target), atime=1_200_000_000.5)
+
+    assert target.stat().st_atime_ns == 1_200_000_000_500_000_000
+    assert target.stat().st_mtime_ns == before
+    assert backend.stat(str(target)).st_mtime == 1_000_000_000
+    assert target.read_text() == "kept"
+
+
+def test_utime_of_a_read_only_file_keeps_it_read_only(backend, tmp_path):
+    """Windows PowerShell 5.1 refuses to set a read-only file's time."""
+    target = tmp_path / "locked.txt"
+    target.write_text("kept")
+    os.chmod(target, stat.S_IREAD)
+    try:
+        backend.utime(str(target), atime=1_100_000_000, mtime=1_100_000_000)
+
+        assert target.stat().st_mtime_ns == 1_100_000_000_000_000_000
+        assert not target.stat().st_mode & stat.S_IWRITE
+    finally:
+        os.chmod(target, stat.S_IREAD | stat.S_IWRITE)
+
+
+def test_utime_of_a_directory_and_of_a_missing_path(backend, tmp_path):
+    (tmp_path / "d").mkdir()
+
+    backend.utime(str(tmp_path / "d"), mtime=1_300_000_000.75)
+
+    assert (tmp_path / "d").stat().st_mtime_ns == 1_300_000_000_750_000_000
+    with pytest.raises(FileNotFoundError):
+        backend.utime(str(tmp_path / "missing"), mtime=1)
+    assert not (tmp_path / "missing").exists()

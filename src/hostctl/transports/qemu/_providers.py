@@ -30,6 +30,7 @@ QGA_HELPER_OPERATIONS = frozenset(
         "unlink",
         "rmdir",
         "rename",
+        "utime",
     )
 )
 
@@ -76,8 +77,15 @@ class QGAPathProvider(PathProvider):
             values.update(("read", "open", "open_read", "exists"))
         if write_commands <= supported:
             values.update(("write", "open_write"))
-        if getattr(backend, "helper", None) is not None:
-            values.update(QGA_HELPER_OPERATIONS)
+        helper = getattr(backend, "helper", None)
+        if helper is not None:
+            # A caller's `QEMUConfig(path_helper=)` may leave `utime` out;
+            # it is declared only when the helper has it.
+            values.update(
+                operation
+                for operation in QGA_HELPER_OPERATIONS
+                if operation != "utime" or callable(getattr(helper, "utime", None))
+            )
         return frozenset(values)
 
     def probe(self) -> ProviderProbe:

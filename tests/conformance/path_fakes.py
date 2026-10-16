@@ -197,6 +197,12 @@ class WinRMFilesystemRunner:
     _PAYLOAD = re.compile(r"\$b=\[Convert\]::FromBase64String\('([^']+)'\)")
     _SEEK = re.compile(r"\$s\.Seek\((\d+),")
     _BUFFER = re.compile(r"New-Object byte\[\] (\d+)")
+    _TIMES = re.compile(
+        r"\$k::SetLast(Write|Access)TimeUtc\(\$p,\[DateTime\]::new\((\d+),"
+        r"\[DateTimeKind\]::Utc\)\)"
+    )
+    #: `DateTime` ticks at the Unix epoch.
+    _DOTNET_EPOCH = 621_355_968_000_000_000
 
     def __init__(self) -> None:
         self.sandbox = _Sandbox("windows")
@@ -373,6 +379,20 @@ class WinRMFilesystemRunner:
 
         if "[IO.Directory]::Delete($p,$false)" in script:
             path.rmdir()
+            return ""
+
+        times = dict(self._TIMES.findall(script))
+        if times:
+            # `Get-Item` runs first, so a missing path sets nothing. NTFS
+            # keeps the 100 ns tick the script names; the read-only attribute
+            # does not stop the script, which clears it around the call.
+            current = os.stat(path)
+            atime_ns, mtime_ns = current.st_atime_ns, current.st_mtime_ns
+            if "Write" in times:
+                mtime_ns = (int(times["Write"]) - self._DOTNET_EPOCH) * 100
+            if "Access" in times:
+                atime_ns = (int(times["Access"]) - self._DOTNET_EPOCH) * 100
+            os.utime(path, ns=(atime_ns, mtime_ns))
             return ""
 
         if "Set-ItemProperty -LiteralPath $p -Name Attributes" in script:
@@ -637,7 +657,9 @@ class LocalQGATransport:
 
 #: The programs `PosixGuestPathHelper` runs. `GnuGuestPrograms` answers all
 #: of them, so none may reach a real `Popen` against the host's filesystem.
-GNU_PROGRAMS = frozenset(("stat", "find", "mkdir", "rm", "rmdir", "mv", "chmod"))
+GNU_PROGRAMS = frozenset(
+    ("stat", "find", "mkdir", "rm", "rmdir", "mv", "chmod", "touch")
+)
 
 _TYPE_LETTERS = (
     (stat.S_ISREG, "f"),
@@ -816,4 +838,31 @@ class GnuGuestPrograms:
         local = self.sandbox.local(remote)
         self._stat_local(remote, local)
         local.chmod(int(options[0], 8))
+        return 0, b"", b""
+
+    def _touch(self, argv):
+        # GNU touch: `-a`/`-m` alone set that time, neither or both set
+        # both; `-c` on a missing path is a silent success. Only the
+        # `-d @EPOCH[.FRACTION]` date form is emulated.
+        options, (remote,) = self._split(argv)
+        stamp = options[options.index("-d") + 1]
+        match = re.fullmatch(r"@(-?)(\d+)(?:\.(\d+))?", stamp)
+        if match is None:
+            raise AssertionError("emulated touch reads only -d @EPOCH: %r" % stamp)
+        sign, whole, fraction = match.groups()
+        ns = int(whole) * 1_000_000_000 + int((fraction or "")[:9].ljust(9, "0"))
+        ns = -ns if sign else ns
+        local = self.sandbox.local(remote)
+        if not local.exists():
+            if "-c" in options:
+                return 0, b"", b""
+            if not local.parent.is_dir():
+                text = "touch: cannot touch '%s': No such file or directory\n" % remote
+                return 1, b"", text.encode("utf-8")
+            local.touch()
+        current = os.stat(local)
+        both = ("-a" in options) == ("-m" in options)
+        atime = ns if both or "-a" in options else current.st_atime_ns
+        mtime = ns if both or "-m" in options else current.st_mtime_ns
+        os.utime(local, ns=(atime, mtime))
         return 0, b"", b""

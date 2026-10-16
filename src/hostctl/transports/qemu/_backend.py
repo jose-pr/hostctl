@@ -314,6 +314,15 @@ class QGAPathBackend:
     def chmod(self, path: str, mode: int, *, follow_symlinks: bool = True) -> None:
         self._helper_method("chmod")(path, mode, follow_symlinks=follow_symlinks)
 
+    def utime(
+        self,
+        path: str,
+        *,
+        atime: typing.Optional[float] = None,
+        mtime: typing.Optional[float] = None,
+    ) -> None:
+        self._helper_method("utime")(path, atime=atime, mtime=mtime)
+
     def symlink(self, path: str, target: str) -> None:
         raise NotImplementedError(
             "QEMU Guest Agent has no symlink RPC; the guest-file-* commands "

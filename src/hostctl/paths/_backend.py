@@ -3,8 +3,8 @@
 WinRM, the Docker archive API and the QEMU guest agent each hand pathapi a
 path class over a backend object that speaks whole files. What is common to
 them lives here -- construction, derivations, listing, `open()`, copy,
-`rename()` and `chmod()` -- so a fix lands once; a transport keeps only what
-it does differently.
+`rename()`, `chmod()` and `_utime()` -- so a fix lands once; a transport
+keeps only what it does differently.
 """
 
 from __future__ import annotations
@@ -142,6 +142,9 @@ class BackendPathMixin:
 
     def _chmod_on_backend(self, mode: int, follow_symlinks: bool) -> None:
         self.backend.chmod(str(self), mode, follow_symlinks=follow_symlinks)
+
+    def _utime(self, *, atime=None, mtime=None) -> None:
+        self.backend.utime(str(self), atime=atime, mtime=mtime)
 
     def unlink(self, missing_ok=False):
         self.backend.unlink(str(self), missing_ok=missing_ok)
