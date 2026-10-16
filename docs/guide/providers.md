@@ -343,6 +343,11 @@ provider = ExecutorProvider(
 )
 ```
 
+`execute` is any callable matching `Executor`. Rather than write one from
+scratch, subclass `hostctl.executor.BufferedExecutor` or `StreamingExecutor`
+and implement only the transport's primitive -- see
+[Writing an executor](extending.md#writing-an-executor).
+
 A probe returns `available`, `degraded`, or `unavailable` with a reason, the
 capabilities it can honor, and an optional `system_hint`. Probes are cached for
 one connection generation, so they may perform real round trips.

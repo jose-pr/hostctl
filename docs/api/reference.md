@@ -47,6 +47,14 @@ adapters and path backends are internal: a host hands them back typed as
 ::: hostctl.Executor
 ::: hostctl.ExecutionOptions
 ::: hostctl.LocalExecutor
+
+The bases a transport written outside hostctl subclasses; the override
+points and a worked example are in
+[Writing an executor](../guide/extending.md#writing-an-executor).
+
+::: hostctl.executor.BufferedExecutor
+::: hostctl.executor.StreamingExecutor
+::: hostctl.executor.ExecutorRequest
 ::: hostctl.Process
 ::: hostctl.TerminalOptions
 

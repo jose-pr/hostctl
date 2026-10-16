@@ -148,6 +148,19 @@ collection until pytruenas ports to these names.
   an iterable of path providers or a `ProviderSelector`. `host.path()` calls
   the same constructor, so per-operation fallback, `.via()` pinning,
   `supports()`, forwarding and `backend=` behave alike. This ships in 0.4.0.
+- `hostctl.executor.BufferedExecutor`, `StreamingExecutor` and
+  `ExecutorRequest`: base classes for an executor written outside hostctl.
+  A transport implements `_exchange(request)`, or `_send`/`_receive` (and
+  `_abandon` when it can stop a command), and inherits the subprocess-shaped
+  call every built-in executor shares: option and capability refusal,
+  `input=`/`stdin=` as bytes, the `text`/`encoding`/`errors` rule,
+  capture and stream routing (streamed output written as it arrives),
+  `check=True`, the executor's own default for an omitted `timeout`, and a
+  `TimeoutExpired` from `expired()` carrying the output captured so far. An
+  `OperationNotStartedError` raised after the command was sent becomes a
+  `ConnectionError`, so it is never replayed through another provider. The
+  container and PSRP executors are built on `BufferedExecutor`. The guide's
+  "Writing an executor" section has a worked example. This ships in 0.4.0.
 
 ### Changed
 
@@ -388,6 +401,9 @@ collection until pytruenas ports to these names.
 
 ### Fixed
 
+- A PSRP `run(..., text=True)` that times out carries `""` in
+  `TimeoutExpired.output`/`.stderr`, the call's output type, as the local
+  executor does; it carried `b""`.
 - Reading a directory as a file over SSH raises `IsADirectoryError` against
   OpenSSH too (sftppath 0.1.1, now the floor of the `ssh` extra); it returned
   `b""` from a Windows server and a bare `OSError("Failure")` from Linux.
