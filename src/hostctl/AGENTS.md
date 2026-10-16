@@ -1532,6 +1532,20 @@ hostctl deploy ssh://server mytool /opt/mytool.pyz -- --version
 ```
 
 - The program after `run` follows `--`; it runs directly, without a shell.
+- `run` and `info` take several hosts: more URI operands, and in any operand
+  hosts separated by commas and `[1-3]`/`[a-c]` ranges (`duho.expand`,
+  `[1-3:02d]` pads), outside the user part (a comma or bracket there is
+  credentials). A later host with no scheme of its own takes the previous
+  one's scheme and user (`ssh://admin@nas1,nas2`); write a literal comma
+  elsewhere as `%2C`. `--parallel N` (default 1) works on N hosts at once.
+  With more than one host, every `run` output line, stdout and stderr alike,
+  starts with `[URI] ` (the URI without its password), `info` prints one
+  `{"target": URI, "result": {...}}` line per host, each failing host gets a
+  `hostctl: [URI] exit status N[: message]` line on stderr, and the exit
+  status is the worst: 130, then the highest of 125-127, then the remote
+  status largest in magnitude, then 0. A password is read once for all hosts.
+  One host -- including an operand that expands to one -- is exactly the
+  single-host command: no prefix, no wrapper, the same statuses.
 - `ls` prints one name per line with backslashes and non-printable
   characters escaped (`\x1b`, `\u2028`); an undecodable byte is `\xNN`.
 - `cp` operands are `URI:PATH` or a local path; the colon before the path is

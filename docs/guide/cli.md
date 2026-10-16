@@ -97,6 +97,45 @@ profile (prompt, login, status marker) and there is no URI spelling for one --
 a profile is Python, passed as `SerialConfig(profile=...)`. Reach a device
 that needs framing through the library, not the CLI.
 
+## Several hosts
+
+`run` and `info` take more than one host: further URI operands, and in any
+operand hosts separated by commas or written as a range.
+
+```console
+hostctl run ssh://admin@nas1,nas2 ssh://backup -- uptime
+hostctl run 'ssh://admin@node[1-8]' --parallel 4 -- systemctl is-active app
+hostctl info 'ssh://web[a-c].example' docker://cache
+```
+
+- A range is `[1-3]` or `[a-c]`; `[1-3:02d]` pads (`01`, `02`, `03`). Several
+  ranges in one URI give every combination. Quote the operand so the shell
+  does not glob it.
+- A host after a comma that names no scheme of its own takes the previous
+  host's scheme and user: `ssh://admin@nas1,nas2:2222` is `admin` on both.
+  To give it another user, repeat the scheme (`ssh://a@h1,ssh://b@h2`) or
+  use another operand.
+- Commas and brackets in the user part are credentials, not target syntax.
+  Anywhere else, write a literal comma as `%2C`.
+- `--parallel N` works on N hosts at once (default 1, one after another).
+
+With more than one host, every line `run` prints, on stdout and on stderr,
+starts with `[URI] `, the URI as you wrote it without its password; a host's
+lines come out together when it finishes. `info` prints one JSON object per
+line, `{"target": URI, "result": {...}}`. A host that fails gets a line on
+stderr saying so:
+
+```text
+hostctl: [ssh://nas2] exit status 3
+hostctl: [ssh://nas3] exit status 125: no route to host
+```
+
+The command's exit status is the worst of the hosts': 130 (interrupted) if
+any was, else the highest of 125-127 if hostctl itself failed on any, else the
+remote status largest in magnitude, else 0. One host — including an operand
+that expands to a single host — is exactly the single-host command: no
+prefix, no wrapper, the same exit statuses.
+
 ## As MCP tools
 
 With `HOSTCTL_MCP=stdio` in its environment, `hostctl` serves every subcommand
@@ -108,6 +147,8 @@ as an MCP tool over stdio instead of running one: `hostctl.run`, `hostctl.ls`,
 {"command": "hostctl", "env": {"HOSTCTL_MCP": "stdio"}}
 ```
 
+- `uri` stays a string; further hosts are the array `more`, and `parallel`
+  is an integer.
 - `run` takes its program and arguments as the tool argument `"--"`, an array;
   so does `deploy` for the arguments of the program it installed.
 - `deploy` is served like the rest: it needs no terminal, and it lets a tool

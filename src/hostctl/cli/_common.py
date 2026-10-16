@@ -191,5 +191,8 @@ class HostCommand(Credentialed):
 
     def connect(self) -> Host:
         """The host, as a context manager that closes it."""
-        credentials = usable_credentials(self.uri, self.credentials())
-        return Host(self.uri, **credentials)
+        return self.open(self.uri, self.credentials())
+
+    def open(self, uri: str, credentials: dict) -> Host:
+        """The host `uri` names, offered what of `credentials` it accepts."""
+        return Host(uri, **usable_credentials(uri, credentials))

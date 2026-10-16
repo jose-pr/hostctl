@@ -83,6 +83,16 @@ collection until pytruenas ports to these names.
   (`subprocess.CalledProcessError`, from any subcommand) exit 125 with one
   line, the step's last stderr line included.
 
+- **`hostctl run` and `hostctl info` on several hosts**: more URI operands,
+  comma lists and `[1-3]`/`[a-c]` ranges in any operand (outside its user
+  part; a later host without a scheme takes the previous one's scheme and
+  user), and `--parallel N`. Each `run` output line starts with `[URI] `,
+  `info` prints one `{"target": URI, "result": {...}}` line per host, a
+  failing host gets a `hostctl: [URI] exit status N` line, and the exit
+  status is the worst: 130, then 125-127, then the largest remote status.
+  A password is read once for all hosts. One host behaves exactly as
+  before, over MCP too (`uri` stays a string; further hosts are `more`).
+
 - **Typed selection records, a host name and an audible fallback**, in
   0.4.0. `SelectionStep` and `ProviderDetail` (in `hostctl` and
   `hostctl.provider`) replace the dicts in traces and `provider_details`.

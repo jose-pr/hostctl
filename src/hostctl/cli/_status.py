@@ -42,6 +42,24 @@ _PREFIXES = (
 )
 
 
+def worst(codes: typing.Sequence[int]) -> int:
+    """The status of a run over several hosts: the worst of theirs.
+
+    130 (interrupted) ranks first, then the CLI's own 125-127 (the command
+    never ran on that host), then the largest remote status by magnitude,
+    then 0. An empty list is 0.
+    """
+
+    def rank(code: int) -> typing.Tuple[int, int]:
+        if code == 130:
+            return (3, 0)
+        if code in (125, 126, 127):
+            return (2, code)
+        return (1 if code else 0, abs(code))
+
+    return max(codes, key=rank, default=0)
+
+
 def status_of(error: BaseException) -> typing.Optional[int]:
     """The exit status for `error`, or `None` when the CLI does not map it."""
     return next(
