@@ -23,6 +23,7 @@ from ...host._timeout import (
     _timeout_from_query,
     _timeout_query,
 )
+from ...host._verify import _verify_from_query
 from ...uri._parse import (
     pathname_label,
     pathname_selection,
@@ -162,6 +163,8 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         )
         from netimps import join_host
 
+        if not ssh.verify:
+            query["verify"] = "false"
         user = f"{quote(ssh.username, safe='')}@" if ssh.username else ""
         authority = f"{user}{join_host(ssh.host, ssh.port)}"
         return (
@@ -195,9 +198,13 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
                 "max_reply_size",
                 "pathname",
                 "socket_path",
+                "verify",
                 *_URI_TIMEOUT_KEYS,
             ),
         )
+        if "verify" in query and scheme != "qga+ssh":
+            # libvirt and a local socket have no peer for hostctl to verify.
+            raise ValueError("verify applies only to a qga+ssh URI")
         _refuse_renamed_keys(query, {"agent_timeout": "timeout_read"})
         try:
             max_reply_size = int(query.get("max_reply_size", cls.max_reply_size))
@@ -250,6 +257,7 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             username=unquote(parsed.username),
             password=typing.cast(typing.Optional[str], credentials.get("password")),
             client_keys=credentials.get("client_keys"),
+            verify=typing.cast(bool, _verify_from_query(query, bundle=False)),
             known_hosts=credentials.get("known_hosts", ()),
         )
         return cls(

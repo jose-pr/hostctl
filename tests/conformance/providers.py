@@ -707,7 +707,7 @@ class FakeSSHHost:
         config = SSHConfig(
             "fake",
             shell=shell,
-            known_hosts=None,
+            verify=False,
             login_shell="powershell" if os.name == "nt" else "auto",
         )
         transport = _SSHTransport(config)
@@ -1184,7 +1184,7 @@ def _ssh_local() -> tuple[object, Callable[[], None]]:
             "HOSTCTL_TEST_SSH_USER", os.environ.get("USER", "runner")
         ),
         client_keys=os.environ.get("HOSTCTL_TEST_SSH_KEY") or None,
-        known_hosts=None,
+        verify=False,
         shell=CMD if windows else POSIX_SHELL,
         pathname=WindowsPathname if windows else PosixPathname,
     )

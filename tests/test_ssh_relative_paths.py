@@ -57,7 +57,7 @@ def _unreachable_host(port, **options):
     from hostctl.transports.ssh import SSHConfig
 
     executor, sftp = ssh_providers(
-        SSHConfig("127.0.0.1", port=port, username="root", known_hosts=None, **options)
+        SSHConfig("127.0.0.1", port=port, username="root", verify=False, **options)
     )
     host = PosixHost(
         executor_providers=(executor,), path_providers=(sftp, local_providers()[1])

@@ -40,14 +40,14 @@ def hide(monkeypatch):
 def _ssh_run():
     from hostctl.transports.ssh._config import SSHConfig
 
-    SSHConfig("nas.example", known_hosts=None).open().run("true")
+    SSHConfig("nas.example", verify=False).open().run("true")
 
 
 def _ssh_path():
     from hostctl.transports.ssh._config import SSHConfig
     from hostctl.transports.ssh._providers import ssh_providers
 
-    ssh_providers(SSHConfig("nas.example", known_hosts=None))[1].path("/")
+    ssh_providers(SSHConfig("nas.example", verify=False))[1].path("/")
 
 
 def _winrm_run():

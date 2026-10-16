@@ -21,6 +21,7 @@ from ...host._timeout import (
     _timeout_from_query,
     _timeout_query,
 )
+from ...host._verify import _host_key_verify, _verify_from_query
 from ...uri._parse import (
     _refuse_uri,
     pathname_label,
@@ -40,9 +41,8 @@ SSHClientKeys = typing.Optional[
     typing.Union[SSHKeySource, typing.Sequence[SSHKeySource]]
 ]
 
-SSHKnownHosts = typing.Optional[
-    typing.Union[SSHKeySource, typing.Sequence[SSHKeySource]]
-]
+#: No `None`: skipping the host-key check is `SSHConfig(verify=False)`.
+SSHKnownHosts = typing.Union[SSHKeySource, typing.Sequence[SSHKeySource]]
 
 
 #: `connect_options` keys hostctl owns, and the keyword to use instead.
@@ -130,6 +130,13 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     password: typing.Optional[str] = dataclasses.field(default=None, repr=False)
     client_keys: SSHClientKeys = dataclasses.field(default=None, repr=False)
     executable: typing.Optional[str] = None
+    #: `True` checks the server's host key; `False` is the one way to skip
+    #: the check. SSH has no CA bundle, so a string is refused: name trusted
+    #: keys with `known_hosts`.
+    verify: bool = True
+    #: The trusted host keys. `()` is the usual lookup (`~/.ssh/known_hosts`,
+    #: or an `ssh_config`'s `UserKnownHostsFile`), which `verify=False`
+    #: switches off; anything else is checked even under `verify=False`.
     known_hosts: SSHKnownHosts = ()
     shell: ShellSelection = POSIX_SHELL
     pathname: PathnameSelection = PosixPathname
@@ -173,6 +180,12 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
         # The constructor takes a HOST; the dispatcher takes a URI.
         _refuse_uri("SSHConfig", self.host)
         _refuse_unsafe_target(self.host, self.username)
+        self.verify = _host_key_verify("SSHConfig", self.verify)
+        if self.known_hosts is None:
+            raise ValueError(
+                "SSHConfig: known_hosts names the trusted host keys; "
+                "pass verify=False to skip the host-key check"
+            )
         if not 1 <= self.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
         if self.shell != "auto":
@@ -229,14 +242,47 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
         # Always passed, never omitted on the default: `()` is asyncssh's own
         # "resolve known_hosts the usual way" value, and both legs receive
         # these options, so the path leg verifies the host key exactly as the
-        # exec leg does. Opting out stays possible and explicit:
-        # `known_hosts=None`.
-        opts["known_hosts"] = self.known_hosts
+        # exec leg does. `None` (no check) comes only from `verify=False`.
+        if self.known_hosts == () and not self.verify:
+            opts["known_hosts"] = None
+        else:
+            opts["known_hosts"] = self.known_hosts
+            if self.known_hosts == () and self.ssh_config is not None:
+                self._refuse_unchecked_config(opts)
         connect = self.timeouts.connect
         if connect is not None:
             opts["connect_timeout"] = connect
         opts.update(self.connect_options)
         return opts
+
+    def _refuse_unchecked_config(self, opts: typing.Mapping[str, object]) -> None:
+        """Raise when the ssh_config would switch the host-key check off.
+
+        `UserKnownHostsFile none` resolves `known_hosts=()` to asyncssh's
+        "no check", which only `verify=False` may ask for. Resolving reads the
+        file (and runs any `Match exec`) once more, without connecting.
+        """
+        from ... import _async
+
+        resolved = (
+            _async.asyncssh()
+            .SSHClientConnectionOptions(
+                config=opts["config"],
+                host=self.host,
+                port=self.port,
+                username=self.username or (),
+                known_hosts=(),
+                client_keys=None,
+                agent_path=None,
+            )
+            .known_hosts
+        )
+        if resolved is None:
+            raise ValueError(
+                "SSHConfig: the ssh_config sets UserKnownHostsFile none for "
+                f"{self.host}; pass verify=False to skip the host-key check, "
+                "or name the file with known_hosts="
+            )
 
     @property
     def connection_uri(self) -> str:
@@ -251,6 +297,8 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             # Only when it was said: `auto` is the default and carrying it
             # would change every existing URI's text.
             query["login_shell"] = self.login_shell
+        if not self.verify:
+            query["verify"] = "false"
         from netimps import join_host
 
         pairs = list(query.items()) + _timeout_query(self.timeout)
@@ -265,6 +313,7 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
                 "pathname",
                 "executable",
                 "login_shell",
+                "verify",
                 "connect_timeout",
                 *_URI_TIMEOUT_KEYS,
             },
@@ -281,6 +330,7 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             password=typing.cast(typing.Optional[str], credentials.get("password")),
             client_keys=typing.cast(SSHClientKeys, credentials.get("client_keys")),
             executable=query.get("executable") or None,
+            verify=typing.cast(bool, _verify_from_query(query, bundle=False)),
             known_hosts=typing.cast(SSHKnownHosts, credentials.get("known_hosts", ())),
             shell=(
                 "auto"

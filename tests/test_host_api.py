@@ -117,14 +117,14 @@ def test_ssh_uri_round_trip_keeps_secrets_separate():
     assert isinstance(source, WindowsHost)
     uri = source.connection_uri
     assert "top-secret" not in uri
-    restored = Host(uri, password="top-secret", known_hosts=None)
+    restored = Host(uri, password="top-secret")
     assert isinstance(restored, WindowsHost)
     assert restored.config.password == "top-secret"
     assert restored.config.shell is POWERSHELL
     assert restored.config.pathname is WindowsPathname
     assert restored.config.executable == "C:/Program Files/PowerShell/7/pwsh.exe"
     assert restored.connection_uri == uri
-    restored_config = HostConfig(uri, password="top-secret", known_hosts=None)
+    restored_config = HostConfig(uri, password="top-secret")
     assert isinstance(restored_config, SSHConfig)
     assert str(restored_config) == uri
 

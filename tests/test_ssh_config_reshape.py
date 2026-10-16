@@ -154,9 +154,7 @@ def test_a_root_default_is_gone_from_the_source():
 
 def test_an_unresolvable_host_in_auto_mode_cleans_up(monkeypatch):
     with pytest.raises(Exception) as raised:
-        SSHConfig(
-            "hostctl-alias.invalid", pathname="auto", known_hosts=None
-        )._create_host()
+        SSHConfig("hostctl-alias.invalid", pathname="auto", verify=False)._create_host()
     assert any(isinstance(c, socket.gaierror) for c in _causes(raised.value))
 
 

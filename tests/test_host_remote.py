@@ -211,7 +211,7 @@ def test_ssh_config_uses_explicit_authentication_fields():
         username="admin",
         password="secret",
         client_keys="keydata",
-        known_hosts=None,
+        verify=False,
     )
     assert config.connect_opts() == {
         "username": "admin",
@@ -238,7 +238,9 @@ def test_default_config_still_verifies_the_host_key_on_every_leg():
 
 
 def test_opting_out_of_host_key_verification_stays_explicit():
-    assert SSHConfig("host", known_hosts=None).connect_opts()["known_hosts"] is None
+    assert SSHConfig("host", verify=False).connect_opts()["known_hosts"] is None
+    with pytest.raises(ValueError, match="verify=False"):
+        SSHConfig("host", known_hosts=None)
 
 
 def test_ssh_key_path_is_not_reencoded():

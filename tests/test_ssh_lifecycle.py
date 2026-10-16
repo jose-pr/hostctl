@@ -51,7 +51,7 @@ def test_connect_timeout_bounds_a_silent_server():
             "127.0.0.1",
             port=listener.getsockname()[1],
             timeout=Timeout(connect=0.5),
-            known_hosts=None,
+            verify=False,
         ).open()
         started = time.monotonic()
         with pytest.raises(OperationNotStartedError) as raised:
@@ -69,7 +69,7 @@ def test_connect_timeout_bounds_a_silent_server():
 
 
 def test_connect_with_nothing_connected_raises():
-    host = SSHConfig("127.0.0.1", port=_closed_port(), known_hosts=None).open()
+    host = SSHConfig("127.0.0.1", port=_closed_port(), verify=False).open()
 
     with pytest.raises(OperationNotStartedError, match="no provider connected"):
         host.connect()
