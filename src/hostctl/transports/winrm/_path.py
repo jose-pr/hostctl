@@ -207,7 +207,7 @@ class WinRMPathBackend:
         # Follow the link, as `os.scandir` and `pathlib.Path.iterdir` do:
         # every reparse point is reported as S_IFLNK whatever it points at,
         # and a junction (a redirected profile folder, a DFS-style mount
-        # point, "C:\Users\All Users") lists like the directory it is.
+        # point, "C:\Documents and Settings") lists like the directory it is.
         current = self.stat(path, follow_symlinks=True)
         if not _stat.S_ISDIR(current.st_mode):
             raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)

@@ -123,7 +123,7 @@ def _sftp_answering(home):
 
 @pytest.mark.parametrize(
     "answer, kind",
-    (("/C:/Users/tester", WindowsHost), ("/home/tester", PosixHost)),
+    (("/C:/Users/devuser", WindowsHost), ("/home/tester", PosixHost)),
 )
 def test_auto_pathname_asks_the_server_when_the_host_is_created(answer, kind):
     with InProcessSSHServer(_handler, sftp_factory=_sftp_answering(answer)) as server:
