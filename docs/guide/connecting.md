@@ -121,7 +121,7 @@ with LocalConfig() as host:
 | | |
 | --- | --- |
 | URI | `ssh://[user@]host[:port][?query]` |
-| query keys | `shell`, `pathname`, `executable`, `login_shell`, and the timeout keys |
+| query keys | `shell`, `pathname`, `executable`, `login_shell`, `verify`, and the timeout keys |
 | credentials | `password`, `client_keys`, `known_hosts` |
 | keyword only | `ssh_config`, `connect_options` (never in a URI) |
 | extra | `ssh` |
@@ -149,8 +149,11 @@ assert str(same) == str(config)
   `ssh` does.
 - **Host keys.** `known_hosts=()` (the default) verifies the server's key
   against asyncssh's usual known-hosts files; a path, bytes or a sequence of
-  them names the trusted keys; `known_hosts=None` turns verification off. The
-  exec and SFTP connections verify the same way.
+  them names the trusted keys. `verify=False` (`?verify=false`) is the one
+  way to skip the check: it replaces the usual lookup, while a `known_hosts`
+  you name is still checked. `known_hosts=None` raises, and so does an
+  `ssh_config` with `UserKnownHostsFile none` unless `verify=False`. The exec
+  and SFTP connections verify the same way.
 - **ssh_config.** Neither connection reads `~/.ssh/config` unless
   `ssh_config=` names a file. It cannot come from a URI, because a
   `ProxyCommand` starts a local process.
@@ -182,8 +185,13 @@ assert str(same) == str(config)
 assert "secret" not in str(config)
 ```
 
-- **TLS.** `winrms://` (or `tls=True`) is HTTPS; `verify=False`
-  (`?verify=false`) skips the server certificate check.
+- **TLS.** `winrms://` (or `tls=True`) is HTTPS. The certificate is checked
+  against the Windows certificate store on the native leg and against
+  `requests`' default (`REQUESTS_CA_BUNDLE`, else certifi) on pywinrm and
+  PSRP. `verify="ca.pem"` (`?verify=ca.pem`, a file or a hashed directory)
+  trusts that bundle instead, on pywinrm and PSRP; the native leg refuses one,
+  since PowerShell remoting trusts only the store. `verify=False`
+  (`?verify=false`) skips every certificate check.
 - **Cleartext.** `auth="basic"`, `"plaintext"` or `"ssl"` over plain HTTP
   would send the password in cleartext, so it raises `ValueError` unless
   `cleartext_auth=True` (`?cleartext_auth=true`). NTLM (the default),
@@ -209,7 +217,7 @@ assert "secret" not in str(config)
 | | |
 | --- | --- |
 | URI | `docker://container[?query]` |
-| query keys | `engine_url`, `username`, `workdir`, `executable`, `shell`, `pathname`, `timeout_connect` |
+| query keys | `engine_url`, `verify`, `username`, `workdir`, `executable`, `shell`, `pathname`, `timeout_connect` |
 | credentials | `client_factory` (a callable returning a Docker client) |
 | extra | `container` |
 
@@ -223,8 +231,11 @@ assert str(same) == str(config)
 
 With no `engine_url` the Docker client comes from the environment
 (`docker.from_env()`, which reads `DOCKER_HOST` and its TLS settings); with one
-it is `docker.DockerClient(base_url=engine_url)`. For anything else -- TLS to
-a remote engine, a pre-built client -- pass `client_factory=`.
+it is `docker.DockerClient(base_url=engine_url)`. An `https://` engine URL is
+TLS: `verify="ca.pem"` trusts that CA bundle instead of docker-py's default,
+`verify=False` checks nothing, and either holds even when
+`REQUESTS_CA_BUNDLE` is set. For anything else -- a client certificate, a
+pre-built client -- pass `client_factory=` (and leave `verify` alone).
 `timeout.connect` is the client's request timeout (the SDK's 60 s by
 default), passed as `timeout=` to the client or the factory only when set;
 it bounds connecting to the Engine and each API reply. A container has no
@@ -237,7 +248,7 @@ does `run(timeout=<n>)`.
 | --- | --- |
 | URI, local libvirt | `qemu+libvirt:///domain[?connection=LIBVIRT_URI]` |
 | URI, Unix socket | `qga+unix:///SOCKET_PATH?domain=DOMAIN` (the path percent-encoded) |
-| URI, socket over SSH | `qga+ssh://user@hypervisor/domain[?socket_path=PATH]` |
+| URI, socket over SSH | `qga+ssh://user@hypervisor/domain[?socket_path=PATH&verify=false]` |
 | query keys | `max_reply_size`, `shell`, `pathname`, the timeout keys, plus the ones above |
 | credentials | `transport_factory`, `serial_console`, `path_helper`; on `qga+ssh`, also `password`, `client_keys`, `known_hosts` |
 | extra | `qemu-libvirt` for libvirt; `ssh` for `qga+ssh` |

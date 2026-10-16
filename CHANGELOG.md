@@ -43,6 +43,9 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `host.path(p, backend=name)` re-selecting a provider per operation | pinned to `name`, as `.via(name)`; `host.path(p)` selects per operation |
 | `serial:///dev/ttyUSB0` (any `serial:///NAME`, `serial:/NAME`) naming the relative device `dev/ttyUSB0` / `NAME`; `serial:////dev/x` naming `dev/x` | the absolute `/dev/ttyUSB0` / `/NAME`; a relative device is `serial:NAME`; `serial:////...` raises `ValueError`; `COMn`, `\\.\...`, pyserial URLs and the encoded `serial:///%2Fdev%2Fx` are unchanged |
 | `CompositePosixPath.from_path(backend_path, provider, factory, ...)` (undocumented) | `CompositePosixPath.over(providers, *segments, backend=None)`; the same for `CompositeWindowsPath` |
+| `SSHConfig(known_hosts=None)`, `HostConfig(uri, known_hosts=None)` (no host-key check) | `SSHConfig(verify=False)`, `?verify=false`; `known_hosts=None` raises `ValueError` |
+| an `ssh_config` with `UserKnownHostsFile none` switching the host-key check off | `verify=False` (the config raises `ValueError` at connect without it) |
+| `REQUESTS_CA_BUNDLE` to make pywinrm or PSRP trust a private CA | `WinRMConfig(verify="ca.pem")` (`?verify=ca.pem`); the variable still applies under `verify=True` |
 
 pytruenas 0.5.4 and earlier pin `hostctl<0.4` and import the 0.3 paths
 (`from hostctl.host import PosixHost, SshConfig, ...`), so they do not import
@@ -161,6 +164,19 @@ collection until pytruenas ports to these names.
   `ConnectionError`, so it is never replayed through another provider. The
   container and PSRP executors are built on `BufferedExecutor`. The guide's
   "Writing an executor" section has a worked example. This ships in 0.4.0.
+- **One verification switch, `verify=`, on every network config.**
+  `WinRMConfig` and `ContainerConfig` take `True`, `False` or a CA bundle
+  path (a PEM file or an OpenSSL hashed directory, `str` or `os.PathLike`)
+  trusted instead of the transport's default; `SSHConfig` (and so a
+  `qga+ssh` tunnel) takes `True` or `False`. The URI key is `verify=`
+  (`true`/`false`, or a percent-encoded path), and it round-trips. A bundle
+  reaches pywinrm as `ca_trust_path` and pypsrp as `cert_validation`, and
+  neither certifi nor `REQUESTS_CA_BUNDLE` replaces it; a missing one raises
+  `FileNotFoundError` before connecting. The native WinRM leg trusts only the
+  Windows certificate store and refuses a bundle. A container's `verify`
+  applies to an `https://` `engine_url` hostctl builds the client for, and is
+  pinned against `requests`' `REQUESTS_CA_BUNDLE` override. This ships in
+  0.4.0.
 
 ### Changed
 
@@ -383,6 +399,17 @@ collection until pytruenas ports to these names.
   one host's provider set. `pickle` and `copy.deepcopy()` of a composite raise
   `TypeError` naming the reason, rather than whichever error the first
   unpicklable provider attribute produced. This ships in 0.4.0.
+- **`SSHConfig(verify=False)` is the one way to skip the host-key check.**
+  `known_hosts=None` raises `ValueError` naming it, `SSHKnownHosts` no longer
+  admits `None`, and an `ssh_config` whose `UserKnownHostsFile none` would
+  switch the check off raises at connect unless `verify=False`. A
+  `known_hosts` the caller names is checked even under `verify=False`.
+  **Breaking, 0.4.0.**
+- **`WinRMConfig.verify` is `bool | str | os.PathLike`**, where it was a
+  bool: a string is a CA bundle path, needs `tls=True`, and one spelling a
+  boolean (`"false"`) raises `ValueError`. Native WinRM's `verify=False` adds
+  `-SkipRevocationCheck` to `-SkipCACheck -SkipCNCheck`, so it checks nothing,
+  as the other legs do. This ships in 0.4.0.
 
 ### Removed
 
@@ -708,6 +735,12 @@ collection until pytruenas ports to these names.
 - **A PowerShell native argument `--%` raises `ValueError`.** PowerShell reads
   it as the stop-parsing token however it is quoted, so the rest of the line
   reached the program unparsed and re-split. **Breaking, 0.4.0.**
+- **No check is off unless the config says `verify=False`.** On SSH,
+  `known_hosts=None` and an `ssh_config`'s `UserKnownHostsFile none` each
+  switched host-key verification off without it; both now raise. A
+  container's CA bundle holds whatever `REQUESTS_CA_BUNDLE` says: stock
+  docker-py lets the variable replace a bundle on every request, widening
+  what it trusts. This ships in 0.4.0.
 
 ## [0.3.2] - 2026-09-23
 

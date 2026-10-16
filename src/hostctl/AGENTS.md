@@ -257,6 +257,41 @@ connection timeouts belong to the transport configs in its
   default (the table). `host.shell.run(timeout=None)` passes `None` on.
   `Process.wait(timeout=)` is unchanged: `None` waits forever.
 
+## Verification (`verify=`)
+
+`WinRMConfig`, `ContainerConfig` and `SSHConfig` (and so a `qga+ssh` tunnel's
+`ssh=`) take `verify=`, keyword-only, default `True`:
+
+- `True` checks the peer with the transport's own trust (the table).
+- `False` checks nothing: no certificate, host name or revocation check over
+  TLS, no host-key check over SSH. It is the only value that switches a check
+  off.
+- A path (`str` or `os.PathLike`, stored as `str`; a PEM file or an OpenSSL
+  hashed directory) is the CA bundle trusted *instead of* the default -- TLS
+  transports only. Neither certifi nor `REQUESTS_CA_BUNDLE` replaces it. A
+  missing path raises `FileNotFoundError` naming it when the leg is built,
+  before connecting.
+- Anything else raises: `TypeError` for another type (`None` and `0`
+  included), `ValueError` for an empty string or one spelling a boolean
+  (`"false"`; write `./false` for such a file). On SSH a string is a
+  `TypeError`: SSH has no CA bundle, so name the keys with `known_hosts=`.
+
+| config / leg | `True` trusts | a CA bundle |
+| --- | --- | --- |
+| `WinRMConfig`, native | the Windows certificate store (PowerShell remoting) | `ValueError` |
+| `WinRMConfig`, pywinrm | `requests`' default: `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE` when set, else certifi | pywinrm `ca_trust_path` |
+| `WinRMConfig`, PSRP | the same as pywinrm | pypsrp `cert_validation` |
+| `ContainerConfig`, `https://` `engine_url` | docker-py's default, the same as pywinrm | docker-py `TLSConfig(verify=)` |
+| `SSHConfig` | `known_hosts` (see SSH) | -- (`TypeError`) |
+
+- **URI key** `verify`: `1/true/yes/on` or `0/false/no/off`, else (TLS
+  schemes) a percent-encoded bundle path. `connection_uri` renders it where
+  it is not the default (WinRM always renders it), so a config round-trips.
+- A WinRM bundle needs `tls=True`, and `provider="native"` refuses one at
+  construction (`provider="auto"` choosing native refuses it when the leg is
+  built). A container's non-default `verify` needs an `https://` `engine_url`
+  and no `client_factory`.
+
 ## URIs (`hostctl.uri`)
 
 ```python
@@ -416,7 +451,7 @@ LocalExecutor.__call__(command, *args, bufsize=-1, stdin=None, stdout=None, stde
 ## SSH (`hostctl.transports.ssh`)
 
 ```python
-SSHConfig(host, *, port=22, username=None, password=None, client_keys=None, executable=None, known_hosts=(), shell=POSIX_SHELL, pathname=PosixPathname, login_shell='auto', timeout=Timeout(), ssh_config=None, connect_options={})
+SSHConfig(host, *, port=22, username=None, password=None, client_keys=None, executable=None, verify=True, known_hosts=(), shell=POSIX_SHELL, pathname=PosixPathname, login_shell='auto', timeout=Timeout(), ssh_config=None, connect_options={})
 ssh_providers(config) -> tuple[ExecutorProvider, PathProvider]
 ```
 
@@ -427,8 +462,16 @@ an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
 - `username=None` leaves the account to asyncssh (the local user, as `ssh`
   does). `client_keys` is an `SSHClientKeys` (one `SSHKeySource` -- a key
   path, bytes or text -- or a sequence of them); `known_hosts` an
-  `SSHKnownHosts`, the same shape. Authentication fields are excluded from
-  `repr()`.
+  `SSHKnownHosts`, the same shape but never `None`. Authentication fields are
+  excluded from `repr()`.
+- Host keys: `known_hosts=()` (the default) is the usual lookup,
+  `~/.ssh/known_hosts` or an `ssh_config`'s `UserKnownHostsFile`; anything
+  else names the trusted keys. `verify=False` (`?verify=false`) replaces the
+  usual lookup with no check; a `known_hosts` you name is checked even then
+  (the stricter setting wins). `known_hosts=None` raises `ValueError` naming
+  `verify=False`, and so, at connect, does an `ssh_config` whose
+  `UserKnownHostsFile none` would switch the check off (unless
+  `verify=False`); `connect_opts()` reads that file once more to tell.
 - `host` and `username` are refused where OpenSSH would refuse them (a
   leading `-`, whitespace, shell metacharacters, `${` in a username); the host
   must be an address or a valid name. `ssh://h:0` is a `ValueError`, not port
@@ -548,8 +591,9 @@ are a `CompositeWindowsPath` over the WinRM path backend.
   `basic`, `plaintext` or `ssl` over plain HTTP sends the password in
   cleartext and raises `ValueError` unless `cleartext_auth=True` (URI
   `?cleartext_auth=true`).
-- `tls=True` is HTTPS; `verify=False` (`?verify=false`) skips the server
-  certificate check. `str(config)` omits an unset port.
+- `tls=True` is HTTPS. `verify` (see "Verification") is `True`, `False`
+  (`?verify=false`, no certificate checks) or a CA bundle path for the
+  pywinrm and PSRP legs. `str(config)` omits an unset port.
 - `timeout` (see "Timeouts") honours two fields. `total`, 30 s, is the
   default of `run(timeout=)`: the same total deadline per command on every
   leg, which a per-call `timeout=` overrides; `None` sets no default.
@@ -598,7 +642,8 @@ Behaviour:
   long it takes, and on the native leg a host that stops answering after the
   session opened can block the call indefinitely.
 - On the native leg `verify=False` becomes `New-PSSessionOption -SkipCACheck
-  -SkipCNCheck`, and the remote exit code is carried back explicitly.
+  -SkipCNCheck -SkipRevocationCheck`, and the remote exit code is carried
+  back explicitly.
 - PSRP `run()` text is rendered by `Out-String -Stream` in the runspace
   (tables as on the other legs, CRLF-joined, 120 columns).
 - A WinRM path's `open("rb")` fetches bounded ranges; writable modes stage
@@ -629,7 +674,7 @@ reopenable.
 ## Containers (`hostctl.transports.container`)
 
 ```python
-ContainerConfig(container, *, engine_url=None, username=None, workdir=None, executable=None, shell='auto', pathname='auto', timeout=Timeout(), client_factory=None)
+ContainerConfig(container, *, engine_url=None, verify=True, username=None, workdir=None, executable=None, shell='auto', pathname='auto', timeout=Timeout(), client_factory=None)
 ContainerHost(config, *, executor_providers=(), path_providers=())
 ```
 
@@ -638,6 +683,14 @@ Linux/POSIX or Windows/PowerShell semantics. `ContainerHost` supports
 buffered exec, persistent sessions and TTYs, and archive-backed POSIX or
 Windows paths. `client_factory` builds the Docker client (default:
 `docker.DockerClient` for an `engine_url`, otherwise `docker.from_env`).
+
+- `verify` (see "Verification") governs an `https://` `engine_url` only: a
+  CA bundle or `False` there is honoured on every request, a
+  `REQUESTS_CA_BUNDLE` notwithstanding. With another engine URL, no
+  `engine_url` (`docker.from_env` reads `DOCKER_TLS_VERIFY` and
+  `DOCKER_CERT_PATH`) or a `client_factory`, anything but `True` raises
+  `ValueError`. Under `False` urllib3 warns `InsecureRequestWarning` per
+  request.
 
 - `run()` takes no stdin and no `timeout=`: Docker's buffered exec streams
   neither, and the exec API has no cancellable deadline.
@@ -669,7 +722,9 @@ QEMUHost.open_serial(*, encoding=None, errors=None) -> Process
 A guest reached through the QEMU guest agent (QGA). `transport` is a
 `QEMUTransport`: `"libvirt"` (local libvirt, the `qemu-libvirt` extra),
 `"unix"` (a socket at `socket_path`) or `"ssh"` (a remote Unix socket over an
-AsyncSSH tunnel described by `ssh=SSHConfig(...)`). `transport_factory`
+AsyncSSH tunnel described by `ssh=SSHConfig(...)`, whose `verify` and
+`known_hosts` govern the host key; `qga+ssh://...?verify=false` sets it, and
+the other schemes refuse the key). `transport_factory`
 returns a `GuestAgentTransport` instead. Discovery positively probes QGA and
 its enabled command list.
 
