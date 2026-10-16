@@ -32,24 +32,7 @@ class SSHExecutorProvider(ExecutorProvider):
         return ProviderProbe("available", capabilities=self.capabilities)
 
     def connect(self):
-        try:
-            self.transport.connect()
-        except OperationNotStartedError:
-            raise
-        # OSError, not just ConnectionError: a DNS failure (socket.gaierror)
-        # and a routing failure (EHOSTUNREACH/ENETUNREACH) are OSError but not
-        # ConnectionError, and they are unambiguously pre-dispatch -- no
-        # channel opened, nothing sent -- so the provider declines and
-        # ordered fallback moves on.
-        except (OSError, TimeoutError) as exc:
-            log.debug(
-                "SSH provider declining before dispatch: %s: %s",
-                type(exc).__name__,
-                ProviderSelector.redact(exc),
-            )
-            raise OperationNotStartedError(
-                "SSH connection failed before dispatch", cause=exc
-            ) from exc
+        self.transport.connect_or_decline()
 
     def close(self):
         self.transport.close()

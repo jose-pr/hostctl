@@ -569,9 +569,9 @@ class SystemHost(Host):
         excluded: typing.List[str] = []
         while True:
             try:
-                # Note the provider as in use WITHOUT connecting: building a
-                # path is I/O-free, and `host.path()` on a host that was never
-                # connected must stay that way. The marker is what matters
+                # Note the provider as in use WITHOUT connecting: the host does
+                # no I/O to build a path (a provider that must, as SSH does for
+                # a relative one, connects itself and declines on failure). The marker is what matters
                 # here -- a transport these paths later reopen lazily was left
                 # on `_closed_targets`, so every later close() skipped it and
                 # the connection lived until process exit.

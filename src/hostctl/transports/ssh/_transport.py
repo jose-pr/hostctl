@@ -14,6 +14,7 @@ from pathlib import PureWindowsPath
 from pathapi import PosixPathname, WindowsPathname, Path
 
 from ._executor import SSHConnection, SSHExecutor
+from ...exceptions import OperationNotStartedError
 from ...provider._selector import ProviderSelector
 from ...process import Process, TerminalRequest
 from ._process import SSHProcess
@@ -258,6 +259,29 @@ class _SSHTransport:
     def connect(self) -> None:
         _ = self.ssh
 
+    def connect_or_decline(self) -> None:
+        """`connect()`, with a failure to connect raised as a decline.
+
+        `OSError`, not just `ConnectionError`: a DNS failure (`socket.gaierror`)
+        and a routing failure (EHOSTUNREACH/ENETUNREACH) are `OSError` but not
+        `ConnectionError`, and every one of them is pre-dispatch -- no channel
+        opened, nothing sent -- so the provider declines and ordered fallback
+        moves on.
+        """
+        try:
+            self.connect()
+        except OperationNotStartedError:
+            raise
+        except (OSError, TimeoutError) as exc:
+            log.debug(
+                "SSH provider declining before dispatch: %s: %s",
+                type(exc).__name__,
+                ProviderSelector.redact(exc),
+            )
+            raise OperationNotStartedError(
+                "SSH connection failed before dispatch", cause=exc
+            ) from exc
+
     def close(self) -> None:
         with self._ssh_lock:
             if self._drop_if_forked():
@@ -343,12 +367,18 @@ class _SSHTransport:
 
         SFTPPath = _async.sftppath().SFTPPath
 
+        # The path style ("auto") and a relative path's base come from the
+        # login directory, read over the exec connection; failing to open it
+        # declines, so the host builds the path from its next provider.
+        if self.config.pathname == "auto" and self._resolved_flavor is None:
+            self.connect_or_decline()
         pure = self.pathname(*segments)
         remote_path = pure.as_posix()
         if pure.anchor:
             if not remote_path.startswith("/"):
                 remote_path = "/" + remote_path
         else:
+            self.connect_or_decline()
             base = self._login_directory().rstrip("/")
             remote_path = (
                 (base + "/" + remote_path) if remote_path not in ("", ".") else base

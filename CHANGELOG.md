@@ -153,7 +153,10 @@ collection until pytruenas ports to these names.
 - **Breaking, 0.4.0**: a relative `host.path()` on an SSH host names the
   login directory, as `run()`'s working directory does, instead of the
   filesystem root; `host.path()` with no segments is the login directory. The
-  directory is read once per connection, so building a relative path connects.
+  directory is read once per connection, so building a relative path connects;
+  when that connection cannot be opened the SFTP provider declines
+  (`OperationNotStartedError`) and the host builds the path from its next
+  path provider.
 - A host used only for paths no longer also opens and authenticates the SSH
   exec connection; each connection authenticates once.
 - The PowerShell dialect over SSH sends `-Command` where the login shell

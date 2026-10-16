@@ -380,7 +380,10 @@ Behaviour:
   exec one.
 - A relative path (and `host.path()`) resolves against the login directory,
   read once per connection generation with SFTP `realpath(".")`; `str()` of
-  the result is the resolved path on the server.
+  the result is the resolved path on the server. When the exec connection
+  cannot be opened (refused, unresolvable, unreachable, rejected), the SFTP
+  provider declines with `OperationNotStartedError` and the host builds the
+  path from its next path provider.
 - Authentication failures raise `PermissionError`; host-key, key-exchange,
   disconnect, connection-loss, protocol and channel failures raise
   `ConnectionError`, with the AsyncSSH exception as `__cause__`. A refused
