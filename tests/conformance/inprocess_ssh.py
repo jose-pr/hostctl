@@ -6,6 +6,7 @@ import asyncio
 import atexit
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -172,9 +173,9 @@ class InProcessSSHServer:
 
 def _end_tree(child: subprocess.Popen) -> None:
     """End `child` and whatever it started, as a closed SSH session does."""
-    if child.poll() is not None:
-        return
     if os.name == "nt":
+        if child.poll() is not None:
+            return
         # TerminateProcess ends cmd.exe alone; its children keep the pipes.
         subprocess.run(
             ["taskkill", "/T", "/F", "/PID", str(child.pid)],
@@ -182,6 +183,12 @@ def _end_tree(child: subprocess.Popen) -> None:
             stderr=subprocess.DEVNULL,
             check=False,
         )
+    else:
+        # The shell may fork the command; its children hold the pipes too.
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except OSError:
+            pass
     try:
         child.kill()
     except OSError:
@@ -211,6 +218,7 @@ async def login_shell_handler(process: typing.Any) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
+        start_new_session=os.name != "nt",
     )
 
     def on_signal(name: str) -> None:

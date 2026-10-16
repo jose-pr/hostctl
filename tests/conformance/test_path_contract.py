@@ -90,10 +90,15 @@ def test_path_names_containing_uri_syntax_address_the_right_file(
 def _error_type_legs():
     for provider in contract_providers():
         windows_server = os.environ.get("HOSTCTL_TEST_SSH_FLAVOUR") == "windows"
-        if provider.name == "ssh-local" and windows_server:
+        if provider.name == "ssh-local":
+            # OpenSSH's sftp-server opens a directory for reading on both
+            # platforms; the read then fails or comes back empty.
             reason = (
-                "Windows OpenSSH's SFTP server opens a directory for reading and "
-                "an unsized read returns b'' (asyncssh reads fstat's st_size, 0)"
+                "Windows OpenSSH: an unsized read of a directory returns b'' "
+                "(asyncssh reads fstat's st_size, 0)"
+                if windows_server
+                else "OpenSSH reports EISDIR on read as SSH_FX_FAILURE, which "
+                "arrives as a bare OSError('Failure')"
             )
             yield pytest.param(
                 provider, marks=pytest.mark.xfail(strict=True, reason=reason)
