@@ -20,6 +20,8 @@ adapters and path backends are internal: a host hands them back typed as
 ::: hostctl.Host
 ::: hostctl.HostConfig
 ::: hostctl.HostInfo
+::: hostctl.Timeout
+::: hostctl.DEFAULT
 ::: hostctl.LocalConfig
 ::: hostctl.LocalHost
 ::: hostctl.SSHConfig

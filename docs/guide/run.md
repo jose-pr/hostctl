@@ -141,18 +141,23 @@ waiting to be formatted (`[pscustomobject]@{a=1}` printed nothing).
   status raises `CalledProcessError` unless you pass `check=False`; a remote
   command that fails is an error by default rather than a return value to
   inspect.
+- `timeout=` is seconds for this call and `None` no limit. Left out, it is
+  the config's total (`SSHConfig(host, timeout=60)`), and with no total set,
+  the transport's own default: no limit everywhere except WinRM (30 s). See
+  [Timeouts](connecting.md#timeouts) for the other fields a config bounds.
 - SSH `input=`, `cwd=`, `env=`, `timeout=` and `encoding=`/`errors=` follow
   the subprocess-shaped contract.
 - WinRM buffers output to caller-owned file handles. It cannot stream stdin or
   select another executable. The pywinrm leg sends the script on stdin to a
   directly started `powershell.exe`, so a command has no command-line length
-  limit. `run(timeout=)` is a total deadline on every leg, and
-  `WinRMConfig(timeout=30.0)` is its default (`None`: no default). When it
+  limit. `run(timeout=)` is a total deadline on every leg, and the config's
+  total (30 s unless `WinRMConfig(timeout=)` says otherwise; `None`: no
+  default) is its default. When it
   expires the command is asked to stop (the native relay is killed, pywinrm
   sends the WinRS terminate signal, PSRP its stop signal) and `TimeoutExpired`
   carries `orphaned=True`, since none of them confirms the remote process
-  ended. `WinRMConfig(connect_timeout=)` bounds only establishing the
-  connection and never ends a running command. Every leg reports one status: 0 when the last
+  ended. `timeout.connect` bounds only establishing the connection and
+  never ends a running command. Every leg reports one status: 0 when the last
   statement succeeded, else the native exit code, else 1. A remote error is that
   status with its text on stderr; only transport and authentication failures are
   normalized to `ConnectionError`/`PermissionError`.
@@ -303,7 +308,7 @@ correlation:
   `ConsoleProtocolError` naming the cap rather than returning a truncated
   transcript with status 0; raise `max_buffer` on the profile to read more.
 - `run(timeout=)` bounds the backend read itself, so a
-  `SerialConfig(read_timeout=None)` host raises `TimeoutExpired` instead of
+  `SerialConfig(timeout=Timeout(read=None))` host raises `TimeoutExpired` instead of
   blocking inside the driver. Device names are opaque (native ports, `loop://`, `socket://`,
 and RFC 2217 URLs are passed to PySerial); RFC 2217 provides no encryption or
 authentication and must be protected by an external secure transport.
@@ -411,7 +416,7 @@ qemu-ga caps the output it captures, and says so in the status reply.
 `result.stdout_truncated` and `result.stderr_truncated` carry that flag, and a
 truncated result also raises a `RuntimeWarning` -- a shortened transcript is
 otherwise indistinguishable from a complete one. Each guest-agent round trip is
-bounded by `QEMUConfig.agent_timeout` independently of the command's own
+bounded by the config's `timeout.read` (10 s) independently of the command's own
 `timeout=`, so an agent that stops answering is reported as such
 (`ConnectionError`) rather than as a command that ran too long.
 `QEMUConfig.max_reply_size` bounds a single reply; a reply refused for size

@@ -50,12 +50,63 @@ except ValueError as error:
 Percent-encode `/`, `?` and `#` in a password written into a URI; `@` and `:`
 parse as written. `redact_uri(uri)` strips the password from a URI for a log.
 
+## Timeouts
+
+Every config takes `timeout=`, spelled the same way everywhere. A number or
+`None` is the **total**: the default deadline of `run(timeout=)`, `None`
+meaning no limit. A `Timeout` names the other fields too:
+
+```python
+from hostctl import DEFAULT, HostConfig, SSHConfig, Timeout
+
+config = SSHConfig("nas.example", timeout=Timeout(600, connect=10))
+assert config.timeout == Timeout(total=600, connect=10)
+assert SSHConfig("nas.example", timeout=600).timeout == Timeout(total=600)
+
+same = HostConfig("ssh://nas.example?timeout=600&timeout_connect=10")
+assert same.timeout == config.timeout
+
+# What each DEFAULT became: SSH connects within 30 s unless told otherwise.
+assert SSHConfig("nas.example").timeouts == Timeout(total=None, connect=30)
+assert Timeout().read is DEFAULT
+```
+
+| field | bounds | URI key |
+| --- | --- | --- |
+| `total` | a whole command; the default of `run(timeout=)` | `timeout` |
+| `connect` | establishing a connection, session or port | `timeout_connect` |
+| `read` | one reply, or one read | `timeout_read` |
+| `write` | one write | `timeout_write` |
+
+Each field is `DEFAULT` (the transport's own), `None` (no limit) or a positive
+number of seconds. In a URI an empty value is `None` and an absent key is
+`DEFAULT`, and `str(config)` writes only the fields that are not `DEFAULT`.
+A transport supports only some fields, and setting one it cannot honour raises
+`ValueError` naming the config and the field rather than being ignored:
+
+| config | `total` | `connect` | `read` | `write` |
+| --- | --- | --- | --- | --- |
+| Local | none | -- | -- | -- |
+| SSH | none | 30 s | -- | -- |
+| WinRM | 30 s | 30 s | -- | -- |
+| Container | -- | 60 s | -- | -- |
+| QEMU guest | none | the `read` value (unix and ssh transports) | 10 s | -- |
+| Serial | none | -- | 0.1 s | 10 s |
+| System URIs | the provider's own | -- | -- | -- |
+
+`run(timeout=)` overrides the total for one call, and `run(timeout=None)`
+lifts it, WinRM's 30 s included. The per-transport sections below say what
+each field bounds there; the
+[API header](https://github.com/jose-pr/hostctl/blob/main/src/hostctl/AGENTS.md)
+has the full rules.
+
 ## Local
 
 | | |
 | --- | --- |
-| URI | `local:` |
+| URI | `local:` (`local:?timeout=60` with a total) |
 | class | `LocalConfig()` |
+| timeouts | `total` |
 | extra | none |
 
 ```python
@@ -70,13 +121,13 @@ with LocalConfig() as host:
 | | |
 | --- | --- |
 | URI | `ssh://[user@]host[:port][?query]` |
-| query keys | `shell`, `pathname`, `executable`, `login_shell`, `connect_timeout` |
+| query keys | `shell`, `pathname`, `executable`, `login_shell`, and the timeout keys |
 | credentials | `password`, `client_keys`, `known_hosts` |
 | keyword only | `ssh_config`, `connect_options` (never in a URI) |
 | extra | `ssh` |
 
 ```python
-from hostctl import HostConfig, SSHConfig
+from hostctl import HostConfig, SSHConfig, Timeout
 
 config = SSHConfig(
     "nas.example",
@@ -84,10 +135,10 @@ config = SSHConfig(
     username="admin",
     client_keys="~/.ssh/id_ed25519",
     known_hosts="~/.ssh/known_hosts",
-    connect_timeout=10.0,
+    timeout=Timeout(connect=10.0),
 )
 same = HostConfig(
-    "ssh://admin@nas.example:2222?connect_timeout=10",
+    "ssh://admin@nas.example:2222?timeout_connect=10",
     client_keys="~/.ssh/id_ed25519",
     known_hosts="~/.ssh/known_hosts",
 )
@@ -103,8 +154,9 @@ assert str(same) == str(config)
 - **ssh_config.** Neither connection reads `~/.ssh/config` unless
   `ssh_config=` names a file. It cannot come from a URI, because a
   `ProxyCommand` starts a local process.
-- **Timeouts.** `connect_timeout` (default 30 s) bounds connecting only;
-  `run(timeout=)` bounds a command.
+- **Timeouts.** `timeout.connect` (default 30 s) bounds connecting only:
+  TCP, key exchange and authentication; `None` leaves asyncssh's own. The
+  total (no default) bounds a command. `read` and `write` raise.
 - Opening it returns a `PosixHost`, or a `WindowsHost` when `pathname` is
   Windows. For a Windows OpenSSH server pass `shell=POWERSHELL` (or `CMD`) and
   `pathname="windows"`; `shell="auto"` and `pathname="auto"` probe instead of
@@ -115,7 +167,7 @@ assert str(same) == str(config)
 | | |
 | --- | --- |
 | URI | `winrm://user@host[:port][?query]` (HTTP), `winrms://...` (HTTPS) |
-| query keys | `auth`, `verify`, `message_encryption`, `timeout`, `connect_timeout`, `provider`, `cleartext_auth` |
+| query keys | `auth`, `verify`, `message_encryption`, `provider`, `cleartext_auth`, and the timeout keys |
 | credentials | `password` |
 | extra | `winrm`; `psrp` for runspaces (Python 3.10+); `winrm-credssp`, `winrm-kerberos` for those `auth` values |
 
@@ -139,24 +191,25 @@ assert "secret" not in str(config)
 - **No password.** On a Windows client, a config with no password uses the
   current Windows login (native PowerShell remoting); `username` must name that
   user.
-- **Timeouts.** Two, both float seconds with a default of 30. `timeout` is
-  the default for `run(timeout=)`: the same total deadline per command,
-  which a per-call `timeout=` overrides; `timeout=None` (`?timeout=`) sets
-  none, so a command that never finishes blocks the call, and on the native
-  leg so does a host that stops answering once the session is open.
-  `connect_timeout` bounds only establishing the connection, as on SSH, and
+- **Timeouts.** Two fields, both 30 s by default. The total is the default
+  for `run(timeout=)`: the same total deadline per command, which a
+  per-call `timeout=` overrides; `timeout=None` (`?timeout=`) sets none, so
+  a command that never finishes blocks the call, and on the native leg so
+  does a host that stops answering once the session is open.
+  `timeout.connect` bounds only establishing the connection, as on SSH, and
   a host that never accepts it raises `ConnectionError`.
-  `connect_timeout=None` (`?connect_timeout=`) keeps each leg's library
+  `Timeout(connect=None)` (`?timeout_connect=`) keeps each leg's library
   default: PowerShell's 180 s on the native leg, pypsrp's 30 s on PSRP, and
   on pywinrm its single 30 s HTTP timeout, which then bounds connecting too.
-  How long one WS-Man request may wait is fixed and not configurable.
+  How long one WS-Man request may wait is fixed and not configurable, so
+  `read` and `write` raise.
 
 ## Containers
 
 | | |
 | --- | --- |
 | URI | `docker://container[?query]` |
-| query keys | `engine_url`, `username`, `workdir`, `executable`, `shell`, `pathname` |
+| query keys | `engine_url`, `username`, `workdir`, `executable`, `shell`, `pathname`, `timeout_connect` |
 | credentials | `client_factory` (a callable returning a Docker client) |
 | extra | `container` |
 
@@ -172,6 +225,11 @@ With no `engine_url` the Docker client comes from the environment
 (`docker.from_env()`, which reads `DOCKER_HOST` and its TLS settings); with one
 it is `docker.DockerClient(base_url=engine_url)`. For anything else -- TLS to
 a remote engine, a pre-built client -- pass `client_factory=`.
+`timeout.connect` is the client's request timeout (the SDK's 60 s by
+default), passed as `timeout=` to the client or the factory only when set;
+it bounds connecting to the Engine and each API reply. A container has no
+total: an Engine exec cannot be cancelled, so `timeout=<n>` raises and so
+does `run(timeout=<n>)`.
 
 ## QEMU guests
 
@@ -180,7 +238,7 @@ a remote engine, a pre-built client -- pass `client_factory=`.
 | URI, local libvirt | `qemu+libvirt:///domain[?connection=LIBVIRT_URI]` |
 | URI, Unix socket | `qga+unix:///SOCKET_PATH?domain=DOMAIN` (the path percent-encoded) |
 | URI, socket over SSH | `qga+ssh://user@hypervisor/domain[?socket_path=PATH]` |
-| query keys | `agent_timeout`, `max_reply_size`, `shell`, `pathname`, plus the ones above |
+| query keys | `max_reply_size`, `shell`, `pathname`, the timeout keys, plus the ones above |
 | credentials | `transport_factory`, `serial_console`, `path_helper`; on `qga+ssh`, also `password`, `client_keys`, `known_hosts` |
 | extra | `qemu-libvirt` for libvirt; `ssh` for `qga+ssh` |
 
@@ -201,14 +259,18 @@ assert isinstance(HostConfig(str(tunneled)), QEMUConfig)
 
 The SSH tunnel takes an `SSHConfig`, so its host keys follow the SSH rules
 above; `qga+ssh` defaults `socket_path` to `/run/qemu-server/DOMAIN.qga`.
-`agent_timeout` bounds one guest-agent round trip, not a command.
+`timeout.read` (10 s) bounds one guest-agent round trip, not a command;
+`timeout.connect` bounds opening a unix or ssh agent stream (by default it
+shares the first reply's deadline) and is refused on libvirt, which opens its
+own; the total bounds a command. The tunnel's SSH connection itself follows
+its `SSHConfig`'s `timeout.connect`.
 
 ## Serial consoles
 
 | | |
 | --- | --- |
 | URI | `serial:///dev/ttyUSB0`, `serial:///COM3`, `serial:///loop://` (`[?query]`) |
-| query keys | `baudrate`, `bytesize`, `parity`, `stopbits`, `xonxoff`, `rtscts`, `dsrdtr`, `read_timeout`, `write_timeout`, `inter_byte_timeout`, `exclusive` |
+| query keys | `baudrate`, `bytesize`, `parity`, `stopbits`, `xonxoff`, `rtscts`, `dsrdtr`, `inter_byte_timeout`, `exclusive`, and the timeout keys |
 | credentials | `profile`, `serial_factory`, `serial_port` |
 | extra | `serial` (unless a port is injected) |
 
@@ -245,7 +307,9 @@ spelling. `SerialConfig(device)` takes the device as written, and
 console has no
 username or password of its own; a login is the profile's `login=` steps,
 whose `secret=True` values are redacted from transcripts. RFC 2217 is not
-encrypted.
+encrypted. `timeout.read` (0.1 s) and `timeout.write` (10 s) are pyserial's
+read and write timeouts; `inter_byte_timeout` stays a field of its own,
+since it is a framing gap within one read rather than a bound on one.
 
 ## System URIs
 
@@ -253,7 +317,10 @@ encrypted.
 providers instead of owning a transport: `executor` and `path` are repeatable
 query keys naming registered providers (`local`, `ssh`, `sftp`, `winrm`, or
 your own). A transport provider takes its config, credentials included, from
-`provider_options`, which is never rendered into the URI.
+`provider_options`, which is never rendered into the URI. A system config's
+`timeout=` sets only the total (`?timeout=`); left `DEFAULT`, the provider
+applies its own (a WinRM provider its config's 30 s), and connecting follows
+the transport config in `provider_options`.
 
 ```python
 from hostctl import HostConfig, PosixHost, SSHConfig

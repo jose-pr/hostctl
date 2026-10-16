@@ -35,7 +35,7 @@ migrates from one table. Three things move together:
   is underscore-private. Names follow one convention: acronyms in capitals
   (`SSHConfig`, `QEMUHost`), exceptions ending in `Error` under one base
   (`HostctlError`), and one keyword vocabulary across configs (`shell=`,
-  `pathname=`, keyword-only after the target).
+  `pathname=`, `timeout=`, keyword-only after the target).
 
 The library's own logger names now follow its module paths
 (`hostctl.transports.ssh._transport`); configure the `hostctl` logger, whose
@@ -64,16 +64,27 @@ not only spelling:
   raise `unknown connection parameter`; a stored URI written by 0.3 must be
   rewritten with the new keys (`shell`, `pathname`, `auth`, `tls`,
   `verify=true|false`, `username`) and without the WinRM timeout keys, which
-  have no per-request replacement (`connect_timeout`, `timeout` instead).
+  have no per-request replacement (`timeout_connect`, `timeout` instead).
+  QEMU's `?agent_timeout=` is `?timeout_read=`, and serial's
+  `?read_timeout=`/`?write_timeout=` are `?timeout_read=`/`?timeout_write=`.
   `str(config)` of a 0.4.0 config is already in the new form.
+- **Every config spells its timeouts as `timeout=`.** A number or `None` is
+  the total, the default of `run(timeout=)`; `Timeout(total, connect=,
+  read=, write=)` names the rest, and a field the transport cannot honour
+  raises instead of being ignored. `QemuConfig(agent_timeout=5)` is
+  `timeout=Timeout(read=5)` (a bare `timeout=5` would bound the command, not
+  the agent reply), and `SerialConfig(read_timeout=, write_timeout=)` is
+  `timeout=Timeout(read=, write=)`. `run(timeout=None)` is no limit for the
+  call on every host.
 - **WinRM has two timeouts, float seconds, and `verify` is a bool.**
   `server_cert_validation="ignore"` is `verify=False`. `read_timeout_sec` and
   `operation_timeout_sec` are gone, and the per-request timing is internal:
-  lower `connect_timeout` (default 30 s) to stop a hang while connecting.
+  lower `timeout.connect` (default 30 s) to stop a hang while connecting.
   A native-leg user who raised `read_timeout_sec` so long commands could
-  finish raises `timeout` instead: `WinRMConfig(timeout=30.0)` is the default
-  for `run(timeout=)` on all three legs, so a pywinrm or PSRP command past
-  30 s now raises `TimeoutExpired` where it used to run unbounded.
+  finish raises the total instead (`WinRMConfig(..., timeout=600)`): its
+  30 s default applies to `run(timeout=)` on all three legs, so a pywinrm or
+  PSRP command past 30 s now raises `TimeoutExpired` where it used to run
+  unbounded.
 - **SSH defaults changed.** `username=None` is the local account, not
   `root`; neither leg reads `~/.ssh/config` unless `ssh_config=` names one;
   a relative `host.path()` is the login directory; `connect()` raises

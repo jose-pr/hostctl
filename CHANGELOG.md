@@ -20,7 +20,7 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `ConsoleProtocolError` from `hostctl.serial` | same name, `hostctl.exceptions`, under `HostctlError` |
 | `SshConfig`, `QemuConfig`, `QemuHost`, `IosConfig`, `IosHost` | `SSHConfig`, `QEMUConfig`, `QEMUHost`, `IOSConfig`, `IOSHost` |
 | `WinRMPath`, `HostPath` in `hostctl` | removed; `host.path()` returns `CompositeWindowsPath`; annotate with `pathapi.Path` |
-| `from hostctl.host import PosixHost, uri_host, ...` | `from hostctl import ...` (homes: `hostctl.system`, `hostctl.uri`; `hostctl.host` holds only `Host`, `HostConfig`, `HostInfo`) |
+| `from hostctl.host import PosixHost, uri_host, ...` | `from hostctl import ...` (homes: `hostctl.system`, `hostctl.uri`; `hostctl.host` holds only `Host`, `HostConfig`, `HostInfo`, `Timeout`, `DEFAULT` and the selections) |
 | `hostctl.host.qemu`, `.container`, `.serial`, `.system`, `.composite_path` | `hostctl.transports.qemu`, `.container`, `.serial`, `hostctl.system`, `hostctl.paths` |
 | `hostctl.serial` (console profiles) | `hostctl.transports.serial` (still re-exported from `hostctl`) |
 | concrete executors, processes, path backends, `provider.transports`, `shell.posix` etc.; `LocalExecutor` from `hostctl.executor` | internal; flavour classes stay in `hostctl.shell`; `LocalExecutor` is in `hostctl` and `hostctl.transports.local` |
@@ -30,10 +30,13 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `SSHShellSelection`, `QEMUShellSelection`, `ContainerShellSelection`, `*PathSelection`, `PathnameConstructor` | `hostctl.host.ShellSelection`, `hostctl.host.PathnameSelection` |
 | `ContainerConfig(user=)` (`?user=`); `SerialConfig(port=, protocol=)`; `SerialConsoleProtocol` | `username=` (`?username=`); `device=`, `profile=`; `ConsoleProfile` |
 | `WinRMConfig(transport=, ssl=, server_cert_validation=)` (and the same URI keys) | `auth=`, `tls=`, `verify=` (bool, `?verify=false`) |
-| `WinRMConfig(read_timeout_sec=, operation_timeout_sec=)` (and the same URI keys; also `read_timeout`, `operation_timeout`) | `connect_timeout=` (float s, default 30, `?connect_timeout=`) where the aim was to stop a hang while connecting; `timeout=` where it was to let a long command finish. The per-request knobs are internal; the old names raise and say so |
+| `WinRMConfig(read_timeout_sec=, operation_timeout_sec=)` (and the same URI keys; also `read_timeout`, `operation_timeout`) | `timeout=Timeout(connect=10)` (default 30 s, `?timeout_connect=10`) where the aim was to stop a hang while connecting; `timeout=600` (the total, `?timeout=600`) where it was to let a long command finish. The per-request knobs are internal; the old names raise and say so |
 | `WinRMConfig(transport="basic"/"plaintext"/"ssl")` over plain HTTP (the password sent in cleartext on pywinrm) | `ValueError` unless `cleartext_auth=True` (`?cleartext_auth=true`); or use `tls=True` |
-| native WinRM: `read_timeout_sec=` raised so a long command could finish (it was the command's deadline) | `timeout=` (default 30 s, `None` for none), the default for `run(timeout=)` on every leg; `connect_timeout` bounds opening the session |
-| pywinrm and PSRP commands with no deadline; `run(timeout=)` refused | `timeout=30.0` applies; pass `timeout=None` to keep them unbounded; `run(timeout=)` is accepted |
+| native WinRM: `read_timeout_sec=` raised so a long command could finish (it was the command's deadline) | `timeout=600`, the total (default 30 s, `None` for none), the default for `run(timeout=)` on every leg; `timeout=Timeout(connect=...)` bounds opening the session |
+| pywinrm and PSRP commands with no deadline; `run(timeout=)` refused | the 30 s total applies; pass `timeout=None` to keep them unbounded; `run(timeout=)` is accepted, and `run(timeout=None)` lifts the total for one call |
+| `QemuConfig(agent_timeout=5)` (`?agent_timeout=5`) | `QEMUConfig(timeout=Timeout(read=5))` (`?timeout_read=5`); `timeout=5` alone is the command total, not the agent reply |
+| `SerialConfig(read_timeout=0.5, write_timeout=2)` (`?read_timeout=0.5&write_timeout=2`) | `SerialConfig(timeout=Timeout(read=0.5, write=2))` (`?timeout_read=0.5&timeout_write=2`); `read_timeout=0` (non-blocking) has no spelling, since a `Timeout` field is positive; `inter_byte_timeout` is unchanged |
+| a config with no timeout of its own (`LocalConfig()`, `SshConfig`, `ContainerConfig`, the system configs) | `timeout=60` on any of them sets the default of `run(timeout=)` (a container refuses it: it has no total); `Timeout(connect=, read=, write=)` where the transport honours them, and `ValueError` where it does not |
 | positional config arguments after the first | keyword-only (`TypeError` otherwise) |
 | `ExecutorCommand`; `executor.PathLike`, `Input`, `Environment`, `FileHandle` | `CommandLike`; `StrPath`, `CommandInput`, `CommandEnvironment`, `StreamTarget` |
 | `pypsrp_available()`, `require_pypsrp()` | `has_psrp()` (and new `has_ssh()`); the guard is internal |
@@ -65,19 +68,27 @@ collection until pytruenas ports to these names.
   by default; it is a keyword only, never a URI key), `SshConfig(connect_options=)` passes extra keywords to
   `asyncssh.connect` on both legs, and `SshConfig(path_flavor="auto")` asks the
   server's login directory while the host is created.
-- `SshConfig(connect_timeout=30.0)` bounds how long an SSH connection may take
-  to establish (`None` keeps asyncssh's default), and is the `connect_timeout`
-  URI key.
-- `WinRMConfig(connect_timeout=30.0)` bounds establishing the connection with
-  the same name and meaning: `-OpenTimeout` on the native leg, pypsrp's
-  `connection_timeout` on PSRP, and the connect half of each HTTP request's
-  timeout on pywinrm (`None` keeps each library's default). An expiry raises
-  `ConnectionError`. This ships in 0.4.0.
+- `hostctl.Timeout(total, *, connect, read, write)` and `hostctl.DEFAULT`:
+  every config (local, SSH, WinRM, container, QEMU, serial and the system
+  configs) takes `timeout=`, a number or `None` (the total, the default of
+  `run(timeout=)`) or a `Timeout`, and stores a `Timeout`.
+  `config.timeouts` shows what each `DEFAULT` resolves to; a field the
+  transport cannot honour raises `ValueError` naming the config and field.
+  The URI keys are `timeout`, `timeout_connect`, `timeout_read` and
+  `timeout_write` on every scheme, empty for `None`. This ships in 0.4.0.
+- SSH connections are bounded while they establish: `SSHConfig`'s
+  `timeout.connect` defaults to 30 s (URI `?timeout_connect=`; `None` keeps
+  asyncssh's default).
+- `WinRMConfig`'s `timeout.connect` (default 30 s) bounds establishing the
+  connection with the same meaning: `-OpenTimeout` on the native leg,
+  pypsrp's `connection_timeout` on PSRP, and the connect half of each HTTP
+  request's timeout on pywinrm (`None` keeps each library's default). An
+  expiry raises `ConnectionError`. This ships in 0.4.0.
 - `hostctl.shell.wants_epilogue(capabilities)` answers whether a script for a
   provider needs the flavour's status epilogue (not when it declares
   `manages_status`). `shell_flavour_names()` (also in `hostctl`) lists the
   names `shell_flavour()` accepts, plugin flavours included.
-- `run(timeout=)` on every WinRM leg, with `WinRMConfig(timeout=30.0)` (URI
+- `run(timeout=)` on every WinRM leg, with the config's total (30 s; URI
   `?timeout=`, empty for `None`) as its default, and
   `RunspaceSession.invoke(timeout=)`. This ships in 0.4.0.
 - `pathapi.protocols.supports(path, Protocol)` answers for a host path. A
@@ -134,13 +145,25 @@ collection until pytruenas ports to these names.
 
 ### Changed
 
-- **Breaking, 0.4.0: `WinRMConfig` has two timeouts, `timeout` and
-  `connect_timeout`.** `timeout=30.0` is the default for `run(timeout=)` on
-  every WinRM leg. The native leg used `read_timeout_sec` as each command's
-  total deadline; it now uses `timeout`, and `connect_timeout` (default 30 s)
+- **Breaking, 0.4.0: every config spells its timeouts as one
+  `timeout=Timeout(...)`.** `QemuConfig(agent_timeout=)` is
+  `timeout=Timeout(read=)` and `SerialConfig(read_timeout=, write_timeout=)`
+  is `timeout=Timeout(read=, write=)`; their URI keys
+  (`?agent_timeout=`, `?read_timeout=`, `?write_timeout=`) raise naming
+  `timeout_read`/`timeout_write`. A number given as `timeout=` is the total
+  only. `run(timeout=None)` is no limit for that call on every host, and
+  `host.shell.run(timeout=None)` passes it on; a left-out `timeout` is the
+  config's total. A QEMU guest-agent reply may now be unbounded
+  (`Timeout(read=None)`); serial's non-blocking `read_timeout=0` is refused.
+  See "Migrating from 0.3".
+
+- **Breaking, 0.4.0: `WinRMConfig` honours two timeouts, `total` and
+  `connect`.** The total, 30 s, is the default for `run(timeout=)` on every
+  WinRM leg. The native leg used `read_timeout_sec` as each command's total
+  deadline; it now uses the total, and `timeout.connect` (default 30 s)
   bounds opening the remote session (`New-PSSessionOption -OpenTimeout`).
   pywinrm and PSRP had no deadline and refused `run(timeout=)`; both now
-  apply `timeout` too, so a command running past 30 s raises
+  apply the total too, so a command running past 30 s raises
   `TimeoutExpired` (`orphaned=True`, after asking the server to stop it)
   where it used to finish. Pass `timeout=None` for no default, or
   `run(timeout=)` per call. The per-request WS-Man timing
@@ -353,8 +376,9 @@ collection until pytruenas ports to these names.
 - Reading a directory as a file over SSH raises `IsADirectoryError` against
   OpenSSH too (sftppath 0.1.1, now the floor of the `ssh` extra); it returned
   `b""` from a Windows server and a bare `OSError("Failure")` from Linux.
-- `SSHConfig(connect_timeout=None)` round-trips through `connection_uri` (an
-  empty `connect_timeout=`); the URI it rendered could not be parsed.
+- `SSHConfig(timeout=Timeout(connect=None))` round-trips through
+  `connection_uri` (an empty `timeout_connect=`); the URI it rendered could
+  not be parsed.
 - On Windows, a process without a console no longer opens a console window
   for every local command: the local executor starts children with
   `CREATE_NO_WINDOW` unless the caller passes `creationflags=`, and so does
