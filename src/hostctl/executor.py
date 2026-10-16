@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import codecs
 import contextvars
+import dataclasses
 import enum
 import os
 import re
 import subprocess
 import sys
 import threading
+import time
 import typing
 from pathlib import PurePath
 
 from pathapi import Pathname
+
+from .exceptions import OperationNotStartedError
 
 _Result = typing.TypeVar("_Result", covariant=True)
 
@@ -161,6 +166,31 @@ def normalize_input(
         # AsyncSSH and the QGA base64 leg both want real `bytes`.
         return bytes(input)
     return input
+
+
+def _read_stdin(
+    stream: StreamTarget,
+    *,
+    encoding: typing.Optional[str],
+    errors: typing.Optional[str],
+) -> bytes:
+    """Read a `stdin=` target to EOF, for a transport that sends input whole.
+
+    `DEVNULL` is empty input; `PIPE` has nothing to read without `input=`. A
+    descriptor is duplicated so the caller's stays open.
+    """
+    if stream == subprocess.DEVNULL:
+        return b""
+    if stream == subprocess.PIPE:
+        raise ValueError("stdin=subprocess.PIPE requires input")
+    if isinstance(stream, int):
+        with os.fdopen(os.dup(stream), "rb") as duplicate:
+            value = duplicate.read()
+    else:
+        value = stream.read()
+    if isinstance(value, str):
+        return value.encode(encoding or "utf-8", errors or "strict")
+    return value
 
 
 def wants_text(
@@ -568,7 +598,434 @@ class StreamLease:
             self._on_end()
 
 
+#: Captured output in either type, or `None` for none.
+_Output = typing.Optional[typing.Union[bytes, str]]
+
+
+@dataclasses.dataclass(frozen=True)
+class ExecutorRequest:
+    """One command as a transport primitive of `BufferedExecutor` receives it.
+
+    `command` is the command text and `args` the native arguments as text,
+    empty unless the executor declares `args`. `input` is the whole standard
+    input, or `None` when the call sent none: the command then gets an empty
+    stdin (EOF), never a terminal. `merge_stderr` is `stderr=STDOUT`: merge
+    natively where the transport can, else return stderr apart and the base
+    appends it. `cwd` and `env` are `None` unless declared and passed; `env`
+    adds to the target's environment. `timeout` is the call's limit in seconds
+    (`None`: no limit) and `deadline` the same limit on `time.monotonic()`.
+    """
+
+    command: str
+    args: typing.Tuple[str, ...] = ()
+    input: typing.Optional[bytes] = None
+    merge_stderr: bool = False
+    cwd: typing.Optional[str] = None
+    env: typing.Optional[typing.Dict[str, str]] = None
+    timeout: typing.Optional[float] = None
+    deadline: typing.Optional[float] = None
+
+    def remaining(self) -> typing.Optional[float]:
+        """Seconds left before `deadline`, zero or less once it passed; `None` without one."""
+        if self.deadline is None:
+            return None
+        return self.deadline - time.monotonic()
+
+
+def _in_mode(
+    value: typing.Optional[typing.Union[bytes, bytearray, str]],
+    text: bool,
+    encoding: typing.Optional[str],
+    errors: typing.Optional[str],
+    *,
+    lenient: bool = False,
+) -> _Output:
+    """`value` as the call's output type: `str` in text mode, else `bytes`."""
+    if value is None:
+        return None
+    if text:
+        if isinstance(value, str):
+            return value
+        # A timeout cuts output at an arbitrary byte; a strict decode of the
+        # torn character would replace the `TimeoutExpired` with an error.
+        fallback = "replace" if lenient else "strict"
+        return bytes(value).decode(encoding or "utf-8", errors or fallback)
+    if isinstance(value, str):
+        return value.encode(encoding or "utf-8", errors or "strict")
+    return bytes(value)
+
+
+class _Call(typing.NamedTuple):
+    """What one `__call__` resolved, shared by both dispatch shapes."""
+
+    display: typing.Union[str, typing.List[str]]
+    stdout: typing.Optional[StreamTarget]
+    stderr: typing.Optional[StreamTarget]
+    text: bool
+    encoding: typing.Optional[str]
+    errors: typing.Optional[str]
+
+    @property
+    def mode(self) -> typing.Tuple[bool, typing.Optional[str], typing.Optional[str]]:
+        """`_in_mode`'s arguments for this call."""
+        return self.text, self.encoding, self.errors
+
+    def expired(
+        self,
+        error: subprocess.TimeoutExpired,
+        request: ExecutorRequest,
+        *,
+        output: _Output = None,
+        stderr: _Output = None,
+        orphaned: typing.Optional[bool] = None,
+    ) -> subprocess.TimeoutExpired:
+        """`error` in hostctl's shape: this call's command and output type."""
+        return expired(
+            self.display,
+            error.timeout if error.timeout is not None else request.timeout,
+            output=_in_mode(
+                error.output if output is None else output,
+                self.text,
+                self.encoding,
+                self.errors,
+                lenient=True,
+            ),
+            stderr=_in_mode(
+                error.stderr if stderr is None else stderr,
+                self.text,
+                self.encoding,
+                self.errors,
+                lenient=True,
+            ),
+            orphaned=(
+                getattr(error, "orphaned", True) if orphaned is None else orphaned
+            ),
+            pid=getattr(error, "pid", None),
+            text=self.text,
+        )
+
+
+class BufferedExecutor(Executor[subprocess.CompletedProcess]):
+    """Base of an executor whose transport returns a command's whole output.
+
+    A subclass declares `executor_capabilities` and implements `_exchange`.
+    The base implements the subprocess-shaped `__call__` every hostctl
+    executor shares: unknown options and undeclared `args`/`cwd`/`env` are
+    refused, `input=`/`stdin=` become bytes, the output type follows
+    `wants_text`, capture and stream targets follow `capture_streams` and
+    `dispatch_output`, a non-zero status raises under `check=True` (the
+    default), and a timeout raises `expired()`'s `TimeoutExpired`.
+    """
+
+    executor_capabilities: typing.FrozenSet[str] = frozenset()
+    #: Why the transport cannot take `stdin=`/`input=`, or `None` when it can.
+    #: When set, passing either raises `NotImplementedError` with this text
+    #: before the caller's stream is read.
+    input_unsupported: typing.Optional[str] = None
+    #: Why the transport cannot bound a call, or `None` when it can. When set,
+    #: a `timeout=` other than `None` raises `NotImplementedError` with it.
+    timeout_unsupported: typing.Optional[str] = None
+
+    def __call__(
+        self,
+        command: CommandLike,
+        *args: CommandArgument,
+        bufsize: int = -1,
+        stdin: typing.Optional[StreamTarget] = None,
+        stdout: typing.Optional[StreamTarget] = None,
+        stderr: typing.Optional[StreamTarget] = None,
+        cwd: typing.Optional[StrPath] = None,
+        env: typing.Optional[CommandEnvironment] = None,
+        capture_output: CaptureOutput = True,
+        check: bool = True,
+        encoding: typing.Optional[str] = None,
+        errors: typing.Optional[str] = None,
+        input: CommandInput = None,
+        timeout: typing.Optional[float] = _OMITTED,  # type: ignore[assignment]
+        text: typing.Optional[bool] = None,
+        **options: object,
+    ) -> subprocess.CompletedProcess:
+        del bufsize
+        name = type(self).__name__
+        if options:
+            raise TypeError(f"unsupported {name} option: {sorted(options)[0]}")
+        capabilities = self.executor_capabilities
+        if args and ExecutorCapability.ARGS not in capabilities:
+            raise NotImplementedError(f"{name} takes no native arguments")
+        if cwd is not None and ExecutorCapability.CWD not in capabilities:
+            raise NotImplementedError(f"{name} has no native working directory")
+        if env is not None and ExecutorCapability.ENV not in capabilities:
+            raise NotImplementedError(f"{name} has no native environment")
+        if self.input_unsupported is not None and (
+            stdin is not None or input is not None
+        ):
+            raise NotImplementedError(self.input_unsupported)
+        if timeout is _OMITTED:
+            timeout = self._default_timeout()
+        if timeout is not None and self.timeout_unsupported is not None:
+            raise NotImplementedError(self.timeout_unsupported)
+        reject_stdin_conflict(input, stdin)
+        stdout, stderr = capture_streams(capture_output, stdout, stderr)
+        environment = normalize_environment(env)
+        payload: typing.Optional[bytes]
+        if input is not None:
+            # Whole bytes whatever the call's mode: the transport sends them.
+            payload = typing.cast(
+                bytes,
+                normalize_input(
+                    input, text_mode=False, encoding=encoding, errors=errors
+                ),
+            )
+        elif stdin is not None:
+            payload = _read_stdin(stdin, encoding=encoding, errors=errors)
+        else:
+            payload = None
+        request = ExecutorRequest(
+            command=command_text(command),
+            args=tuple(command_text(value) for value in args),
+            input=payload,
+            merge_stderr=stderr == subprocess.STDOUT,
+            cwd=None if cwd is None else command_text(cwd),
+            env=environment,
+            timeout=timeout,
+            deadline=None if timeout is None else time.monotonic() + timeout,
+        )
+        call = _Call(
+            (
+                [request.command, *request.args]
+                if ExecutorCapability.ARGS in capabilities
+                else request.command
+            ),
+            stdout,
+            stderr,
+            wants_text(text, encoding, errors),
+            encoding,
+            errors,
+        )
+        out, err, returncode = self._dispatch_request(request, call)
+        # `CompletedProcess` reads a `None` status as success.
+        completed = subprocess.CompletedProcess(
+            call.display, -1 if returncode is None else returncode, out, err
+        )
+        if check:
+            completed.check_returncode()
+        return completed
+
+    def _exchange(
+        self, request: ExecutorRequest
+    ) -> typing.Tuple[_Output, _Output, typing.Optional[int]]:
+        """Run `request` and return `(stdout, stderr, returncode)`; override it.
+
+        Either stream may be `bytes`, `str` or `None` (empty). Raise
+        `subprocess.TimeoutExpired` when `request.timeout` passes (build it
+        with `expired()` to set `orphaned`, `pid` and partial output), and
+        `OperationNotStartedError` only when nothing was sent.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement _exchange")
+
+    def _default_timeout(self) -> typing.Optional[float]:
+        """The limit of a call made without `timeout=`; `None` (no limit) here."""
+        return None
+
+    def _normalize_error(self, exc: Exception) -> Exception:
+        """Map a transport error to the one to raise; `exc` itself by default.
+
+        A `subprocess.TimeoutExpired` returned here is raised in `expired()`'s
+        shape; anything else is raised chained to `exc`.
+        """
+        return exc
+
+    @staticmethod
+    def _raise_normalized(
+        exc: Exception, normalized: Exception, request: ExecutorRequest, call: _Call
+    ) -> "typing.NoReturn":
+        if isinstance(normalized, subprocess.TimeoutExpired):
+            raise call.expired(normalized, request) from exc
+        if normalized is exc:
+            raise exc
+        raise normalized from exc
+
+    def _dispatch_request(
+        self, request: ExecutorRequest, call: _Call
+    ) -> typing.Tuple[_Output, _Output, typing.Optional[int]]:
+        try:
+            out, err, returncode = self._exchange(request)
+        except OperationNotStartedError:
+            raise
+        except subprocess.TimeoutExpired as exc:
+            raise call.expired(exc, request) from exc
+        except Exception as exc:
+            self._raise_normalized(exc, self._normalize_error(exc), request, call)
+        out = _in_mode(b"" if out is None else out, *call.mode)
+        err = _in_mode(b"" if err is None else err, *call.mode)
+        if request.merge_stderr:
+            if err:
+                out = typing.cast(typing.Any, out) + err
+            err = None
+        out, err = dispatch_output(
+            call.stdout,
+            call.stderr,
+            out,
+            err,
+            encoding=call.encoding,
+            errors=call.errors,
+        )
+        return out, err, returncode
+
+
+class _Sink:
+    """One streamed output target, decoding incrementally in text mode."""
+
+    def __init__(self, target: typing.Optional[StreamTarget], default, call: _Call):
+        self._target = default if target is None else target
+        self._call = call
+        self._decoder = (
+            codecs.getincrementaldecoder(call.encoding or "utf-8")(
+                call.errors or "strict"
+            )
+            if call.text and self._target != subprocess.DEVNULL
+            else None
+        )
+
+    def write(self, data: bytes, *, final: bool = False) -> None:
+        if self._target == subprocess.DEVNULL:
+            return
+        value: typing.Union[bytes, str] = data
+        if self._decoder is not None:
+            value = self._decoder.decode(data, final)
+        if value:
+            write_output(
+                self._target,
+                value,
+                encoding=self._call.encoding,
+                errors=self._call.errors,
+            )
+
+
+class StreamingExecutor(BufferedExecutor):
+    """Base of an executor whose transport delivers output as it arrives.
+
+    A subclass implements `_send` and `_receive`, and `_abandon` when it can
+    stop a running command. The base sends, then receives until a status
+    arrives: captured output is collected, and output routed elsewhere (a
+    file, `None` for the console) is written as each piece arrives. When the
+    deadline passes it calls `_abandon` and raises `TimeoutExpired` carrying
+    the output captured so far. `OperationNotStartedError` declines the
+    provider only from `_send`; out of `_receive`, after the command was
+    sent, it is raised as `ConnectionError` so the command is not replayed.
+    """
+
+    def _send(self, request: ExecutorRequest) -> None:
+        """Send `request` (command and input) to the target; override it.
+
+        Raise `OperationNotStartedError` only when no byte of it was sent.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement _send")
+
+    def _receive(
+        self, request: ExecutorRequest, wait: typing.Optional[float]
+    ) -> typing.Tuple[bytes, bytes, typing.Optional[int]]:
+        """Return the next `(stdout, stderr, returncode)` output; override it.
+
+        Wait at most `wait` seconds (`None`: until something arrives) and
+        return `(b"", b"", None)` when nothing did. A status other than
+        `None` ends the command; output returned with it is its last.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement _receive")
+
+    def _abandon(self, request: ExecutorRequest) -> bool:
+        """Stop the command after a timeout or a failure; True if it may still run.
+
+        The default stops nothing, so the command is reported orphaned.
+        """
+        return True
+
+    def _stop(self, request: ExecutorRequest) -> bool:
+        try:
+            return bool(self._abandon(request))
+        except Exception:
+            return True
+
+    def _dispatch_request(
+        self, request: ExecutorRequest, call: _Call
+    ) -> typing.Tuple[_Output, _Output, typing.Optional[int]]:
+        captured_out = bytearray() if call.stdout == subprocess.PIPE else None
+        captured_err = bytearray() if call.stderr == subprocess.PIPE else None
+        out_sink = (
+            None if captured_out is not None else _Sink(call.stdout, sys.stdout, call)
+        )
+        err_sink = (
+            None
+            if captured_err is not None or request.merge_stderr
+            else _Sink(call.stderr, sys.stderr, call)
+        )
+
+        def collect(data: bytes, captured, sink) -> None:
+            if not data:
+                return
+            if captured is not None:
+                captured += data
+            else:
+                sink.write(data)
+
+        sent = False
+        deadline_passed: typing.Optional[subprocess.TimeoutExpired] = None
+        try:
+            self._send(request)
+            sent = True
+            while True:
+                wait = request.remaining()
+                if wait is not None and wait <= 0:
+                    deadline_passed = expired(call.display, request.timeout)
+                    raise deadline_passed
+                out, err, returncode = self._receive(request, wait)
+                if request.merge_stderr:
+                    out, err = (out or b"") + (err or b""), b""
+                collect(out, captured_out, out_sink)
+                collect(err, captured_err, err_sink)
+                if returncode is not None:
+                    break
+        except subprocess.TimeoutExpired as exc:
+            orphaned = self._stop(request)
+            raise call.expired(
+                exc,
+                request,
+                output=b"" if captured_out is None else bytes(captured_out),
+                stderr=b"" if captured_err is None else bytes(captured_err),
+                orphaned=orphaned,
+            ) from (None if exc is deadline_passed else exc)
+        except Exception as exc:
+            normalized = (
+                exc
+                if isinstance(exc, OperationNotStartedError)
+                else self._normalize_error(exc)
+            )
+            declined = isinstance(normalized, OperationNotStartedError)
+            if sent or not declined:
+                self._stop(request)
+            if sent and declined:
+                # The command is out: replaying it elsewhere could run it twice.
+                raise ConnectionError(
+                    f"{typing.cast(OperationNotStartedError, normalized).reason}; "
+                    "the command was already sent, so it is not retried through "
+                    "another provider"
+                ) from exc
+            self._raise_normalized(exc, normalized, request, call)
+        except BaseException:
+            self._stop(request)
+            raise
+        for sink in (out_sink, err_sink):
+            if sink is not None:
+                sink.write(b"", final=True)
+        return (
+            None if captured_out is None else _in_mode(captured_out, *call.mode),
+            None if captured_err is None else _in_mode(captured_err, *call.mode),
+            returncode,
+        )
+
+
 __all__ = [
+    "BufferedExecutor",
     "CaptureOutput",
     "CommandArgument",
     "CommandLine",
@@ -576,6 +1033,8 @@ __all__ = [
     "ExecutionOptions",
     "Executor",
     "ExecutorCapability",
+    "ExecutorRequest",
+    "StreamingExecutor",
     "CommandLike",
     "StreamTarget",
     "CommandInput",

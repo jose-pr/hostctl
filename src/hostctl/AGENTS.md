@@ -1037,6 +1037,77 @@ them is where cross-transport divergence comes from.
 - `expired` builds the `subprocess.TimeoutExpired` every transport raises:
   `.orphaned`, `.pid`, and output attributes that are never `None`.
 
+### Writing an executor
+
+```python
+class BufferedExecutor(Executor[subprocess.CompletedProcess])
+BufferedExecutor.executor_capabilities: frozenset[str] = frozenset()
+BufferedExecutor.input_unsupported: str | None = None
+BufferedExecutor.timeout_unsupported: str | None = None
+BufferedExecutor.__call__(command, *args, bufsize=-1, stdin=None, stdout=None, stderr=None, cwd=None, env=None, capture_output=True, check=True, encoding=None, errors=None, input=None, timeout=..., text=None, **options) -> subprocess.CompletedProcess
+BufferedExecutor._exchange(request) -> tuple[bytes | str | None, bytes | str | None, int | None]
+BufferedExecutor._default_timeout() -> float | None
+BufferedExecutor._normalize_error(exc) -> Exception
+class StreamingExecutor(BufferedExecutor)
+StreamingExecutor._send(request) -> None
+StreamingExecutor._receive(request, wait) -> tuple[bytes, bytes, int | None]
+StreamingExecutor._abandon(request) -> bool
+ExecutorRequest(command, args=(), input=None, merge_stderr=False, cwd=None, env=None, timeout=None, deadline=None)
+ExecutorRequest.remaining() -> float | None
+```
+
+The bases a third-party transport subclasses so it implements only its
+primitive and behaves like every built-in executor. The `_` methods are
+the override points (never called from outside); everything else is the
+base's. Hand an instance to `ExecutorProvider(name, executor)`, which
+advertises the class's `executor_capabilities`.
+
+- `BufferedExecutor` is for a transport that returns a command's whole
+  output: implement `_exchange`. `StreamingExecutor` is for one whose output
+  arrives while the command runs: implement `_send` (deliver the command and
+  its input) and `_receive` (wait at most `wait` seconds, `None` for
+  indefinitely; return `(b"", b"", None)` when nothing arrived and a status
+  when the command ended), plus `_abandon` when the transport can stop a
+  command (return `False` once stopped; the default `True` reports it
+  orphaned).
+- `ExecutorRequest` (frozen) is what the primitive gets: `command` text,
+  `args` as text (only with the `"args"` capability), `input` as the whole
+  stdin in bytes or `None` for none (give the command an empty stdin),
+  `merge_stderr` for `stderr=STDOUT` (merge natively if the transport can;
+  stderr returned apart is appended), `cwd`/`env` (only with `"cwd"`/`"env"`;
+  `env` validated and `str`-keyed), `timeout` in seconds or `None`, and
+  `deadline` on `time.monotonic()`; `remaining()` is what is left of it.
+- `__call__` refuses an unknown option with `TypeError`, and `args`, `cwd`
+  or `env` the class does not declare with `NotImplementedError`. Set
+  `input_unsupported`/`timeout_unsupported` to the reason a transport cannot
+  take `stdin=`/`input=` or bound a call: either is then refused with
+  `NotImplementedError(reason)`, input before the caller's stream is read.
+  `input=` of any accepted type and a `stdin=` stream read to EOF both
+  arrive as bytes.
+- Output may be `bytes`, `str` or `None` (empty); the base converts it to
+  the type `wants_text` selects, captures or routes it per
+  `capture_streams`/`dispatch_output`, and returns a `CompletedProcess`
+  whose `args` are `[command, *args]` with the `"args"` capability and the
+  command text otherwise. A `None` status is `-1`; `check=True` is the
+  default. A streaming executor writes uncaptured output as it arrives,
+  decoding incrementally in text mode, and collects only captured output.
+- `timeout` left out is `_default_timeout()` (`None`, no limit, unless
+  overridden), so a host whose config total is `DEFAULT` gets the
+  transport's own default; `None` is no limit. A streaming executor's
+  deadline is enforced by the base: it calls `_abandon` and raises
+  `TimeoutExpired` with the captured output so far. `_exchange` raises
+  `subprocess.TimeoutExpired` itself; the base re-raises it via `expired()`
+  with the call's command and output type, `orphaned=True` unless the
+  exception says otherwise. Partial output torn mid-character decodes with
+  `errors="replace"` unless `errors=` was given.
+- `_normalize_error(exc)` maps any other transport exception (a returned
+  `TimeoutExpired` is treated as a timeout). `OperationNotStartedError` lets
+  the host try its next provider, so raise it only before the first byte
+  was sent: from `_send` or from `_exchange` before it sends. Raised by
+  `_receive` (or produced by `_normalize_error` there), the command is
+  already out, so the base raises `ConnectionError` chained to it instead.
+  Every failure other than a decline from `_send` calls `_abandon`.
+
 ## Processes (`hostctl.process`)
 
 ```python

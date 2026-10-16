@@ -255,3 +255,159 @@ capabilities, and the no-replay safety rule.
 Both `with config as host:` and `with config.open() as host:` connect the
 transport and guarantee `close()` on normal exit or exceptions. Hosts also
 support their own context manager, `connect()`, and `close()` lifecycle.
+
+## Writing an executor
+
+An `ExecutorProvider` takes any callable matching `Executor`, but a callable
+written from scratch has to repeat everything the built-in executors agree
+on: the output type `text=`/`encoding=`/`errors=` select, `capture_output=`
+and stream targets, `input=` versus `stdin=`, `check=True`, and a timeout
+that raises `subprocess.TimeoutExpired` with the output so far. A
+`SystemHost` can send the same call through any of its providers, so an
+executor that differs returns results that depend on which provider won.
+
+`hostctl.executor` has two base classes that do all of that, so a transport
+writes only its primitive:
+
+- `BufferedExecutor`: the transport runs a command and returns its whole
+  output. Implement `_exchange(request) -> (stdout, stderr, returncode)`.
+- `StreamingExecutor`: output arrives while the command runs. Implement
+  `_send(request)`, `_receive(request, wait) -> (stdout, stderr, returncode)`
+  and, when the transport can stop a command, `_abandon(request)`.
+
+This one runs commands over a channel of frames (a websocket, say), where a
+frame starting `1` is stdout, `2` stderr and `3` the exit status. A loopback
+channel stands in for the network so this page runs:
+
+```python
+import queue
+import subprocess
+
+from hostctl import ExecutorProvider, OperationNotStartedError, PosixHost
+from hostctl.executor import StreamingExecutor
+
+
+class FrameExecutor(StreamingExecutor):
+    """Commands over a channel of frames: 1 stdout, 2 stderr, 3 status."""
+
+    def __init__(self, connect):
+        self._connect = connect
+        self._channel = None
+
+    def _send(self, request):
+        if self._channel is None:
+            try:
+                self._channel = self._connect()
+            except OSError as exc:
+                # Nothing was sent, so the host may try its next provider.
+                raise OperationNotStartedError(f"cannot connect: {exc}") from exc
+        payload = request.command.encode() + b"\0" + (request.input or b"")
+        self._channel.send(b"0" + payload)
+
+    def _receive(self, request, wait):
+        frame = self._channel.recv(wait)
+        if frame is None:
+            return b"", b"", None
+        kind, body = frame[:1], frame[1:]
+        if kind == b"1":
+            return body, b"", None
+        if kind == b"2":
+            return b"", body, None
+        return b"", b"", int(body)
+
+    def _abandon(self, request):
+        channel, self._channel = self._channel, None
+        if channel is not None:
+            channel.close()  # the remote ends a command whose channel closes
+        return False  # so nothing is left running
+
+
+class LoopbackChannel:
+    """Stands in for the remote: it reports what it was asked to run."""
+
+    def __init__(self):
+        self._frames = queue.Queue()
+
+    def send(self, message):
+        command, _, stdin = message[1:].partition(b"\0")
+        self._frames.put(b"1ran: " + command + b"\n")
+        self._frames.put(b"2stdin: %d bytes\n" % len(stdin))
+        self._frames.put(b"30")
+
+    def recv(self, timeout):
+        try:
+            return self._frames.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def close(self):
+        pass
+
+
+host = PosixHost(
+    executor_providers=(ExecutorProvider("frames", FrameExecutor(LoopbackChannel)),)
+)
+result = host.run("echo hello", input="abc", text=True)
+assert result.stdout == "ran: /bin/sh -c 'echo hello'\n"
+assert result.stderr == "stdin: 3 bytes\n"
+```
+
+The host renders the command for its shell and the base does the rest. A
+remote that never answers shows the timeout half:
+
+```python
+class SilentChannel(LoopbackChannel):
+    def send(self, message):
+        pass  # the command runs and never finishes
+
+
+try:
+    FrameExecutor(SilentChannel)("sleep 60", timeout=0.1)
+except subprocess.TimeoutExpired as exc:
+    assert exc.orphaned is False  # `_abandon` closed the channel
+    assert exc.output == b""
+else:
+    raise AssertionError("no timeout")
+```
+
+What the base does with a call, so a subclass need not:
+
+- **Options.** An option the base does not know raises `TypeError`. `args`,
+  `cwd` and `env` raise `NotImplementedError` unless the class declares the
+  matching `executor_capabilities` (`"args"`, `"cwd"`, `"env"`); declared,
+  they reach the request as text, `env` validated and `str`-keyed. A
+  provider built with `ExecutorProvider(name, executor)` advertises that
+  same set.
+- **Input.** `input=` (any of `bytes`, `bytearray`, `memoryview`, `str`) and
+  a `stdin=` stream, read to EOF, arrive as `request.input` bytes; `None`
+  means the call sent none, so give the command an empty stdin. Set
+  `input_unsupported = "why"` on a transport that cannot carry input: the
+  call then raises before the caller's stream is read.
+- **Output.** Return `bytes` or `str`; the base turns them into the type the
+  call asked for, captures or writes them where `capture_output=`,
+  `stdout=` and `stderr=` say (`None` is the console), and merges stderr into
+  stdout for `stderr=STDOUT`. `request.merge_stderr` says when, so a
+  transport that can merge natively, keeping the order, does. A streaming
+  executor's uncaptured output is written as each piece arrives, decoded
+  incrementally in text mode.
+- **Status.** `check=True` is the default, as everywhere in hostctl; a
+  missing status (`None`) is reported as `-1`.
+- **Timeouts.** `request.timeout` is the call's limit (`None`: none) and
+  `request.remaining()` what is left of it. A call without `timeout=` uses
+  `_default_timeout()` (no limit unless overridden), so a host whose
+  config leaves the total at `DEFAULT` gets the transport's own default. A
+  streaming executor's deadline is the base's: it calls `_abandon` and
+  raises with the captured output. A buffered one raises
+  `subprocess.TimeoutExpired` from `_exchange` (`expired()` sets `orphaned`,
+  `pid` and partial output), and the base re-raises it with the call's
+  command and output type; `orphaned` is `True` unless the transport said
+  otherwise. Set `timeout_unsupported = "why"` on a transport that cannot
+  bound a command.
+- **Errors.** `_normalize_error(exc)` maps a transport's exception to the one
+  to raise (a returned `TimeoutExpired` gets the timeout treatment).
+  `OperationNotStartedError` is the one exception that lets the host try its
+  next provider, so raise it only when no byte of the command was sent: from
+  `_send`, or from `_exchange` before it sends. Raised from `_receive` the
+  command is already out, and the base raises `ConnectionError` instead,
+  which the host does not retry. Every failure other than a decline from
+  `_send` calls `_abandon`.
