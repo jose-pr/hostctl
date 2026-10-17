@@ -273,6 +273,15 @@ collection until pytruenas ports to these names.
   applies to an `https://` `engine_url` hostctl builds the client for, and is
   pinned against `requests`' `REQUESTS_CA_BUNDLE` override. This ships in
   0.4.0.
+- **`ContainerConfig(client_cert=(certificate, key))`: a client certificate
+  for a Docker Engine over TLS.** A daemon run with `--tlsverify` requires
+  one, which only a `client_factory` could supply. The pair of PEM paths
+  (one file holding both is passed twice) reaches docker-py as
+  `TLSConfig(client_cert=..., verify=...)` with `verify` resolved as before;
+  it needs an `https://` `engine_url` and no `client_factory` (`ValueError`),
+  is accepted beside a URI as a credential, is never in `repr()` or
+  `connection_uri`, and a missing file raises `FileNotFoundError` before
+  connecting.
 - **`MissingExtraError`: a missing extra is its own exception, and the
   command line reports it in one line.** Every place hostctl names an
   optional extra that is not installed raises

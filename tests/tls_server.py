@@ -31,7 +31,8 @@ def _pem(cert: x509.Certificate) -> bytes:
 
 
 class ThrowawayCA:
-    """A self-signed CA; `issue()` signs a server certificate for 127.0.0.1."""
+    """A self-signed CA; `issue()` signs a server certificate for 127.0.0.1,
+    `issue(client=True)` a client certificate."""
 
     def __init__(self, common_name: str = "hostctl test CA") -> None:
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -70,19 +71,22 @@ class ThrowawayCA:
     def pem(self) -> bytes:
         return _pem(self.cert)
 
-    def issue(self) -> typing.Tuple[bytes, bytes]:
-        """A `(certificate chain PEM, key PEM)` for `localhost` and 127.0.0.1."""
+    def issue(self, *, client: bool = False) -> typing.Tuple[bytes, bytes]:
+        """A `(certificate chain PEM, key PEM)`: for `localhost` and 127.0.0.1,
+        or with `client` one for TLS client authentication."""
         now = datetime.datetime.now(datetime.timezone.utc)
         key = ec.generate_private_key(ec.SECP256R1())
-        cert = (
+        builder = (
             x509.CertificateBuilder()
-            .subject_name(_name("localhost"))
+            .subject_name(_name("hostctl test client" if client else "localhost"))
             .issuer_name(self.cert.subject)
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - datetime.timedelta(minutes=5))
             .not_valid_after(now + datetime.timedelta(days=1))
-            .add_extension(
+        )
+        if not client:
+            builder = builder.add_extension(
                 x509.SubjectAlternativeName(
                     [
                         x509.DNSName("localhost"),
@@ -91,9 +95,15 @@ class ThrowawayCA:
                 ),
                 False,
             )
-            .add_extension(x509.BasicConstraints(ca=False, path_length=None), True)
+        usage = x509.oid.ExtendedKeyUsageOID
+        cert = (
+            builder.add_extension(
+                x509.BasicConstraints(ca=False, path_length=None), True
+            )
             .add_extension(
-                x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
+                x509.ExtendedKeyUsage(
+                    [usage.CLIENT_AUTH if client else usage.SERVER_AUTH]
+                ),
                 False,
             )
             .add_extension(
@@ -110,6 +120,20 @@ class ThrowawayCA:
             serialization.NoEncryption(),
         )
         return _pem(cert) + self.pem, key_pem
+
+    def write_client_cert(
+        self, directory: "os.PathLike[str] | str", stem: str = "client"
+    ) -> typing.Tuple[str, str]:
+        """A client certificate written as `(STEM.pem, STEM.key)` in `directory`."""
+        chain, key = self.issue(client=True)
+        paths = (
+            os.path.join(os.fspath(directory), f"{stem}.pem"),
+            os.path.join(os.fspath(directory), f"{stem}.key"),
+        )
+        for path, data in zip(paths, (chain, key)):
+            with open(path, "wb") as handle:
+                handle.write(data)
+        return paths
 
     def write_bundle(self, path: "os.PathLike[str] | str") -> str:
         with open(path, "wb") as handle:
@@ -196,10 +220,19 @@ class TLSServer:
     GET answers a minimal Docker `/version` (200), POST answers 401, so a
     client that completes the handshake gets an HTTP-level failure and one
     that refuses the certificate an SSL error. `requests` records each
-    request that got past the handshake.
+    request that got past the handshake. With `client_ca` the server
+    requires a client certificate that CA issued, as `dockerd --tlsverify`
+    does.
     """
 
-    def __init__(self, ca: ThrowawayCA, directory: "os.PathLike[str] | str") -> None:
+    def __init__(
+        self,
+        ca: ThrowawayCA,
+        directory: "os.PathLike[str] | str",
+        *,
+        client_ca: typing.Optional[ThrowawayCA] = None,
+    ) -> None:
+        self._client_ca = client_ca
         chain, key = ca.issue()
         self._cert = os.path.join(os.fspath(directory), "server.pem")
         self._key = os.path.join(os.fspath(directory), "server.key")
@@ -212,6 +245,9 @@ class TLSServer:
     def __enter__(self) -> "TLSServer":
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(self._cert, self._key)
+        if self._client_ca is not None:
+            context.verify_mode = ssl.CERT_REQUIRED
+            context.load_verify_locations(cadata=self._client_ca.pem.decode("ascii"))
         self._server = _Server(("127.0.0.1", 0), _Handler)
         self._server.requests = self.requests  # type: ignore[attr-defined]
         self._server.socket = context.wrap_socket(self._server.socket, server_side=True)

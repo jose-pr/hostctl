@@ -227,7 +227,7 @@ assert "secret" not in str(config)
 | --- | --- |
 | URI | `docker://container[?query]` |
 | query keys | `engine_url`, `verify`, `username`, `workdir`, `executable`, `shell`, `pathname`, `timeout_connect` |
-| credentials | `client_factory` (a callable returning a Docker client) |
+| credentials | `client_factory` (a callable returning a Docker client), `client_cert` (a `(certificate, key)` pair of PEM paths) |
 | extra | `container` |
 
 ```python
@@ -244,9 +244,24 @@ it is `docker.DockerClient(base_url=engine_url)`. An `https://` engine URL is
 TLS: by default the certificate is checked against the operating system's
 trust store, as on pywinrm (`REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE` instead
 when set); `verify="ca.pem"` trusts that CA bundle instead, `verify=False`
-checks nothing, and either holds even when `REQUESTS_CA_BUNDLE` is set. For
-anything else -- a client certificate, a
-pre-built client -- pass `client_factory=` (and leave `verify` alone).
+checks nothing, and either holds even when `REQUESTS_CA_BUNDLE` is set. A
+daemon run with `--tlsverify` also wants a client certificate:
+`client_cert=("cert.pem", "key.pem")` (one PEM holding both is passed
+twice) presents it, alongside whatever `verify` says. It is never shown in
+`repr()` or the connection URI, and a missing file raises
+`FileNotFoundError` before connecting. For anything else -- a pre-built
+client -- pass `client_factory=` (and leave `verify` and `client_cert`
+alone).
+
+```python
+config = ContainerConfig(
+    "application",
+    engine_url="https://docker.example:2376",
+    verify="ca.pem",
+    client_cert=("cert.pem", "key.pem"),
+)
+```
+
 `timeout.connect` is the client's request timeout (the SDK's 60 s by
 default), passed as `timeout=` to the client or the factory only when set;
 it bounds connecting to the Engine and each API reply. A container has no

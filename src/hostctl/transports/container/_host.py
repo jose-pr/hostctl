@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+import os
 import subprocess
 import typing
 from pathlib import PureWindowsPath
@@ -47,8 +48,12 @@ from ...host._tls import _trust_adapter
 from ...host._verify import _ca_bundle
 
 
-def _pinned_client(verify: typing.Union[bool, str]) -> typing.Callable[..., object]:
-    """A `docker.DockerClient` factory whose every request checks with `verify`.
+def _pinned_client(
+    verify: typing.Union[bool, str],
+    client_cert: typing.Optional[typing.Tuple[str, str]] = None,
+) -> typing.Callable[..., object]:
+    """A `docker.DockerClient` factory whose every request checks with `verify`
+    and presents `client_cert`.
 
     docker-py sends through `requests.Session.request`, which replaces the
     session's `verify` -- a CA bundle, or `False` -- with `REQUESTS_CA_BUNDLE`
@@ -74,9 +79,21 @@ def _pinned_client(verify: typing.Union[bool, str]) -> typing.Callable[..., obje
     class _Client(docker.DockerClient):
         def __init__(self, **options: object) -> None:
             # `DockerClient.__init__` builds `self.api` and nothing else.
-            self.api = _API(tls=docker.tls.TLSConfig(verify=verify), **options)
+            self.api = _API(
+                tls=docker.tls.TLSConfig(client_cert=client_cert, verify=verify),
+                **options,
+            )
 
     return _Client
+
+
+def _client_cert_files(pair: typing.Tuple[str, str]) -> typing.Tuple[str, str]:
+    """`pair` when both files exist; raises `FileNotFoundError` naming the first
+    that does not, before any request rather than as a TLS error."""
+    for role, path in zip(("certificate", "key"), pair):
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"client {role} not found: {path}")
+    return pair
 
 
 def _close_hijacked(stream: object) -> None:
@@ -197,11 +214,19 @@ class ContainerHost(Host):
             verify = self.config.verify
             engine = (self.config.engine_url or "").casefold()
             if self.config.client_factory is None and engine.startswith("https://"):
-                # The config refuses a verify other than True anywhere else.
+                # The config refuses a verify other than True, and a client
+                # certificate, anywhere else.
                 factory = _pinned_client(
-                    verify
-                    if isinstance(verify, bool)
-                    else _ca_bundle(typing.cast(str, verify))
+                    (
+                        verify
+                        if isinstance(verify, bool)
+                        else _ca_bundle(typing.cast(str, verify))
+                    ),
+                    (
+                        None
+                        if self.config.client_cert is None
+                        else _client_cert_files(self.config.client_cert)
+                    ),
                 )
             self._client = factory(**options)
         return self._client

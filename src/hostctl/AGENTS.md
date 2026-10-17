@@ -323,7 +323,7 @@ connection timeouts belong to the transport configs in its
 - A WinRM bundle needs `tls=True`, and `provider="native"` refuses one at
   construction (`provider="auto"` choosing native refuses it when the leg is
   built). A container's non-default `verify` needs an `https://` `engine_url`
-  and no `client_factory`.
+  and no `client_factory`, as does its `client_cert` (see Containers).
 
 ## URIs (`hostctl.uri`)
 
@@ -741,7 +741,7 @@ reopenable.
 ## Containers (`hostctl.transports.container`)
 
 ```python
-ContainerConfig(container, *, engine_url=None, verify=True, username=None, workdir=None, executable=None, shell='auto', pathname='auto', timeout=Timeout(), client_factory=None)
+ContainerConfig(container, *, engine_url=None, verify=True, username=None, workdir=None, executable=None, shell='auto', pathname='auto', timeout=Timeout(), client_factory=None, client_cert=None)
 ContainerHost(config, *, executor_providers=(), path_providers=())
 ```
 
@@ -757,6 +757,18 @@ Windows paths. `client_factory` builds the Docker client (default:
   `engine_url` (`docker.from_env` reads `DOCKER_TLS_VERIFY` and
   `DOCKER_CERT_PATH`) or a `client_factory`, anything but `True` raises
   `ValueError`. Under `False` urllib3 warns `InsecureRequestWarning` per
+  request.
+- `client_cert=(certificate, key)` (`str` or `os.PathLike` PEM paths, stored
+  as a tuple of `str`) is presented to an `https://` `engine_url`, as a
+  daemon run with `--tlsverify` requires; one PEM holding both is
+  `(pem, pem)`. It reaches docker-py as `TLSConfig(client_cert=...,
+  verify=...)` with `verify` resolved as above, and a `True` there keeps
+  docker-py's default trust. Never in `repr()` or `connection_uri`; beside
+  a URI it is a credential: `HostConfig("docker://app?engine_url=...",
+  client_cert=(c, k))`. Anything but a two-item pair raises `TypeError`
+  (an empty path `ValueError`); another engine URL, no `engine_url`, or a
+  `client_factory` raise `ValueError`. A missing file raises
+  `FileNotFoundError` naming it when the client is built, before any
   request.
 
 - `run()` takes no stdin and no `timeout=`: Docker's buffered exec streams

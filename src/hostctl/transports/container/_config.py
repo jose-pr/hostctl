@@ -35,6 +35,30 @@ if typing.TYPE_CHECKING:
     from ._host import ContainerHost
 
 
+def _client_cert(value: object) -> typing.Optional[typing.Tuple[str, str]]:
+    """`value` validated as a `(certificate, key)` pair of paths, stored as `str`."""
+    if value is None:
+        return None
+    if not isinstance(value, (tuple, list)) or len(value) != 2:
+        raise TypeError(
+            "ContainerConfig: client_cert must be a (certificate, key) pair of "
+            "paths; for one PEM file holding both, pass it twice"
+        )
+    pair = []
+    for item in value:
+        if isinstance(item, os.PathLike):
+            item = os.fspath(item)
+        if not isinstance(item, str):
+            raise TypeError(
+                "ContainerConfig: client_cert paths must be str or os.PathLike, "
+                f"not {type(item).__name__}"
+            )
+        if not item:
+            raise ValueError("ContainerConfig: client_cert paths must not be empty")
+        pair.append(item)
+    return (pair[0], pair[1])
+
+
 @_keyword_only()
 @dataclasses.dataclass
 class ContainerConfig(HostConfig, schemes=("docker",)):
@@ -44,7 +68,7 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
     #: whitelist can be read before a config is built: an ambient
     #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
     #: is accepted. The base dispatcher enforces it.
-    uri_credentials = ("client_factory",)
+    uri_credentials = ("client_factory", "client_cert")
 
     #: docker-py's `DEFAULT_TIMEOUT_SECONDS`. No `total`: an Engine exec
     #: cannot be cancelled, and the buffered one reads a single response.
@@ -70,6 +94,12 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
     client_factory: typing.Optional[typing.Callable[..., object]] = dataclasses.field(
         default=None, repr=False, compare=False
     )
+    #: The `(certificate, key)` PEM files presented to an `https://`
+    #: `engine_url`, as a daemon run with `--tlsverify` requires. One file
+    #: holding both is `(pem, pem)`. Never in `repr()` or `connection_uri`.
+    client_cert: typing.Optional[typing.Tuple[str, str]] = dataclasses.field(
+        default=None, repr=False
+    )
 
     def __post_init__(self) -> None:
         HostConfig.__init__(self)
@@ -88,6 +118,19 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
                     "ContainerConfig: verify applies to an https:// engine_url; "
                     "other engine URLs carry no TLS, and without one docker-py "
                     "reads DOCKER_TLS_VERIFY and DOCKER_CERT_PATH"
+                )
+        self.client_cert = _client_cert(self.client_cert)
+        if self.client_cert is not None:
+            if self.client_factory is not None:
+                raise ValueError(
+                    "ContainerConfig: client_factory builds the Docker client and "
+                    "owns its TLS settings; pass no client_cert"
+                )
+            if not (self.engine_url or "").casefold().startswith("https://"):
+                raise ValueError(
+                    "ContainerConfig: client_cert applies to an https:// engine_url; "
+                    "other engine URLs carry no TLS, and without one docker-py "
+                    "reads DOCKER_CERT_PATH"
                 )
         if self.shell != "auto":
             self.shell = shell_flavour(self.shell)
@@ -146,6 +189,9 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
             client_factory=typing.cast(
                 typing.Optional[typing.Callable[..., object]],
                 credentials.get("client_factory"),
+            ),
+            client_cert=typing.cast(
+                typing.Optional[typing.Tuple[str, str]], credentials.get("client_cert")
             ),
         )
 

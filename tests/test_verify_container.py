@@ -191,3 +191,156 @@ def test_a_client_factory_keeps_its_own_trust(tls, monkeypatch):
     finally:
         host.close()
     assert seen and seen[0]["base_url"] == tls.url
+
+
+# -- client_cert: a daemon run with --tlsverify --------------------------------
+
+
+@pytest.fixture(scope="module")
+def mtls(tmp_path_factory):
+    """A server that requires a client certificate from `client_ca`."""
+    directory = tmp_path_factory.mktemp("mtls")
+    ca = ThrowawayCA()
+    client_ca = ThrowawayCA("client CA")
+    stranger = ThrowawayCA("unrelated client CA")
+    with TLSServer(ca, directory, client_ca=client_ca) as server:
+        server.bundle = ca.write_bundle(directory / "ca.pem")
+        server.client_cert = client_ca.write_client_cert(directory)
+        server.stranger_cert = stranger.write_client_cert(directory, "stranger")
+        yield server
+
+
+def _handshakes(server, **options) -> bool:
+    """Whether a request got past the handshake: the server records only those.
+
+    Under TLS 1.3 the server rejects a client certificate after the client's
+    side of the handshake has finished, so the client sees a reset or an SSL
+    alert on its first read; the server's record is what tells them apart.
+    """
+    before = len(server.requests)
+    host = ContainerHost(ContainerConfig("app", engine_url=server.url, **options))
+    try:
+        host.client.version()
+    except docker.errors.DockerException as exc:
+        # docker-py wraps the reset or the SSL error; anything else is a bug.
+        assert (
+            "SSL" in str(exc)
+            or "reset" in str(exc).casefold()
+            or ("forcibly closed" in str(exc))
+        ), exc
+        assert len(server.requests) == before
+        return False
+    finally:
+        host.close()
+    assert len(server.requests) > before
+    return True
+
+
+def test_without_a_client_certificate_the_handshake_fails(mtls):
+    assert _handshakes(mtls, verify=mtls.bundle) is False
+
+
+def test_the_right_client_certificate_is_presented(mtls):
+    assert _handshakes(mtls, verify=mtls.bundle, client_cert=mtls.client_cert)
+
+
+def test_a_client_certificate_from_another_ca_is_refused(mtls):
+    assert (
+        _handshakes(mtls, verify=mtls.bundle, client_cert=mtls.stranger_cert) is False
+    )
+
+
+def test_a_client_certificate_keeps_the_default_trust(mtls, monkeypatch):
+    # `verify=True` with a client certificate is docker-py's default trust,
+    # which honours `REQUESTS_CA_BUNDLE`; without it the server is unknown.
+    assert _handshakes(mtls, client_cert=mtls.client_cert) is False
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", mtls.bundle)
+    assert _handshakes(mtls, client_cert=mtls.client_cert)
+
+
+@_insecure
+def test_a_client_certificate_with_verify_false(mtls):
+    assert _handshakes(mtls, verify=False, client_cert=mtls.client_cert)
+
+
+def test_one_pem_holding_both_is_passed_twice(mtls, tmp_path):
+    cert, key = mtls.client_cert
+    combined = tmp_path / "combined.pem"
+    with open(cert, "rb") as first, open(key, "rb") as second:
+        combined.write_bytes(first.read() + second.read())
+    assert _handshakes(mtls, verify=mtls.bundle, client_cert=(combined, combined))
+
+
+@pytest.mark.parametrize("which", (0, 1))
+def test_a_missing_client_file_names_its_path_before_connecting(mtls, tmp_path, which):
+    pair = list(mtls.client_cert)
+    pair[which] = str(tmp_path / "absent.pem")
+    before = len(mtls.requests)
+    host = ContainerHost(
+        ContainerConfig(
+            "app", engine_url=mtls.url, verify=mtls.bundle, client_cert=tuple(pair)
+        )
+    )
+    with pytest.raises(FileNotFoundError, match="absent.pem") as raised:
+        host.client
+    assert ("certificate", "key")[which] in str(raised.value)
+    assert len(mtls.requests) == before
+
+
+@pytest.mark.parametrize(
+    "options",
+    (
+        {},
+        {"engine_url": "tcp://127.0.0.1:2376"},
+        {"engine_url": "unix:///var/run/docker.sock"},
+        {"engine_url": "https://h:2376", "client_factory": lambda **kw: None},
+    ),
+)
+def test_client_cert_needs_an_https_engine_the_config_builds(options):
+    with pytest.raises(ValueError, match="client_cert"):
+        ContainerConfig("app", client_cert=("c.pem", "k.pem"), **options)
+
+
+@pytest.mark.parametrize(
+    "value, error",
+    (
+        ("both.pem", TypeError),
+        (("only.pem",), TypeError),
+        (("c.pem", "k.pem", "x.pem"), TypeError),
+        (("c.pem", b"k.pem"), TypeError),
+        (("c.pem", ""), ValueError),
+    ),
+)
+def test_client_cert_must_be_a_pair_of_paths(value, error):
+    with pytest.raises(error, match="client_cert"):
+        ContainerConfig("app", engine_url="https://h:2376", client_cert=value)
+
+
+def test_client_cert_is_stored_as_str_and_is_keyword_only(tmp_path):
+    config = ContainerConfig(
+        "app", engine_url="https://h:2376", client_cert=[tmp_path / "c", "k"]
+    )
+    assert config.client_cert == (str(tmp_path / "c"), "k")
+    with pytest.raises(TypeError):
+        ContainerConfig("app", "https://h:2376", True, client_cert=("c", "k"))
+
+
+def test_client_cert_is_never_shown():
+    config = ContainerConfig(
+        "app",
+        engine_url="https://h:2376",
+        client_cert=("/secret/c.pem", "/secret/k.pem"),
+    )
+    assert "secret" not in repr(config)
+    assert "secret" not in config.connection_uri
+    again = HostConfig(config.connection_uri)
+    assert again.client_cert is None
+
+
+def test_client_cert_is_a_credential_beside_a_uri():
+    config = HostConfig(
+        "docker://app?engine_url=https%3A%2F%2Fh%3A2376", client_cert=("c.pem", "k.pem")
+    )
+    assert config.client_cert == ("c.pem", "k.pem")
+    with pytest.raises(ValueError, match="client_cert"):
+        HostConfig("docker://app", client_cert=("c.pem", "k.pem"))
