@@ -88,10 +88,10 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     auth: WinRMAuth = "ntlm"
     port: typing.Optional[int] = None
     tls: bool = False
-    #: `True` checks the server certificate with each leg's default trust
-    #: (native: the Windows certificate store; pywinrm and PSRP: `requests`'
-    #: default), `False` checks nothing, a path is the CA bundle trusted
-    #: instead (pywinrm and PSRP only). Stored as `bool` or `str`.
+    #: `True` checks the server certificate against the operating system's
+    #: trust store (pywinrm and PSRP: `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE`
+    #: instead when set), `False` checks nothing, a path is the CA bundle
+    #: trusted instead (pywinrm and PSRP only). Stored as `bool` or `str`.
     verify: typing.Union[bool, str, "os.PathLike[str]"] = True
     message_encryption: MessageEncryption = "auto"
     #: `total` is the default of `run(timeout=)` on every leg (30 s);

@@ -17,7 +17,7 @@ pytest.importorskip("cryptography")
 
 from hostctl import HostConfig, WinRMConfig  # noqa: E402
 from hostctl.transports.winrm._native import NativeWinRMSession  # noqa: E402
-from tls_server import ThrowawayCA, TLSServer  # noqa: E402
+from tls_server import ThrowawayCA, TLSServer, os_store_holds  # noqa: E402
 
 _ENV_BUNDLES = ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
 
@@ -280,3 +280,109 @@ def test_pathlib_bundle_on_the_psrp_mapping(tmp_path):
     # A duck-typed config's falsy value is not a request to switch checks off.
     assert _cert_validation(None) is True
     assert _cert_validation(0) is True
+
+
+# `verify=True` on pywinrm and PSRP: the OS store, simulated through the
+# `_os_trust` seam (tls_server.os_store_holds), or a CA variable when set.
+
+
+@pytest.mark.parametrize("send", _LEGS)
+def test_true_trusts_the_os_store(tls, send, monkeypatch):
+    os_store_holds(monkeypatch, tls.bundle)
+    before = len(tls.requests)
+    assert send(_config(tls)) is True
+    assert len(tls.requests) > before
+
+
+@pytest.mark.parametrize("send", _LEGS)
+def test_true_does_not_consult_certifi(tls, send, monkeypatch):
+    import requests
+
+    # `requests`' default bundle now holds the server's CA: reading it would
+    # accept the server.
+    monkeypatch.setattr(requests.adapters, "DEFAULT_CA_BUNDLE_PATH", tls.bundle)
+    os_store_holds(monkeypatch, tls.other_bundle)
+    assert send(_config(tls)) is False
+
+
+@pytest.mark.parametrize("send", _LEGS)
+@pytest.mark.parametrize("name", _ENV_BUNDLES)
+def test_a_ca_variable_replaces_the_os_store(tls, send, monkeypatch, name):
+    os_store_holds(monkeypatch, tls.bundle)
+    monkeypatch.setenv(name, tls.other_bundle)
+    assert send(_config(tls)) is False
+    os_store_holds(monkeypatch, tls.other_bundle)
+    monkeypatch.setenv(name, tls.bundle)
+    assert send(_config(tls)) is True
+
+
+@pytest.mark.parametrize("send", _LEGS)
+def test_a_bundle_ignores_the_os_store(tls, send, monkeypatch):
+    os_store_holds(monkeypatch, tls.bundle)
+    assert send(_config(tls, verify=tls.other_bundle)) is False
+    assert send(_config(tls, verify=tls.bundle)) is True
+
+
+@pytest.mark.parametrize("send", _LEGS)
+def test_false_ignores_the_os_store(tls, send, monkeypatch):
+    os_store_holds(monkeypatch, tls.other_bundle)
+    assert send(_config(tls, verify=False)) is True
+
+
+def test_pywinrm_trusts_the_session_it_rebuilds(tls, monkeypatch):
+    pytest.importorskip("winrm")
+    from winrm.exceptions import InvalidCredentialsError
+
+    from hostctl.transports.winrm._transport import _PywinrmLeg
+
+    os_store_holds(monkeypatch, tls.bundle)
+    transport = _PywinrmLeg(_config(tls))._build()._protocol.transport
+    for _ in range(2):
+        with pytest.raises(InvalidCredentialsError):
+            transport.send_message("<x/>")
+        assert transport.session.get_adapter("https://")._hostctl_trust
+        transport.close_session()
+        assert transport.session is None
+
+
+def test_pywinrm_trusts_before_setting_up_encryption(tls, monkeypatch):
+    # With message encryption pywinrm sends its first request from inside
+    # `build_session`; a trust installed after it returns would be too late.
+    pytest.importorskip("winrm")
+    import requests
+    from winrm.exceptions import InvalidCredentialsError
+
+    from hostctl.transports.winrm._transport import _PywinrmLeg
+
+    config = _config(tls, auth="ntlm", message_encryption="always")
+    transport = _PywinrmLeg(config)._build()._protocol.transport
+    with pytest.raises(requests.exceptions.SSLError):
+        transport.build_session()
+    transport.close_session()
+    os_store_holds(monkeypatch, tls.bundle)
+    transport = _PywinrmLeg(config)._build()._protocol.transport
+    with pytest.raises(InvalidCredentialsError):
+        transport.build_session()
+    transport.close_session()
+
+
+@pytest.mark.skipif(
+    sys.version_info < (3, 10), reason="hostctl[psrp] needs Python 3.10+"
+)
+def test_the_pypsrp_hook_point_exists():
+    # `_TransportHTTP._build_session` is private to pypsrp. If a release
+    # within the `psrp` extra's range moves it, this names the cause.
+    pytest.importorskip("pypsrp")
+    from pypsrp.wsman import WSMan, _TransportHTTP
+
+    assert callable(getattr(_TransportHTTP, "_build_session", None))
+    transport = WSMan("h", ssl=True, auth="basic", username="u", password="p").transport
+    assert isinstance(transport, _TransportHTTP)
+    assert transport.session is None
+
+
+def test_a_pypsrp_without_the_hook_point_refuses():
+    from hostctl.transports.winrm._psrp import _trust_psrp
+
+    with pytest.raises(RuntimeError, match="_build_session"):
+        _trust_psrp(object())

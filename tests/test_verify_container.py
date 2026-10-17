@@ -13,7 +13,7 @@ docker = pytest.importorskip("docker")
 
 from hostctl import ContainerConfig, HostConfig  # noqa: E402
 from hostctl.transports.container import ContainerHost  # noqa: E402
-from tls_server import ThrowawayCA, TLSServer  # noqa: E402
+from tls_server import ThrowawayCA, TLSServer, os_store_holds  # noqa: E402
 
 _ENV_BUNDLES = ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
 
@@ -129,3 +129,62 @@ def test_the_uri_key_round_trips(verify):
     assert again.verify == verify
     assert again == config
     assert "verify" not in ContainerConfig("app").connection_uri
+
+
+# `verify=True` on an `https://` engine: the OS store, simulated through the
+# `_os_trust` seam (tls_server.os_store_holds), or a CA variable when set.
+
+
+def test_true_trusts_the_os_store(tls, monkeypatch):
+    os_store_holds(monkeypatch, tls.bundle)
+    before = len(tls.requests)
+    assert _connects(tls) is True
+    assert len(tls.requests) >= before + 2
+
+
+def test_true_does_not_consult_certifi(tls, monkeypatch):
+    import requests
+
+    monkeypatch.setattr(requests.adapters, "DEFAULT_CA_BUNDLE_PATH", tls.bundle)
+    os_store_holds(monkeypatch, tls.other_bundle)
+    assert _connects(tls) is False
+
+
+@pytest.mark.parametrize("name", _ENV_BUNDLES)
+def test_a_ca_variable_replaces_the_os_store(tls, monkeypatch, name):
+    os_store_holds(monkeypatch, tls.bundle)
+    monkeypatch.setenv(name, tls.other_bundle)
+    assert _connects(tls) is False
+    os_store_holds(monkeypatch, tls.other_bundle)
+    monkeypatch.setenv(name, tls.bundle)
+    assert _connects(tls) is True
+
+
+def test_a_bundle_ignores_the_os_store(tls, monkeypatch):
+    os_store_holds(monkeypatch, tls.bundle)
+    assert _connects(tls, verify=tls.other_bundle) is False
+
+
+@_insecure
+def test_false_ignores_the_os_store(tls, monkeypatch):
+    os_store_holds(monkeypatch, tls.other_bundle)
+    assert _connects(tls, verify=False) is True
+
+
+def test_a_client_factory_keeps_its_own_trust(tls, monkeypatch):
+    seen = []
+
+    def factory(**options):
+        seen.append(options)
+        return docker.DockerClient(**options)
+
+    os_store_holds(monkeypatch, tls.bundle)
+    host = ContainerHost(
+        ContainerConfig("app", engine_url=tls.url, client_factory=factory)
+    )
+    try:
+        with pytest.raises(docker.errors.DockerException, match="SSL"):
+            host.client
+    finally:
+        host.close()
+    assert seen and seen[0]["base_url"] == tls.url

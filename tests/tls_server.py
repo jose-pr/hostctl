@@ -228,3 +228,16 @@ class TLSServer:
         self._server.shutdown()
         self._server.server_close()
         self._thread.join(5)
+
+
+def os_store_holds(monkeypatch: typing.Any, bundle: str) -> None:
+    """Make hostctl's OS-store loading return `bundle` as the whole store.
+
+    Simulates a CA installed in the operating system's trust store without
+    touching the real one.
+    """
+    from hostctl.host import _tls
+
+    monkeypatch.setattr(
+        _tls, "_os_trust", lambda: ssl.create_default_context(cafile=bundle)
+    )

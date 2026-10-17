@@ -10,6 +10,7 @@ import types
 from ..._extras import _require
 from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT
 from ...host._timeout import DEFAULT, _config_timeouts
+from ...host._tls import _trust_session
 from ...host._verify import _ca_bundle
 from ...executor import (
     BufferedExecutor,
@@ -149,6 +150,29 @@ def _cert_validation(verify: object) -> typing.Union[bool, str]:
     return verify is not False
 
 
+def _trust_psrp(transport: typing.Any) -> None:
+    """Make the session pypsrp's HTTP transport builds trust the OS store.
+
+    `_TransportHTTP._build_session` is private to pypsrp; the `psrp` extra's
+    version range is the one it was checked against, and its absence raises
+    rather than leaving certifi as the trust.
+    """
+    build_session = getattr(transport, "_build_session", None)
+    if build_session is None:
+        raise RuntimeError(
+            "this pypsrp has no _TransportHTTP._build_session, where hostctl "
+            "installs the OS trust for verify=True; install the version range "
+            "hostctl[psrp] declares"
+        )
+
+    def _build_session() -> typing.Any:
+        session = build_session()
+        _trust_session(session)
+        return session
+
+    transport._build_session = _build_session
+
+
 class RunspaceSession:
     """A persistent PSRP runspace with typed PowerShell pipeline streams.
 
@@ -206,7 +230,10 @@ class RunspaceSession:
         connect = _config_timeouts(config).connect
         if connect is not None and connect is not DEFAULT:
             kwargs["connection_timeout"] = connect
-        return RunspacePool(WSMan(**kwargs))
+        wsman = WSMan(**kwargs)
+        if ssl and kwargs["cert_validation"] is True:
+            _trust_psrp(wsman.transport)
+        return RunspacePool(wsman)
 
     def connect(self) -> None:
         # One lock: two threads calling `connect()` on a fresh session each

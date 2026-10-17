@@ -16,7 +16,7 @@ pytest.importorskip("cryptography")
 requests = pytest.importorskip("requests")
 
 from hostctl.host import _tls  # noqa: E402
-from tls_server import ThrowawayCA, TLSServer  # noqa: E402
+from tls_server import ThrowawayCA, TLSServer, os_store_holds  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -35,13 +35,6 @@ def tls(tmp_path_factory):
 def _no_env_bundle(monkeypatch):
     for name in _tls._ENV_BUNDLES:
         monkeypatch.delenv(name, raising=False)
-
-
-def _os_store_holds(monkeypatch, bundle):
-    """Make the `_os_trust` seam load `bundle` as if it were the OS store."""
-    monkeypatch.setattr(
-        _tls, "_os_trust", lambda: ssl.create_default_context(cafile=bundle)
-    )
 
 
 def _get(server, session) -> bool:
@@ -69,7 +62,7 @@ def test_without_a_variable_the_os_store_is_the_trust(monkeypatch):
 
 @pytest.mark.parametrize("name", _tls._ENV_BUNDLES)
 def test_a_variable_replaces_the_os_store(tls, monkeypatch, name):
-    _os_store_holds(monkeypatch, tls.bundle)
+    os_store_holds(monkeypatch, tls.bundle)
     monkeypatch.setenv(name, tls.other_bundle)
     assert _get(tls, _trusted()) is False
     monkeypatch.setenv(name, tls.bundle)
@@ -77,7 +70,7 @@ def test_a_variable_replaces_the_os_store(tls, monkeypatch, name):
 
 
 def test_requests_order_between_the_variables(tls, monkeypatch):
-    _os_store_holds(monkeypatch, tls.other_bundle)
+    os_store_holds(monkeypatch, tls.other_bundle)
     monkeypatch.setenv("REQUESTS_CA_BUNDLE", tls.bundle)
     monkeypatch.setenv("CURL_CA_BUNDLE", tls.other_bundle)
     assert _get(tls, _trusted()) is True
@@ -87,7 +80,7 @@ def test_requests_order_between_the_variables(tls, monkeypatch):
 
 
 def test_a_variable_may_name_a_hashed_directory(tls, monkeypatch):
-    _os_store_holds(monkeypatch, tls.other_bundle)
+    os_store_holds(monkeypatch, tls.other_bundle)
     monkeypatch.setenv("REQUESTS_CA_BUNDLE", tls.hashed)
     assert _get(tls, _trusted()) is True
 
@@ -99,7 +92,7 @@ def test_a_missing_variable_bundle_names_path_and_variable(monkeypatch, tmp_path
 
 
 def test_the_os_store_is_trusted(tls, monkeypatch):
-    _os_store_holds(monkeypatch, tls.bundle)
+    os_store_holds(monkeypatch, tls.bundle)
     assert _get(tls, _trusted()) is True
 
 
@@ -107,7 +100,7 @@ def test_certifi_is_not_consulted(tls, monkeypatch):
     monkeypatch.setattr(requests.adapters, "DEFAULT_CA_BUNDLE_PATH", tls.bundle)
     # The patch is effective: stock `requests` now trusts the server.
     assert _get(tls, requests.Session()) is True
-    _os_store_holds(monkeypatch, tls.other_bundle)
+    os_store_holds(monkeypatch, tls.other_bundle)
     assert _get(tls, _trusted()) is False
 
 

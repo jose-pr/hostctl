@@ -43,6 +43,7 @@ from pathapi import Path
 from ._path import ContainerPathBackend, PosixContainerPath, WindowsContainerPath
 from ...host._selection import PathnameType
 from ._config import ContainerConfig
+from ...host._tls import _trust_adapter
 from ...host._verify import _ca_bundle
 
 
@@ -52,11 +53,17 @@ def _pinned_client(verify: typing.Union[bool, str]) -> typing.Callable[..., obje
     docker-py sends through `requests.Session.request`, which replaces the
     session's `verify` -- a CA bundle, or `False` -- with `REQUESTS_CA_BUNDLE`
     whenever that is set. The first request is sent from the constructor, so
-    the override has to be in the class.
+    the override has to be in the class. `True` trusts the OS store, or an
+    environment bundle, installed on each `https://` adapter as it is mounted.
     """
     import docker
 
     class _API(docker.APIClient):
+        def mount(self, prefix, adapter):
+            if verify is True and prefix.casefold() == "https://":
+                _trust_adapter(adapter)
+            super().mount(prefix, adapter)
+
         def merge_environment_settings(self, url, proxies, stream, verify, cert):
             settings = super().merge_environment_settings(
                 url, proxies, stream, verify, cert
@@ -191,10 +198,13 @@ class ContainerHost(Host):
                 # its own; `None` is the SDK's "no limit".
                 options["timeout"] = connect
             verify = self.config.verify
-            if verify is not True:
-                # The config refuses this with a client_factory.
+            engine = (self.config.engine_url or "").casefold()
+            if self.config.client_factory is None and engine.startswith("https://"):
+                # The config refuses a verify other than True anywhere else.
                 factory = _pinned_client(
-                    False if verify is False else _ca_bundle(typing.cast(str, verify))
+                    verify
+                    if isinstance(verify, bool)
+                    else _ca_bundle(typing.cast(str, verify))
                 )
             self._client = factory(**options)
         return self._client

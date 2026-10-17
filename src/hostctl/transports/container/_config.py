@@ -53,8 +53,9 @@ class ContainerConfig(HostConfig, schemes=("docker",)):
     container: str
     engine_url: typing.Optional[str] = None
     #: The Engine's certificate check on an `https://` `engine_url`: `True` is
-    #: docker-py's default (`requests`' trust), `False` checks nothing, a path
-    #: is the CA bundle trusted instead. Any other engine URL, the
+    #: the operating system's trust store (`REQUESTS_CA_BUNDLE` or
+    #: `CURL_CA_BUNDLE` instead when set), `False` checks nothing, a path is
+    #: the CA bundle trusted instead. Any other engine URL, the
     #: environment's Docker settings and a `client_factory` own their TLS, so
     #: there it must stay `True`.
     verify: typing.Union[bool, str, "os.PathLike[str]"] = True

@@ -28,6 +28,7 @@ from ...shell import POWERSHELL
 from ...shell._flavour import ShellFlavour
 from ...shell._vocabulary import wants_epilogue
 from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT, WinRMConfig
+from ...host._tls import _trust_session
 from ...host._verify import _ca_bundle
 from ...executor import _OMITTED, _Omitted
 from ._path import WinRMPath, WinRMPathBackend
@@ -183,6 +184,10 @@ class _PywinrmLeg(_SessionLeg):
             # A given `ca_trust_path` replaces both `REQUESTS_CA_BUNDLE` and
             # certifi; pywinrm hands it to `requests` as `verify=`.
             trust["ca_trust_path"] = _ca_bundle(verify)
+        elif verify is True and self.config.tls:
+            # `None` stops pywinrm reading the CA variables itself: the
+            # installed trust reads them.
+            trust["ca_trust_path"] = None
         # `winrm.Session` still owns endpoint and auth handling; only its
         # protocol is used, because `run_ps` goes through cmd.exe.
         protocol = winrm.Session(
@@ -196,12 +201,37 @@ class _PywinrmLeg(_SessionLeg):
             read_timeout_sec=_READ_TIMEOUT,
             **trust,
         ).protocol
+        if verify is True and self.config.tls:
+            _trust_pywinrm(protocol.transport)
         connect = self.config.timeouts.connect
         if connect is not None:
             # pywinrm hands this attribute to `requests` as the `timeout=` of
             # every request, so a `(connect, read)` pair splits the two.
             protocol.transport.read_timeout_sec = (connect, _READ_TIMEOUT)
         return _PywinrmStdinSession(protocol, timeout=self.config.timeouts.total)
+
+
+def _trust_pywinrm(transport: typing.Any) -> None:
+    """Make every session a pywinrm `Transport` builds trust the OS store.
+
+    pywinrm builds a fresh session after `close_session()`, and with message
+    encryption sends its first request from inside `build_session()`, through
+    `setup_encryption()` -- so both are wrapped, before any request is sent.
+    """
+    build_session = transport.build_session
+    setup_encryption = transport.setup_encryption
+
+    def _setup_encryption(session: typing.Any) -> None:
+        _trust_session(session)
+        setup_encryption(session)
+
+    def _build_session() -> typing.Any:
+        session = build_session()
+        _trust_session(session)
+        return session
+
+    transport.setup_encryption = _setup_encryption
+    transport.build_session = _build_session
 
 
 class _PSRPLeg(_Leg):
