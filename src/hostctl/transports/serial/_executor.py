@@ -10,6 +10,7 @@ import time
 import types
 import typing
 
+from ...exceptions import MissingExtraError
 from ...executor import StreamLease, raise_normalized
 
 if typing.TYPE_CHECKING:
@@ -93,9 +94,7 @@ def _default_serial_factory(port: str, **options: object) -> SerialLike:
     try:
         import serial
     except ImportError as exc:
-        raise ImportError(
-            "serial support requires the 'serial' extra: " "pip install hostctl[serial]"
-        ) from exc
+        raise MissingExtraError("serial", "a serial port") from exc
     return typing.cast(SerialLike, serial.serial_for_url(port, **options))
 
 

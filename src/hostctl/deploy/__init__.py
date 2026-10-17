@@ -8,7 +8,7 @@ result atomically through ``host.run()`` and ``host.path()``, so it works over
 any transport to a POSIX host. :func:`bundle` writes the same layouts locally.
 
 Needs the ``deploy`` extra (``pip install "hostctl[deploy]"``); importing this
-module does not, and the first call without it raises `ImportError` naming it.
+module does not, and the first call without it raises `MissingExtraError` naming it.
 """
 
 from __future__ import annotations

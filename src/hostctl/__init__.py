@@ -25,6 +25,7 @@ from .exceptions import (
     BundleError as BundleError,
     ConsoleProtocolError as ConsoleProtocolError,
     HostctlError as HostctlError,
+    MissingExtraError as MissingExtraError,
     OperationNotStartedError as OperationNotStartedError,
     ProtocolError as ProtocolError,
     QGACommandError as QGACommandError,
@@ -231,6 +232,7 @@ __all__ = [
     "QGATimeoutError",
     "QGACommandError",
     "BundleError",
+    "MissingExtraError",
     # Transfer helpers
     "ProgressReader",
     "host_checksum",

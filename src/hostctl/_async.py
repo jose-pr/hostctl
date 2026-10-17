@@ -38,9 +38,9 @@ def asyncssh():
     try:
         import asyncssh
     except ImportError as exc:  # pragma: no cover - only without the extra
-        raise ImportError(
-            "SSH support requires the 'ssh' extra: pip install hostctl[ssh]"
-        ) from exc
+        from .exceptions import MissingExtraError
+
+        raise MissingExtraError("ssh", "SSH") from exc
     return asyncssh
 
 
@@ -49,9 +49,9 @@ def sftppath():
     try:
         import sftppath
     except ImportError as exc:
-        raise ImportError(
-            "SSH paths require the 'ssh' extra: pip install hostctl[ssh]"
-        ) from exc
+        from .exceptions import MissingExtraError
+
+        raise MissingExtraError("ssh", "SSH paths") from exc
     return sftppath
 
 

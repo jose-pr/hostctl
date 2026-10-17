@@ -90,6 +90,7 @@ points and a worked example are in
 ::: hostctl.QGATimeoutError
 ::: hostctl.QGACommandError
 ::: hostctl.BundleError
+::: hostctl.MissingExtraError
 
 ## Provider composition
 
@@ -155,8 +156,8 @@ throughout, which lets providers advertise transport-specific tokens
 Any of them can be passed wherever a `ShellFlavour` is expected.
 
 `has_ssh()` and `has_psrp()` report whether the `ssh` and `psrp` extras are
-installed, without importing them; a missing extra otherwise raises an
-`ImportError` naming it where it is used. `__version__` contains the
+installed, without importing them; a missing extra otherwise raises
+`MissingExtraError` (an `ImportError`) naming it where it is used. `__version__` contains the
 installed package version.
 
 `ShellSelection` and `PathnameSelection` (in `hostctl.host`) are what every

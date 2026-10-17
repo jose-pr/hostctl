@@ -25,7 +25,7 @@ pytest.importorskip("packaging")
 pytest.importorskip("pathspec")
 
 from _deploy_fakes import make_site  # noqa: E402
-from hostctl import BundleError  # noqa: E402
+from hostctl import BundleError, MissingExtraError  # noqa: E402
 from hostctl.deploy import SourceTree, bundle  # noqa: E402
 from hostctl.deploy import _archive, _closure, _tree  # noqa: E402
 
@@ -632,7 +632,7 @@ def test_a_tree_without_pathspec_names_the_extra(tmp_path, monkeypatch):
     (tmp_path / "f.txt").write_text("x")
     _block(monkeypatch, "pathspec")
 
-    with pytest.raises(ImportError, match=r"hostctl\[deploy\]"):
+    with pytest.raises(MissingExtraError, match=r"hostctl\[deploy\]"):
         SourceTree(tmp_path).files()
 
 
@@ -640,7 +640,7 @@ def test_a_pyproject_without_a_toml_parser_names_the_extra(tmp_path, monkeypatch
     (tmp_path / "pyproject.toml").write_text("[project]\ndependencies = []\n")
     _block(monkeypatch, "tomllib", "tomli")
 
-    with pytest.raises(ImportError, match=r"'deploy' extra"):
+    with pytest.raises(MissingExtraError, match=r"'deploy' extra"):
         SourceTree(tmp_path).requirements()
 
 

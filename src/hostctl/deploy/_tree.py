@@ -12,7 +12,7 @@ import typing
 from pathlib import Path
 
 from .._extras import _require
-from ..exceptions import BundleError
+from ..exceptions import BundleError, MissingExtraError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -176,9 +176,8 @@ def _toml_loads() -> typing.Callable[[str], typing.Dict[str, typing.Any]]:
     try:
         import tomli
     except ImportError as exc:
-        raise ImportError(
-            "reading pyproject.toml before Python 3.11 needs the 'deploy' extra: "
-            'pip install "hostctl[deploy]"'
+        raise MissingExtraError(
+            "deploy", "reading pyproject.toml before Python 3.11"
         ) from exc
     return tomli.loads
 

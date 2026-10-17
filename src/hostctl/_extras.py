@@ -49,20 +49,17 @@ def _available(extra: str) -> bool:
 
 
 def _require(extra: str, feature: str) -> None:
-    """Import what `extra` provides, or raise `ImportError` naming it."""
+    """Import what `extra` provides, or raise `MissingExtraError` naming it."""
+    from .exceptions import MissingExtraError
+
     names, floor = _EXTRAS[extra]
     if sys.version_info < floor:
-        raise ImportError(
-            f"{feature} needs Python {floor[0]}.{floor[1]} or newer "
-            f"(the '{extra}' extra supports nothing older)"
-        )
+        raise MissingExtraError(extra, feature, python=floor)
     for name in names:
         try:
             importlib.import_module(name)
         except ImportError as exc:
-            raise ImportError(
-                f"{feature} needs the '{extra}' extra: pip install \"hostctl[{extra}]\""
-            ) from exc
+            raise MissingExtraError(extra, feature) from exc
 
 
 def has_ssh() -> bool:

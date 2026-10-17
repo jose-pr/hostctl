@@ -13,6 +13,7 @@ import typing
 from ._native import NativeWinRMSession
 from ._pywinrm import WinRMExecutor, WinRMSession, _PywinrmStdinSession
 from ..._extras import has_psrp
+from ...exceptions import MissingExtraError
 from ._psrp import PSRPExecutor, RunspaceSession
 from ...provider._selector import ProviderSelector
 from ...executor import (
@@ -174,10 +175,7 @@ class _PywinrmLeg(_SessionLeg):
         try:
             import winrm
         except ImportError as exc:
-            raise ImportError(
-                "WinRM support requires the 'winrm' extra: "
-                "pip install hostctl[winrm]"
-            ) from exc
+            raise MissingExtraError("winrm", "WinRM over pywinrm") from exc
         verify = self.config.verify
         trust: typing.Dict[str, object] = {}
         if isinstance(verify, str):

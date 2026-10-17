@@ -15,6 +15,7 @@ import typing
 
 from ...exceptions import (
     HostctlError,
+    MissingExtraError,
     QGACommandError,
     QGADisconnectedError,
     QGAProtocolError,
@@ -153,10 +154,7 @@ class LibvirtGuestAgentTransport:
                 import libvirt
                 import libvirt_qemu
             except ImportError as exc:
-                raise ImportError(
-                    "libvirt QGA support requires the 'qemu-libvirt' extra: "
-                    "pip install hostctl[qemu-libvirt]"
-                ) from exc
+                raise MissingExtraError("qemu-libvirt", "libvirt QGA") from exc
             connect_factory = connect_factory or libvirt.open
             command_factory = command_factory or libvirt_qemu.qemuAgentCommand
         connection = None

@@ -21,6 +21,7 @@ __all__ = [
     "QGATimeoutError",
     "QGACommandError",
     "BundleError",
+    "MissingExtraError",
 ]
 
 
@@ -98,3 +99,34 @@ class BundleError(HostctlError, RuntimeError):
     compiled extension or nothing importable, a missing ignore file, a source
     tree without an importable package.
     """
+
+
+class MissingExtraError(HostctlError, ImportError):
+    """A feature needs an optional extra that this installation lacks.
+
+    `extra` is the name to install (`pip install "hostctl[EXTRA]"`) and
+    `feature` what needed it. With `python`, the extra cannot be installed on
+    this interpreter at all: it names the oldest Python the extra supports.
+    """
+
+    def __init__(
+        self,
+        extra: str,
+        feature: str,
+        *,
+        python: typing.Optional[typing.Tuple[int, int]] = None,
+    ) -> None:
+        if python is None:
+            message = (
+                f"{feature} needs the '{extra}' extra: "
+                f'pip install "hostctl[{extra}]"'
+            )
+        else:
+            message = (
+                f"{feature} needs Python {python[0]}.{python[1]} or newer "
+                f"(the '{extra}' extra supports nothing older)"
+            )
+        super().__init__(message)
+        self.extra = extra
+        self.feature = feature
+        self.python = python

@@ -14,6 +14,7 @@ from hostctl.transports.ssh._config import SSHConfig
 from hostctl.exceptions import (
     ConsoleProtocolError,
     HostctlError,
+    MissingExtraError,
     OperationNotStartedError,
     ProtocolError,
     QGACommandError,
@@ -49,6 +50,7 @@ def test_every_exported_exception_is_a_hostctl_error_with_one_home():
         (QGAProtocolError, ConnectionError),
         (ConsoleProtocolError, ConnectionError),
         (QGATimeoutError, TimeoutError),
+        (MissingExtraError, ImportError),
     ],
 )
 def test_each_category_is_the_builtin_a_caller_already_catches(cls, builtin):

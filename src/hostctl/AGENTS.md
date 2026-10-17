@@ -23,7 +23,7 @@ a host out of providers without a transport.
 `pip install hostctl` installs the core, which needs only `pathapi` and
 `netimps`; each transport is an extra, `pip install "hostctl[ssh,winrm]"`.
 Importing a transport package whose extra is missing works, and the first use
-raises naming the extra to install. `hostctl.has_ssh()` and
+raises `MissingExtraError` (an `ImportError`) naming the extra to install. `hostctl.has_ssh()` and
 `hostctl.has_psrp()` answer whether the `ssh` and `psrp` extras are
 installed, importing nothing.
 
@@ -1509,7 +1509,7 @@ SourceTree.requirements(extras=(), *, include=(), exclude=()) -> list[str]
 Puts a Python program on a host that cannot install it itself (no `pip`, a
 read-only root, no network). Needs the `deploy` extra; importing
 `hostctl.deploy` does not, and the first `deploy()`, `bundle()` or
-`SourceTree` read without it raises `ImportError` naming the extra.
+`SourceTree` read without it raises `MissingExtraError` naming the extra.
 
 - `source` is an installed distribution's name (`"mytool"`), whose
   dependency closure is read from this environment's metadata, or a
@@ -1596,12 +1596,14 @@ HostctlError(Exception)
 │   └── ConsoleProtocolError
 ├── QGATimeoutError(HostctlError, TimeoutError)
 ├── QGACommandError(HostctlError)
-└── BundleError(HostctlError, RuntimeError)
+├── BundleError(HostctlError, RuntimeError)
+└── MissingExtraError(HostctlError, ImportError)
 ```
 
 ```python
 OperationNotStartedError(reason='operation was not started', *, cause=None)
 QGACommandError(error_class, description, *, data=None)
+MissingExtraError(extra, feature, *, python=None)
 ```
 
 - `HostctlError` -- the base; catch it for "anything hostctl raised".
@@ -1623,6 +1625,13 @@ QGACommandError(error_class, description, *, data=None)
   `OSError`.
 - `BundleError` -- `hostctl.deploy` cannot build a correct bundle from what
   is installed here; raised before anything is sent to the target.
+- `MissingExtraError` -- a feature needs an optional extra that is not
+  installed (`.extra`, `.feature`): `FEATURE needs the 'EXTRA' extra: pip
+  install "hostctl[EXTRA]"`. With `.python` set (a `(major, minor)` pair) the
+  extra cannot be installed on this interpreter (`psrp` before 3.10) and the
+  message names that Python instead. It is an `ImportError`, so an existing
+  `except ImportError` still catches it; an `ImportError` raised inside an
+  installed dependency is never turned into one.
 
 ## Command line
 

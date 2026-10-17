@@ -25,7 +25,7 @@ from ...executor import (
     CommandInput,
     StrPath,
 )
-from ...exceptions import OperationNotStartedError
+from ...exceptions import MissingExtraError, OperationNotStartedError
 from ...provider._selector import ProviderSelector
 from ._providers import ContainerArchivePathProvider, ContainerExecutorProvider
 from ._process import ContainerProcess
@@ -182,10 +182,7 @@ class ContainerHost(Host):
                 try:
                     import docker
                 except ImportError as exc:
-                    raise ImportError(
-                        "container support requires the 'container' extra: "
-                        "pip install hostctl[container]"
-                    ) from exc
+                    raise MissingExtraError("container", "a Docker container") from exc
                 factory = (
                     docker.DockerClient if self.config.engine_url else docker.from_env
                 )

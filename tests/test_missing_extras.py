@@ -12,6 +12,8 @@ import sys
 
 import pytest
 
+from hostctl.exceptions import HostctlError, MissingExtraError
+
 
 class _Hidden(importlib.abc.MetaPathFinder):
     def __init__(self, names):
@@ -116,10 +118,34 @@ ROWS = (
 def test_a_missing_dependency_names_the_extra_to_install(hide, extra, modules, call):
     hide(*modules)
 
-    with pytest.raises(ImportError) as raised:
+    with pytest.raises(MissingExtraError) as raised:
         call()
 
-    assert f"hostctl[{extra}]" in str(raised.value)
+    assert f'pip install "hostctl[{extra}]"' in str(raised.value)
+    assert raised.value.extra == extra
+    assert isinstance(raised.value, ImportError)
+    # The import that failed stays reachable for a traceback.
+    assert isinstance(raised.value.__cause__, ImportError)
+
+
+def test_an_older_python_than_the_extra_supports_names_the_python(monkeypatch):
+    from hostctl import _extras
+
+    monkeypatch.setattr(_extras.sys, "version_info", (3, 9, 0))
+    with pytest.raises(MissingExtraError) as raised:
+        _extras._require("psrp", "PSRP")
+
+    assert raised.value.python == (3, 10)
+    assert "Python 3.10 or newer" in str(raised.value)
+    assert "pip install" not in str(raised.value)
+
+
+def test_missing_extra_error_is_a_hostctl_error_and_an_import_error():
+    error = MissingExtraError("ssh", "SSH")
+
+    assert isinstance(error, HostctlError) and isinstance(error, ImportError)
+    assert (error.extra, error.feature, error.python) == ("ssh", "SSH", None)
+    assert str(error) == "SSH needs the 'ssh' extra: pip install \"hostctl[ssh]\""
 
 
 def test_a_probe_reports_an_incomplete_ssh_extra(hide):
