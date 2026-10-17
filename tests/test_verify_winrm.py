@@ -17,7 +17,12 @@ pytest.importorskip("cryptography")
 
 from hostctl import HostConfig, WinRMConfig  # noqa: E402
 from hostctl.transports.winrm._native import NativeWinRMSession  # noqa: E402
-from tls_server import ThrowawayCA, TLSServer, os_store_holds  # noqa: E402
+from tls_server import (  # noqa: E402
+    ThrowawayCA,
+    TLSServer,
+    certifi_holds,
+    os_store_holds,
+)
 
 _ENV_BUNDLES = ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
 
@@ -296,11 +301,9 @@ def test_true_trusts_the_os_store(tls, send, monkeypatch):
 
 @pytest.mark.parametrize("send", _LEGS)
 def test_true_does_not_consult_certifi(tls, send, monkeypatch):
-    import requests
-
-    # `requests`' default bundle now holds the server's CA: reading it would
+    # `requests`' default trust now holds the server's CA: reading it would
     # accept the server.
-    monkeypatch.setattr(requests.adapters, "DEFAULT_CA_BUNDLE_PATH", tls.bundle)
+    certifi_holds(monkeypatch, tls.bundle)
     os_store_holds(monkeypatch, tls.other_bundle)
     assert send(_config(tls)) is False
 

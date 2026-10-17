@@ -241,3 +241,20 @@ def os_store_holds(monkeypatch: typing.Any, bundle: str) -> None:
     monkeypatch.setattr(
         _tls, "_os_trust", lambda: ssl.create_default_context(cafile=bundle)
     )
+
+
+def certifi_holds(monkeypatch: typing.Any, bundle: str) -> None:
+    """Make `requests`' own default trust -- certifi -- accept `bundle`'s CA.
+
+    `requests` reads certifi through `DEFAULT_CA_BUNDLE_PATH`, and 2.32.3 and
+    2.32.4 also through a context loaded at import; both are replaced.
+    """
+    import requests.adapters
+
+    monkeypatch.setattr(requests.adapters, "DEFAULT_CA_BUNDLE_PATH", bundle)
+    if getattr(requests.adapters, "_preloaded_ssl_context", None) is not None:
+        monkeypatch.setattr(
+            requests.adapters,
+            "_preloaded_ssl_context",
+            ssl.create_default_context(cafile=bundle),
+        )

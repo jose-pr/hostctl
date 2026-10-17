@@ -16,7 +16,12 @@ pytest.importorskip("cryptography")
 requests = pytest.importorskip("requests")
 
 from hostctl.host import _tls  # noqa: E402
-from tls_server import ThrowawayCA, TLSServer, os_store_holds  # noqa: E402
+from tls_server import (  # noqa: E402
+    ThrowawayCA,
+    TLSServer,
+    certifi_holds,
+    os_store_holds,
+)
 
 
 @pytest.fixture(scope="module")
@@ -97,7 +102,7 @@ def test_the_os_store_is_trusted(tls, monkeypatch):
 
 
 def test_certifi_is_not_consulted(tls, monkeypatch):
-    monkeypatch.setattr(requests.adapters, "DEFAULT_CA_BUNDLE_PATH", tls.bundle)
+    certifi_holds(monkeypatch, tls.bundle)
     # The patch is effective: stock `requests` now trusts the server.
     assert _get(tls, requests.Session()) is True
     os_store_holds(monkeypatch, tls.other_bundle)

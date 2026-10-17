@@ -13,7 +13,12 @@ docker = pytest.importorskip("docker")
 
 from hostctl import ContainerConfig, HostConfig  # noqa: E402
 from hostctl.transports.container import ContainerHost  # noqa: E402
-from tls_server import ThrowawayCA, TLSServer, os_store_holds  # noqa: E402
+from tls_server import (  # noqa: E402
+    ThrowawayCA,
+    TLSServer,
+    certifi_holds,
+    os_store_holds,
+)
 
 _ENV_BUNDLES = ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
 
@@ -143,9 +148,7 @@ def test_true_trusts_the_os_store(tls, monkeypatch):
 
 
 def test_true_does_not_consult_certifi(tls, monkeypatch):
-    import requests
-
-    monkeypatch.setattr(requests.adapters, "DEFAULT_CA_BUNDLE_PATH", tls.bundle)
+    certifi_holds(monkeypatch, tls.bundle)
     os_store_holds(monkeypatch, tls.other_bundle)
     assert _connects(tls) is False
 
