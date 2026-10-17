@@ -273,6 +273,17 @@ collection until pytruenas ports to these names.
   applies to an `https://` `engine_url` hostctl builds the client for, and is
   pinned against `requests`' `REQUESTS_CA_BUNDLE` override. This ships in
   0.4.0.
+- **`MissingExtraError`: a missing extra is its own exception, and the
+  command line reports it in one line.** Every place hostctl names an
+  optional extra that is not installed raises
+  `hostctl.exceptions.MissingExtraError(extra, feature)` (`.extra`,
+  `.feature`, and `.python` when the extra cannot be installed on this
+  interpreter), a `HostctlError` and an `ImportError`, so an existing
+  `except ImportError` still catches it. The messages now share one form,
+  `FEATURE needs the 'EXTRA' extra: pip install "hostctl[EXTRA]"`. `hostctl`
+  exits 125 with `hostctl: <that message>` where it printed a traceback
+  ending in the hint; an `ImportError` raised inside an installed dependency
+  is not mapped and still shows its traceback.
 
 ### Changed
 

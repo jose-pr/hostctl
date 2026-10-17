@@ -1689,7 +1689,9 @@ hostctl deploy ssh://server mytool /opt/mytool.pyz -- --version
 - Exit status: `run` returns the remote command's own status; the command
   line's own failures are 125 (connection, timeout, usage, unsupported
   operation), 126 (permission denied), 127 (not found) and 130 (interrupted).
-  A parser usage error is 2. An unreachable host is 125 for every subcommand,
+  A parser usage error is 2. A missing extra (`MissingExtraError`, never
+  another `ImportError`) is 125 with one line, `hostctl: FEATURE needs the
+  'EXTRA' extra: pip install "hostctl[EXTRA]"`. An unreachable host is 125 for every subcommand,
   `info` included.
 - Under `HOSTCTL_MCP=stdio` every subcommand is an MCP tool (`hostctl.run`,
   `.ls`, `.cat`, `.cp`, `.info`, `.shell`, `.deploy`); `run`'s program and

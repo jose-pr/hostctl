@@ -9,7 +9,7 @@ from __future__ import annotations
 import subprocess
 import typing
 
-from ..exceptions import BundleError, OperationNotStartedError
+from ..exceptions import BundleError, MissingExtraError, OperationNotStartedError
 
 #: The first `isinstance` match wins, so both OSError subclasses come before
 #: OSError itself.
@@ -18,6 +18,9 @@ ERRORS: typing.Dict[type, int] = {
     # A step `deploy` ran on the target failed; its stderr is in the report.
     subprocess.CalledProcessError: 125,
     BundleError: 125,
+    # Only hostctl's own: an ImportError raised inside an installed
+    # dependency is a defect, and keeps its traceback.
+    MissingExtraError: 125,
     PermissionError: 126,
     FileNotFoundError: 127,
     # Raised only before anything was sent: the host was never reached.
@@ -29,7 +32,7 @@ ERRORS: typing.Dict[type, int] = {
 }
 
 EXIT_CODES = {
-    125: "connection, timeout, usage, or an unsupported operation",
+    125: "connection, timeout, usage, a missing extra, or an unsupported operation",
     126: "permission denied",
     127: "not found",
     130: "interrupted",

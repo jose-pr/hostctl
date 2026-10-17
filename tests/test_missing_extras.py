@@ -170,3 +170,92 @@ def test_without_duho_the_cli_names_the_extra(hide):
         main(["info", "local:"])
 
     assert "hostctl[cli]" in str(exit_.value.code)
+
+
+#: What reaches each extra from the command line; none of them gets as far as
+#: the network, because the import is the first thing the connection does.
+CLI_ROWS = (
+    pytest.param(
+        "ssh", ("asyncssh",), ["run", "ssh://nas.example", "--", "true"], id="ssh"
+    ),
+    pytest.param(
+        "winrm",
+        ("winrm",),
+        ["run", "winrm://u@win.example:5985?provider=pywinrm", "--", "x"],
+        id="winrm",
+    ),
+    pytest.param(
+        "psrp",
+        ("pypsrp",),
+        ["run", "winrm://u@win.example:5985?provider=psrp", "--", "x"],
+        id="psrp",
+        marks=pytest.mark.skipif(
+            sys.version_info < (3, 10), reason="PSRP needs Python 3.10+"
+        ),
+    ),
+    pytest.param(
+        "container", ("docker",), ["run", "docker://web", "--", "true"], id="container"
+    ),
+    pytest.param(
+        "serial", ("serial",), ["run", "serial:///dev/ttyS0", "--", "true"], id="serial"
+    ),
+    pytest.param(
+        "qemu-libvirt",
+        ("libvirt", "libvirt_qemu"),
+        ["info", "qemu+libvirt:///vm"],
+        id="libvirt",
+    ),
+    pytest.param(
+        "deploy",
+        ("pathspec",),
+        ["deploy", "--tree", "local:", ".", "x.pyz"],
+        id="deploy",
+    ),
+)
+
+
+@pytest.fixture
+def cli(monkeypatch):
+    pytest.importorskip("duho")
+    monkeypatch.delenv("DUHO_TRACEBACK", raising=False)
+    monkeypatch.setenv("HOSTCTL_PASSWORD", "pw")
+    from hostctl.cli import main
+
+    return main
+
+
+@pytest.mark.parametrize("extra, modules, argv", CLI_ROWS)
+def test_the_cli_reports_a_missing_extra_in_one_line(
+    cli, hide, capsys, extra, modules, argv
+):
+    hide(*modules)
+
+    status = cli(argv)
+
+    err = capsys.readouterr().err
+    assert status == 125
+    assert len(err.splitlines()) == 1 and err.startswith("hostctl: "), err
+    assert f'pip install "hostctl[{extra}]"' in err
+    assert "Traceback" not in err
+
+
+@pytest.mark.skipif(sys.version_info >= (3, 10), reason="the floor applies before 3.10")
+def test_the_cli_names_the_python_psrp_needs(cli, capsys):
+    status = cli(["run", "winrm://u@win.example:5985?provider=psrp", "--", "x"])
+
+    err = capsys.readouterr().err
+    assert status == 125
+    assert "Python 3.10 or newer" in err and len(err.splitlines()) == 1
+
+
+def test_an_import_error_inside_a_dependency_keeps_its_traceback(cli, monkeypatch):
+    import hostctl.cli.info as info
+
+    def broken(host):
+        raise ImportError("cannot import name 'thing' from 'somedependency'")
+
+    monkeypatch.setattr(info, "_identity", broken)
+
+    with pytest.raises(ImportError, match="somedependency") as raised:
+        cli(["info", "local:"])
+    assert not isinstance(raised.value, MissingExtraError)

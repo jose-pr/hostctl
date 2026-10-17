@@ -21,7 +21,7 @@ formatting layer. Everything the CLI itself reports uses one of four codes:
 
 | code | meaning |
 | ---- | ------- |
-| 125  | connection, timeout, usage, or an operation this transport does not support |
+| 125  | connection, timeout, usage, a missing extra, or an operation this transport does not support |
 | 126  | permission denied |
 | 127  | not found |
 | 130  | interrupted (Ctrl-C) |
@@ -41,8 +41,18 @@ grammar, so none of it lives only here.
 
 Passwords are never accepted as command-line arguments. Set
 `HOSTCTL_PASSWORD`, or pass `--ask-password` after a subcommand to use an
-interactive hidden prompt. Transport extras remain optional and produce their
-normal actionable import error when absent.
+interactive hidden prompt.
+
+Transport extras stay optional. Using a transport whose extra is missing exits
+125 with one line naming the extra to install:
+
+```console
+$ hostctl run ssh://server -- uptime
+hostctl: SSH needs the 'ssh' extra: pip install "hostctl[ssh]"
+```
+
+Only hostctl's own `MissingExtraError` is reported this way; an `ImportError`
+raised inside an installed dependency is a defect and keeps its traceback.
 
 `ls` prints one name per line, with backslashes and non-printable characters
 escaped (`\x1b`, `\x0a`, `\\`), because the host chooses those bytes: a name

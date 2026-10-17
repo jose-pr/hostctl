@@ -45,7 +45,7 @@ credentials:
 
 exit status:
   0    the command succeeded (for `run`, the remote command's own status)
-  125  connection, timeout, usage, or an unsupported operation
+  125  connection, timeout, usage, a missing extra, or an unsupported operation
   126  permission denied
   127  not found
   130  interrupted
