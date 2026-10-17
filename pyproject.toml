@@ -51,14 +51,24 @@ dependencies = ["pathapi>=0.1.0,<0.2", "netimps>=0.4.0,<0.5"]
 # over the exec leg's connection and loop.
 ssh = ["asyncssh>=2.20,<3", "sftppath[asyncssh]>=0.1.3,<0.2"]
 # Windows Remote Management command execution.
-winrm = ["pywinrm>=0.5.0,<0.6"]
+#
+# `requests` is declared by every extra whose transport speaks HTTPS through
+# it. 2.32.3 is the floor: 2.32.0-2.32.2 hand a certifi-loaded context to
+# every verifying connection, replacing the OS-store context that
+# `verify=True` installs; from 2.32.3 a context the adapter holds is kept.
+winrm = ["pywinrm>=0.5.0,<0.6", "requests>=2.32.3,<3"]
 # PowerShell Remoting Protocol runspaces (Python 3.10+ only).  The marker
 # keeps the compatibility floor (Python 3.9) installable with pywinrm alone.
 # pypsrp is pre-1.0, so a minor may break: the ceiling is the next minor.
-psrp = ["pypsrp>=0.9.0,<0.10; python_version >= '3.10'"]
+# `verify=True` wraps pypsrp's private `_TransportHTTP._build_session`, the
+# same in 0.9.0 and 0.9.1; a pypsrp without it raises rather than connect.
+psrp = [
+    "pypsrp>=0.9.0,<0.10; python_version >= '3.10'",
+    "requests>=2.32.3,<3; python_version >= '3.10'",
+]
 # Docker Engine-compatible container execution, paths, and sessions.
 # docker 7.0 passes the container suite; nothing here needs a 7.1 API.
-container = ["docker>=7.0,<8"]
+container = ["docker>=7.0,<8", "requests>=2.32.3,<3"]
 # Raw native, RFC 2217, socket, and virtual serial transports.
 # 3.3 is where `serial.Serial` gained `exclusive`, which SerialConfig passes through.
 serial = ["pyserial>=3.3,<4"]
@@ -68,8 +78,8 @@ serial = ["pyserial>=3.3,<4"]
 qemu-libvirt = ["libvirt-python>=9.0"]
 # Optional pywinrm authentication providers. The base winrm extra already
 # supports basic/plaintext/ssl and NTLM.
-winrm-credssp = ["pywinrm[credssp]>=0.5.0,<0.6"]
-winrm-kerberos = ["pywinrm[kerberos]>=0.5.0,<0.6"]
+winrm-credssp = ["pywinrm[credssp]>=0.5.0,<0.6", "requests>=2.32.3,<3"]
+winrm-kerberos = ["pywinrm[kerberos]>=0.5.0,<0.6", "requests>=2.32.3,<3"]
 # The `hostctl` command line. 0.7.5 is the floor: it is the first release
 # whose tool-call error result carries the exit status (125/126/127) for an
 # `_errors_` exception, and 0.7.4 is where `_report_error_` begins.
