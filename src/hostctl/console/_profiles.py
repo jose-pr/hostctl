@@ -73,6 +73,8 @@ class RawConsoleProfile:
     line_terminator = b"\r\n"
     encoding = "utf-8"
     max_buffer = 64 * 1024
+    #: A raw console declares no shell grammar, so a host refuses argv and cwd/env.
+    shell_flavour = None
 
     def negotiate(self, stream: ConsoleStream) -> None:
         return None
@@ -98,6 +100,9 @@ class PromptConsoleProfile:
     enabled.  Without a real status marker a prompt can delimit output, but it
     cannot truthfully represent a process exit status.
     """
+
+    #: A device's command grammar is its own, so a host refuses argv and cwd/env.
+    shell_flavour = None
 
     def __init__(
         self,

@@ -21,6 +21,7 @@ from ...executor import (
     normalize_input,
     reject_stdin_conflict,
     expired,
+    masked_environment,
     wants_text,
     StrPath,
 )
@@ -29,6 +30,7 @@ from ...process import Process, terminal_options
 from ._process import SerialConsoleProcess
 from ...exceptions import ConsoleProtocolError
 from ...console import RawConsoleProfile, ConsoleProfile
+from ...shell import PosixShellFlavour, Shell, ShellFlavour, ShellToken
 from ...shell._grammar import Command, starts_direct_command
 from ...host._host import Host
 from ...host._config import HostConfig
@@ -307,12 +309,20 @@ class SerialHost(Host):
         return frozenset(values)
 
     @property
-    def shell_flavour(self):
-        raise NotImplementedError("serial consoles do not identify a shell flavour")
+    def shell_flavour(self) -> ShellFlavour:
+        """The flavour the console profile declares (`PosixConsoleProfile`'s `shell`)."""
+        flavour = getattr(self.config.profile, "shell_flavour", None)
+        if flavour is None:
+            raise NotImplementedError(
+                "serial console profile does not identify a shell flavour"
+            )
+        return flavour
 
     @property
     def shell(self):
-        return _SerialShell(self)
+        if getattr(self.config.profile, "shell_flavour", None) is None:
+            return _SerialShell(self)
+        return Shell(self.shell_flavour, self)
 
     def connect(self) -> None:
         port = self._executor.connect()
@@ -414,13 +424,19 @@ class SerialHost(Host):
             raise NotImplementedError(
                 "serial console profile does not provide reliable run()"
             )
-        if starts_direct_command(cmds) is not None:
-            raise NotImplementedError(
-                "serial consoles do not provide native argv execution"
-            )
+        flavour = getattr(profile, "shell_flavour", None)
+        direct = starts_direct_command(cmds)
+        if direct is not None:
+            if flavour is None:
+                raise NotImplementedError(
+                    "serial consoles do not provide native argv execution"
+                )
+            # A console has no argv channel: the program and its arguments are
+            # quoted into the script, as for any script-only provider.
+            cmds = ((direct[0], *direct[1]),)
         if executable is not None:
             raise NotImplementedError("serial consoles do not accept executable")
-        if cwd is not None or env is not None:
+        if flavour is None and (cwd is not None or env is not None):
             raise NotImplementedError("serial console profile does not support cwd/env")
         # A profile with `execute` (`PosixConsoleProfile`) frames stdin and
         # stderr of its own; any other one has a single merged stream.
@@ -438,20 +454,32 @@ class SerialHost(Host):
             raise NotImplementedError(
                 "serial framed run has no pipe to size: bufsize is not supported"
             )
-        rendered = []
-        for value in cmds:
-            if isinstance(value, (tuple, list)):
-                # `shlex.join` is POSIX quoting, and this host refuses to
-                # name a shell flavour at all. On a Cisco-style console
-                # `["show", "run | include hostname"]` went on the wire as
-                # `show 'run | include hostname'`, which the device takes
-                # literally and rejects. The profile owns the device's
-                # grammar; nothing here knows it.
-                raise NotImplementedError(
-                    "a serial console profile defines no argv quoting: pass "
-                    "the command as text, spelled the way the device expects"
-                )
-            rendered.append(str(value))
+        rendered: typing.List[str] = []
+        shown: typing.Optional[str] = None
+        if flavour is not None:
+            # One script, one framed exchange: operators and the separator
+            # are the shell's, exactly as on any other host of this flavour.
+            script = _console_script(flavour, cmds, cwd=cwd, env=env)
+            rendered = [script] if script else []
+            shown = (
+                _console_script(flavour, cmds, cwd=cwd, env=masked_environment(env))
+                if env
+                else script
+            )
+        else:
+            for value in cmds:
+                if isinstance(value, (tuple, list)):
+                    # `shlex.join` is POSIX quoting, and this profile names no
+                    # shell flavour at all. On a Cisco-style console
+                    # `["show", "run | include hostname"]` went on the wire as
+                    # `show 'run | include hostname'`, which the device takes
+                    # literally and rejects. The profile owns the device's
+                    # grammar; nothing here knows it.
+                    raise NotImplementedError(
+                        "a serial console profile defines no argv quoting: pass "
+                        "the command as text, spelled the way the device expects"
+                    )
+                rendered.append(str(value))
         data = None
         if framed:
             reject_stdin_conflict(input, stdin)
@@ -475,7 +503,11 @@ class SerialHost(Host):
         outputs = []
         error_outputs = []
         returncode = 0
-        command = rendered[0] if len(rendered) == 1 else list(rendered)
+        command: typing.Union[str, typing.List[str]] = (
+            rendered[0] if len(rendered) == 1 else list(rendered)
+        )
+        if shown:
+            command = shown
         try:
             for single in rendered:
                 remaining = (
@@ -553,6 +585,31 @@ class SerialHost(Host):
                 returncode, command, output=captured, stderr=captured_error
             )
         return result
+
+
+def _console_script(
+    flavour: ShellFlavour,
+    cmds: typing.Iterable[ShellToken],
+    *,
+    cwd: typing.Optional[StrPath],
+    env: typing.Optional[CommandEnvironment],
+) -> str:
+    """`cmds` as one script for a profile that evaluates it in the console's shell.
+
+    `cwd`/`env` are confined to a subshell: that shell outlives the call, so
+    an embedded `cd` or `export` would apply to every later command too. No
+    epilogue: the profile frames the exit status itself.
+    """
+    script = flavour.script(cmds, cwd=cwd, env=env, epilogue=False)
+    if not script or (cwd is None and not env):
+        return script
+    if not isinstance(flavour, PosixShellFlavour):
+        raise NotImplementedError(
+            f"no subshell is known for a {flavour.name} console, so cwd/env "
+            "cannot be confined to one command"
+        )
+    # The newline ends a here-document the script may close with.
+    return "( " + script + "\n)"
 
 
 class _SerialShell:

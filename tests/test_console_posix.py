@@ -26,10 +26,18 @@ import time
 
 import pytest
 
-from hostctl.console import LoginStep, PosixConsoleProfile, console_stream
+from _adversarial import POSIX_HOSTILE, VALUES
+from hostctl.console import (
+    LoginStep,
+    PosixConsoleProfile,
+    PromptConsoleProfile,
+    RawConsoleProfile,
+    console_stream,
+)
 from hostctl.console import _posix
 from hostctl.console._posix import _Frame, _typed_batches
 from hostctl.exceptions import ConsoleProtocolError, OperationNotStartedError
+from hostctl.shell import BASH, FISH, POSIX_SHELL, ZSH, Exec, Shell, ShellOperator
 from hostctl.transports.serial import SerialConfig, SerialHost
 
 TOKEN = "0123456789abcdef"
@@ -369,13 +377,39 @@ def test_a_stdin_stream_is_read_and_delivered_as_input():
     assert result.stdout == b"out:cat|in:from a stream"
 
 
-def test_input_with_stdin_or_with_several_commands_is_refused():
+def test_input_with_stdin_is_refused_and_several_commands_share_it():
+    """Several commands are one POSIX script, so `input=` is that script's
+    stdin, as it is for `sh -c 'cat;cat'`."""
     host = _host(_Terminal(_echo))
 
     with pytest.raises(ValueError):
         host.run("cat", input=b"x", stdin=io.BytesIO(b"y"))
+    assert host.run("cat", "cat", input=b"x", timeout=10).stdout == (
+        b"out:cat;cat|in:x"
+    )
+
+
+def test_a_framed_profile_with_no_shell_flavour_keeps_every_refusal():
+    """A custom profile with `execute` but no declared grammar: the host has
+    no quoting rule and no way to embed cwd/env, so it refuses them."""
+    profile = PosixConsoleProfile()
+    profile.shell_flavour = None  # type: ignore[assignment]
+    host = SerialHost(
+        SerialConfig("pty", profile=profile, serial_port=_Terminal(_echo))
+    )
+
+    with pytest.raises(NotImplementedError, match="shell flavour"):
+        host.shell_flavour
+    with pytest.raises(NotImplementedError, match="argv quoting"):
+        host.run(["printf", "%s", "a b"])
+    with pytest.raises(NotImplementedError, match="native argv"):
+        host.run(Exec("ls"))
+    with pytest.raises(NotImplementedError, match="cwd/env"):
+        host.run("pwd", cwd="/srv")
     with pytest.raises(NotImplementedError, match="one command"):
         host.run("cat", "cat", input=b"x")
+    with pytest.raises(NotImplementedError, match="no shell flavour"):
+        host.shell(cwd="/srv")
 
 
 def test_a_timeout_interrupts_and_raises_the_hostctl_shape():
@@ -478,6 +512,130 @@ def test_the_profile_advertises_run_and_sends_lines_for_a_session():
     with host.spawn() as session:
         session.send("ls")
     assert terminal.writes[-1] == b"ls\n"
+
+
+# -- the console's shell grammar (emulated terminal) ------------------------------
+
+
+def _recording():
+    """A responder that records each command and answers `ok`, status 0."""
+    commands = []
+
+    def respond(command, data, merged):
+        commands.append(command)
+        return (b"ok", b"", 0)
+
+    return commands, respond
+
+
+def test_the_profile_names_its_shell_flavour():
+    assert PosixConsoleProfile().shell_flavour is POSIX_SHELL
+    assert PosixConsoleProfile(shell="zsh").shell_flavour is ZSH
+    assert PosixConsoleProfile(shell=BASH).shell_flavour is BASH
+    for other in ("fish", "cmd", "powershell"):
+        with pytest.raises(ValueError, match="sh-family"):
+            PosixConsoleProfile(shell=other)
+    assert RawConsoleProfile().shell_flavour is None
+    assert PromptConsoleProfile("# ").shell_flavour is None
+
+    assert _host(_Terminal()).shell_flavour is POSIX_SHELL
+    raw = SerialHost(SerialConfig("pty", serial_port=_Terminal()))
+    with pytest.raises(NotImplementedError, match="shell flavour"):
+        raw.shell_flavour
+
+
+def test_argv_is_quoted_by_the_posix_flavour_with_no_epilogue():
+    commands, respond = _recording()
+    host = _host(_Terminal(respond))
+
+    result = host.run(["printf", "%s", "a b"], timeout=10)
+    host.run(["printf", "%s\\n", *VALUES], timeout=30)
+
+    assert commands[1:] == [
+        b"printf %s 'a b'",
+        POSIX_SHELL.script([["printf", "%s\\n", *VALUES]]).encode(),
+    ]
+    assert result.args == "printf %s 'a b'"
+    assert POSIX_SHELL.execution_epilogue == ""
+
+
+def test_a_zsh_console_quotes_as_zsh():
+    """zsh expands a bare `=ls` to the path of `ls`; its flavour quotes it."""
+    commands, respond = _recording()
+
+    _host(_Terminal(respond), shell="zsh").run(["printf", "%s", "=ls"], timeout=10)
+
+    assert commands[-1] == b"printf %s '=ls'"
+
+
+def test_exec_operators_and_several_commands_are_one_script():
+    commands, respond = _recording()
+    terminal = _Terminal(respond)
+    host = _host(terminal)
+
+    host.run(Exec("ls", "-l", "a b"), timeout=10)
+    host.run("ls", ShellOperator.PIPE, ["wc", "-l"], "echo done", timeout=10)
+
+    assert commands[1:] == [b"ls -l 'a b'", b"ls|wc -l;echo done"]
+    assert sum("stty -opost" in line for line in terminal.lines) == 3
+
+
+def test_cwd_and_env_run_in_a_subshell_and_env_values_are_masked():
+    """The console's shell outlives the call: a bare `cd`/`export` would
+    apply to every later command, so the pair is confined to `( ... )`."""
+    commands, respond = _recording()
+    host = _host(_Terminal(respond))
+
+    result = host.run("pwd", cwd="/srv x", env={"K": "secret v"}, timeout=10)
+
+    assert commands[-1] == b"( export K='secret v';cd -- '/srv x'&&{ pwd; }\n)"
+    assert "secret" not in str(result.args) and "K=" in str(result.args)
+
+
+def test_a_failure_or_timeout_shows_the_masked_command():
+    host = _host(
+        _Terminal(
+            lambda command, data, merged: (
+                (b"", b"", 0)
+                if command == b":"
+                else None if b"sleep" in command else (b"", b"no", 2)
+            )
+        )
+    )
+
+    with pytest.raises(subprocess.CalledProcessError) as failed:
+        host.run("false", env={"TOKEN": "hunter2"}, timeout=10)
+    with pytest.raises(subprocess.TimeoutExpired) as expired:
+        host.run("sleep 9", env={"TOKEN": "hunter2"}, timeout=0.5)
+
+    for error in (failed.value, expired.value):
+        assert "hunter2" not in str(error.cmd) and "TOKEN=" in str(error.cmd)
+
+
+def test_host_shell_is_a_shell_that_binds_cwd_and_env():
+    commands, respond = _recording()
+    host = _host(_Terminal(respond))
+
+    shell = host.shell
+    shell(cwd="/srv").run("pwd", timeout=10)
+
+    assert isinstance(shell, Shell) and shell.flavour is POSIX_SHELL
+    assert commands[-1] == b"( cd -- /srv&&{ pwd; }\n)"
+
+
+def test_a_non_posix_flavour_cannot_confine_cwd_and_env():
+    """A custom profile may declare another grammar; without a subshell
+    spelling the host refuses rather than leave cwd/env in the session."""
+    profile = PosixConsoleProfile()
+    profile.shell_flavour = FISH  # type: ignore[assignment]
+    commands, respond = _recording()
+    host = SerialHost(
+        SerialConfig("pty", profile=profile, serial_port=_Terminal(respond))
+    )
+
+    assert host.run(["echo", "a b"], timeout=10).args == "echo 'a b'"
+    with pytest.raises(NotImplementedError, match="subshell"):
+        host.run("pwd", cwd="/srv")
 
 
 # -- a real shell over pipes (Linux; Git Bash on Windows) -------------------------
@@ -671,6 +829,7 @@ def pty_shell(request):
     if not _HAS_PTY:
         pytest.skip(f"needs a POSIX pty and {', '.join(_PTY_TOOLS)}")
     shell = _PtyShell(_SHELLS[request.param])
+    shell.name = request.param
     yield shell
     shell.close()
 
@@ -784,3 +943,112 @@ def test_real_pty_through_console_stream_over_a_blocking_read(pty_shell):
     with pytest.raises(TimeoutError):
         profile.execute(stream, "sleep 5", timeout=0.5)
     assert profile.execute(stream, "echo ok", timeout=20) == (b"ok\n", b"", 0)
+
+
+# -- the console's shell grammar against a real shell ----------------------------
+
+
+class _StreamPort:
+    """A pyserial-shaped port over a `ConsoleStream`: `read` honours `.timeout`."""
+
+    is_open = True
+    dtr = rts = False
+    write_timeout = 10
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.timeout = 0.1
+
+    def read(self, size=1):
+        try:
+            return self.stream.read(size, timeout=self.timeout)
+        except ConnectionError:
+            return b""
+
+    def write(self, data):
+        self.stream.write(bytes(data))
+        return len(data)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        self.is_open = False
+
+    def send_break(self, duration=0.25):
+        pass
+
+
+def _assert_the_shell_grammar_holds(host):
+    """argv, cwd and env on a real shell, each value checked by what it printed."""
+    assert host.run(["printf", "%s", "a b"], timeout=20).stdout == b"a b"
+    printed = host.run(["printf", "%s\\n", *VALUES], timeout=60).stdout
+    assert printed.decode("utf-8").split("\n")[:-1] == VALUES
+
+    # A path in the shell's own spelling (MSYS on Windows, plain on POSIX).
+    base = host.run("mktemp -d", text=True, timeout=20).stdout.strip()
+
+    def listed():
+        # Through a pipe: GNU ls quotes names when its stdout is a terminal.
+        return host.run(
+            ["ls", "-A", base], ShellOperator.PIPE, ["cat"], text=True, timeout=20
+        ).stdout
+
+    try:
+        for number, template in enumerate(POSIX_HOSTILE):
+            value = template.format(marker=f"{base}/m{number}")
+            assert host.run(["printf", "%s", value], timeout=20).stdout == (
+                value.encode()
+            )
+        assert listed() == ""
+
+        directory = "a b'$(touch x) ;`touch y`"
+        target = f"{base}/{directory}"
+        host.run(["mkdir", target], timeout=20)
+        assert host.run(["pwd"], cwd=target, text=True, timeout=20).stdout == (
+            target + "\n"
+        )
+        assert host.run("pwd", text=True, timeout=20).stdout != target + "\n"
+
+        names = {f"HC_V{number}": value for number, value in enumerate(VALUES)}
+        script = "printf '%s\\n' " + " ".join(f'"${name}"' for name in names)
+        printed = host.run(script, env=names, timeout=60).stdout
+        assert printed.decode("utf-8").split("\n")[:-1] == VALUES
+        assert host.run('printf %s "${HC_V1-unset}"', timeout=20).stdout == b"unset"
+        assert listed() == directory + "\n"
+    finally:
+        host.run(["rm", "-rf", base], timeout=20)
+
+
+def test_real_shell_over_pipes_quotes_argv_and_applies_cwd_and_env():
+    """`SerialHost` over a real `sh -s` (Git Bash on Windows)."""
+    if not _HAS_SH:
+        pytest.skip(f"needs {', '.join(_TOOLS)} on PATH")
+    process = _PipeProcess()
+    host = SerialHost(
+        SerialConfig(
+            "pipe",
+            profile=PosixConsoleProfile(wakeup=b""),
+            serial_port=_StreamPort(console_stream(process)),
+        )
+    )
+    try:
+        _assert_the_shell_grammar_holds(host)
+    finally:
+        process.close()
+
+
+@pytest.mark.skipif(not _HAS_PTY, reason="needs a POSIX pty and base64/mktemp/stty")
+def test_real_pty_quotes_argv_and_applies_cwd_and_env(pty_shell):
+    """The done-when on every available shell: zsh needs its own flavour,
+    which quotes the corpus's `=ls`."""
+    shell = {"bash": "bash", "zsh": "zsh"}.get(pty_shell.name, "posix")
+    host = SerialHost(
+        SerialConfig(
+            "pty",
+            profile=PosixConsoleProfile(shell=shell),
+            serial_port=_PtyPort(pty_shell.fd),
+        )
+    )
+
+    _assert_the_shell_grammar_holds(host)

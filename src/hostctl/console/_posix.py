@@ -19,6 +19,7 @@ import typing
 import uuid
 
 from ..exceptions import ConsoleProtocolError, OperationNotStartedError
+from ..shell import PosixShellFlavour, ShellFlavourSelection, shell_flavour
 from ._profiles import LoginStep, PromptConsoleProfile
 from ._stream import ConsoleStream
 
@@ -204,6 +205,11 @@ class PosixConsoleProfile:
     `base64`, `mktemp`, `stty`, `cat` and `rm` on the target. The command runs
     in the console's own shell through `eval`, so `cd` and variables persist
     between commands and `exit` ends the session.
+
+    `shell` names that shell's flavour (`"posix"`, `"bash"`, `"zsh"` or a
+    `PosixShellFlavour`); a host driving this profile quotes structured
+    commands and embeds `cwd`/`env` with it. Any other flavour raises
+    `ValueError`, since the framing itself is sh syntax.
     """
 
     can_run = True
@@ -222,9 +228,18 @@ class PosixConsoleProfile:
         login_timeout: float = 10.0,
         wakeup: typing.Union[bytes, str] = b"\n",
         read_size: int = 4096,
+        shell: ShellFlavourSelection = "posix",
     ) -> None:
         if not login_timeout > 0:
             raise ValueError("login_timeout must be positive")
+        flavour = shell_flavour(shell)
+        if not isinstance(flavour, PosixShellFlavour):
+            raise ValueError(
+                f"PosixConsoleProfile frames commands in sh syntax; {flavour.name} "
+                "is not an sh-family shell flavour"
+            )
+        #: The grammar of the console's shell: argv quoting, `cd` and `export`.
+        self.shell_flavour: PosixShellFlavour = flavour
         #: Seconds each login step, and the shell's first framed answer, may take.
         self.login_timeout = float(login_timeout)
         self.login = tuple(
