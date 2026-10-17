@@ -895,13 +895,24 @@ the default of `run(timeout=)` (none); `connect` raises.
 is already there) and `write=0` its `write_timeout=0`. `inter_byte_timeout`
 is pyserial's own, separate field.
 
-- `run()` frames each command as its own profile exchange, only when the
-  profile advertises it; it refuses a structured (argv) command (the host
-  names no shell flavour) and `bufsize=`. With a profile that has `execute`
-  (`PosixConsoleProfile`), `input=` (one command only) or a `stdin=` stream,
-  read to its end, is the command's stdin, and stderr is separate unless
-  `stderr=subprocess.STDOUT`; any other profile refuses `stdin=`/`input=`
-  and merges the streams (`stderr` is `None`). There is no path or PTY.
+- `run()` works only when the profile advertises it, and refuses
+  `executable=` and `bufsize=`. With a profile that declares a
+  `shell_flavour` (`PosixConsoleProfile`), `host.shell_flavour` is that
+  flavour, `host.shell` is a `Shell`, and `run()` renders every command
+  (text, structured argv, `ShellOperator`s, a sole `Exec`) as ONE script in
+  that flavour, run as one exchange: argv is quoted exactly as on any other
+  host of the flavour. `cwd=`/`env=` are embedded and run in a subshell
+  `( ... )`, so they never persist in the console's shell; plain commands
+  still run in that shell. `CompletedProcess.args` is the script, with
+  `env` values masked. With any other profile, `shell_flavour` raises
+  `NotImplementedError`, each command is its own exchange, and a structured
+  command, an `Exec`, `cwd=` and `env=` raise `NotImplementedError`.
+- With a profile that has `execute` (`PosixConsoleProfile`), `input=` or a
+  `stdin=` stream, read to its end, is the stdin of the command (of the
+  whole script with a `shell_flavour`; one command only without), and
+  stderr is separate unless `stderr=subprocess.STDOUT`; any other profile
+  refuses `stdin=`/`input=` and merges the streams (`stderr` is `None`).
+  There is no path or PTY.
 - `spawn()` reads `bytes` unless `encoding=`/`errors=` asks for text.
 - Negotiation is cached against the transport it ran on, so
   `host.executor.close()` forces a fresh login. Closing the host or the
@@ -957,7 +968,8 @@ ConsoleProfile.run(stream, command, *, timeout=None) -> tuple[bytes, int]
 ConsoleProfile.send(stream, command)
 ```
 
-- `RawConsoleProfile` supports sessions only.
+- `RawConsoleProfile` supports sessions only. It and `PromptConsoleProfile`
+  have `shell_flavour = None`: a device's grammar is its own.
 - `PromptConsoleProfile` adds bounded login/prompt framing and advertises
   `run` only when `reliable_status=True` and a `status_marker` is set.
   `login_timeout` bounds each login step and the first prompt (`ValueError`
@@ -967,10 +979,13 @@ ConsoleProfile.send(stream, command)
 - `LoginStep` is one expect/send pair; `ConsoleProfile` is the protocol a
   custom profile implements (`can_run`, `line_terminator`, `encoding` and the
   three methods). A timed-out `run` raises `TimeoutError` carrying the
-  transcript so far as `.output`.
+  transcript so far as `.output`. An optional `shell_flavour` attribute (a
+  `ShellFlavour`, or `None`) is not part of the protocol; a host reads it
+  with `getattr` to quote argv and embed `cwd`/`env` (see `SerialHost.run`).
 
 ```python
-PosixConsoleProfile(*, login=(), login_timeout=10.0, wakeup=b'\n', read_size=4096)
+PosixConsoleProfile(*, login=(), login_timeout=10.0, wakeup=b'\n', read_size=4096, shell='posix')
+PosixConsoleProfile.shell_flavour -> PosixShellFlavour
 PosixConsoleProfile.execute(stream, command, *, input=None, merge_stderr=False, timeout=None, on_stdout=None, on_stderr=None) -> tuple[bytes, bytes, int]
 ```
 
@@ -987,6 +1002,11 @@ terminal's settings are restored afterwards.
   `base64`, `mktemp`, `stty`, `cat`, `rm`. The command runs through `eval`
   in the console's own shell: `cd` and variables persist, and `exit` ends
   the session (the next read raises `ConnectionError`).
+- `shell` names that shell's flavour (`"posix"`, `"bash"`, `"zsh"`, or a
+  `PosixShellFlavour`), kept as `shell_flavour`; a host driving the profile
+  quotes argv and embeds `cwd`/`env` with it. Pass `shell="zsh"` for a zsh
+  console: zsh expands a bare `=word`, which POSIX quoting leaves unquoted.
+  Any other flavour (fish, cmd, PowerShell) raises `ValueError`.
 - `negotiate()` writes `wakeup`, runs the `login=` steps (as
   `PromptConsoleProfile`'s, each bounded by `login_timeout`), then a framed
   `:`; no answer within `login_timeout` raises `TimeoutError`, a non-zero

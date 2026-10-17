@@ -329,8 +329,30 @@ with config as host:
   the rest of its line, and raises `TimeoutExpired` with the output so far.
 
 The command runs in the console's own shell, so `cd` and variables persist and
-`exit` ends the session. A QEMU console or a container session is driven the
-same way, through `console_stream`:
+`exit` ends the session.
+
+The profile also names that shell's flavour, so the host speaks its grammar
+as any other POSIX host does: `host.shell_flavour` is `POSIX_SHELL`, a
+structured command is quoted by it, and `cwd=`/`env=` are embedded in the
+script. They run in a subshell, so they apply to that one call and never to
+the console's shell:
+
+```python
+with config as host:
+    host.run(["printf", "%s", "a b"]).stdout       # b"a b"
+    host.run(["ls", "-l", name], cwd="/var/log")   # quoted, in /var/log
+    host.run("env", env={"LANG": "C"})             # only for this command
+    host.run("pwd")                                # unchanged by the cwd above
+```
+
+Several commands, and `ShellOperator`s between them, form one script, run as
+one exchange; `input=` is that script's stdin. For a zsh console pass
+`PosixConsoleProfile(shell="zsh")`: zsh expands a bare `=word`, which the POSIX
+flavour leaves unquoted. `host.shell` is an ordinary `Shell`, so
+`host.shell(cwd="/srv")` binds defaults as it does on every other host.
+
+A QEMU console or a container session is driven the same way, through
+`console_stream`:
 
 ```python
 from hostctl import PosixConsoleProfile, console_stream

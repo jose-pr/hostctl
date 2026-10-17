@@ -116,6 +116,18 @@ collection until pytruenas ports to these names.
   Typed lines stay under 1 KiB and at most 2 KiB is typed before the shell
   acknowledges it, so busybox's line editor and a serial line's input queue
   lose nothing.
+- **A serial host with `PosixConsoleProfile` speaks POSIX shell**, in 0.4.0.
+  `PosixConsoleProfile(shell="posix")` names the console shell's flavour
+  (`"bash"`, `"zsh"` or any `PosixShellFlavour`; fish, cmd and PowerShell
+  raise `ValueError`) as `shell_flavour`, and `SerialHost` reads it:
+  `host.shell_flavour` returns it, `host.shell` is a `Shell`, and `run()`
+  quotes structured argv and a sole `Exec` with that flavour, as on any
+  other POSIX host. `cwd=` and `env=` are embedded and run in a subshell, so
+  they never persist in the console's shell; `CompletedProcess.args` masks
+  the `env` values. With this profile several commands (and `ShellOperator`s
+  between them) are one script run as one exchange, and `input=` is its
+  stdin. `RawConsoleProfile` and `PromptConsoleProfile` declare no flavour
+  and keep refusing argv, `Exec`, `cwd=` and `env=`.
 
 - **Typed selection records, a host name and an audible fallback**, in
   0.4.0. `SelectionStep` and `ProviderDetail` (in `hostctl` and
