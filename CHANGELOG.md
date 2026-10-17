@@ -407,7 +407,7 @@ collection until pytruenas ports to these names.
   building one. Change `pathlib_next` imports as
   pathapi's changelog says: `pathlib_next.utils.sync` is `pathapi.sync`,
   `pathlib_next.utils.stat.FileStat` is `pathapi.FileStat`.
-  - The `ssh` extra is `asyncssh>=2.20,<3` and `sftppath[asyncssh]>=0.1.1,<0.2`,
+  - The `ssh` extra is `asyncssh>=2.20,<3` and `sftppath[asyncssh]>=0.1.3,<0.2`,
     in place of `pathlib_next[sftp-async]`. An SSH host's path is an
     `sftppath.SFTPPath`, and its `str()` is the path on the server where it
     was `sftp://host:22/...`.
@@ -502,7 +502,7 @@ collection until pytruenas ports to these names.
   first path operation; building an absolute path still connects nothing, and
   a path taken before `close()` runs on the next connection. `ssh_config`,
   `connect_options` and `timeout=Timeout(connect=...)` therefore apply once,
-  to that one connection. The `ssh` extra needs `sftppath[asyncssh]>=0.1.2`
+  to that one connection. The `ssh` extra needs `sftppath[asyncssh]>=0.1.3`
   (`AsyncSSHBackend.over_connection()`). An SSH path's sftppath backend can no
   longer be pickled (`TypeError`): its connection belongs to the process.
   This ships in 0.4.0.
