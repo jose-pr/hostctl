@@ -127,8 +127,8 @@ def test_a_batch_smaller_than_a_typed_line_is_refused(batch):
         PosixConsoleProfile(batch=batch)
 
 
-def test_the_batch_defaults_to_two_kib():
-    assert PosixConsoleProfile().batch == 2048
+def test_the_batch_defaults_to_one_kib():
+    assert PosixConsoleProfile().batch == 1024
     assert PosixConsoleProfile(batch=None).batch is None
 
 
@@ -454,7 +454,7 @@ def test_a_whole_input_is_written_in_pieces_with_the_echo_read_between():
 
     assert (out, status) == (b"ok", 0)
     writes = [size for call, size in stream.calls if call == "write"]
-    assert len(writes) > 10 and max(writes) <= _posix._BATCH
+    assert len(writes) > 10 and max(writes) <= _posix._WRITE
     for before, after in zip(stream.calls, stream.calls[1:-1]):
         if before[0] == "write" and after[0] == "write":
             pytest.fail("two writes with no read between them")
@@ -1095,11 +1095,15 @@ def test_real_pty_is_binary_safe_and_restores_the_terminal(pty_shell):
 
 
 @pytest.mark.skipif(not _HAS_PTY, reason="needs a POSIX pty and base64/mktemp/stty")
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="a macOS pty takes about 1.3 KiB of unread typing: only the default batch",
+)
 def test_real_pty_takes_a_larger_batch_with_its_echo_read_while_typing(pty_shell):
-    """A pty blocks the writer instead of dropping input, so a batch past the
-    serial line's 4 KiB is safe while the echo is read between writes (8 and
-    16 KiB measured on sh, bash, zsh and busybox; 64 KiB stalls a pty that
-    is driven from one thread)."""
+    """A Linux pty blocks the writer instead of dropping input, so a batch
+    past the serial line's 4 KiB is safe while the echo is read between
+    writes (8 and 16 KiB measured on sh, bash, zsh and busybox; 64 KiB stalls
+    a pty that is driven from one thread)."""
     stream = _PtyStream(pty_shell.fd)
     profile = PosixConsoleProfile(batch=8192)
     profile.negotiate(stream)

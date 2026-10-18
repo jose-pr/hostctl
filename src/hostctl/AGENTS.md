@@ -1085,7 +1085,7 @@ ConsoleProfile.send(stream, command)
   with `getattr` to quote argv and embed `cwd`/`env` (see `SerialHost.run`).
 
 ```python
-PosixConsoleProfile(*, login=(), login_timeout=10.0, wakeup=b'\n', read_size=4096, shell='posix', batch=2048)
+PosixConsoleProfile(*, login=(), login_timeout=10.0, wakeup=b'\n', read_size=4096, shell='posix', batch=1024)
 PosixConsoleProfile.shell_flavour -> PosixShellFlavour
 PosixConsoleProfile.execute(stream, command, *, input=None, merge_stderr=False, timeout=None, on_stdout=None, on_stderr=None) -> tuple[bytes, bytes, int]
 ```
@@ -1118,18 +1118,19 @@ terminal's settings are restored afterwards.
   waiting on the terminal. `merge_stderr=True` is `2>&1`. `on_stdout` gets
   stdout as it arrives; stderr is delivered when the command ends. `run()`
   is `execute(merge_stderr=True)` without its stderr.
-- Every typed line is under 1 KiB, and at most `batch` bytes (default 2048)
+- Every typed line is under 1 KiB, and at most `batch` bytes (default 1024)
   are typed before the shell acknowledges them, so neither a minimal line
   editor nor a serial line's input queue loses a byte. A stream failure
   before the command line is typed raises `OperationNotStartedError`
   (nothing ran).
 - `batch` (an int of at least 1024, or `None` for no acknowledgements)
   trades that round trip for safety. Keep the default on a serial line,
-  which drops what overflows its 4 KiB input queue. A stream that blocks the
-  writer instead and whose far end keeps reading the terminal (a web shell,
-  an SSH or container session) takes `None`: each acknowledgement costs a
-  round trip, so the default spends one per 2 KiB of input. A pty read and written from one thread takes a few KiB more (8 and 16 KiB
-  measured), not `None`: it stops reading input while its echo goes unread.
+  which drops what overflows its 4 KiB input queue, and on a pty read and
+  written from one thread, which stops reading input while its echo goes
+  unread: a macOS pty after about 1.3 KiB (a Linux one takes 8 and 16 KiB).
+  A stream that blocks the writer and whose far end keeps reading the
+  terminal (a web shell, an SSH or container session) takes `None`: each
+  acknowledgement costs a round trip, so the default spends one per KiB.
   Writes are at most 2 KiB, and what the console sent is read and dropped
   before each next one (it can only be echo and prompts until the command
   line is typed).

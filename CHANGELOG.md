@@ -87,13 +87,14 @@ collection until pytruenas ports to these names.
   `User` of a configuration file read after `ssh_config`, so the ssh_config
   keeps the last word; it is not part of the URI.
 - **`PosixConsoleProfile(batch=)`: size or turn off the acknowledged
-  batch.** At most `batch` typed bytes (default 2048, the serial-safe value)
-  go out before the shell acknowledges them; `batch=None` types everything
-  with no round trip, for a stream that blocks the writer and whose far end
-  keeps reading the terminal (a web shell, an SSH or container session).
-  Writes stay at most 2 KiB, with the console's echo read between them, so
-  a larger batch works on a pty too (8 and 16 KiB measured). A batch under
-  1024 bytes raises `ValueError`.
+  batch.** At most `batch` typed bytes (default 1024) go out before the
+  shell acknowledges them: a serial line's input queue holds 4 KiB, and a
+  macOS pty driven from one thread stops taking input after about 1.3 KiB.
+  `batch=None` types everything with no round trip, for a stream that
+  blocks the writer and whose far end keeps reading the terminal (a web
+  shell, an SSH or container session). Writes stay at most 2 KiB, with the
+  console's echo read between them, so a larger batch works on a Linux pty
+  (8 and 16 KiB measured). A batch under 1024 bytes raises `ValueError`.
 - **`hostctl.deploy`: install a Python program on a host that cannot install
   it itself**, behind a new `deploy` extra (`packaging`, `pathspec`, and
   `tomli` before Python 3.11; included in `dev`). `deploy(host, source,
@@ -149,7 +150,7 @@ collection until pytruenas ports to these names.
   `execute(stream, command, *, input=, merge_stderr=, timeout=, on_stdout=,
   on_stderr=)` returns `(stdout, stderr, status)`. `SerialHost.run()` with
   it accepts `input=` and a `stdin=` stream and returns stderr separately.
-  Typed lines stay under 1 KiB and at most 2 KiB is typed before the shell
+  Typed lines stay under 1 KiB and at most 1 KiB is typed before the shell
   acknowledges it, so busybox's line editor and a serial line's input queue
   lose nothing.
 - **A serial host with `PosixConsoleProfile` speaks POSIX shell**, in 0.4.0.

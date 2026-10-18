@@ -28,12 +28,17 @@ from ._stream import ConsoleStream
 #: ash's line editor drops a longer line (1024 bytes in its default build).
 _CHUNK = 768
 
-#: Typed bytes in flight before the shell acknowledges them. A terminal's
-#: input queue holds 4 KiB; a serial line overrunning it loses characters.
-_BATCH = 2048
-
 #: Smallest batch: one typed line (each stays under 1 KiB) must fit in it.
 _MIN_BATCH = 1024
+
+#: Typed bytes in flight before the shell acknowledges them. A serial line's
+#: input queue holds 4 KiB and drops what overruns it; a macOS pty whose echo
+#: nobody reads stops taking input after about 1.3 KiB (measured on sh, bash
+#: and zsh), the smallest console measured.
+_BATCH = _MIN_BATCH
+
+#: Longest single write; the console's output is read between two of them.
+_WRITE = 2048
 
 #: Room kept in each batch for the acknowledgement appended to its last line.
 _ACK_ROOM = 64
@@ -226,12 +231,13 @@ class PosixConsoleProfile:
     `ValueError`, since the framing itself is sh syntax.
 
     `batch` is how many typed bytes may be in flight before the shell
-    acknowledges them (at least 1024; `None`: no acknowledgements). Keep the
-    default on a serial line, whose 4 KiB input queue drops what overflows
-    it. A stream that blocks the writer instead and whose far end keeps
-    reading the terminal (a web shell, an SSH or container session) takes
-    `None`, saving a round trip per 2 KiB; a pty read and written from one
-    thread takes a few KiB more, not an unbounded batch.
+    acknowledges them (at least 1024, the default; `None`: no
+    acknowledgements). Keep the default on a serial line, whose 4 KiB input
+    queue drops what overflows it, and on a pty read and written from one
+    thread: a macOS pty stops taking input after about 1.3 KiB while its
+    echo goes unread (a Linux one takes 8 and 16 KiB). A stream that blocks
+    the writer and whose far end keeps reading the terminal (a web shell, an
+    SSH or container session) takes `None`, saving a round trip per KiB.
     """
 
     can_run = True
@@ -470,7 +476,7 @@ class PosixConsoleProfile:
     ) -> None:
         """Write lines that come before the command line; a failure ran nothing.
 
-        At most `_BATCH` bytes go in one write, and what the console sent is
+        At most `_WRITE` bytes go in one write, and what the console sent is
         read before the next (and after the last, with `drain_after`): a
         terminal whose echo nobody reads stops reading its input, and the
         blocked write would never return. Until the command line is typed,
@@ -479,7 +485,7 @@ class PosixConsoleProfile:
         pieces: typing.List[bytes] = []
         for line in lines:
             data = line.encode("ascii") + b"\n"
-            if pieces and len(pieces[-1]) + len(data) <= _BATCH:
+            if pieces and len(pieces[-1]) + len(data) <= _WRITE:
                 pieces[-1] += data
             else:
                 pieces.append(data)
