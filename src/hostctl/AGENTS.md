@@ -1127,6 +1127,43 @@ terminal's settings are restored afterwards.
   rest of the line, and raises `TimeoutError` with `.output` and `.stderr`
   so far; that command's temporary directory is left behind.
 
+```python
+class ConsoleExecutor(StreamingExecutor)
+ConsoleExecutor(stream_factory, *, profile=None)
+ConsoleExecutor._abandon(request) -> bool
+```
+
+**`ConsoleExecutor` serves `run()` from a POSIX shell's console** -- a web
+shell, a QEMU console, a container TTY -- through `PosixConsoleProfile`, with
+the call surface of every executor ("Executor contract") and no thread.
+Wrap it in an `ExecutorProvider`.
+
+- `stream_factory()` returns the `ConsoleStream` of a console whose shell is
+  ready to type into (log in there, `profile.negotiate(stream)`, if it needs
+  it); it is called once per command. `profile` defaults to
+  `PosixConsoleProfile()`; anything but a `PosixConsoleProfile` raises
+  `TypeError`. Pass `PosixConsoleProfile(batch=None)` for a stream that
+  cannot overflow.
+- No native `args`, `cwd` or `env`: a host renders one line of shell text
+  (`/bin/sh -c '...'` on a `PosixHost`), which runs in a child shell, so
+  nothing a command does persists in the console's shell.
+- stdout is delivered as it arrives, stderr when the command ends. One
+  command holds the terminal from its first typed byte until its status
+  arrives; another call waits for it within its own timeout (`TimeoutExpired`,
+  `orphaned=False`, nothing typed).
+- Decline rule: `OperationNotStartedError` only before the command line is
+  typed -- `stream_factory` raised `OSError` or `TimeoutError` (any other
+  exception propagates), or the stream failed while the command's files were
+  typed. The host then tries its next provider. A failure after that is a
+  `ConnectionError`, never retried elsewhere.
+- After a timeout, and after a failure once the stream was obtained (a
+  decline included), `_abandon` types ^C. A timeout raises `TimeoutExpired`
+  with the output so far and `orphaned=True` (^C stops only a program that
+  heeds it); one that passed while acknowledgements were awaited, before the
+  command line, is `orphaned=False`. Override `_abandon` to also drop the
+  stream (call `super()._abandon(request)` first) and return `False` when
+  that ends the command, as closing a login session does.
+
 ## Shells (`hostctl.shell`)
 
 A shell flavour renders commands for one shell language; a `Shell` binds one

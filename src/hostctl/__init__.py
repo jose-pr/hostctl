@@ -41,6 +41,7 @@ from .executor import (
     CommandLike as CommandLike,
 )
 from .console import (
+    ConsoleExecutor as ConsoleExecutor,
     ConsoleProfile as ConsoleProfile,
     ConsoleStream as ConsoleStream,
     LoginStep as LoginStep,
@@ -212,6 +213,7 @@ __all__ = [
     "PosixConsoleProfile",
     "LoginStep",
     "console_stream",
+    "ConsoleExecutor",
     # Provider composition
     "ExecutorProvider",
     "PathProvider",

@@ -63,6 +63,17 @@ collection until pytruenas ports to these names.
 
 ### Added
 
+- **`ConsoleExecutor`: `run()` over a POSIX shell's console, with no
+  thread.** `hostctl.console.ConsoleExecutor(stream_factory, *,
+  profile=None)` is a `StreamingExecutor` that frames each command with
+  `PosixConsoleProfile` on the `ConsoleStream` the factory returns: capture
+  or live stdout, `input=`/`stdin=`, the text rule, `check`, and a timeout
+  that types ^C and raises `TimeoutExpired(orphaned=True)`. It declines
+  (`OperationNotStartedError`, so the host tries its next provider) only
+  before the command line is typed, holds the terminal for one command at
+  a time, and lets a subclass override `_abandon` to drop the stream. A web
+  shell or a QEMU console behind an `ExecutorProvider` no longer needs a
+  worker thread per command around `execute()`.
 - **`PosixConsoleProfile(batch=)`: size or turn off the acknowledged
   batch.** At most `batch` typed bytes (default 2048, the serial-safe value)
   go out before the shell acknowledges them; `batch=None` types everything

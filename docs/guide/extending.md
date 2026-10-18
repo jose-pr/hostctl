@@ -287,6 +287,11 @@ writes only its primitive:
   `_send(request)`, `_receive(request, wait) -> (stdout, stderr, returncode)`
   and, when the transport can stop a command, `_abandon(request)`.
 
+A transport that reaches a POSIX shell only through its terminal (a web
+shell, a serial or QEMU console) needs neither: `hostctl.ConsoleExecutor`
+is a `StreamingExecutor` over any `ConsoleStream` (see "Serving `run()` from a
+console" in the run guide).
+
 This one runs commands over a channel of frames (a websocket, say), where a
 frame starting `1` is stdout, `2` stderr and `3` the exit status. A loopback
 channel stands in for the network so this page runs:

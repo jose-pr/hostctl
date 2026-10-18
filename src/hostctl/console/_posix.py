@@ -401,9 +401,32 @@ class PosixConsoleProfile:
         """Type `command` through the line that runs it.
 
         Returns the frame parser and the ``(stdout, stderr)`` it already
-        framed. Raises `OperationNotStartedError` when the stream failed
-        before that line was typed, and `TimeoutError` (after a ^C) when
-        `deadline` passed while waiting for an acknowledgement.
+        framed. Raises what `_prepare` raises; a failure while typing the
+        command line itself is not a decline, since part of it may be typed.
+        """
+        frame, leftover, line = self._prepare(
+            stream, command, input=input, merge_stderr=merge_stderr, deadline=deadline
+        )
+        stream.write(line)
+        out, err = frame.feed(leftover)
+        return frame, out, err
+
+    def _prepare(
+        self,
+        stream: ConsoleStream,
+        command: _Data,
+        *,
+        input: typing.Optional[_Data],
+        merge_stderr: bool,
+        deadline: typing.Optional[float],
+    ) -> typing.Tuple[_Frame, bytes, bytes]:
+        """Type everything `command` needs before the line that runs it.
+
+        Returns the frame parser, what the console sent after the last
+        acknowledgement, and the command line still to write. Raises
+        `OperationNotStartedError` when the stream fails, and `TimeoutError`
+        (after a ^C) when `deadline` passes waiting for an acknowledgement:
+        either way the command line was never typed.
         """
         encoded = (
             command.encode(self.encoding)
@@ -429,9 +452,8 @@ class PosixConsoleProfile:
                 stream, f"__AK{token}_{number}__".encode(), deadline, frame
             )
         *setup, main = batches[-1]
-        self._type(stream, setup, then=main)
-        out, err = frame.feed(leftover)
-        return frame, out, err
+        self._type(stream, setup, drain_after=True)
+        return frame, leftover, main.encode("ascii") + b"\n"
 
     @staticmethod
     def _emit(sink: _Sink, data: bytes) -> None:
@@ -443,14 +465,15 @@ class PosixConsoleProfile:
         stream: ConsoleStream,
         lines: typing.Sequence[str],
         *,
-        then: typing.Optional[str] = None,
+        drain_after: bool = False,
     ) -> None:
-        """Write `lines`, then the command line `then`; a failure before it ran nothing.
+        """Write lines that come before the command line; a failure ran nothing.
 
         At most `_BATCH` bytes go in one write, and what the console sent is
-        read before the next: a terminal whose echo nobody reads stops reading
-        its input, and the blocked write would never return. Until the
-        command line is typed, that output is echo and prompts only.
+        read before the next (and after the last, with `drain_after`): a
+        terminal whose echo nobody reads stops reading its input, and the
+        blocked write would never return. Until the command line is typed,
+        that output is echo and prompts only.
         """
         pieces: typing.List[bytes] = []
         for line in lines:
@@ -461,36 +484,30 @@ class PosixConsoleProfile:
                 pieces.append(data)
         for index, piece in enumerate(pieces):
             if index:
-                try:
-                    self._drain(stream)
-                except Exception as exc:
-                    raise OperationNotStartedError(
-                        "console stream failed before the command was typed",
-                        cause=exc,
-                    ) from exc
+                self._drain(stream)
             try:
                 stream.write(piece)
             except Exception as exc:
                 raise OperationNotStartedError(
                     "console write failed before the command was typed", cause=exc
                 ) from exc
-        if then is None:
-            return
-        if pieces:
-            try:
-                self._drain(stream)
-            except Exception as exc:
-                raise OperationNotStartedError(
-                    "console stream failed before the command was typed", cause=exc
-                ) from exc
-        # Part of the command line may be typed before a failure: no decline.
-        stream.write(then.encode("ascii") + b"\n")
+        if pieces and drain_after:
+            self._drain(stream)
 
     def _drain(self, stream: ConsoleStream) -> None:
-        """Read and drop what the console has already sent, without waiting."""
-        for _ in range(_DRAIN_READS):
-            if not stream.read(self.read_size, timeout=0):
-                return
+        """Read and drop what the console has already sent, without waiting.
+
+        Raises `OperationNotStartedError` when the stream has failed: it is
+        only called before the command line is typed.
+        """
+        try:
+            for _ in range(_DRAIN_READS):
+                if not stream.read(self.read_size, timeout=0):
+                    return
+        except Exception as exc:
+            raise OperationNotStartedError(
+                "console stream failed before the command was typed", cause=exc
+            ) from exc
 
     def _acknowledged(
         self,

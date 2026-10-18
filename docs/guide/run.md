@@ -377,6 +377,45 @@ with guest.open_serial() as process:
     stdout, stderr, status = profile.execute(console, "uptime", timeout=30)
 ```
 
+### Serving `run()` from a console: `ConsoleExecutor`
+
+To give a host `run()` over a console it does not otherwise have -- a web
+shell behind a websocket, a QEMU console -- wrap the console in a
+`ConsoleExecutor` and add it as a provider. It frames each command with
+`PosixConsoleProfile` and has the call surface of every executor: capture or
+live stdout, the text rule, `input=`/`stdin=`, `check`, `TimeoutExpired`, and
+the decline rule, with no thread:
+
+```python
+from hostctl import ConsoleExecutor, ExecutorProvider, PosixConsoleProfile, PosixHost
+
+executor = ConsoleExecutor(
+    lambda: session.stream,                   # the console, connected, shell ready
+    profile=PosixConsoleProfile(batch=None),  # a websocket cannot overflow
+)
+host = PosixHost(executor_providers=(ExecutorProvider("webshell", executor),))
+host.run("journalctl -f", stdout=None, timeout=60)  # printed as it arrives
+```
+
+- `stream_factory` is called once per command; the console must be ready
+  to type into. A factory that raises `OSError` or `TimeoutError`, or a
+  stream that fails before the command line is typed, declines: the host
+  tries its next provider. After that a failure is a `ConnectionError`.
+- One command holds the terminal at a time; another waits within its own
+  timeout. The command runs in a child shell (`/bin/sh -c '...'`), so it
+  leaves the console's shell as it found it.
+- A timeout types ^C and raises `TimeoutExpired(orphaned=True)`. A subclass
+  that can end the command for certain overrides `_abandon` -- closing the
+  session hangs up its jobs -- and returns `False`:
+
+```python
+class WebShellExecutor(ConsoleExecutor):
+    def _abandon(self, request):
+        super()._abandon(request)   # types ^C
+        session.close()             # the hang-up ends the command
+        return False
+```
+
 ### A device console: `PromptConsoleProfile`
 
 A network device or a BMC has no POSIX shell to frame for it.
