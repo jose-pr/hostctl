@@ -327,6 +327,19 @@ with config as host:
   shell. stderr is separate unless `stderr=subprocess.STDOUT`.
 - On `timeout` the profile types ^C, which interrupts the command and discards
   the rest of its line, and raises `TimeoutExpired` with the output so far.
+- Every typed line stays under 1 KiB (a minimal busybox line editor drops a
+  longer one), and at most `batch` bytes -- 2 KiB by default -- are typed
+  before the shell acknowledges them, so a serial line's 4 KiB input queue
+  never overflows.
+
+Each acknowledgement is a round trip. On a stream that cannot overflow --
+one that blocks the writer, with a far end that keeps reading the terminal,
+like a web shell over a websocket or an SSH or container session --
+`PosixConsoleProfile(batch=None)` types everything without waiting. Keep the
+default on a serial line. A pty you read and write yourself from one thread
+takes a larger batch (8 and 16 KiB measured on sh, bash, zsh and busybox) but
+not `None`: while its echo goes unread it stops reading input, and the write
+never returns.
 
 The command runs in the console's own shell, so `cd` and variables persist and
 `exit` ends the session.

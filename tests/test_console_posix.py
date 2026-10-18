@@ -102,6 +102,34 @@ def test_batches_bound_the_bytes_in_flight_and_are_acknowledged():
     assert len(_typed_batches(b"true", TOKEN)) == 1
 
 
+@pytest.mark.parametrize("batch", [1024, 8192])
+def test_a_larger_batch_is_bounded_by_its_size(batch):
+    batches = _typed_batches(b"cat", TOKEN, input=os.urandom(50000), batch=batch)
+
+    for batch_lines in batches:
+        assert sum(len(line) + 1 for line in batch_lines) <= batch
+    assert len(batches) > 50000 * 4 // 3 // batch
+
+
+def test_without_acknowledgements_everything_is_one_batch():
+    batches = _typed_batches(b"cat", TOKEN, input=os.urandom(20000), batch=None)
+
+    assert len(batches) == 1
+    assert not any("__AK" in line for line in batches[0])
+    assert "stty -opost" in batches[0][-1]
+
+
+@pytest.mark.parametrize("batch", [0, 512, 1023, True, 2048.0, "2048"])
+def test_a_batch_smaller_than_a_typed_line_is_refused(batch):
+    with pytest.raises(ValueError, match="batch must be None or an int"):
+        PosixConsoleProfile(batch=batch)
+
+
+def test_the_batch_defaults_to_two_kib():
+    assert PosixConsoleProfile().batch == 2048
+    assert PosixConsoleProfile(batch=None).batch is None
+
+
 def test_stdin_is_dev_null_without_input_and_stderr_mode_is_chosen():
     plain = _lines(b"true")[-1]
     assert "< /dev/null" in plain and "2>&1" not in plain
@@ -367,6 +395,68 @@ def test_input_reaches_the_command_byte_for_byte(value):
 
     assert result.stdout == b"out:cat" + (b"|in:" + value if value else b"")
     assert terminal.lost == 0
+
+
+def test_without_acknowledgements_input_is_typed_with_no_round_trip():
+    """`batch=None`, for a stream that cannot overflow: the shell is never
+    asked to acknowledge, and the input still arrives byte for byte."""
+    terminal = _Terminal(_echo)
+    payload = os.urandom(20000)
+
+    result = _host(terminal, batch=None).run("cat", input=payload, timeout=30)
+
+    assert result.stdout == b"out:cat|in:" + payload
+    assert not any("__AK" in line for line in terminal.lines)
+    assert terminal.lost == 0
+
+
+def test_a_larger_batch_needs_fewer_acknowledgements():
+    def acknowledgements(batch):
+        terminal = _Terminal(_echo)
+        payload = bytes(range(256)) * 80
+        result = _host(terminal, batch=batch).run("cat", input=payload, timeout=30)
+        assert result.stdout == b"out:cat|in:" + payload
+        return sum("__AK" in line for line in terminal.lines)
+
+    assert acknowledgements(2048) > acknowledgements(8192) > 0
+
+
+class _Recording:
+    """A stream that answers like a fast shell and logs every call in order."""
+
+    def __init__(self):
+        self.calls = []
+        self.frame = None
+
+    def read(self, size=-1, *, timeout=None):
+        self.calls.append(("read", timeout))
+        data, self.frame = self.frame or b"", None
+        return data
+
+    def write(self, data):
+        self.calls.append(("write", len(data)))
+        token = re.search(rb'"__ST" "(\w+)__"', data)
+        if token:
+            name = token.group(1)
+            self.frame = b"__ST%s__ok__OUT%s____EN%s_0_EN__" % (name, name, name)
+
+
+def test_a_whole_input_is_written_in_pieces_with_the_echo_read_between():
+    """A terminal whose echo nobody reads stops reading its input; with no
+    acknowledgement to wait for, what arrived is read before each write."""
+    stream = _Recording()
+
+    out, _, status = PosixConsoleProfile(batch=None).execute(
+        stream, "cat", input=os.urandom(30000), timeout=10
+    )
+
+    assert (out, status) == (b"ok", 0)
+    writes = [size for call, size in stream.calls if call == "write"]
+    assert len(writes) > 10 and max(writes) <= _posix._BATCH
+    for before, after in zip(stream.calls, stream.calls[1:-1]):
+        if before[0] == "write" and after[0] == "write":
+            pytest.fail("two writes with no read between them")
+    assert ("read", 0) in stream.calls
 
 
 def test_a_stdin_stream_is_read_and_delivered_as_input():
@@ -905,6 +995,25 @@ def test_real_pty_is_binary_safe_and_restores_the_terminal(pty_shell):
         b"a\r\nb\n"
     )
     assert termios.tcgetattr(pty_shell.fd)[1] & termios.OPOST
+
+
+@pytest.mark.skipif(not _HAS_PTY, reason="needs a POSIX pty and base64/mktemp/stty")
+def test_real_pty_takes_a_larger_batch_with_its_echo_read_while_typing(pty_shell):
+    """A pty blocks the writer instead of dropping input, so a batch past the
+    serial line's 4 KiB is safe while the echo is read between writes (8 and
+    16 KiB measured on sh, bash, zsh and busybox; 64 KiB stalls a pty that
+    is driven from one thread)."""
+    stream = _PtyStream(pty_shell.fd)
+    profile = PosixConsoleProfile(batch=8192)
+    profile.negotiate(stream)
+    payload = os.urandom(256 * 1024)
+
+    assert profile.execute(stream, "cat", input=payload, timeout=120) == (
+        payload,
+        b"",
+        0,
+    )
+    assert profile.execute(stream, "echo ok", timeout=20) == (b"ok\n", b"", 0)
 
 
 @pytest.mark.skipif(not _HAS_PTY, reason="needs a POSIX pty and base64/mktemp/stty")

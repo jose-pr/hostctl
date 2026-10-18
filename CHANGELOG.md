@@ -63,6 +63,14 @@ collection until pytruenas ports to these names.
 
 ### Added
 
+- **`PosixConsoleProfile(batch=)`: size or turn off the acknowledged
+  batch.** At most `batch` typed bytes (default 2048, the serial-safe value)
+  go out before the shell acknowledges them; `batch=None` types everything
+  with no round trip, for a stream that blocks the writer and whose far end
+  keeps reading the terminal (a web shell, an SSH or container session).
+  Writes stay at most 2 KiB, with the console's echo read between them, so
+  a larger batch works on a pty too (8 and 16 KiB measured). A batch under
+  1024 bytes raises `ValueError`.
 - **`hostctl.deploy`: install a Python program on a host that cannot install
   it itself**, behind a new `deploy` extra (`packaging`, `pathspec`, and
   `tomli` before Python 3.11; included in `dev`). `deploy(host, source,

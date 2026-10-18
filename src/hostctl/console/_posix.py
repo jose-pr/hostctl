@@ -31,8 +31,17 @@ _CHUNK = 768
 #: input queue holds 4 KiB; a serial line overrunning it loses characters.
 _BATCH = 2048
 
+#: Smallest batch: one typed line (each stays under 1 KiB) must fit in it.
+_MIN_BATCH = 1024
+
+#: Room kept in each batch for the acknowledgement appended to its last line.
+_ACK_ROOM = 64
+
 #: Longest single read, so a deadline is checked while the command is silent.
 _POLL = 0.25
+
+#: Reads of already-arrived output between two writes; bounds a noisy console.
+_DRAIN_READS = 64
 
 #: Pre-frame bytes kept while waiting for a marker; older ones are never needed.
 _KEEP = 64 * 1024
@@ -56,12 +65,13 @@ def _typed_batches(
     *,
     input: typing.Optional[bytes] = None,
     merge_stderr: bool = False,
+    batch: typing.Optional[int] = _BATCH,
 ) -> typing.List[typing.List[str]]:
     """The lines typed to run `command`, grouped into acknowledged batches.
 
     Each line is printable ASCII with no TAB, ``!`` or newline. Every batch
     but the last ends by printing ``__AK<token>_<n>__``; the last holds the
-    line that runs the command.
+    line that runs the command. A `batch` of `None` is one batch.
     """
     var = f"__hc{token}"
     tmp = f'"${{{var}d:?}}"'
@@ -97,15 +107,18 @@ def _typed_batches(
             f"unset {var}d {var}r {var}s",
         )
     )
+    if batch is None:
+        return [lines + [main]]
+    budget = batch - _ACK_ROOM
     batches: typing.List[typing.List[str]] = [[]]
     size = 0
     for line in lines:
-        if batches[-1] and size + len(line) + 1 > _BATCH:
+        if batches[-1] and size + len(line) + 1 > budget:
             batches.append([])
             size = 0
         batches[-1].append(line)
         size += len(line) + 1
-    if batches[-1] and size + len(main) + 1 > _BATCH:
+    if batches[-1] and size + len(main) + 1 > budget:
         batches.append([])
     batches[-1].append(main)
     for number, batch in enumerate(batches[:-1], 1):
@@ -210,6 +223,14 @@ class PosixConsoleProfile:
     `PosixShellFlavour`); a host driving this profile quotes structured
     commands and embeds `cwd`/`env` with it. Any other flavour raises
     `ValueError`, since the framing itself is sh syntax.
+
+    `batch` is how many typed bytes may be in flight before the shell
+    acknowledges them (at least 1024; `None`: no acknowledgements). Keep the
+    default on a serial line, whose 4 KiB input queue drops what overflows
+    it. A stream that blocks the writer instead and whose far end keeps
+    reading the terminal (a web shell, an SSH or container session) takes
+    `None`, saving a round trip per 2 KiB; a pty read and written from one
+    thread takes a few KiB more, not an unbounded batch.
     """
 
     can_run = True
@@ -229,9 +250,20 @@ class PosixConsoleProfile:
         wakeup: typing.Union[bytes, str] = b"\n",
         read_size: int = 4096,
         shell: ShellFlavourSelection = "posix",
+        batch: typing.Optional[int] = _BATCH,
     ) -> None:
         if not login_timeout > 0:
             raise ValueError("login_timeout must be positive")
+        if batch is not None and (
+            isinstance(batch, bool) or not isinstance(batch, int) or batch < _MIN_BATCH
+        ):
+            raise ValueError(
+                f"batch must be None or an int of at least {_MIN_BATCH} bytes, "
+                f"got {batch!r}"
+            )
+        #: Typed bytes sent before waiting for the shell to acknowledge them;
+        #: `None` types everything at once.
+        self.batch = batch
         flavour = shell_flavour(shell)
         if not isinstance(flavour, PosixShellFlavour):
             raise ValueError(
@@ -344,6 +376,35 @@ class PosixConsoleProfile:
         `.output` and `.stderr` so far. A stream failure before the command
         line was typed raises `OperationNotStartedError`.
         """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        frame, out, err = self._start(
+            stream, command, input=input, merge_stderr=merge_stderr, deadline=deadline
+        )
+        self._emit(on_stdout, out)
+        self._emit(on_stderr, err)
+        while frame.state != "done":
+            chunk = self._read(stream, deadline, frame)
+            out, err = frame.feed(chunk)
+            self._emit(on_stdout, out)
+            self._emit(on_stderr, err)
+        return bytes(frame.out), bytes(frame.err), typing.cast(int, frame.returncode)
+
+    def _start(
+        self,
+        stream: ConsoleStream,
+        command: _Data,
+        *,
+        input: typing.Optional[_Data],
+        merge_stderr: bool,
+        deadline: typing.Optional[float],
+    ) -> typing.Tuple[_Frame, bytes, bytes]:
+        """Type `command` through the line that runs it.
+
+        Returns the frame parser and the ``(stdout, stderr)`` it already
+        framed. Raises `OperationNotStartedError` when the stream failed
+        before that line was typed, and `TimeoutError` (after a ^C) when
+        `deadline` passed while waiting for an acknowledgement.
+        """
         encoded = (
             command.encode(self.encoding)
             if isinstance(command, str)
@@ -357,27 +418,20 @@ class PosixConsoleProfile:
             )
         )
         token = uuid.uuid4().hex[:16]
-        batches = _typed_batches(encoded, token, input=data, merge_stderr=merge_stderr)
-        deadline = None if timeout is None else time.monotonic() + timeout
+        batches = _typed_batches(
+            encoded, token, input=data, merge_stderr=merge_stderr, batch=self.batch
+        )
         frame = _Frame(token)
         leftover = b""
         for number, batch in enumerate(batches[:-1], 1):
-            self._type(stream, batch, started=False)
+            self._type(stream, batch)
             leftover = self._acknowledged(
                 stream, f"__AK{token}_{number}__".encode(), deadline, frame
             )
         *setup, main = batches[-1]
-        self._type(stream, setup, started=False)
-        self._type(stream, [main], started=True)
+        self._type(stream, setup, then=main)
         out, err = frame.feed(leftover)
-        self._emit(on_stdout, out)
-        self._emit(on_stderr, err)
-        while frame.state != "done":
-            chunk = self._read(stream, deadline, frame)
-            out, err = frame.feed(chunk)
-            self._emit(on_stdout, out)
-            self._emit(on_stderr, err)
-        return bytes(frame.out), bytes(frame.err), typing.cast(int, frame.returncode)
+        return frame, out, err
 
     @staticmethod
     def _emit(sink: _Sink, data: bytes) -> None:
@@ -385,20 +439,58 @@ class PosixConsoleProfile:
             sink(data)
 
     def _type(
-        self, stream: ConsoleStream, lines: typing.Sequence[str], *, started: bool
+        self,
+        stream: ConsoleStream,
+        lines: typing.Sequence[str],
+        *,
+        then: typing.Optional[str] = None,
     ) -> None:
-        if not lines:
+        """Write `lines`, then the command line `then`; a failure before it ran nothing.
+
+        At most `_BATCH` bytes go in one write, and what the console sent is
+        read before the next: a terminal whose echo nobody reads stops reading
+        its input, and the blocked write would never return. Until the
+        command line is typed, that output is echo and prompts only.
+        """
+        pieces: typing.List[bytes] = []
+        for line in lines:
+            data = line.encode("ascii") + b"\n"
+            if pieces and len(pieces[-1]) + len(data) <= _BATCH:
+                pieces[-1] += data
+            else:
+                pieces.append(data)
+        for index, piece in enumerate(pieces):
+            if index:
+                try:
+                    self._drain(stream)
+                except Exception as exc:
+                    raise OperationNotStartedError(
+                        "console stream failed before the command was typed",
+                        cause=exc,
+                    ) from exc
+            try:
+                stream.write(piece)
+            except Exception as exc:
+                raise OperationNotStartedError(
+                    "console write failed before the command was typed", cause=exc
+                ) from exc
+        if then is None:
             return
-        payload = "".join(line + "\n" for line in lines).encode("ascii")
-        if started:
-            stream.write(payload)
-            return
-        try:
-            stream.write(payload)
-        except Exception as exc:
-            raise OperationNotStartedError(
-                "console write failed before the command was typed", cause=exc
-            ) from exc
+        if pieces:
+            try:
+                self._drain(stream)
+            except Exception as exc:
+                raise OperationNotStartedError(
+                    "console stream failed before the command was typed", cause=exc
+                ) from exc
+        # Part of the command line may be typed before a failure: no decline.
+        stream.write(then.encode("ascii") + b"\n")
+
+    def _drain(self, stream: ConsoleStream) -> None:
+        """Read and drop what the console has already sent, without waiting."""
+        for _ in range(_DRAIN_READS):
+            if not stream.read(self.read_size, timeout=0):
+                return
 
     def _acknowledged(
         self,
