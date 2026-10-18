@@ -1130,7 +1130,7 @@ terminal's settings are restored afterwards.
 ```python
 class ConsoleExecutor(StreamingExecutor)
 ConsoleExecutor(stream_factory, *, profile=None)
-ConsoleExecutor._abandon(request) -> bool
+ConsoleExecutor._abandon(request, *, stream=None) -> bool
 ```
 
 **`ConsoleExecutor` serves `run()` from a POSIX shell's console** -- a web
@@ -1157,12 +1157,27 @@ Wrap it in an `ExecutorProvider`.
   typed. The host then tries its next provider. A failure after that is a
   `ConnectionError`, never retried elsewhere.
 - After a timeout, and after a failure once the stream was obtained (a
-  decline included), `_abandon` types ^C. A timeout raises `TimeoutExpired`
-  with the output so far and `orphaned=True` (^C stops only a program that
-  heeds it); one that passed while acknowledgements were awaited, before the
-  command line, is `orphaned=False`. Override `_abandon` to also drop the
-  stream (call `super()._abandon(request)` first) and return `False` when
-  that ends the command, as closing a login session does.
+  decline included), `_abandon(request, stream=stream)` types ^C on the
+  stream the factory returned for that command; a ^C write that raises is
+  ignored (the stream is often abandoned because it failed). A timeout raises
+  `TimeoutExpired` with the output so far and `orphaned=True` (^C stops only
+  a program that heeds it); one that passed while acknowledgements were
+  awaited, before the command line, is `orphaned=False`. Override `_abandon`
+  to also drop `stream` and return `False` when that ends the command, as
+  closing a login session does:
+
+  ```python
+  def _abandon(self, request, *, stream=None):
+      super()._abandon(request, stream=stream)   # ^C, best effort
+      session.drop(stream)
+      return False
+  ```
+
+  It runs while the command still holds the terminal (before the next
+  command's `stream_factory()` call), so `stream` is that command's. An
+  exception it raises is swallowed and the command reported orphaned; the
+  timeout or failure is what the caller sees. `stream=None` means the
+  running command's stream.
 
 ## Shells (`hostctl.shell`)
 

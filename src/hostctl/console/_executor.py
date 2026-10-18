@@ -45,10 +45,12 @@ class ConsoleExecutor(StreamingExecutor):
     typed. A failure after that is a `ConnectionError`.
 
     After a timeout, and after a failure once the stream was obtained (a
-    decline included), `_abandon` types ^C. A timeout raises `TimeoutExpired`
-    with `orphaned=True`: ^C stops only a program that heeds it. Override
-    `_abandon` to also drop the stream, returning `False` when that ends the
-    command (closing a login session hangs up its jobs).
+    decline included), `_abandon(request, stream=)` types ^C on that stream.
+    A timeout raises `TimeoutExpired` with `orphaned=True`: ^C stops only a
+    program that heeds it. Override `_abandon` to also drop `stream`,
+    returning `False` when that ends the command (closing a login session
+    hangs up its jobs). It runs before the terminal is released, so no other
+    command has typed into `stream`.
     """
 
     executor_capabilities: typing.FrozenSet[str] = frozenset()
@@ -129,12 +131,23 @@ class ConsoleExecutor(StreamingExecutor):
         self._release(request)
         return out, err, frame.returncode
 
-    def _abandon(self, request: ExecutorRequest) -> bool:
-        """Type ^C on the command's terminal; True: the command may still run."""
-        running = self._running
-        if running is not None and running.request is request:
-            if running.stream is not None:
-                running.stream.write(b"\x03")
+    def _abandon(
+        self, request: ExecutorRequest, *, stream: typing.Optional[ConsoleStream] = None
+    ) -> bool:
+        """Type ^C on `stream`, the command's terminal; True: it may still run.
+
+        `stream` defaults to the running command's. A write that fails is
+        ignored: a stream is often abandoned because it already failed.
+        """
+        if stream is None:
+            running = self._running
+            if running is not None and running.request is request:
+                stream = running.stream
+        if stream is not None:
+            try:
+                stream.write(b"\x03")
+            except Exception:
+                pass
         return True
 
     def _stop(self, request: ExecutorRequest) -> bool:
@@ -143,7 +156,11 @@ class ConsoleExecutor(StreamingExecutor):
             # This call never held the terminal: nothing of it ran.
             return False
         try:
-            return super()._stop(request) and running.started
+            try:
+                orphaned = bool(self._abandon(request, stream=running.stream))
+            except Exception:
+                orphaned = True
+            return orphaned and running.started
         finally:
             self._release(request)
 

@@ -71,9 +71,11 @@ collection until pytruenas ports to these names.
   that types ^C and raises `TimeoutExpired(orphaned=True)`. It declines
   (`OperationNotStartedError`, so the host tries its next provider) only
   before the command line is typed, holds the terminal for one command at
-  a time, and lets a subclass override `_abandon` to drop the stream. A web
-  shell or a QEMU console behind an `ExecutorProvider` no longer needs a
-  worker thread per command around `execute()`.
+  a time, and lets a subclass override `_abandon(request, *, stream=None)`
+  to drop that command's stream; the ^C typed before it is best effort, so
+  a stream that already failed does not stop the override. A web shell or
+  a QEMU console behind an `ExecutorProvider` no longer needs a worker
+  thread per command around `execute()`.
 - **`PosixConsoleProfile(batch=)`: size or turn off the acknowledged
   batch.** At most `batch` typed bytes (default 2048, the serial-safe value)
   go out before the shell acknowledges them; `batch=None` types everything

@@ -406,13 +406,16 @@ host.run("journalctl -f", stdout=None, timeout=60)  # printed as it arrives
   leaves the console's shell as it found it.
 - A timeout types ^C and raises `TimeoutExpired(orphaned=True)`. A subclass
   that can end the command for certain overrides `_abandon` -- closing the
-  session hangs up its jobs -- and returns `False`:
+  session hangs up its jobs -- and returns `False`. `stream` is the one the
+  factory returned for this command, still held by it, and the ^C is best
+  effort: on a stream that already failed it is skipped, and the override
+  still runs.
 
 ```python
 class WebShellExecutor(ConsoleExecutor):
-    def _abandon(self, request):
-        super()._abandon(request)   # types ^C
-        session.close()             # the hang-up ends the command
+    def _abandon(self, request, *, stream=None):
+        super()._abandon(request, stream=stream)   # types ^C
+        session.drop(stream)        # the hang-up ends the command
         return False
 ```
 

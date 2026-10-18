@@ -149,9 +149,9 @@ def test_a_write_failure_before_the_command_line_declines_and_types_ctrl_c():
     abandoned = []
 
     class Recording(ConsoleExecutor):
-        def _abandon(self, request):
+        def _abandon(self, request, *, stream=None):
             abandoned.append(request.command)
-            return super()._abandon(request)
+            return super()._abandon(request, stream=stream)
 
     host = _host(
         Recording(lambda: _Console(terminal)), ExecutorProvider("ssh", _completed)
@@ -241,18 +241,87 @@ def test_an_override_that_drops_the_session_reports_the_command_ended():
     closed = []
 
     class Session(ConsoleExecutor):
-        def _abandon(self, request):
-            super()._abandon(request)
-            closed.append(True)
+        def _abandon(self, request, *, stream=None):
+            super()._abandon(request, stream=stream)
+            closed.append(stream)
             return False
 
-    host = _host(Session(lambda: _Console(terminal)))
+    console = _Console(terminal)
+    host = _host(Session(lambda: console))
 
     with pytest.raises(subprocess.TimeoutExpired) as caught:
         host.run("sleep 100", timeout=0.5)
 
     assert caught.value.orphaned is False
-    assert closed == [True]
+    assert closed == [console]
+
+
+class _Dying(_Console):
+    """A console whose link drops once the command line is typed."""
+
+    def __init__(self, terminal):
+        super().__init__(terminal)
+        self.dead = False
+
+    def write(self, data):
+        if self.dead:
+            raise ConnectionResetError("link down")
+        super().write(data)
+        if b"stty -opost" in data:
+            self.dead = True
+
+
+def _dropping(dropped):
+    class Dropping(ConsoleExecutor):
+        def _abandon(self, request, *, stream=None):
+            super()._abandon(request, stream=stream)
+            dropped.append(stream)
+            return False
+
+    return Dropping
+
+
+def test_the_override_drops_the_stream_after_a_failure_on_a_dead_stream():
+    dying = _Dying(_Terminal(lambda command, data, merged: None))
+    dropped = []
+    executor = _dropping(dropped)(lambda: dying)
+    host = _host(executor)
+
+    def lose_the_link(size=-1, *, timeout=None):
+        if dying.dead:
+            raise ConnectionError("console closed")
+        return _Console.read(dying, size, timeout=timeout)
+
+    dying.read = lose_the_link
+    with pytest.raises(ConnectionError, match="console closed"):
+        host.run("sleep 100", timeout=10)
+
+    assert dropped == [dying]
+    assert executor._running is None
+
+
+def test_a_timeout_on_a_dead_stream_is_still_a_timeout():
+    dying = _Dying(_Terminal(lambda command, data, merged: None))
+    dropped = []
+    host = _host(_dropping(dropped)(lambda: dying))
+
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        host.run("sleep 100", timeout=0.5)
+
+    assert caught.value.orphaned is False
+    assert dropped == [dying]
+
+
+def test_the_base_ctrl_c_on_a_dead_stream_reports_the_command_orphaned():
+    dying = _Dying(_Terminal(lambda command, data, merged: None))
+    executor = ConsoleExecutor(lambda: dying)
+    host = _host(executor)
+
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        host.run("sleep 100", timeout=0.5)
+
+    assert caught.value.orphaned is True
+    assert executor._terminal.acquire(blocking=False), "the terminal was kept"
 
 
 def test_one_command_holds_the_terminal_and_a_waiter_keeps_its_timeout():
