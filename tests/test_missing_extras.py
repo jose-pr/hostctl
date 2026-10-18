@@ -148,6 +148,26 @@ def test_missing_extra_error_is_a_hostctl_error_and_an_import_error():
     assert str(error) == "SSH needs the 'ssh' extra: pip install \"hostctl[ssh]\""
 
 
+def test_a_library_built_on_hostctl_names_its_own_distribution():
+    error = MissingExtraError("ssh", "SFTP paths", distribution="pytruenas")
+
+    assert error.distribution == "pytruenas"
+    assert str(error) == (
+        "SFTP paths needs the 'ssh' extra: pip install \"pytruenas[ssh]\""
+    )
+    assert MissingExtraError("ssh", "SSH").distribution == "hostctl"
+
+
+def test_the_python_floor_message_names_the_distribution_and_no_pip_hint():
+    error = MissingExtraError("psrp", "PSRP", python=(3, 10), distribution="mytool")
+
+    assert str(error) == (
+        "PSRP needs Python 3.10 or newer "
+        "(the 'psrp' extra of mytool supports nothing older)"
+    )
+    assert "pip install" not in str(error)
+
+
 def test_a_probe_reports_an_incomplete_ssh_extra(hide):
     from hostctl.transports.ssh._providers import SFTPPathProvider, ssh_providers
     from hostctl.transports.ssh._config import SSHConfig
@@ -169,7 +189,10 @@ def test_without_duho_the_cli_names_the_extra(hide):
     with pytest.raises(SystemExit) as exit_:
         main(["info", "local:"])
 
-    assert "hostctl[cli]" in str(exit_.value.code)
+    assert str(exit_.value.code) == (
+        "hostctl: the hostctl command line needs the 'cli' extra: "
+        'pip install "hostctl[cli]"'
+    )
 
 
 #: What reaches each extra from the command line; none of them gets as far as
@@ -259,3 +282,24 @@ def test_an_import_error_inside_a_dependency_keeps_its_traceback(cli, monkeypatc
     with pytest.raises(ImportError, match="somedependency") as raised:
         cli(["info", "local:"])
     assert not isinstance(raised.value, MissingExtraError)
+
+
+def test_the_cli_reports_a_downstream_distribution_s_extra_as_its_own(
+    cli, capsys, monkeypatch
+):
+    """The 125 mapping is the type's, so a provider from another package that
+    raises it for its own extra gets the same one line."""
+    import hostctl.cli.info as info
+
+    def missing(host):
+        raise MissingExtraError("ssh", "the web shell", distribution="pytruenas")
+
+    monkeypatch.setattr(info, "_identity", missing)
+
+    status = cli(["info", "local:"])
+
+    err = capsys.readouterr().err
+    assert status == 125
+    assert err.strip() == (
+        "hostctl: the web shell needs the 'ssh' extra: " 'pip install "pytruenas[ssh]"'
+    )

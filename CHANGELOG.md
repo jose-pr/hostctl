@@ -310,6 +310,9 @@ collection until pytruenas ports to these names.
   exits 125 with `hostctl: <that message>` where it printed a traceback
   ending in the hint; an `ImportError` raised inside an installed dependency
   is not mapped and still shows its traceback.
+  `MissingExtraError(..., distribution="pytruenas")` names another
+  package's extra (`pip install "pytruenas[ssh]"`, `.distribution`), so a
+  library built on hostctl raises the same type for its own extras.
 - **Keyword credentials override the URI's, and `username=` is one.**
   `HostConfig(uri, username=, password=)` and `Host(uri, ...)` use one URI
   with other credentials without rewriting it: `password=` replaces the

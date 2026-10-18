@@ -104,9 +104,11 @@ class BundleError(HostctlError, RuntimeError):
 class MissingExtraError(HostctlError, ImportError):
     """A feature needs an optional extra that this installation lacks.
 
-    `extra` is the name to install (`pip install "hostctl[EXTRA]"`) and
-    `feature` what needed it. With `python`, the extra cannot be installed on
-    this interpreter at all: it names the oldest Python the extra supports.
+    `extra` is the name to install (`pip install "DISTRIBUTION[EXTRA]"`) and
+    `feature` what needed it. `distribution` is the package whose extra it is:
+    a library built on hostctl raises this for its own extras. With `python`,
+    the extra cannot be installed on this interpreter at all: it names the
+    oldest Python the extra supports.
     """
 
     def __init__(
@@ -115,18 +117,20 @@ class MissingExtraError(HostctlError, ImportError):
         feature: str,
         *,
         python: typing.Optional[typing.Tuple[int, int]] = None,
+        distribution: str = "hostctl",
     ) -> None:
         if python is None:
             message = (
                 f"{feature} needs the '{extra}' extra: "
-                f'pip install "hostctl[{extra}]"'
+                f'pip install "{distribution}[{extra}]"'
             )
         else:
             message = (
                 f"{feature} needs Python {python[0]}.{python[1]} or newer "
-                f"(the '{extra}' extra supports nothing older)"
+                f"(the '{extra}' extra of {distribution} supports nothing older)"
             )
         super().__init__(message)
         self.extra = extra
         self.feature = feature
         self.python = python
+        self.distribution = distribution

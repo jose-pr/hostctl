@@ -15,8 +15,6 @@ if typing.TYPE_CHECKING:
 
 __all__ = ["main"]
 
-_NEEDS_EXTRA = "hostctl: the CLI needs the 'cli' extra -- pip install 'hostctl[cli]'"
-
 
 def main(argv: typing.Optional[typing.Sequence[str]] = None) -> int:
     """Run the command line and return its exit status.
@@ -30,7 +28,10 @@ def main(argv: typing.Optional[typing.Sequence[str]] = None) -> int:
     try:
         import duho
     except ImportError as exc:
-        raise SystemExit(_NEEDS_EXTRA) from exc
+        from ..exceptions import MissingExtraError
+
+        missing = MissingExtraError("cli", "the hostctl command line")
+        raise SystemExit(f"hostctl: {missing}") from exc
 
     from ._root import Hostctl
 

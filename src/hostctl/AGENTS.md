@@ -1673,7 +1673,7 @@ HostctlError(Exception)
 ```python
 OperationNotStartedError(reason='operation was not started', *, cause=None)
 QGACommandError(error_class, description, *, data=None)
-MissingExtraError(extra, feature, *, python=None)
+MissingExtraError(extra, feature, *, python=None, distribution="hostctl")
 ```
 
 - `HostctlError` -- the base; catch it for "anything hostctl raised".
@@ -1696,10 +1696,13 @@ MissingExtraError(extra, feature, *, python=None)
 - `BundleError` -- `hostctl.deploy` cannot build a correct bundle from what
   is installed here; raised before anything is sent to the target.
 - `MissingExtraError` -- a feature needs an optional extra that is not
-  installed (`.extra`, `.feature`): `FEATURE needs the 'EXTRA' extra: pip
-  install "hostctl[EXTRA]"`. With `.python` set (a `(major, minor)` pair) the
-  extra cannot be installed on this interpreter (`psrp` before 3.10) and the
-  message names that Python instead. It is an `ImportError`, so an existing
+  installed (`.extra`, `.feature`, `.distribution`): `FEATURE needs the
+  'EXTRA' extra: pip install "DISTRIBUTION[EXTRA]"`. `distribution` is the
+  package whose extra it is (default `"hostctl"`): a library built on hostctl
+  raises this for its own extras and gets the CLI's exit 125 with them. With
+  `.python` set (a `(major, minor)` pair) the extra cannot be installed on
+  this interpreter (`psrp` before 3.10) and the message names that Python
+  instead. It is an `ImportError`, so an existing
   `except ImportError` still catches it; an `ImportError` raised inside an
   installed dependency is never turned into one.
 

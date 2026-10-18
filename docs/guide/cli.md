@@ -79,8 +79,11 @@ $ hostctl run ssh://server -- uptime
 hostctl: SSH needs the 'ssh' extra: pip install "hostctl[ssh]"
 ```
 
-Only hostctl's own `MissingExtraError` is reported this way; an `ImportError`
-raised inside an installed dependency is a defect and keeps its traceback.
+Only `MissingExtraError` is reported this way; an `ImportError` raised inside
+an installed dependency is a defect and keeps its traceback. A package built on
+hostctl raises it for its own extras with `distribution=`
+(`MissingExtraError("ssh", "the web shell", distribution="pytruenas")` names
+`pip install "pytruenas[ssh]"`), and gets the same one line.
 
 `ls` prints one name per line, with backslashes and non-printable characters
 escaped (`\x1b`, `\x0a`, `\\`), because the host chooses those bytes: a name
