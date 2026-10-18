@@ -33,8 +33,10 @@ from ...uri._parse import (
 from ...shell import POSIX_SHELL, shell_flavour
 from ._config_source import (
     USER_SSH_CONFIG,
+    _SSHConfigText,
     _UserSSHConfig,
     _asyncssh_config,
+    _checked,
     _ssh_config_source,
 )
 
@@ -117,20 +119,39 @@ def _refuse_unsafe_target(host: str, username: typing.Optional[str]) -> None:
             )
     if netimps.try_parse(host) is None and not netimps.is_valid(host, netimps.FQDN):
         raise ValueError("SSH host must be an address or a valid host name")
-    if not username:
-        return
+    if username:
+        _refuse_unsafe_username(username, "username")
+
+
+def _refuse_unsafe_username(username: str, field: str) -> None:
     if username.startswith("-"):
-        raise ValueError("SSH username cannot start with '-'")
+        raise ValueError(f"SSH {field} cannot start with '-'")
     if "${" in username:
-        raise ValueError("SSH username cannot contain '${'")
+        raise ValueError(f"SSH {field} cannot contain '${{'")
     if username.endswith("\\"):
-        raise ValueError("SSH username cannot end with a backslash")
+        raise ValueError(f"SSH {field} cannot end with a backslash")
     for char in username:
         if char in _USER_REFUSED:
-            raise ValueError(f"SSH username cannot contain {char!r}")
+            raise ValueError(f"SSH {field} cannot contain {char!r}")
     for index, char in enumerate(username[:-1]):
         if char.isspace() and username[index + 1] == "-":
-            raise ValueError("SSH username cannot have whitespace before '-'")
+            raise ValueError(f"SSH {field} cannot have whitespace before '-'")
+
+
+def _default_user_config(username: str) -> _SSHConfigText:
+    """`username` as the `User` of a configuration read after the ssh_config.
+
+    asyncssh keeps the first `User` it reads, so any the ssh_config sets wins.
+    """
+    _refuse_unsafe_username(username, "default_username")
+    if any(ord(char) < 32 or ord(char) == 127 for char in username):
+        # A line break would end the `User` line and start another keyword.
+        raise ValueError("SSH default_username cannot contain control characters")
+    if username.lower() == "none":
+        # asyncssh reads `User none` as no value at all.
+        raise ValueError("SSH default_username cannot be 'none'")
+    quoted = username.replace("\\", "\\\\")
+    return _SSHConfigText(_checked(f'User "{quoted}"\n'))
 
 
 def _authority(host: str, port: typing.Optional[int]) -> str:
@@ -160,6 +181,9 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     #: does without `-p`; a number wins over the config.
     port: typing.Optional[int] = None
     username: typing.Optional[str] = None
+    #: The account when neither `username` nor the ssh_config's `User` names
+    #: one, instead of the local user's.
+    default_username: typing.Optional[str] = None
     #: A string, or a callable returning one (or `None`) that asyncssh calls
     #: only when the server asks for a password, after key authentication.
     password: typing.Union[str, typing.Callable[[], typing.Optional[str]], None] = (
@@ -221,6 +245,8 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
         # The constructor takes a HOST; the dispatcher takes a URI.
         _refuse_uri("SSHConfig", self.host)
         _refuse_unsafe_target(self.host, self.username)
+        if self.default_username:
+            _default_user_config(self.default_username)
         self.verify = _host_key_verify("SSHConfig", self.verify)
         if self.known_hosts is None:
             raise ValueError(
@@ -274,7 +300,12 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             opts["client_keys"] = keys
         # Resolved here, when the connection opens, and always passed: both
         # legs share these options, so they resolve and verify the host alike.
-        opts["config"] = _asyncssh_config(self.ssh_config)
+        config = _asyncssh_config(self.ssh_config)
+        if self.default_username and not self.username:
+            if config is None or isinstance(config, _SSHConfigText):
+                config = [] if config is None else [config]
+            config = [*config, _default_user_config(self.default_username)]
+        opts["config"] = config
         # Always passed, never omitted on the default: `()` is asyncssh's own
         # "resolve known_hosts the usual way" value, and both legs receive
         # these options, so the path leg verifies the host key exactly as the

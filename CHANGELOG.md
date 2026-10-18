@@ -76,6 +76,14 @@ collection until pytruenas ports to these names.
   a stream that already failed does not stop the override. A web shell or
   a QEMU console behind an `ExecutorProvider` no longer needs a worker
   thread per command around `execute()`.
+- **`SSHConfig(default_username=)`: a login the ssh_config can still
+  override.** The account when neither `username` (nor the URI's user) nor
+  the ssh_config's `User` names one, in place of the local user's: a
+  library whose targets have a known administrative login passes
+  `default_username="root"` instead of writing `Include ~/.ssh/config` and
+  `Host *` / `User root` as configuration text. It reaches asyncssh as the
+  `User` of a configuration file read after `ssh_config`, so the ssh_config
+  keeps the last word; it is not part of the URI.
 - **`PosixConsoleProfile(batch=)`: size or turn off the acknowledged
   batch.** At most `batch` typed bytes (default 2048, the serial-safe value)
   go out before the shell acknowledges them; `batch=None` types everything

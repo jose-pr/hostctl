@@ -535,7 +535,7 @@ LocalExecutor.__call__(command, *args, bufsize=-1, stdin=None, stdout=None, stde
 ## SSH (`hostctl.transports.ssh`)
 
 ```python
-SSHConfig(host, *, port=None, username=None, password=None, client_keys=None, executable=None, verify=True, known_hosts=(), shell=POSIX_SHELL, pathname=PosixPathname, login_shell='auto', timeout=Timeout(), ssh_config=USER_SSH_CONFIG, connect_options={})
+SSHConfig(host, *, port=None, username=None, default_username=None, password=None, client_keys=None, executable=None, verify=True, known_hosts=(), shell=POSIX_SHELL, pathname=PosixPathname, login_shell='auto', timeout=Timeout(), ssh_config=USER_SSH_CONFIG, connect_options={})
 ssh_providers(config) -> tuple[ExecutorProvider, PathProvider]
 USER_SSH_CONFIG
 ```
@@ -548,6 +548,14 @@ an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
   local user, and `port=None` the port to its `Port`, else 22, as `ssh` does
   without `-l`/`-p`; a value you pass wins over the config. `ssh://h` has no
   port (`port is None`); `ssh://h:22` names 22.
+- `default_username` replaces the local user in that chain: `username` (the
+  URI's user) > the ssh_config's `User` > `default_username` > the local
+  user. For a library whose targets have a known login (`"root"`) that a
+  user's `~/.ssh/config` may still override. It is read as the `User` of a
+  configuration file asyncssh reads after `ssh_config` (any `User` there,
+  `Host *` included, wins), so a `Match user` in the ssh_config sees the
+  local user. Not part of the URI. Refused, with `ValueError`, where a
+  `username` would be and also for control characters and `"none"`.
   `client_keys` is an `SSHClientKeys` (one `SSHKeySource` -- a key
   path, bytes or text -- or a sequence of them); `known_hosts` an
   `SSHKnownHosts`, the same shape but never `None`. Authentication fields are

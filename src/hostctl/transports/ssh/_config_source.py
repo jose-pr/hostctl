@@ -204,11 +204,33 @@ _LIVE_LOCK = threading.Lock()
 def _materialized(
     options: typing.Dict[str, object],
 ) -> typing.Iterator[typing.Dict[str, object]]:
-    """`options`, with configuration text written to a file while in use."""
+    """`options`, with configuration text written to a file while in use.
+
+    `config` is one source or a list of them, read by asyncssh in order.
+    """
     source = options.get("config")
-    if not isinstance(source, _SSHConfigText):
+    sources = source if isinstance(source, list) else [source]
+    if not any(isinstance(item, _SSHConfigText) for item in sources):
         yield options
         return
+    files: typing.List[object] = []
+    written: typing.List[str] = []
+    try:
+        for item in sources:
+            if isinstance(item, _SSHConfigText):
+                name = _written(item)
+                written.append(name)
+                files.append(name)
+            else:
+                files.append(item)
+        yield {**options, "config": files}
+    finally:
+        for name in written:
+            _remove(name)
+
+
+def _written(source: _SSHConfigText) -> str:
+    """The name of a new private file holding `source`'s text."""
     data = _encoded(source.text())
     # mkstemp creates the file readable and writable by this user only.
     descriptor, name = tempfile.mkstemp(prefix="hostctl-ssh-config-", suffix=".conf")
@@ -217,9 +239,10 @@ def _materialized(
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(data)
-        yield {**options, "config": [name]}
-    finally:
+    except BaseException:
         _remove(name)
+        raise
+    return name
 
 
 def _remove(name: str) -> None:
