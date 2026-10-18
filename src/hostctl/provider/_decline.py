@@ -1,4 +1,4 @@
-"""Why a transport could not connect, as one line an operator can act on.
+"""Why a provider declined, as one line an operator can act on.
 
 The text becomes the provider's decline reason, which is what
 `SelectionStep.reason` and the host's fallback WARNING show.
@@ -104,6 +104,18 @@ def _detail(error: BaseException) -> str:
     return ProviderSelector.redact(text)
 
 
+def cause(exc: BaseException) -> str:
+    """`exc` as `Type: message`, one line with credentials redacted.
+
+    The message is the first one found along what `exc` wraps, with the
+    type of the error that carries it; an error with no message anywhere is
+    its type name alone.
+    """
+    error = next((item for item in _chain(exc) if str(item)), exc)
+    detail = _detail(error)
+    return f"{type(error).__name__}: {detail}" if detail else type(error).__name__
+
+
 def connect_failure(
     service: str,
     host: str,
@@ -124,8 +136,7 @@ def connect_failure(
         if error is not None:
             break
     else:
-        category = "failed"
-        error = next((item for item in chain if str(item)), exc)
+        return f"{service} connection to {target} failed ({cause(exc)})"
     detail = _detail(error)
     if category == "host_key":
         return f"{service} host key of {target} is not trusted ({detail}); {trust}"
@@ -144,6 +155,4 @@ def connect_failure(
         return f"{service} connection to {target} timed out{suffix}"
     if category == "unreachable":
         return f"{service} host {target} is unreachable ({detail})"
-    if category == "closed":
-        return f"{service} connection to {target} was closed by the peer ({detail})"
-    return f"{service} connection to {target} failed ({type(error).__name__}: {detail})"
+    return f"{service} connection to {target} was closed by the peer ({detail})"

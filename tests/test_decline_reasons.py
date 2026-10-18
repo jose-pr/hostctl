@@ -25,7 +25,7 @@ from hostctl import (
     PosixHost,
     Timeout,
 )
-from hostctl.provider._decline import connect_failure
+from hostctl.provider._decline import cause, connect_failure
 
 _TRUST = "add the key to known_hosts"
 
@@ -163,6 +163,32 @@ def test_credentials_in_an_error_message_are_redacted_and_the_detail_is_one_line
 
     assert "hunter2" not in reason
     assert "\n" not in reason and len(reason) < 400
+
+
+# -- the cause of any other decline ------------------------------------------------
+
+
+def test_a_cause_is_its_type_and_message():
+    assert cause(TimeoutError("send timed out")) == "TimeoutError: send timed out"
+
+
+def test_a_cause_without_a_message_names_the_wrapped_one():
+    try:
+        try:
+            raise ConnectionResetError("peer reset")
+        except OSError as inner:
+            raise ConnectionError() from inner
+    except ConnectionError as outer:
+        assert cause(outer) == "ConnectionResetError: peer reset"
+    assert cause(TimeoutError()) == "TimeoutError"
+
+
+def test_a_cause_is_one_redacted_line():
+    text = cause(OSError("lost wss://u:hunter2@nas token=hunter2\n" + "x" * 1000))
+
+    assert text.startswith("OSError: lost wss://u:<redacted>@nas")
+    assert "hunter2" not in text
+    assert "\n" not in text and len(text) < 300
 
 
 # -- real SSH declines through the in-process server -----------------------------

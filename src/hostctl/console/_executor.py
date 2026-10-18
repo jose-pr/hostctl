@@ -8,7 +8,7 @@ import typing
 
 from ..exceptions import OperationNotStartedError
 from ..executor import ExecutorRequest, StreamingExecutor, expired
-from ..provider._selector import ProviderSelector
+from ..provider._decline import cause
 from ._posix import PosixConsoleProfile, _Frame
 from ._stream import ConsoleStream
 
@@ -86,9 +86,7 @@ class ConsoleExecutor(StreamingExecutor):
         except (OSError, TimeoutError) as exc:
             self._release(request)
             raise OperationNotStartedError(
-                "console stream unavailable: "
-                f"{type(exc).__name__}: {ProviderSelector.redact(exc)}",
-                cause=exc,
+                f"console stream unavailable: {cause(exc)}", cause=exc
             ) from exc
         except BaseException:
             self._release(request)

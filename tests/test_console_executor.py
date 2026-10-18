@@ -161,6 +161,58 @@ def test_a_write_failure_before_the_command_line_declines_and_types_ctrl_c():
     assert abandoned == ["/bin/sh -c 'rm -rf /data'"]
 
 
+class _Failing(_Console):
+    """A console whose writes or reads raise `error` from the start."""
+
+    def __init__(self, terminal, *, write=None, read=None):
+        super().__init__(terminal)
+        self.write_error, self.read_error = write, read
+
+    def write(self, data):
+        if self.write_error is not None:
+            raise self.write_error
+        super().write(data)
+
+    def read(self, size=-1, *, timeout=None):
+        if self.read_error is not None:
+            raise self.read_error
+        return super().read(size, timeout=timeout)
+
+
+def _decline_warning(console, caplog):
+    host = _host(ConsoleExecutor(lambda: console), ExecutorProvider("ssh", _completed))
+    with caplog.at_level(logging.WARNING, logger="hostctl"):
+        assert host.run("true", timeout=10).stdout == b"from-fallback"
+    [warning] = [
+        r.getMessage() for r in caplog.records if "fell back" in r.getMessage()
+    ]
+    return warning
+
+
+def test_a_write_decline_names_its_cause(caplog):
+    console = _Failing(_Terminal(_sh), write=TimeoutError("send timed out"))
+
+    warning = _decline_warning(console, caplog)
+
+    assert (
+        "console: console write failed before the command was typed: "
+        "TimeoutError: send timed out" in warning
+    )
+
+
+def test_a_read_decline_names_its_cause_redacted_on_one_line(caplog):
+    error = ConnectionError("lost wss://u:hunter2@nas\nsecond line")
+    console = _Failing(_Terminal(_sh), read=error)
+
+    warning = _decline_warning(console, caplog)
+
+    assert (
+        "console stream failed before the command was typed: "
+        "ConnectionError: lost wss://u:<redacted>@nas second line" in warning
+    )
+    assert "hunter2" not in caplog.text
+
+
 def test_a_failure_on_the_command_line_itself_is_not_a_decline():
     terminal = _Terminal(_sh)
     write = terminal.write

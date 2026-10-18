@@ -19,6 +19,7 @@ import typing
 import uuid
 
 from ..exceptions import ConsoleProtocolError, OperationNotStartedError
+from ..provider._decline import cause
 from ..shell import PosixShellFlavour, ShellFlavourSelection, shell_flavour
 from ._profiles import LoginStep, PromptConsoleProfile
 from ._stream import ConsoleStream
@@ -489,7 +490,9 @@ class PosixConsoleProfile:
                 stream.write(piece)
             except Exception as exc:
                 raise OperationNotStartedError(
-                    "console write failed before the command was typed", cause=exc
+                    "console write failed before the command was typed: "
+                    f"{cause(exc)}",
+                    cause=exc,
                 ) from exc
         if pieces and drain_after:
             self._drain(stream)
@@ -506,7 +509,8 @@ class PosixConsoleProfile:
                     return
         except Exception as exc:
             raise OperationNotStartedError(
-                "console stream failed before the command was typed", cause=exc
+                "console stream failed before the command was typed: " f"{cause(exc)}",
+                cause=exc,
             ) from exc
 
     def _acknowledged(
@@ -529,7 +533,9 @@ class PosixConsoleProfile:
                 if isinstance(exc, OperationNotStartedError):
                     raise
                 raise OperationNotStartedError(
-                    "console stream failed before the command was typed", cause=exc
+                    "console stream failed before the command was typed: "
+                    f"{cause(exc)}",
+                    cause=exc,
                 ) from exc
             buffer += chunk
 

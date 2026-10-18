@@ -70,8 +70,10 @@ collection until pytruenas ports to these names.
   or live stdout, `input=`/`stdin=`, the text rule, `check`, and a timeout
   that types ^C and raises `TimeoutExpired(orphaned=True)`. It declines
   (`OperationNotStartedError`, so the host tries its next provider) only
-  before the command line is typed, holds the terminal for one command at
-  a time, and lets a subclass override `_abandon(request, *, stream=None)`
+  before the command line is typed, with a reason naming the stream's error
+  (`console write failed before the command was typed: TimeoutError: ...`),
+  holds the terminal for one command at a time, and lets a subclass
+  override `_abandon(request, *, stream=None)`
   to drop that command's stream; the ^C typed before it is best effort, so
   a stream that already failed does not stop the override. A web shell or
   a QEMU console behind an `ExecutorProvider` no longer needs a worker

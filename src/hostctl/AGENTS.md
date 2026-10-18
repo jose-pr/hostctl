@@ -1163,7 +1163,11 @@ Wrap it in an `ExecutorProvider`.
   typed -- `stream_factory` raised `OSError` or `TimeoutError` (any other
   exception propagates), or the stream failed while the command's files were
   typed. The host then tries its next provider. A failure after that is a
-  `ConnectionError`, never retried elsewhere.
+  `ConnectionError`, never retried elsewhere. The decline reason (the
+  fallback WARNING, `SelectionStep.reason`) names the error on one line,
+  credentials redacted: `console stream unavailable: ConnectionRefusedError:
+  ...`, `console write failed before the command was typed: TimeoutError:
+  ...`, `console stream failed before the command was typed: ...`.
 - After a timeout, and after a failure once the stream was obtained (a
   decline included), `_abandon(request, stream=stream)` types ^C on the
   stream the factory returned for that command; a ^C write that raises is
