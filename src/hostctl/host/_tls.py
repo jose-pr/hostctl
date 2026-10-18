@@ -1,10 +1,11 @@
 """What `verify=True` trusts on the transports that speak HTTPS through `requests`.
 
-The operating system's trust store, as `ssl.create_default_context()` loads
-it, unless `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE` names a bundle, which is
-then the only trust. certifi is never consulted. Each HTTP library builds its
-own `requests` session, so the decision is installed on the adapter that
-session mounts for `https://`.
+The operating system's trust, checked by the platform's own verifier through
+`truststore` on Python 3.10+ (else the store as `ssl.create_default_context()`
+loads it), unless `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE` names a bundle,
+which is then the only trust. certifi is never consulted. Each HTTP library
+builds its own `requests` session, so the decision is installed on the adapter
+that session mounts for `https://`; nothing else in the process is changed.
 """
 
 from __future__ import annotations
@@ -18,8 +19,18 @@ _ENV_BUNDLES = ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
 
 
 def _os_trust() -> ssl.SSLContext:
-    """A verifying client context holding the operating system's trust store."""
-    return ssl.create_default_context()
+    """A verifying client context that trusts what the operating system trusts.
+
+    With `truststore`, the platform verifier decides: Windows CryptoAPI, which
+    fetches a public root it has not stored yet, the macOS keychain, OpenSSL
+    with the system's CA paths elsewhere. Without it (Python 3.9, or not
+    installed), OpenSSL checks against the store as `ssl` loads it.
+    """
+    try:
+        import truststore
+    except ImportError:
+        return ssl.create_default_context()
+    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
 
 def _default_context() -> ssl.SSLContext:

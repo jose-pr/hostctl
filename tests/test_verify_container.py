@@ -18,6 +18,7 @@ from tls_server import (  # noqa: E402
     TLSServer,
     certifi_holds,
     os_store_holds,
+    os_trust_built,
 )
 
 _ENV_BUNDLES = ("REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
@@ -171,6 +172,28 @@ def test_a_bundle_ignores_the_os_store(tls, monkeypatch):
 @_insecure
 def test_false_ignores_the_os_store(tls, monkeypatch):
     os_store_holds(monkeypatch, tls.other_bundle)
+    assert _connects(tls, verify=False) is True
+
+
+def test_true_checks_with_the_platform_verifier(tls, monkeypatch):
+    truststore = pytest.importorskip("truststore")
+    built = os_trust_built(monkeypatch)
+    assert _connects(tls) is False
+    os_store_holds(monkeypatch, tls.bundle)
+    assert _connects(tls) is True
+    assert built
+    assert all(isinstance(context, truststore.SSLContext) for context in built)
+
+
+@_insecure
+def test_a_bundle_or_false_never_builds_the_default_trust(tls, monkeypatch):
+    from hostctl.host import _tls
+
+    def refuse() -> None:
+        raise AssertionError("verify=True's context built for another value")
+
+    monkeypatch.setattr(_tls, "_default_context", refuse)
+    assert _connects(tls, verify=tls.bundle) is True
     assert _connects(tls, verify=False) is True
 
 

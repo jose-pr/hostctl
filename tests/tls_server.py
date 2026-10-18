@@ -208,6 +208,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
 class _Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
+    context: ssl.SSLContext
+
+    def finish_request(self, request: typing.Any, client_address: typing.Any) -> None:
+        # Handshake in the request's thread, not in `accept()`: a client that
+        # connected and has not started its handshake yet (truststore
+        # serialises handshakes per context) must not stall the others.
+        tls = self.context.wrap_socket(request, server_side=True)
+        try:
+            super().finish_request(tls, client_address)
+        finally:
+            self.shutdown_request(tls)
 
     def handle_error(self, request: object, client_address: object) -> None:
         # A refused handshake is the expected outcome of half the tests.
@@ -250,7 +261,7 @@ class TLSServer:
             context.load_verify_locations(cadata=self._client_ca.pem.decode("ascii"))
         self._server = _Server(("127.0.0.1", 0), _Handler)
         self._server.requests = self.requests  # type: ignore[attr-defined]
-        self._server.socket = context.wrap_socket(self._server.socket, server_side=True)
+        self._server.context = context
         self.port = self._server.server_address[1]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
@@ -267,16 +278,37 @@ class TLSServer:
 
 
 def os_store_holds(monkeypatch: typing.Any, bundle: str) -> None:
-    """Make hostctl's OS-store loading return `bundle` as the whole store.
+    """Make the OS trust hostctl builds also accept `bundle`'s CA.
 
     Simulates a CA installed in the operating system's trust store without
-    touching the real one.
+    touching the real one: the context is still the real one (truststore's
+    platform verifier where it is installed), with the CA added to it alone.
     """
     from hostctl.host import _tls
 
-    monkeypatch.setattr(
-        _tls, "_os_trust", lambda: ssl.create_default_context(cafile=bundle)
-    )
+    build = _tls._os_trust
+
+    def holding() -> ssl.SSLContext:
+        context = build()
+        context.load_verify_locations(cafile=bundle)
+        return context
+
+    monkeypatch.setattr(_tls, "_os_trust", holding)
+
+
+def os_trust_built(monkeypatch: typing.Any) -> typing.List[ssl.SSLContext]:
+    """Record each context hostctl's OS trust builds; it is still built as before."""
+    from hostctl.host import _tls
+
+    build = _tls._os_trust
+    built: typing.List[ssl.SSLContext] = []
+
+    def recording() -> ssl.SSLContext:
+        built.append(build())
+        return built[-1]
+
+    monkeypatch.setattr(_tls, "_os_trust", recording)
+    return built
 
 
 def certifi_holds(monkeypatch: typing.Any, bundle: str) -> None:
