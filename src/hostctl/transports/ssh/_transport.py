@@ -294,7 +294,7 @@ class _SSHTransport:
 
     def _decline_reason(self, service: str, exc: BaseException) -> str:
         """Why `service` declined, naming the host and what refused it."""
-        from .._decline import connect_failure
+        from ...provider._decline import connect_failure
 
         return connect_failure(
             service,

@@ -25,7 +25,7 @@ from hostctl import (
     PosixHost,
     Timeout,
 )
-from hostctl.transports._decline import connect_failure
+from hostctl.provider._decline import connect_failure
 
 _TRUST = "add the key to known_hosts"
 

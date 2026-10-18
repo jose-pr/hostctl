@@ -12,7 +12,7 @@ import socket
 import ssl
 import typing
 
-from ..provider._selector import ProviderSelector
+from ._selector import ProviderSelector
 from ..uri._parse import uri_host
 
 #: errno values (POSIX and Winsock) of a host or network that cannot be reached.

@@ -45,7 +45,7 @@ class WinRMExecutorProvider(ExecutorProvider):
                 type(exc).__name__,
                 ProviderSelector.redact(exc),
             )
-            from .._decline import connect_failure
+            from ...provider._decline import connect_failure
 
             config = self.transport.config
             raise OperationNotStartedError(
