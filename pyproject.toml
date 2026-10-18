@@ -39,8 +39,10 @@ classifiers = [
 # next minor because every one of these is pre-1.0, where a minor may break.
 # netimps 0.4.0's scheme registry knows winrm/winrms/wsman/wsmans/psrp, so
 # `ConnectionString` resolves 5985/5986 for them where 0.3 left the port
-# `None`.
-dependencies = ["pathapi>=0.1.0,<0.2", "netimps>=0.4.0,<0.5"]
+# `None`. pathapi 0.1.2 is the floor of sftppath 0.1.3, the `ssh` extra's
+# floor; CI installs every extra at its floor together, so a lower pathapi
+# floor could never be installed there and would go untested.
+dependencies = ["pathapi>=0.1.2,<0.2", "netimps>=0.4.0,<0.5"]
 
 [project.optional-dependencies]
 # SSH-backed run()/path(): asyncssh for shell exec, sftppath's SFTPPath for

@@ -516,7 +516,7 @@ collection until pytruenas ports to these names.
   no longer takes `stdout=`/`stderr=` and writes to `sys.stdout`/`sys.stderr`.
   Subcommands, operands and exit statuses are unchanged, except that the
   `--` before `run`'s program is now required.
-- **Paths are `pathapi` paths** (`pathapi>=0.1.0,<0.2`, which replaces
+- **Paths are `pathapi` paths** (`pathapi>=0.1.2,<0.2`, which replaces
   `pathlib_next`; `pathlib-next` was renamed `pathapi`). `HostPath` is
   `pathapi.Path`, `ExecutorCommand` takes a `pathapi.Pathname`, and a path
   provider must return a `pathapi.Path`; one that returns anything else fails
