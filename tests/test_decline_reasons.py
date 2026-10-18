@@ -310,7 +310,7 @@ def test_a_server_that_never_answers_times_out(caplog):
         ),
         (
             OSError(errno.ENETUNREACH, "Network is unreachable"),
-            "SSH host nas.invalid:22 is unreachable (",
+            "SSH host nas.invalid is unreachable (",
         ),
     ],
     ids=["dns", "unreachable"],
