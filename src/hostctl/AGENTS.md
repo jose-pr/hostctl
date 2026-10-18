@@ -165,6 +165,8 @@ HostConfig.name -> str                             # settable
   `SSH host name nas did not resolve (...)`, `SSH connection to nas:22 timed
   out`, `SSH host nas:22 is unreachable (...)`, `WinRM TLS certificate of
   win:5986 is not trusted (...); ...`, else `... failed (Type: message)`.
+  The target carries a port only when the config names one: an `SSHConfig`
+  without `port=` leaves it to the ssh_config, so the reason says `nas`.
 - `run()` returns `subprocess.CompletedProcess`. **`check` and
   `capture_output` default to `True`**, the opposite of `subprocess.run`: a
   failing remote command raises `CalledProcessError`, and its output is
