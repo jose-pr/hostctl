@@ -199,15 +199,16 @@ assert "secret" not in str(config)
 ```
 
 - **TLS.** `winrms://` (or `tls=True`) is HTTPS. The certificate is checked
-  against the operating system's trust store on every leg: the Windows
-  certificate store on the native leg, and on pywinrm and PSRP the store as
-  Python's `ssl` module loads it -- or, when `REQUESTS_CA_BUNDLE` or
-  `CURL_CA_BUNDLE` is set, that bundle alone. certifi is not used.
+  against the operating system's trust on every leg: the Windows
+  certificate store on the native leg, and on pywinrm and PSRP the
+  platform's own verifier through `truststore` on Python 3.10+ (on 3.9 the
+  store as Python's `ssl` module loads it) -- or, when `REQUESTS_CA_BUNDLE`
+  or `CURL_CA_BUNDLE` is set, that bundle alone. certifi is not used.
   `verify="ca.pem"` (`?verify=ca.pem`, a file or a hashed directory) trusts
   that bundle instead, on pywinrm and PSRP; the native leg refuses one,
   since PowerShell remoting trusts only the store. `verify=False`
-  (`?verify=false`) skips every certificate check. What Python loads as the
-  store differs by platform; see the
+  (`?verify=false`) skips every certificate check. What the store holds
+  differs by platform and Python version; see the
   [contracts ledger](contracts.md#divergence-ledger).
 - **Cleartext.** `auth="basic"`, `"plaintext"` or `"ssl"` over plain HTTP
   would send the password in cleartext, so it raises `ValueError` unless

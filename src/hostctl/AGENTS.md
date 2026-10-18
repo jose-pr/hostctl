@@ -306,23 +306,31 @@ connection timeouts belong to the transport configs in its
 | config / leg | `True` trusts | a CA bundle |
 | --- | --- | --- |
 | `WinRMConfig`, native | the Windows certificate store (PowerShell remoting) | `ValueError` |
-| `WinRMConfig`, pywinrm | the OS trust store; `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE` instead when set; never certifi | pywinrm `ca_trust_path` |
+| `WinRMConfig`, pywinrm | the OS trust, checked by the platform's verifier (Python 3.10+) or OpenSSL's store (3.9); `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE` instead when set; never certifi | pywinrm `ca_trust_path` |
 | `WinRMConfig`, PSRP | the same as pywinrm | pypsrp `cert_validation` |
 | `ContainerConfig`, `https://` `engine_url` | the same as pywinrm | docker-py `TLSConfig(verify=)` |
 | `SSHConfig` | `known_hosts` (see SSH) | -- (`TypeError`) |
 
-- **The OS trust store** is what Python's `ssl.create_default_context()`
-  loads. Windows: the ROOT and CA certificate stores as they are on the
-  machine -- a root Windows downloads on first use for its own clients is
-  absent until something has fetched it. Linux and the BSDs: OpenSSL's
-  default file and directory (`update-ca-trust`, `update-ca-certificates`,
-  `certctl`; `SSL_CERT_FILE`/`SSL_CERT_DIR` override them). macOS: the
+- **The OS trust**, on Python 3.10+ with `truststore` (which the `winrm`,
+  `psrp` and `container` extras install there), is decided by the
+  platform's own verifier. Windows: CryptoAPI, as for Schannel -- a public
+  root the machine has not stored yet is fetched from Windows Update.
+  macOS: the Security framework, keychains included. Linux and the BSDs:
+  OpenSSL with the system's CA file and directory (`update-ca-trust`,
+  `update-ca-certificates`, `certctl`; `SSL_CERT_FILE`/`SSL_CERT_DIR`
+  override them). Only the sessions hostctl builds use it; `ssl` is not
+  patched for the rest of the process.
+- **On Python 3.9, or without `truststore`**, it is what
+  `ssl.create_default_context()` loads. Windows: the ROOT and CA stores as
+  they are on the machine -- a root Windows downloads on first use is absent
+  until something has fetched it. Linux and the BSDs: as above. macOS: the
   Python build's OpenSSL file (`/etc/ssl/cert.pem` for Apple's Python), not
   the keychain -- a CA added to a keychain needs `verify=` or
-  `REQUESTS_CA_BUNDLE`. A set CA variable is the only trust, as it is in
-  `requests`; a missing file it names raises `FileNotFoundError` naming the
+  `REQUESTS_CA_BUNDLE`.
+- A set CA variable is the only trust, as it is in `requests`, checked by
+  OpenSSL; a missing file it names raises `FileNotFoundError` naming the
   variable. The `winrm`, `psrp` and `container` extras need
-  `requests>=2.32.3`.
+  `requests>=2.32.3` and, on Python 3.10+, `truststore>=0.10.5`.
 
 - **URI key** `verify`: `1/true/yes/on` or `0/false/no/off`, else (TLS
   schemes) a percent-encoded bundle path. `connection_uri` renders it where

@@ -50,7 +50,7 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `SSHConfig(known_hosts=None)`, `HostConfig(uri, known_hosts=None)` (no host-key check) | `SSHConfig(verify=False)`, `?verify=false`; `known_hosts=None` raises `ValueError` |
 | an `ssh_config` with `UserKnownHostsFile none` switching the host-key check off | `verify=False` (the config raises `ValueError` at connect without it) |
 | `REQUESTS_CA_BUNDLE` to make pywinrm or PSRP trust a private CA | `WinRMConfig(verify="ca.pem")` (`?verify=ca.pem`); the variable still applies under `verify=True` |
-| a server certificate trusted only through certifi on pywinrm, PSRP or an `https://` Docker engine (`verify=True`) | fails: `verify=True` trusts the operating system's store. Install the CA there, pass `verify="ca.pem"`, or set `REQUESTS_CA_BUNDLE` to certifi's bundle (`python -m certifi` prints its path). On Windows a public root not yet in the machine's store fails the same way until Windows has fetched it |
+| a server certificate trusted only through certifi on pywinrm, PSRP or an `https://` Docker engine (`verify=True`) | fails: `verify=True` trusts the operating system's store. Install the CA there, pass `verify="ca.pem"`, or set `REQUESTS_CA_BUNDLE` to certifi's bundle (`python -m certifi` prints its path). A public root Windows has not fetched yet is fetched on Python 3.10+; on Python 3.9 it fails until Windows has fetched it |
 
 | `HostConfig(uri, password=...)` with a password in the URI raising `ValueError` | the keyword replaces the URI's password (extras included); `password=""` is no password |
 | `hostctl <command> --ask-password` | nothing: the command prompts by itself when a host asks for a password on a terminal; `-p PASSWORD` or `HOSTCTL_PASSWORD` where nothing can prompt |
@@ -569,11 +569,16 @@ collection until pytruenas ports to these names.
   `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE`, when set, is still the only trust
   (a missing file it names raises `FileNotFoundError` naming the variable);
   a `verify=` bundle and `verify=False` behave as before. pywinrm no longer
-  warns about reading the variable, since hostctl reads it. The store is what
-  Python's `ssl` loads, which on Windows is the roots already present and on
-  macOS not the keychain (see the contracts ledger). The `winrm`, `psrp`,
-  `container`, `winrm-credssp` and `winrm-kerberos` extras need
-  `requests>=2.32.3`. **Breaking, 0.4.0.**
+  warns about reading the variable, since hostctl reads it. On Python 3.10+
+  the platform's own verifier checks the certificate through `truststore`:
+  Windows CryptoAPI, which fetches a public root the machine has not stored
+  yet, the macOS keychain, OpenSSL with the system CA paths elsewhere. Only
+  hostctl's own sessions use it; `ssl` is not patched for the process. On
+  Python 3.9, or without `truststore`, the store is what Python's `ssl`
+  loads, which on Windows is the roots already present and on macOS not the
+  keychain (see the contracts ledger). The `winrm`, `psrp`, `container`,
+  `winrm-credssp` and `winrm-kerberos` extras need `requests>=2.32.3` and,
+  on Python 3.10+, `truststore>=0.10.5`. **Breaking, 0.4.0.**
 
 ### Removed
 
