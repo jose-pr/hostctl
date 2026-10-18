@@ -552,9 +552,8 @@ an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
   else names the trusted keys. `verify=False` (`?verify=false`) replaces the
   usual lookup with no check; a `known_hosts` you name is checked even then
   (the stricter setting wins). `known_hosts=None` raises `ValueError` naming
-  `verify=False`, and so, at connect, does an `ssh_config` whose
-  `UserKnownHostsFile none` would switch the check off (unless
-  `verify=False`); `connect_opts()` reads that file once more to tell.
+  `verify=False`. An `ssh_config` you name is honoured as written, so its
+  `UserKnownHostsFile none` switches the check off.
 - `host` and `username` are refused where OpenSSH would refuse them (a
   leading `-`, whitespace, shell metacharacters, `${` in a username); the host
   must be an address or a valid name. `ssh://h:0` is a `ValueError`, not port

@@ -160,8 +160,8 @@ assert str(same) == str(config)
   against asyncssh's usual known-hosts files; a path, bytes or a sequence of
   them names the trusted keys. `verify=False` (`?verify=false`) is the one
   way to skip the check: it replaces the usual lookup, while a `known_hosts`
-  you name is still checked. `known_hosts=None` raises, and so does an
-  `ssh_config` with `UserKnownHostsFile none` unless `verify=False`.
+  you name is still checked. `known_hosts=None` raises. An `ssh_config` you
+  name is honoured as written, `UserKnownHostsFile none` included.
 - **One connection.** Commands and paths share one connection and one login,
   opened by whichever comes first (building an absolute path connects
   nothing); paths open SFTP channels on it, so every setting here applies

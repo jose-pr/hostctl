@@ -48,7 +48,6 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `serial:///dev/ttyUSB0` (any `serial:///NAME`, `serial:/NAME`) naming the relative device `dev/ttyUSB0` / `NAME`; `serial:////dev/x` naming `dev/x` | the absolute `/dev/ttyUSB0` / `/NAME`; a relative device is `serial:NAME`; `serial:////...` raises `ValueError`; `COMn`, `\\.\...`, pyserial URLs and the encoded `serial:///%2Fdev%2Fx` are unchanged |
 | `CompositePosixPath.from_path(backend_path, provider, factory, ...)` (undocumented) | `CompositePosixPath.over(providers, *segments, backend=None)`; the same for `CompositeWindowsPath` |
 | `SSHConfig(known_hosts=None)`, `HostConfig(uri, known_hosts=None)` (no host-key check) | `SSHConfig(verify=False)`, `?verify=false`; `known_hosts=None` raises `ValueError` |
-| an `ssh_config` with `UserKnownHostsFile none` switching the host-key check off | `verify=False` (the config raises `ValueError` at connect without it) |
 | `REQUESTS_CA_BUNDLE` to make pywinrm or PSRP trust a private CA | `WinRMConfig(verify="ca.pem")` (`?verify=ca.pem`); the variable still applies under `verify=True` |
 | a server certificate trusted only through certifi on pywinrm, PSRP or an `https://` Docker engine (`verify=True`) | fails: `verify=True` trusts the operating system's store. Install the CA there, pass `verify="ca.pem"`, or set `REQUESTS_CA_BUNDLE` to certifi's bundle (`python -m certifi` prints its path). A public root Windows has not fetched yet is fetched on Python 3.10+; on Python 3.9 it fails until Windows has fetched it |
 
@@ -543,9 +542,9 @@ collection until pytruenas ports to these names.
   unpicklable provider attribute produced. This ships in 0.4.0.
 - **`SSHConfig(verify=False)` is the one way to skip the host-key check.**
   `known_hosts=None` raises `ValueError` naming it, `SSHKnownHosts` no longer
-  admits `None`, and an `ssh_config` whose `UserKnownHostsFile none` would
-  switch the check off raises at connect unless `verify=False`. A
-  `known_hosts` the caller names is checked even under `verify=False`.
+  admits `None`. A `known_hosts` the caller names is checked even under
+  `verify=False`, and an `ssh_config` the caller names is honoured as
+  written.
   **Breaking, 0.4.0.**
 - **`WinRMConfig.verify` is `bool | str | os.PathLike`**, where it was a
   bool: a string is a CA bundle path, needs `tls=True`, and one spelling a
@@ -906,9 +905,10 @@ collection until pytruenas ports to these names.
 - **A PowerShell native argument `--%` raises `ValueError`.** PowerShell reads
   it as the stop-parsing token however it is quoted, so the rest of the line
   reached the program unparsed and re-split. **Breaking, 0.4.0.**
-- **No check is off unless the config says `verify=False`.** On SSH,
-  `known_hosts=None` and an `ssh_config`'s `UserKnownHostsFile none` each
-  switched host-key verification off without it; both now raise. A
+- **No check is off unless the config says so.** On SSH,
+  `known_hosts=None` switched host-key verification off; it now raises
+  and names `verify=False` (an `ssh_config` the caller names still
+  decides for itself). A
   container's CA bundle holds whatever `REQUESTS_CA_BUNDLE` says: stock
   docker-py lets the variable replace a bundle on every request, widening
   what it trusts. This ships in 0.4.0.

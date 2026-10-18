@@ -135,9 +135,10 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     )
     client_keys: SSHClientKeys = dataclasses.field(default=None, repr=False)
     executable: typing.Optional[str] = None
-    #: `True` checks the server's host key; `False` is the one way to skip
-    #: the check. SSH has no CA bundle, so a string is refused: name trusted
-    #: keys with `known_hosts`.
+    #: `True` checks the server's host key; `False` skips the check. An
+    #: `ssh_config` the caller names is honoured as written, including a
+    #: `UserKnownHostsFile none`. SSH has no CA bundle, so a string is refused:
+    #: name trusted keys with `known_hosts`.
     verify: bool = True
     #: The trusted host keys. `()` is the usual lookup (`~/.ssh/known_hosts`,
     #: or an `ssh_config`'s `UserKnownHostsFile`), which `verify=False`
@@ -247,47 +248,17 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
         # Always passed, never omitted on the default: `()` is asyncssh's own
         # "resolve known_hosts the usual way" value, and both legs receive
         # these options, so the path leg verifies the host key exactly as the
-        # exec leg does. `None` (no check) comes only from `verify=False`.
+        # exec leg does. `None` (no check) comes from `verify=False`, or from
+        # the caller's own ssh_config resolving `()` that way.
         if self.known_hosts == () and not self.verify:
             opts["known_hosts"] = None
         else:
             opts["known_hosts"] = self.known_hosts
-            if self.known_hosts == () and self.ssh_config is not None:
-                self._refuse_unchecked_config(opts)
         connect = self.timeouts.connect
         if connect is not None:
             opts["connect_timeout"] = connect
         opts.update(self.connect_options)
         return opts
-
-    def _refuse_unchecked_config(self, opts: typing.Mapping[str, object]) -> None:
-        """Raise when the ssh_config would switch the host-key check off.
-
-        `UserKnownHostsFile none` resolves `known_hosts=()` to asyncssh's
-        "no check", which only `verify=False` may ask for. Resolving reads the
-        file (and runs any `Match exec`) once more, without connecting.
-        """
-        from ... import _async
-
-        resolved = (
-            _async.asyncssh()
-            .SSHClientConnectionOptions(
-                config=opts["config"],
-                host=self.host,
-                port=self.port,
-                username=self.username or (),
-                known_hosts=(),
-                client_keys=None,
-                agent_path=None,
-            )
-            .known_hosts
-        )
-        if resolved is None:
-            raise ValueError(
-                "SSHConfig: the ssh_config sets UserKnownHostsFile none for "
-                f"{self.host}; pass verify=False to skip the host-key check, "
-                "or name the file with known_hosts="
-            )
 
     def _default_name(self) -> str:
         host = uri_host(self.host)

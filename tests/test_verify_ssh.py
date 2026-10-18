@@ -129,12 +129,10 @@ def _ssh_config(tmp_path, body: str) -> str:
 
 
 @pytest.mark.parametrize("leg", (_exec_connects, _sftp_connects))
-def test_an_ssh_config_cannot_switch_the_check_off(server, tmp_path, leg):
+def test_an_ssh_config_the_caller_names_is_honoured(server, tmp_path, leg):
+    # The file is the caller's choice: its `UserKnownHostsFile none` stands.
     config_path = _ssh_config(tmp_path, "Host 127.0.0.1\n    UserKnownHostsFile none\n")
-    with pytest.raises(ValueError, match="UserKnownHostsFile none"):
-        leg(server.config(known_hosts=(), ssh_config=config_path))
-    assert not _authenticated(server)
-    assert leg(server.config(known_hosts=(), ssh_config=config_path, verify=False))
+    assert leg(server.config(known_hosts=(), ssh_config=config_path))
 
 
 def test_an_ssh_config_naming_the_file_still_verifies(server, tmp_path, empty_home):
