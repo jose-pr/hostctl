@@ -14,6 +14,10 @@ Two things live here rather than in the modules that need them:
   run has no console (an editor or agent running pytest in the background), so
   the thousands of `cmd.exe`/`powershell.exe` children open no windows. A
   caller passing its own `creationflags` keeps them.
+- No test reads the real `~/.ssh/config`. An SSH config's default is the
+  user's own OpenSSH configuration, so every test resolves it to a file that
+  does not exist; `fake_home` points `~` at a temporary directory and lets
+  the default resolve there.
 - With `HOSTCTL_TEST_COLLECT=1`, a full garbage collection after every test.
   An object left in a reference cycle (an unreaped subprocess, an unclosed
   socket) is otherwise collected during some later test, and the
@@ -58,6 +62,36 @@ def _windowless_popen() -> None:
 
 if os.name == "nt":
     _windowless_popen()
+
+
+_ABSENT_SSH_CONFIG = str(_TESTS / ".no-user-ssh-config" / "config")
+_USER_SSH_CONFIG_PATH: dict = {}
+
+
+@pytest.fixture(autouse=True)
+def _no_user_ssh_config(monkeypatch):
+    from hostctl.transports.ssh import _config_source
+
+    _USER_SSH_CONFIG_PATH.setdefault("real", _config_source._user_ssh_config_path)
+    monkeypatch.setattr(
+        _config_source, "_user_ssh_config_path", lambda: _ABSENT_SSH_CONFIG
+    )
+
+
+@pytest.fixture
+def fake_home(tmp_path, monkeypatch):
+    """A home directory with an empty `.ssh/`, where `~` and the default
+    ssh_config (`USER_SSH_CONFIG`) resolve for this test."""
+    from hostctl.transports.ssh import _config_source
+
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setattr(
+        _config_source, "_user_ssh_config_path", _USER_SSH_CONFIG_PATH["real"]
+    )
+    return home
 
 
 if os.environ.get("HOSTCTL_TEST_COLLECT") == "1":

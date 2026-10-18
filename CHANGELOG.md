@@ -53,6 +53,8 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 
 | `HostConfig(uri, password=...)` with a password in the URI raising `ValueError` | the keyword replaces the URI's password (extras included); `password=""` is no password |
 | `hostctl <command> --ask-password` | nothing: the command prompts by itself when a host asks for a password on a terminal; `-p PASSWORD` or `HOSTCTL_PASSWORD` where nothing can prompt |
+| `SshConfig("h").port`, `HostConfig("ssh://h").port` being `22` | `None`: the ssh_config's `Port` applies, else 22 (`ssh://h:22` or `port=22` pins 22) |
+| an SSH host's paths reading no `~/.ssh/config` (its commands did) | both read it, as `ssh` does; `ssh_config=None` reads none |
 
 pytruenas 0.5.4 and earlier pin `hostctl<0.4` and import the 0.3 paths
 (`from hostctl.host import PosixHost, SshConfig, ...`), so they do not import
@@ -166,8 +168,20 @@ collection until pytruenas ports to these names.
   is installed, and `has_psrp()` the same for `psrp`, without importing
   either; one table of extras drives both, the install hint, and the SFTP
   provider's availability. This ships in 0.4.0.
-- `SshConfig(ssh_config=)` reads one ssh_config on both legs (neither reads one
-  by default; it is a keyword only, never a URI key), `SshConfig(connect_options=)` passes extra keywords to
+- `SSHConfig(ssh_config=)` is the OpenSSH client configuration of the host's
+  one connection, so commands and paths read the same one:
+  `hostctl.USER_SSH_CONFIG` (the default, also exported from
+  `hostctl.transports.ssh`) is `~/.ssh/config`, found when the connection
+  opens, a missing file reading nothing, as with `ssh`; `None` or `False`
+  reads none; an `os.PathLike` names a file; a `str`, bytes, a stream or an
+  object with `read_text()`/`open()` (a path on another host) is the
+  configuration's TEXT, which reaches asyncssh through a private temporary
+  file that exists only while the connection opens and never appears in
+  `repr()` or `connection_uri`. A `str` is never a file name (a line with a
+  keyword and no value raises `ValueError` naming `pathlib.Path`). It is a
+  keyword only, never a URI key.
+  `SSHConfig(port=None)`, the default, leaves the port to the ssh_config's
+  `Port`, else 22, as `username=None` leaves the user. `SshConfig(connect_options=)` passes extra keywords to
   `asyncssh.connect` on both legs, and `SshConfig(path_flavor="auto")` asks the
   server's login directory while the host is created.
 - `hostctl.Timeout(total, *, connect, read, write)` and `hostctl.DEFAULT`:
@@ -383,11 +397,13 @@ collection until pytruenas ports to these names.
   instead of a base64 `-EncodedCommand` argument. Endpoint-protection
   heuristics scan the command line, and a base64 PowerShell launch is what
   they flag; the script now never appears there. Results are unchanged.
-- **Breaking, 0.4.0**: the exec leg of an SSH host no longer reads
-  `~/.ssh/config`. It did, by asyncssh's default, while the SFTP leg did not,
-  so an alias reached the server through `run()` and failed through `path()`.
-  Neither leg reads one now; pass the host, key, known_hosts file or proxy
-  you took from it to `SshConfig`.
+- **Both legs of an SSH host read `~/.ssh/config`**, as `ssh` does. The exec
+  leg did, by asyncssh's default, while the SFTP leg did not, so an alias
+  reached the server through `run()` and failed through `path()`; they share
+  one connection and one configuration now. `known_hosts=()` follows its
+  `UserKnownHostsFile`. Pass `ssh_config=None` for a connection that depends
+  on no personal file. **Breaking, 0.4.0** for a caller relying on the paths
+  ignoring it.
 - **Breaking, 0.4.0**: `SshConfig(username=)` defaults to `None`, the local
   account, as `ssh` does, instead of `"root"`; pass `username="root"` to keep
   the old behaviour. `ssh://host` carries no user, and `connection_uri` omits
@@ -543,8 +559,7 @@ collection until pytruenas ports to these names.
 - **`SSHConfig(verify=False)` is the one way to skip the host-key check.**
   `known_hosts=None` raises `ValueError` naming it, `SSHKnownHosts` no longer
   admits `None`. A `known_hosts` the caller names is checked even under
-  `verify=False`, and an `ssh_config` the caller names is honoured as
-  written.
+  `verify=False`, and the ssh_config is honoured as written.
   **Breaking, 0.4.0.**
 - **`WinRMConfig.verify` is `bool | str | os.PathLike`**, where it was a
   bool: a string is a CA bundle path, needs `tls=True`, and one spelling a
@@ -907,8 +922,7 @@ collection until pytruenas ports to these names.
   reached the program unparsed and re-split. **Breaking, 0.4.0.**
 - **No check is off unless the config says so.** On SSH,
   `known_hosts=None` switched host-key verification off; it now raises
-  and names `verify=False` (an `ssh_config` the caller names still
-  decides for itself). A
+  and names `verify=False` (the ssh_config still decides for itself). A
   container's CA bundle holds whatever `REQUESTS_CA_BUNDLE` says: stock
   docker-py lets the variable replace a bundle on every request, widening
   what it trusts. This ships in 0.4.0.

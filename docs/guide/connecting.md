@@ -132,7 +132,7 @@ with LocalConfig() as host:
 | URI | `ssh://[user@]host[:port][?query]` |
 | query keys | `shell`, `pathname`, `executable`, `login_shell`, `verify`, and the timeout keys |
 | credentials | `username`, `password`, `client_keys`, `known_hosts` |
-| keyword only | `ssh_config`, `connect_options` (never in a URI) |
+| keyword only | `ssh_config` (default `USER_SSH_CONFIG`), `connect_options` (never in a URI) |
 | extra | `ssh` |
 
 ```python
@@ -154,22 +154,33 @@ same = HostConfig(
 assert str(same) == str(config)
 ```
 
-- **Account.** With no `username`, asyncssh uses the local account name, as
-  `ssh` does.
+- **Account and port.** With no `username` the ssh_config's `User` applies,
+  else the local account name; with no `port` its `Port`, else 22, as `ssh`
+  does without `-l`/`-p`. A value you pass wins. `ssh://h` names no port;
+  `ssh://h:22` names 22.
 - **Host keys.** `known_hosts=()` (the default) verifies the server's key
-  against asyncssh's usual known-hosts files; a path, bytes or a sequence of
-  them names the trusted keys. `verify=False` (`?verify=false`) is the one
-  way to skip the check: it replaces the usual lookup, while a `known_hosts`
-  you name is still checked. `known_hosts=None` raises. An `ssh_config` you
-  name is honoured as written, `UserKnownHostsFile none` included.
+  against the ssh_config's `UserKnownHostsFile`, else `~/.ssh/known_hosts`,
+  as `ssh` does; a path, bytes or a sequence of them names the trusted keys.
+  `verify=False` (`?verify=false`) is the one way to skip the check: it replaces the usual lookup, while a `known_hosts`
+  you name is still checked. `known_hosts=None` raises. The ssh_config is
+  honoured as written, `UserKnownHostsFile none` included.
 - **One connection.** Commands and paths share one connection and one login,
   opened by whichever comes first (building an absolute path connects
   nothing); paths open SFTP channels on it, so every setting here applies
   once. After `close()` the next use opens a new one, and a path taken
   before `close()` keeps working on it.
-- **ssh_config.** The connection reads no `~/.ssh/config` unless
-  `ssh_config=` names a file. It cannot come from a URI, because a
-  `ProxyCommand` starts a local process.
+- **ssh_config.** The connection reads your `~/.ssh/config`, as `ssh`
+  does: `ssh_config=USER_SSH_CONFIG`, the default, finds it when the
+  connection opens, and a missing file reads nothing. `ssh_config=None`
+  reads none, for a service or a test that must not depend on a personal
+  file. A `pathlib.Path` names another file. **A `str` is the
+  configuration's text**, not a file name, and so are bytes, a stream such
+  as `io.StringIO`, and any object with `read_text()` -- a path on another
+  host included, read when the first connection opens. Text reaches
+  asyncssh through a private temporary file that exists only while the
+  connection opens; `repr()` shows `<ssh_config text>`, never the text. The
+  ssh_config cannot come from a URI, because a `ProxyCommand` starts a
+  local process.
 - **Timeouts.** `timeout.connect` (default 30 s) bounds connecting only:
   TCP, key exchange and authentication; `None` leaves asyncssh's own. The
   total (no default) bounds a command. `read` and `write` raise.
@@ -177,6 +188,17 @@ assert str(same) == str(config)
   Windows. For a Windows OpenSSH server pass `shell=POWERSHELL` (or `CMD`) and
   `pathname="windows"`; `shell="auto"` and `pathname="auto"` probe instead of
   guessing.
+
+```python
+import pathlib
+
+from hostctl import SSHConfig
+
+SSHConfig("nas")  # ~/.ssh/config, as ssh reads it
+SSHConfig("nas", ssh_config=None)  # no configuration at all
+SSHConfig("nas", ssh_config=pathlib.Path("ci/ssh_config"))  # a file
+SSHConfig("nas", ssh_config="Host nas\n    HostName 10.0.0.5\n")  # text
+```
 
 ## WinRM
 

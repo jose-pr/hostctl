@@ -36,7 +36,8 @@ class _SharedSFTPBackend(_sftppath.BaseSFTPBackend):
         return self._transport.config.host
 
     @property
-    def port(self) -> int:
+    def port(self) -> typing.Optional[int]:
+        # `None`: the ssh_config's `Port`, else 22, as `SFTPEndpoint` reads it.
         return self._transport.config.port
 
     @property

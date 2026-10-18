@@ -619,7 +619,8 @@ def test_a_forked_child_does_not_reuse_the_parents_connection(monkeypatch):
     assert not stub.closed
 
 
-def test_the_default_verifies_the_host_key_and_reads_no_ssh_config():
+def test_the_default_verifies_the_host_key_and_finds_no_missing_ssh_config():
+    # The suite's `~/.ssh/config` never exists (`conftest.py`).
     options = SSHConfig("h").connect_opts()
 
     assert options == {
@@ -636,8 +637,8 @@ def test_an_absolute_sftp_path_connects_nothing_until_used():
     backend = transport.path("/tmp/x").backend
 
     assert transport._ssh is None
-    assert (backend.host, backend.port, backend.user) == ("h", 22, None)
-    assert backend.endpoint == ("h", 22, None)
+    assert (backend.host, backend.port, backend.user) == ("h", None, None)
+    assert backend.endpoint == ("h", None, None)
 
 
 @pytest.mark.parametrize("shell", ("/bin/ash", "/bin/ksh", "/usr/bin/mksh"))
@@ -663,4 +664,4 @@ def test_ssh_auto_still_refuses_csh_and_says_so():
 def test_a_zero_port_in_a_uri_is_refused_not_turned_into_22():
     with pytest.raises(ValueError, match="port"):
         HostConfig("ssh://h:0")
-    assert HostConfig("ssh://h").port == 22
+    assert HostConfig("ssh://h").port is None

@@ -8,7 +8,7 @@ import typing
 from pathlib import PureWindowsPath
 from urllib.parse import quote, unquote, urlencode
 
-from pathapi import PosixPathname
+from pathapi import Path, PosixPathname
 
 
 from ...host._config import HostConfig
@@ -31,6 +31,12 @@ from ...uri._parse import (
     uri_hostname,
 )
 from ...shell import POSIX_SHELL, shell_flavour
+from ._config_source import (
+    USER_SSH_CONFIG,
+    _UserSSHConfig,
+    _asyncssh_config,
+    _ssh_config_source,
+)
 
 if typing.TYPE_CHECKING:
     from ._transport import _SSHTransport
@@ -44,6 +50,21 @@ SSHClientKeys = typing.Optional[
 
 #: No `None`: skipping the host-key check is `SSHConfig(verify=False)`.
 SSHKnownHosts = typing.Union[SSHKeySource, typing.Sequence[SSHKeySource]]
+
+#: What `SSHConfig(ssh_config=)` takes. A `str` is the configuration's text.
+_SSHConfigSource = typing.Union[
+    _UserSSHConfig,
+    "os.PathLike[str]",
+    str,
+    bytes,
+    bytearray,
+    memoryview,
+    typing.IO[str],
+    typing.IO[bytes],
+    Path,
+    bool,
+    None,
+]
 
 
 #: `connect_options` keys hostctl owns, and the keyword to use instead.
@@ -112,6 +133,15 @@ def _refuse_unsafe_target(host: str, username: typing.Optional[str]) -> None:
             raise ValueError("SSH username cannot have whitespace before '-'")
 
 
+def _authority(host: str, port: typing.Optional[int]) -> str:
+    """`host[:port]` for a URI, with no port when the ssh_config decides it."""
+    if port is None:
+        return uri_host(host)
+    from netimps import join_host
+
+    return join_host(host, port)
+
+
 @_keyword_only()
 @dataclasses.dataclass
 class SSHConfig(HostConfig, schemes=("ssh",)):
@@ -126,7 +156,9 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     _timeout_defaults = {"total": None, "connect": 30.0}
 
     host: str
-    port: int = 22
+    #: `None` leaves the port to the ssh_config's `Port`, else 22, as `ssh`
+    #: does without `-p`; a number wins over the config.
+    port: typing.Optional[int] = None
     username: typing.Optional[str] = None
     #: A string, or a callable returning one (or `None`) that asyncssh calls
     #: only when the server asks for a password, after key authentication.
@@ -135,13 +167,13 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     )
     client_keys: SSHClientKeys = dataclasses.field(default=None, repr=False)
     executable: typing.Optional[str] = None
-    #: `True` checks the server's host key; `False` skips the check. An
-    #: `ssh_config` the caller names is honoured as written, including a
+    #: `True` checks the server's host key; `False` skips the check. The
+    #: `ssh_config` is honoured as written, including a
     #: `UserKnownHostsFile none`. SSH has no CA bundle, so a string is refused:
     #: name trusted keys with `known_hosts`.
     verify: bool = True
-    #: The trusted host keys. `()` is the usual lookup (`~/.ssh/known_hosts`,
-    #: or an `ssh_config`'s `UserKnownHostsFile`), which `verify=False`
+    #: The trusted host keys. `()` is the lookup `ssh` does (the
+    #: `ssh_config`'s `UserKnownHostsFile`, else `~/.ssh/known_hosts`), which `verify=False`
     #: switches off; anything else is checked even under `verify=False`.
     known_hosts: SSHKnownHosts = ()
     shell: ShellSelection = POSIX_SHELL
@@ -168,11 +200,14 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     #: TCP, key exchange and authentication (30 s), and `None` there leaves
     #: asyncssh's own default.
     timeout: _TimeoutField = _TimeoutField()
-    #: An ssh_config to read on BOTH legs (`Host`, `HostName`, `IdentityFile`,
-    #: `ProxyJump` ...). `None`, the default, reads none. One path: OpenSSH's
-    #: `Include` covers the rest. Never part of the URI: a `ProxyCommand`
-    #: starts a local process, which whoever wrote the URI must not choose.
-    ssh_config: typing.Optional[typing.Union[str, "os.PathLike[str]"]] = None
+    #: The OpenSSH client configuration of the host's one connection (`Host`,
+    #: `HostName`, `IdentityFile`, `ProxyJump`, `UserKnownHostsFile` ...).
+    #: `USER_SSH_CONFIG` is `~/.ssh/config`, as `ssh` reads it; `None` or
+    #: `False` reads none; an `os.PathLike` names a file; a `str`, bytes, a
+    #: stream or an object with `read_text`/`open` is the text. Never part of
+    #: the URI: a `ProxyCommand` starts a local process, which whoever wrote
+    #: the URI must not choose.
+    ssh_config: _SSHConfigSource = USER_SSH_CONFIG
     #: Extra keywords for `asyncssh.connect`, given to both legs. Never part
     #: of the URI or `repr()`, since it may hold a passphrase.
     connect_options: typing.Mapping[str, object] = dataclasses.field(
@@ -192,7 +227,7 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
                 "SSHConfig: known_hosts names the trusted host keys; "
                 "pass verify=False to skip the host-key check"
             )
-        if not 1 <= self.port <= 65535:
+        if self.port is not None and not 1 <= self.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
         if self.shell != "auto":
             self.shell = shell_flavour(self.shell)
@@ -209,6 +244,7 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
         if self.login_shell not in _LOGIN_SHELLS:
             values = ", ".join(sorted(_LOGIN_SHELLS))
             raise ValueError(f"login_shell must be one of: {values}")
+        self.ssh_config = _ssh_config_source(self.ssh_config)
 
     @property
     def resolved_login_shell(self) -> str:
@@ -236,20 +272,14 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             if isinstance(keys, (str, bytes, os.PathLike)):
                 keys = [keys]
             opts["client_keys"] = keys
-        # `config` is always passed: asyncssh would otherwise load
-        # `~/.ssh/config`, and a library call must not depend on a personal
-        # file. `ssh_config` is the explicit opt-in. Both legs get these
-        # options, so they resolve and verify the host alike.
-        opts["config"] = (
-            None
-            if self.ssh_config is None
-            else [os.path.expanduser(os.fspath(self.ssh_config))]
-        )
+        # Resolved here, when the connection opens, and always passed: both
+        # legs share these options, so they resolve and verify the host alike.
+        opts["config"] = _asyncssh_config(self.ssh_config)
         # Always passed, never omitted on the default: `()` is asyncssh's own
         # "resolve known_hosts the usual way" value, and both legs receive
         # these options, so the path leg verifies the host key exactly as the
         # exec leg does. `None` (no check) comes from `verify=False`, or from
-        # the caller's own ssh_config resolving `()` that way.
+        # the ssh_config resolving `()` that way.
         if self.known_hosts == () and not self.verify:
             opts["known_hosts"] = None
         else:
@@ -262,7 +292,7 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
 
     def _default_name(self) -> str:
         host = uri_host(self.host)
-        return host if self.port == 22 else f"{host}:{self.port}"
+        return host if self.port in (None, 22) else f"{host}:{self.port}"
 
     @property
     def connection_uri(self) -> str:
@@ -279,10 +309,8 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
             query["login_shell"] = self.login_shell
         if not self.verify:
             query["verify"] = "false"
-        from netimps import join_host
-
         pairs = list(query.items()) + _timeout_query(self.timeout)
-        return f"ssh://{user}{join_host(self.host, self.port)}?{urlencode(pairs)}"
+        return f"ssh://{user}{_authority(self.host, self.port)}?{urlencode(pairs)}"
 
     @classmethod
     def _from_parsed_uri(cls, parsed, **credentials: object) -> SSHConfig:
@@ -301,11 +329,9 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
         _refuse_renamed_keys(query, {"connect_timeout": "timeout_connect"})
         if not parsed.hostname or parsed.path not in ("", "/"):
             raise ValueError("SSH URI requires a host and no path")
-        from netimps import get_default_port
-
         return cls(
             host=uri_hostname(parsed),
-            port=get_default_port("ssh") if parsed.port is None else parsed.port,
+            port=parsed.port,
             username=unquote(parsed.username or "") or None,
             password=typing.cast(typing.Optional[str], credentials.get("password")),
             client_keys=typing.cast(SSHClientKeys, credentials.get("client_keys")),

@@ -30,7 +30,7 @@ from ...uri._parse import (
     strict_uri_query,
     uri_hostname,
 )
-from ..ssh._config import SSHConfig
+from ..ssh._config import SSHConfig, _authority
 from ._helper import GuestPathHelper
 
 if typing.TYPE_CHECKING:
@@ -165,12 +165,10 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
         query["socket_path"] = self.socket_path or (
             f"/run/qemu-server/{self.domain}.qga"
         )
-        from netimps import join_host
-
         if not ssh.verify:
             query["verify"] = "false"
         user = f"{quote(ssh.username, safe='')}@" if ssh.username else ""
-        authority = f"{user}{join_host(ssh.host, ssh.port)}"
+        authority = f"{user}{_authority(ssh.host, ssh.port)}"
         return (
             f"qga+ssh://{authority}/{quote(self.domain, safe='')}?"
             f"{urlencode(query)}"
@@ -253,11 +251,9 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
             )
         if not parsed.hostname or not parsed.username or not parsed.path.strip("/"):
             raise ValueError("SSH QGA URI requires user, host, and domain")
-        from netimps import get_default_port
-
         ssh = SSHConfig(
             uri_hostname(parsed),
-            port=parsed.port or get_default_port("ssh"),
+            port=parsed.port,
             username=unquote(parsed.username),
             password=typing.cast(typing.Optional[str], credentials.get("password")),
             client_keys=credentials.get("client_keys"),

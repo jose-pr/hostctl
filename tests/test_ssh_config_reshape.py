@@ -1,4 +1,4 @@
-"""SSHConfig: no root default, an opt-in ssh_config, connect_options, pathname="auto"."""
+"""SSHConfig: no root default, a named ssh_config, connect_options, pathname="auto"."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def test_the_server_sees_the_local_user_when_none_is_given():
     assert ("begin_auth", getpass.getuser()) in server.events
 
 
-def test_the_default_options_read_no_ssh_config():
+def test_the_default_options_always_carry_the_config():
     assert sorted(SSHConfig("h").connect_opts()) == [
         "config",
         "connect_timeout",
@@ -56,7 +56,7 @@ def test_the_default_options_read_no_ssh_config():
     ]
 
 
-def test_ssh_config_is_an_opt_in_for_the_one_connection(tmp_path, monkeypatch):
+def test_a_named_ssh_config_serves_the_one_connection(tmp_path, monkeypatch):
     with InProcessSSHServer(_handler, sftp_root=tmp_path) as server:
         path = tmp_path / "ssh_config"
         path.write_text(

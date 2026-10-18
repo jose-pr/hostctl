@@ -122,10 +122,10 @@ def test_connect_options_cannot_reach_the_check():
         SSHConfig("nas.example", connect_options={"known_hosts": None})
 
 
-def _ssh_config(tmp_path, body: str) -> str:
+def _ssh_config(tmp_path, body: str):
     path = tmp_path / "ssh_config"
     path.write_text(body)
-    return str(path)
+    return path
 
 
 @pytest.mark.parametrize("leg", (_exec_connects, _sftp_connects))

@@ -1,4 +1,4 @@
-"""Neither SSH leg reads an ssh_config unless asked to."""
+"""`ssh_config=None` keeps the user's ~/.ssh/config out of both SSH legs."""
 
 from __future__ import annotations
 
@@ -21,18 +21,18 @@ def _causes(exc):
         exc = exc.__cause__ or exc.__context__
 
 
-def test_an_ssh_config_alias_reaches_neither_leg(tmp_path, monkeypatch):
+def test_with_none_an_alias_reaches_neither_leg(fake_home):
     with InProcessSSHServer(_handler) as server:
-        ssh_dir = tmp_path / ".ssh"
-        ssh_dir.mkdir()
-        (ssh_dir / "config").write_text(
+        (fake_home / ".ssh" / "config").write_text(
             "Host hostctl-alias.invalid\n"
             "    HostName 127.0.0.1\n"
             f"    Port {server.port}\n"
         )
-        monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("USERPROFILE", str(tmp_path))
-        host = server.config(host="hostctl-alias.invalid")._create_host()
+        host = server.config(
+            host="hostctl-alias.invalid",
+            ssh_config=None,
+            connect_options={"agent_path": None},
+        )._create_host()
         try:
             with pytest.raises(Exception) as run_error:
                 host.run("x")

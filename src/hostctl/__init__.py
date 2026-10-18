@@ -121,7 +121,11 @@ from .transports.local import (
 )
 from .transports.qemu import QEMUConfig as QEMUConfig, QEMUHost as QEMUHost
 from .transports.serial import SerialConfig as SerialConfig, SerialHost as SerialHost
-from .transports.ssh import SSHConfig as SSHConfig, ssh_providers as ssh_providers
+from .transports.ssh import (
+    SSHConfig as SSHConfig,
+    USER_SSH_CONFIG as USER_SSH_CONFIG,
+    ssh_providers as ssh_providers,
+)
 from .transports.winrm import (
     WinRMConfig as WinRMConfig,
     winrm_providers as winrm_providers,
@@ -156,6 +160,7 @@ __all__ = [
     "uri_hostname",
     "winrm_providers",
     "SSHConfig",
+    "USER_SSH_CONFIG",
     "WinRMConfig",
     "ContainerConfig",
     "ContainerHost",

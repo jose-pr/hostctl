@@ -54,17 +54,21 @@ def test_an_ipv6_host_is_bracketed_beside_its_port():
     assert SSHConfig("::1", port=2222).connection_uri.startswith("ssh://[::1]:2222?")
 
 
-def test_an_ssh_uri_without_a_port_gets_the_ssh_port():
-    assert HostConfig("ssh://u@nas").port == 22
+def test_an_ssh_uri_without_a_port_leaves_it_to_the_ssh_config():
+    # asyncssh then takes the ssh_config's `Port`, else 22, as `ssh` does.
+    assert HostConfig("ssh://u@nas").port is None
+    assert HostConfig("ssh://u@nas:22").port == 22
     config = HostConfig("ssh://u@[::1]")
-    assert (config.host, config.port) == ("::1", 22)
+    assert (config.host, config.port) == ("::1", None)
+    assert config.connection_uri.startswith("ssh://u@[::1]?")
 
 
-def test_the_qga_ssh_uri_gets_the_ssh_port_too():
+def test_the_qga_ssh_uri_leaves_the_port_to_the_ssh_config_too():
     config = HostConfig("qga+ssh://u@nas/vm")
 
     assert isinstance(config, QEMUConfig)
-    assert config.ssh.port == 22
+    assert config.ssh.port is None
+    assert config.connection_uri.startswith("qga+ssh://u@nas/vm?")
 
 
 @pytest.mark.parametrize(

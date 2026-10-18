@@ -27,6 +27,7 @@ from ...shell._invocation import render_command
 from ...shell._vocabulary import ShellCommand
 from ...host._selection import PathnameType
 from ._config import SSHConfig
+from ._config_source import _materialized
 
 log = logging.getLogger(__name__)
 
@@ -236,13 +237,13 @@ class _SSHTransport:
                     ProviderSelector.redact(self.config.connection_uri),
                 )
                 try:
-                    self._ssh = _async.async_to_sync(
-                        _async.asyncssh().connect(
-                            self.config.host,
-                            port=self.config.port,
-                            **self.config.connect_opts(),
+                    options = self.config.connect_opts()
+                    if self.config.port is not None:
+                        options["port"] = self.config.port
+                    with _materialized(options) as options:
+                        self._ssh = _async.async_to_sync(
+                            _async.asyncssh().connect(self.config.host, **options)
                         )
-                    )
                 except Exception as exc:
                     log.debug(
                         "SSH connection to %s failed: %s",

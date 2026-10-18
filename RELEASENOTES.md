@@ -85,9 +85,12 @@ not only spelling:
   30 s default applies to `run(timeout=)` on all three legs, so a pywinrm or
   PSRP command past 30 s now raises `TimeoutExpired` where it used to run
   unbounded.
-- **SSH defaults changed.** `username=None` is the local account, not
-  `root`; the connection reads no `~/.ssh/config` unless `ssh_config=` names
-  one; a relative `host.path()` is the login directory; `connect()` raises
+- **SSH defaults changed.** `username=None` is the ssh_config's `User`,
+  else the local account, not `root`, and `port=None` its `Port`, else 22;
+  commands and paths both read `~/.ssh/config`, as `ssh` does, where 0.3's
+  paths read none (`ssh_config=None` reads none, and a `str` there is
+  configuration text, never a file name); a relative `host.path()` is the
+  login directory; `connect()` raises
   `OperationNotStartedError` when no provider connected; commands and paths
   share one connection and one login, so a server's per-connection limits
   and authentication logs see one where they saw two.

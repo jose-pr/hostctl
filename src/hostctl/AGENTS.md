@@ -527,16 +527,20 @@ LocalExecutor.__call__(command, *args, bufsize=-1, stdin=None, stdout=None, stde
 ## SSH (`hostctl.transports.ssh`)
 
 ```python
-SSHConfig(host, *, port=22, username=None, password=None, client_keys=None, executable=None, verify=True, known_hosts=(), shell=POSIX_SHELL, pathname=PosixPathname, login_shell='auto', timeout=Timeout(), ssh_config=None, connect_options={})
+SSHConfig(host, *, port=None, username=None, password=None, client_keys=None, executable=None, verify=True, known_hosts=(), shell=POSIX_SHELL, pathname=PosixPathname, login_shell='auto', timeout=Timeout(), ssh_config=USER_SSH_CONFIG, connect_options={})
 ssh_providers(config) -> tuple[ExecutorProvider, PathProvider]
+USER_SSH_CONFIG
 ```
 
 `ssh://user@host:port`; needs the `ssh` extra. Opening it returns a
 `PosixHost` (or `WindowsHost` for a Windows path flavour) whose `run()` uses
 an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
 
-- `username=None` leaves the account to asyncssh (the local user, as `ssh`
-  does). `client_keys` is an `SSHClientKeys` (one `SSHKeySource` -- a key
+- `username=None` leaves the account to the ssh_config's `User`, else the
+  local user, and `port=None` the port to its `Port`, else 22, as `ssh` does
+  without `-l`/`-p`; a value you pass wins over the config. `ssh://h` has no
+  port (`port is None`); `ssh://h:22` names 22.
+  `client_keys` is an `SSHClientKeys` (one `SSHKeySource` -- a key
   path, bytes or text -- or a sequence of them); `known_hosts` an
   `SSHKnownHosts`, the same shape but never `None`. Authentication fields are
   excluded from `repr()`.
@@ -547,12 +551,12 @@ an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
   Cache the answer in the callable to ask once. An exception it raises is
   the root `cause` of the `OperationNotStartedError` that reports the
   refused connection.
-- Host keys: `known_hosts=()` (the default) is the usual lookup,
-  `~/.ssh/known_hosts` or an `ssh_config`'s `UserKnownHostsFile`; anything
+- Host keys: `known_hosts=()` (the default) is the lookup `ssh` does: the
+  ssh_config's `UserKnownHostsFile`, else `~/.ssh/known_hosts`; anything
   else names the trusted keys. `verify=False` (`?verify=false`) replaces the
   usual lookup with no check; a `known_hosts` you name is checked even then
   (the stricter setting wins). `known_hosts=None` raises `ValueError` naming
-  `verify=False`. An `ssh_config` you name is honoured as written, so its
+  `verify=False`. The ssh_config is honoured as written, so its
   `UserKnownHostsFile none` switches the check off.
 - `host` and `username` are refused where OpenSSH would refuse them (a
   leading `-`, whitespace, shell metacharacters, `${` in a username); the host
@@ -576,12 +580,38 @@ an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
   exchange, authentication), 30 s, and `None` there keeps asyncssh's own
   (an ssh_config `ConnectTimeout`, else the OS connect timeout plus
   asyncssh's 2-minute login timeout). `read`/`write` raise.
-- `ssh_config` is the one way to read an ssh_config, for the host's one
-  connection. Without it none is read -- the connection gets `config=None`,
-  so an alias, `IdentityFile`, `UserKnownHostsFile` or `ProxyCommand` in
-  `~/.ssh/config` is ignored. It is never a URI key, and an `ssh://` URI
-  naming it raises: a `ProxyCommand` starts a local process, which a URI's
-  author must not choose.
+- `ssh_config` is the OpenSSH client configuration of the host's one
+  connection (`Host`, `HostName`, `User`, `Port`, `IdentityFile`,
+  `ProxyJump`, `ProxyCommand`, `UserKnownHostsFile`, `Include` ...):
+  - `USER_SSH_CONFIG` (the default; exported from `hostctl` and
+    `hostctl.transports.ssh`, one object, `repr()` `USER_SSH_CONFIG`) is
+    `~/.ssh/config`, `~` resolved each time a connection opens; a missing
+    file reads nothing and fails nothing, as with `ssh`.
+  - `None` or `False` reads none.
+  - An `os.PathLike` (`pathlib.Path`, a local `pathapi.Path`) names a file,
+    `~` expanded when the connection opens.
+  - **A `str` is the configuration's text, not a file name**: name a file
+    as `pathlib.Path(...)`. A line holding a keyword and no value (what a
+    file name is when read as text) raises `ValueError`; anything else is
+    not second-guessed.
+  - `bytes`, `bytearray`, `memoryview` and a stream (`read()`, e.g.
+    `io.StringIO`/`io.BytesIO`) are the text too, read when the config is
+    built; bytes are decoded as UTF-8 (`ValueError` otherwise).
+  - Any other object with `read_text()` or `open()` (a `pathapi.Path` on
+    another host, a `MemPath`) is read as UTF-8 text through that object
+    when the first connection opens, and the text is kept for later ones
+    (and for a `dataclasses.replace()` copy).
+  - Other values raise `TypeError`; `True` raises `ValueError`.
+
+  Text reaches asyncssh (which reads configurations only from files)
+  through a private temporary file, created readable by this user only,
+  written in the encoding `open()` reads it with, removed as soon as the
+  connection is open or has failed (and at interpreter exit as a fallback).
+  It is never logged, never in `repr()` (`ssh_config=<ssh_config text>`) or
+  `connection_uri`. A relative `Include` in it resolves against `~/.ssh`.
+  `ssh_config` is never a URI key, and an `ssh://` URI naming it raises: a
+  `ProxyCommand` starts a local process, which a URI's author must not
+  choose.
 - `connect_options` are extra `asyncssh.connect` keywords for that
   connection, kept out of the URI and `repr()`; a key hostctl owns (`host`,
   `port`, `username`, `password`, `client_keys`, `known_hosts`, `config`,
@@ -1753,6 +1783,7 @@ hostctl deploy ssh://server mytool /opt/mytool.pyz -- --version
 | --- | --- | --- |
 | `HOSTCTL_PASSWORD` | the command line | on each subcommand without `-p`; the password is offered only to schemes whose config accepts one (`qemu+libvirt:` and `qga+unix:` take none), and replaces a password in the URI. A tool caller can read it and name any host to offer it to. |
 | `HOSTCTL_MCP` | the command line | at start; `stdio` serves every subcommand as an MCP tool over stdio. |
+| `HOME` (POSIX), `USERPROFILE` (Windows) | SSH | when a connection opens with `ssh_config=USER_SSH_CONFIG` (the default), to find `~/.ssh/config`, through `os.path.expanduser`. |
 | `USERNAME` | native WinRM | when a password-free `WinRMConfig` opens on a Windows client: `username` must be this user (alone, `DOMAIN\user` or `user@DOMAIN`). Unset or empty raises `ValueError`. |
 | `USERDOMAIN` | native WinRM | at the same moment, to accept the domain-qualified spellings of the current user; optional. |
 
@@ -1773,6 +1804,12 @@ dependency may (asyncssh, pywinrm, docker), as documented by that package.
   connection and SFTP channel without closing them (closing would tear down
   the parent's socket) and reconnects. `close()` in a forked child forgets
   the parent's connection.
+- **SSH reads `~/.ssh/config` by default.** Like `ssh`, an `SSHConfig`
+  (and `ssh://` on the command line) applies the user's own OpenSSH
+  configuration: its `Host` aliases, `User`, `Port`, keys, `ProxyJump` and
+  `UserKnownHostsFile`. Pass `ssh_config=None` for a connection that depends
+  on no personal file (a service, a test). A `str` is configuration text,
+  never a file name.
 - **No replay after dispatch.** Provider failover happens only before
   anything is sent (`OperationNotStartedError`). A command that may have
   started is never retried on another provider, so a `ConnectionError`
