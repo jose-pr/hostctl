@@ -202,8 +202,16 @@ ranked below one that is unavailable. It is logged once per host and skipped
 provider, on `host.logger`:
 
 ```text
-hostctl.host._host WARNING [nas1] run() fell back from ssh to webshell: ssh: SSH connection failed before dispatch
+hostctl.host._host WARNING [nas1] run() fell back from ssh to webshell: ssh: SSH host key of nas1:22 is not trusted (Host key is not trusted for host nas1); add the key to known_hosts (known_hosts= names the file to read) or pass verify=False to skip the host-key check
 ```
+
+The reason after the provider's name is the one it declined with, which
+`host.last_selection` also holds as `SelectionStep.reason`. The SSH, SFTP and
+WinRM providers name what refused them: an untrusted host key or TLS
+certificate (with the setting that trusts it), a refused login, a refused
+connection, a host name that did not resolve, an unreachable host, or a
+timeout, each with the target and the error's own message, credentials
+redacted.
 
 Routing an operation to the provider that supports it, and a pinned path, are
 not fallbacks and log nothing.

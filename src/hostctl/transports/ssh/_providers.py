@@ -128,7 +128,7 @@ class SFTPPathProvider(PathProvider):
                 ProviderSelector.redact(mapped),
             )
             raise OperationNotStartedError(
-                "SFTP channel failed before dispatch", cause=mapped
+                self.transport._decline_reason("SFTP", mapped), cause=mapped
             ) from exc
 
 

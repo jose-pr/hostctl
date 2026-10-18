@@ -338,6 +338,16 @@ collection until pytruenas ports to these names.
 
 ### Changed
 
+- **The fallback WARNING says why the provider declined.** The SSH, SFTP
+  and WinRM providers decline with a reason naming the target and what
+  refused it -- `SSH host key of nas:22 is not trusted (...)` with the
+  remedy (`known_hosts=`, `verify=False`), `SSH login to nas:22 was refused`,
+  `SSH connection to nas:22 was refused`, `SSH host name nas did not
+  resolve`, `SSH connection to nas:22 timed out`, `SSH host nas:22 is
+  unreachable`, `WinRM TLS certificate of win:5986 is not trusted` -- with
+  the error's own message, credentials redacted. It is what
+  `SelectionStep.reason` and the `run() fell back from ssh to ...` WARNING
+  show, where every cause read `SSH connection failed before dispatch`.
 - **Breaking, 0.4.0: every config spells its timeouts as one
   `timeout=Timeout(...)`.** `QemuConfig(agent_timeout=)` is
   `timeout=Timeout(read=)` and `SerialConfig(read_timeout=, write_timeout=)`

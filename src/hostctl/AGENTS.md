@@ -157,6 +157,14 @@ HostConfig.name -> str                             # settable
   is unavailable (its probe said so, or it declined before dispatch):
   `run() fell back from ssh to webshell: ssh: <reason>`. Routing an operation
   to the provider that supports it, and a pinned path, are not fallbacks.
+  The SSH, SFTP and WinRM providers' reason (also `SelectionStep.reason`)
+  says what refused them, with the target and the redacted error: `SSH host
+  key of nas:22 is not trusted (...); add the key to known_hosts
+  (known_hosts= names the file to read) or pass verify=False ...`, `SSH login
+  to nas:22 was refused (...)`, `SSH connection to nas:22 was refused (...)`,
+  `SSH host name nas did not resolve (...)`, `SSH connection to nas:22 timed
+  out`, `SSH host nas:22 is unreachable (...)`, `WinRM TLS certificate of
+  win:5986 is not trusted (...); ...`, else `... failed (Type: message)`.
 - `run()` returns `subprocess.CompletedProcess`. **`check` and
   `capture_output` default to `True`**, the opposite of `subprocess.run`: a
   failing remote command raises `CalledProcessError`, and its output is

@@ -31,6 +31,12 @@ from ._config_source import _materialized
 
 log = logging.getLogger(__name__)
 
+#: The remedy a decline names when the server's host key is not trusted.
+_UNTRUSTED_HOST_KEY = (
+    "add the key to known_hosts (known_hosts= names the file to read) "
+    "or pass verify=False to skip the host-key check"
+)
+
 
 class _SSHTransport:
     """A host reached over SSH, with an explicitly configured command shell."""
@@ -283,8 +289,20 @@ class _SSHTransport:
                 ProviderSelector.redact(exc),
             )
             raise OperationNotStartedError(
-                "SSH connection failed before dispatch", cause=exc
+                self._decline_reason("SSH", exc), cause=exc
             ) from exc
+
+    def _decline_reason(self, service: str, exc: BaseException) -> str:
+        """Why `service` declined, naming the host and what refused it."""
+        from .._decline import connect_failure
+
+        return connect_failure(
+            service,
+            self.config.host,
+            self.config.port,
+            exc,
+            trust=_UNTRUSTED_HOST_KEY,
+        )
 
     def close(self) -> None:
         with self._ssh_lock:

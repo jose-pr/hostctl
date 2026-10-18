@@ -45,8 +45,21 @@ class WinRMExecutorProvider(ExecutorProvider):
                 type(exc).__name__,
                 ProviderSelector.redact(exc),
             )
+            from .._decline import connect_failure
+
+            config = self.transport.config
             raise OperationNotStartedError(
-                "WinRM connection failed before dispatch", cause=exc
+                connect_failure(
+                    "WinRM",
+                    config.host,
+                    config.port,
+                    exc,
+                    trust=(
+                        "name its CA bundle with verify= or pass verify=False "
+                        "to skip the certificate check"
+                    ),
+                ),
+                cause=exc,
             ) from exc
 
     def close(self):
