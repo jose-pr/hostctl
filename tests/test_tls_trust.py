@@ -222,11 +222,11 @@ def test_the_platform_verifier_accepts_a_ca_the_os_trusts(tls, monkeypatch):
 
 def test_nothing_is_loaded_into_the_platform_verifier(tls, monkeypatch):
     # truststore treats CAs loaded into its context as extra trust; nothing
-    # on the way (requests, urllib3) may add any.
+    # on the way (requests, urllib3) may add any. Its inner context is not
+    # compared: on Linux truststore loads the system store into it itself.
     truststore = pytest.importorskip("truststore")
     context = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.load_verify_locations(cafile=tls.bundle)
-    before = context._ctx.cert_store_stats()
 
     def refuse(*args: object, **kwargs: object) -> None:
         raise AssertionError("CA certificates loaded into hostctl's context")
@@ -239,7 +239,6 @@ def test_nothing_is_loaded_into_the_platform_verifier(tls, monkeypatch):
         monkeypatch.setattr(context, name, refuse)
     monkeypatch.setattr(_tls, "_os_trust", lambda: context)
     assert _get(tls, _trusted()) is True
-    assert context._ctx.cert_store_stats() == before
 
 
 def test_concurrent_handshakes_through_one_context_all_verify(tls):
