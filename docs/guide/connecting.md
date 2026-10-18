@@ -191,12 +191,16 @@ assert "secret" not in str(config)
 ```
 
 - **TLS.** `winrms://` (or `tls=True`) is HTTPS. The certificate is checked
-  against the Windows certificate store on the native leg and against
-  `requests`' default (`REQUESTS_CA_BUNDLE`, else certifi) on pywinrm and
-  PSRP. `verify="ca.pem"` (`?verify=ca.pem`, a file or a hashed directory)
-  trusts that bundle instead, on pywinrm and PSRP; the native leg refuses one,
+  against the operating system's trust store on every leg: the Windows
+  certificate store on the native leg, and on pywinrm and PSRP the store as
+  Python's `ssl` module loads it -- or, when `REQUESTS_CA_BUNDLE` or
+  `CURL_CA_BUNDLE` is set, that bundle alone. certifi is not used.
+  `verify="ca.pem"` (`?verify=ca.pem`, a file or a hashed directory) trusts
+  that bundle instead, on pywinrm and PSRP; the native leg refuses one,
   since PowerShell remoting trusts only the store. `verify=False`
-  (`?verify=false`) skips every certificate check.
+  (`?verify=false`) skips every certificate check. What Python loads as the
+  store differs by platform; see the
+  [contracts ledger](contracts.md#divergence-ledger).
 - **Cleartext.** `auth="basic"`, `"plaintext"` or `"ssl"` over plain HTTP
   would send the password in cleartext, so it raises `ValueError` unless
   `cleartext_auth=True` (`?cleartext_auth=true`). NTLM (the default),
@@ -237,9 +241,11 @@ assert str(same) == str(config)
 With no `engine_url` the Docker client comes from the environment
 (`docker.from_env()`, which reads `DOCKER_HOST` and its TLS settings); with one
 it is `docker.DockerClient(base_url=engine_url)`. An `https://` engine URL is
-TLS: `verify="ca.pem"` trusts that CA bundle instead of docker-py's default,
-`verify=False` checks nothing, and either holds even when
-`REQUESTS_CA_BUNDLE` is set. For anything else -- a client certificate, a
+TLS: by default the certificate is checked against the operating system's
+trust store, as on pywinrm (`REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE` instead
+when set); `verify="ca.pem"` trusts that CA bundle instead, `verify=False`
+checks nothing, and either holds even when `REQUESTS_CA_BUNDLE` is set. For
+anything else -- a client certificate, a
 pre-built client -- pass `client_factory=` (and leave `verify` alone).
 `timeout.connect` is the client's request timeout (the SDK's 60 s by
 default), passed as `timeout=` to the client or the factory only when set;

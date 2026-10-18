@@ -50,6 +50,7 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `SSHConfig(known_hosts=None)`, `HostConfig(uri, known_hosts=None)` (no host-key check) | `SSHConfig(verify=False)`, `?verify=false`; `known_hosts=None` raises `ValueError` |
 | an `ssh_config` with `UserKnownHostsFile none` switching the host-key check off | `verify=False` (the config raises `ValueError` at connect without it) |
 | `REQUESTS_CA_BUNDLE` to make pywinrm or PSRP trust a private CA | `WinRMConfig(verify="ca.pem")` (`?verify=ca.pem`); the variable still applies under `verify=True` |
+| a server certificate trusted only through certifi on pywinrm, PSRP or an `https://` Docker engine (`verify=True`) | fails: `verify=True` trusts the operating system's store. Install the CA there, pass `verify="ca.pem"`, or set `REQUESTS_CA_BUNDLE` to certifi's bundle (`python -m certifi` prints its path). On Windows a public root not yet in the machine's store fails the same way until Windows has fetched it |
 
 pytruenas 0.5.4 and earlier pin `hostctl<0.4` and import the 0.3 paths
 (`from hostctl.host import PosixHost, SshConfig, ...`), so they do not import
@@ -518,6 +519,16 @@ collection until pytruenas ports to these names.
   (`AsyncSSHBackend.over_connection()`). An SSH path's sftppath backend can no
   longer be pickled (`TypeError`): its connection belongs to the process.
   This ships in 0.4.0.
+- **`verify=True` trusts the operating system's store on pywinrm, PSRP and an
+  `https://` Docker engine**, as native WinRM does, where it trusted certifi.
+  `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE`, when set, is still the only trust
+  (a missing file it names raises `FileNotFoundError` naming the variable);
+  a `verify=` bundle and `verify=False` behave as before. pywinrm no longer
+  warns about reading the variable, since hostctl reads it. The store is what
+  Python's `ssl` loads, which on Windows is the roots already present and on
+  macOS not the keychain (see the contracts ledger). The `winrm`, `psrp`,
+  `container`, `winrm-credssp` and `winrm-kerberos` extras need
+  `requests>=2.32.3`. **Breaking, 0.4.0.**
 
 ### Removed
 
