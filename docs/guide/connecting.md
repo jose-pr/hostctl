@@ -23,14 +23,22 @@ ways:
 - as the password in a URI's userinfo, `ssh://admin:secret@nas.example`. It is
   accepted on the way in, moved into the credentials, and never rendered back
   out: `str(config)` and `config.connection_uri` carry no password or key.
-  Giving the password in both places raises `ValueError`;
+  A keyword password replaces it, and `username=` replaces the URI's user,
+  so one URI serves several logins: `HostConfig("ssh://admin:old@nas",
+  username="deploy", password="new")`. `password=""` means no password;
 - as extra lines of the password field, split by `parse_credentials`: the
   first line is the password and each later `name:value` line is passed as the
   credential keyword `name`, so a second factor travels in the same field.
 
 Each config names the credentials it accepts (`uri_credentials`); any other
 keyword raises `ValueError` naming it, so a typo such as `passwrd=` never
-builds a config without a password.
+builds a config without a password. `username=` is one on SSH, WinRM and
+`qga+ssh`.
+
+On SSH and WinRM `password` may also be a callable returning the password,
+called only when one is needed: SSH when the server asks after key
+authentication failed, WinRM when the chosen leg authenticates with a
+password. That is how a program asks its user only when it has to.
 
 ```python
 from hostctl import HostConfig, SSHConfig, parse_credentials
@@ -123,7 +131,7 @@ with LocalConfig() as host:
 | --- | --- |
 | URI | `ssh://[user@]host[:port][?query]` |
 | query keys | `shell`, `pathname`, `executable`, `login_shell`, `verify`, and the timeout keys |
-| credentials | `password`, `client_keys`, `known_hosts` |
+| credentials | `username`, `password`, `client_keys`, `known_hosts` |
 | keyword only | `ssh_config`, `connect_options` (never in a URI) |
 | extra | `ssh` |
 
@@ -176,7 +184,7 @@ assert str(same) == str(config)
 | --- | --- |
 | URI | `winrm://user@host[:port][?query]` (HTTP), `winrms://...` (HTTPS) |
 | query keys | `auth`, `verify`, `message_encryption`, `provider`, `cleartext_auth`, and the timeout keys |
-| credentials | `password` |
+| credentials | `username`, `password` |
 | extra | `winrm`; `psrp` for runspaces (Python 3.10+); `winrm-credssp`, `winrm-kerberos` for those `auth` values |
 
 ```python
@@ -276,7 +284,7 @@ does `run(timeout=<n>)`.
 | URI, Unix socket | `qga+unix:///SOCKET_PATH?domain=DOMAIN` (the path percent-encoded) |
 | URI, socket over SSH | `qga+ssh://user@hypervisor/domain[?socket_path=PATH&verify=false]` |
 | query keys | `max_reply_size`, `shell`, `pathname`, the timeout keys, plus the ones above |
-| credentials | `transport_factory`, `serial_console`, `path_helper`; on `qga+ssh`, also `password`, `client_keys`, `known_hosts` |
+| credentials | `transport_factory`, `serial_console`, `path_helper`; on `qga+ssh`, also `username`, `password`, `client_keys`, `known_hosts` |
 | extra | `qemu-libvirt` for libvirt; `ssh` for `qga+ssh` |
 
 ```python

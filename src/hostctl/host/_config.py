@@ -18,6 +18,7 @@ from ..uri._parse import (
     _encode_stripped_characters,
     _refuse_cut_short_userinfo,
     _reject_authority_control_characters,
+    _with_username,
     _without_password,
     parse_credentials,
     strict_uri_credentials,
@@ -263,6 +264,10 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         would render it. Use :func:`redact_uri` before showing a URI that may
         still carry one.
 
+        Explicit credentials override the URI's: `password=` replaces its
+        whole password field (`""` meaning no password), and `username=`
+        replaces its user where the selected config accepts one.
+
         The password field is parsed by :func:`parse_credentials`, so a newline
         separates trailing `key:value` extras -- an OTP or other second factor
         travels through the same field. The newline may be written raw: it is
@@ -275,25 +280,22 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         _refuse_cut_short_userinfo(parsed)
         if parsed.fragment:
             raise ValueError("connection URI fragments are not supported")
+        explicit_password = credentials.get("password") is not None
+        if credentials.get("password") == "":
+            credentials["password"] = None
         if parsed.password is not None:
             # `scheme://user:secret@host` is a valid URI, so accept it: extract
             # the password into the credential arguments and strip it from the
             # parsed authority. The password therefore never reaches a config
             # field that `connection_uri`/`repr` render, which is what keeps
-            # the canonical form credential-free.
-            if credentials.get("password") is not None:
-                raise ValueError(
-                    "password given both in the connection URI and as an argument"
-                )
-            password, extras = parse_credentials(_unquote(parsed.password))
-            credentials["password"] = password
-            for key, value in extras.items():
-                if key in credentials:
-                    raise ValueError(
-                        f"credential {key!r} given both in the connection URI "
-                        "and as an argument"
-                    )
-                credentials[key] = value
+            # the canonical form credential-free. An explicit `password=`
+            # replaces the whole field, extras included.
+            if not explicit_password:
+                password, extras = parse_credentials(_unquote(parsed.password))
+                credentials["password"] = password
+                for key, value in extras.items():
+                    if credentials.get(key) is None:
+                        credentials[key] = value
             parsed = _without_password(parsed)
         matches = [
             implementation
@@ -316,6 +318,9 @@ class HostConfig(_abc.ABC, metaclass=_HostConfigMeta):
         accepted = implementation._uri_credentials_for(parsed)
         if accepted is not None:
             strict_uri_credentials(credentials, accepted)
+        username = credentials.pop("username", None)
+        if username is not None:
+            parsed = _with_username(parsed, _ty.cast(str, username))
         return implementation._from_parsed_uri(parsed, **credentials)
 
     @classmethod

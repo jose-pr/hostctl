@@ -50,6 +50,7 @@ class QEMUConfig(HostConfig, schemes=("qemu+libvirt", "qga+unix", "qga+ssh")):
     #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
     #: is accepted. The base dispatcher enforces it.
     uri_credentials = (
+        "username",
         "password",
         "client_keys",
         "known_hosts",

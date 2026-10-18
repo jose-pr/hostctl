@@ -8,7 +8,7 @@ import typing
 import types
 
 from ..._extras import _require
-from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT
+from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT, _resolve_password
 from ...host._timeout import DEFAULT, _config_timeouts
 from ...host._tls import _trust_session
 from ...host._verify import _ca_bundle
@@ -219,7 +219,7 @@ class RunspaceSession:
             "server": getattr(config, "host"),
             "port": endpoint_port or get_default_port("winrms" if ssl else "winrm"),
             "username": getattr(config, "username"),
-            "password": getattr(config, "password", None),
+            "password": _resolve_password(config),
             "ssl": ssl,
             "auth": auth,
             "cert_validation": _cert_validation(getattr(config, "verify", True)),

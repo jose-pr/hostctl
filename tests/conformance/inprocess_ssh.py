@@ -18,8 +18,15 @@ from hostctl.transports.ssh._config import SSHConfig
 
 
 class _Server(asyncssh.SSHServer):
-    def __init__(self, events: list) -> None:
+    def __init__(
+        self,
+        events: list,
+        accept_keys: bool = True,
+        password: typing.Optional[str] = None,
+    ) -> None:
         self._events = events
+        self._accept_keys = accept_keys
+        self._password = password
 
     def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
         self._events.append(("connection", conn))
@@ -32,7 +39,15 @@ class _Server(asyncssh.SSHServer):
         return True
 
     def validate_public_key(self, username: str, key: asyncssh.SSHKey) -> bool:
-        return True
+        self._events.append(("public_key", username))
+        return self._accept_keys
+
+    def password_auth_supported(self) -> bool:
+        return self._password is not None
+
+    def validate_password(self, username: str, password: str) -> bool:
+        self._events.append(("password", username))
+        return password == self._password
 
 
 class InProcessSSHServer:
@@ -43,6 +58,9 @@ class InProcessSSHServer:
     too. `sftp_root` enables SFTP chrooted to that
     directory; `sftp_factory` overrides how the SFTP server is built, and
     `home` makes `realpath(".")` answer that path (recorded in `events`).
+    `accept_keys=False` refuses every public key and `password` enables
+    password authentication with that one password; each attempt is
+    recorded as `("public_key", username)` or `("password", username)`.
     """
 
     def __init__(
@@ -52,8 +70,12 @@ class InProcessSSHServer:
         sftp_root: typing.Optional[typing.Union[str, os.PathLike]] = None,
         sftp_factory: typing.Optional[typing.Callable[..., typing.Any]] = None,
         home: typing.Optional[str] = None,
+        accept_keys: bool = True,
+        password: typing.Optional[str] = None,
     ) -> None:
         self.handler = handler
+        self._accept_keys = accept_keys
+        self._password = password
         self.events: list = []
         self._sftp_root = sftp_root
         self._sftp_factory = sftp_factory
@@ -96,7 +118,7 @@ class InProcessSSHServer:
                 if sftp_factory is not None:
                     options["sftp_factory"] = sftp_factory
                 self._server = await asyncssh.create_server(
-                    lambda: _Server(self.events),
+                    lambda: _Server(self.events, self._accept_keys, self._password),
                     "127.0.0.1",
                     0,
                     server_host_keys=[host_key],

@@ -14,6 +14,7 @@ from pathlib import (
 from urllib.parse import (
     SplitResult as _SplitResult,
     parse_qsl as _parse_qsl,
+    quote as _quote,
     unquote as _unquote,
     urlsplit as _urlsplit,
 )
@@ -195,6 +196,19 @@ def _rebuild_authority(parsed: _SplitResult, password: _ty.Optional[str]) -> str
 def _without_password(parsed: _SplitResult) -> _SplitResult:
     """Return `parsed` with any password removed from its authority."""
     return parsed._replace(netloc=_rebuild_authority(parsed, None))
+
+
+def _with_username(parsed: _SplitResult, username: str) -> _SplitResult:
+    """Return `parsed` (already password-free) with `username` as its user.
+
+    `username` is the decoded name and is percent-encoded here, as the user
+    part of a URI is; an empty one leaves no user at all.
+    """
+    bare = parsed._replace(netloc=parsed.netloc.rpartition("@")[2])
+    host = _rebuild_authority(bare, None)
+    if not username:
+        return parsed._replace(netloc=host)
+    return parsed._replace(netloc=f"{_quote(username, safe='')}@{host}")
 
 
 def redact_uri(uri: str) -> str:

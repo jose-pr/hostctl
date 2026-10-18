@@ -69,6 +69,27 @@ _NATIVE_BUNDLE = (
 )
 
 
+def _resolve_password(config: "WinRMConfig") -> typing.Optional[str]:
+    """The password a pywinrm or PSRP leg authenticates with.
+
+    A callable is called here, when the leg builds its session; Kerberos takes
+    no password, so it is not called then. `None` from it raises
+    `PermissionError`: NTLM, Basic and CredSSP cannot authenticate without one.
+    """
+    password = getattr(config, "password", None)
+    if not callable(password):
+        return password
+    if config.auth == "kerberos":
+        return None
+    value = password()
+    if value is None:
+        raise PermissionError(
+            f"WinRM auth={config.auth!r} needs a password for {config.username!r} "
+            f"on {config.host}, and none was given"
+        )
+    return value
+
+
 @_keyword_only()
 @dataclasses.dataclass
 class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
@@ -78,13 +99,17 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
     #: whitelist can be read before a config is built: an ambient
     #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
     #: is accepted. The base dispatcher enforces it.
-    uri_credentials = ("password",)
+    uri_credentials = ("username", "password")
 
     _timeout_defaults = {"total": 30.0, "connect": 30.0}
 
     host: str
     username: str
-    password: typing.Optional[str] = dataclasses.field(default=None, repr=False)
+    #: A string, or a callable returning one that is called only when the
+    #: selected leg needs a password, as it builds its session.
+    password: typing.Union[str, typing.Callable[[], typing.Optional[str]], None] = (
+        dataclasses.field(default=None, repr=False)
+    )
     auth: WinRMAuth = "ntlm"
     port: typing.Optional[int] = None
     tls: bool = False
@@ -126,7 +151,7 @@ class WinRMConfig(HostConfig, schemes=("winrm", "winrms")):
             raise ValueError("message_encryption must be 'auto', 'always', or 'never'")
         if self.provider not in typing.get_args(WinRMProviderName):
             raise ValueError("provider must be 'auto', 'native', 'pywinrm', or 'psrp'")
-        if self.provider == "native" and self.password is not None:
+        if self.provider == "native" and isinstance(self.password, str):
             raise ValueError(
                 "native WinRM uses the current Windows logon; drop password= "
                 "or choose 'pywinrm'/'psrp'"

@@ -52,6 +52,8 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | `REQUESTS_CA_BUNDLE` to make pywinrm or PSRP trust a private CA | `WinRMConfig(verify="ca.pem")` (`?verify=ca.pem`); the variable still applies under `verify=True` |
 | a server certificate trusted only through certifi on pywinrm, PSRP or an `https://` Docker engine (`verify=True`) | fails: `verify=True` trusts the operating system's store. Install the CA there, pass `verify="ca.pem"`, or set `REQUESTS_CA_BUNDLE` to certifi's bundle (`python -m certifi` prints its path). On Windows a public root not yet in the machine's store fails the same way until Windows has fetched it |
 
+| `HostConfig(uri, password=...)` with a password in the URI raising `ValueError` | the keyword replaces the URI's password (extras included); `password=""` is no password |
+
 pytruenas 0.5.4 and earlier pin `hostctl<0.4` and import the 0.3 paths
 (`from hostctl.host import PosixHost, SshConfig, ...`), so they do not import
 against 0.4.0; `test.yml`'s informative `downstream-pytruenas` job fails at
@@ -293,6 +295,19 @@ collection until pytruenas ports to these names.
   exits 125 with `hostctl: <that message>` where it printed a traceback
   ending in the hint; an `ImportError` raised inside an installed dependency
   is not mapped and still shows its traceback.
+- **Keyword credentials override the URI's, and `username=` is one.**
+  `HostConfig(uri, username=, password=)` and `Host(uri, ...)` use one URI
+  with other credentials without rewriting it: `password=` replaces the
+  URI's whole password field (`""` means no password), and `username=`
+  replaces the URI's user on `ssh`, `winrm`/`winrms` and `qga+ssh`
+  (elsewhere `ValueError`); `connection_uri` shows the user in effect and
+  never a password.
+- **A callable `password=` on `SSHConfig` and `WinRMConfig`, asked only
+  when a password is needed.** asyncssh calls it when the server asks for a
+  password after key authentication failed; a WinRM leg calls it as it
+  builds its session, and `provider="auto"` takes the native leg without
+  calling it when that can serve the config. A program can so prompt its
+  user only when it has to.
 
 ### Changed
 

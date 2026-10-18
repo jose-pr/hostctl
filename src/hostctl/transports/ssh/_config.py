@@ -121,14 +121,18 @@ class SSHConfig(HostConfig, schemes=("ssh",)):
     #: whitelist can be read before a config is built: an ambient
     #: credential (the CLI's `HOSTCTL_PASSWORD`) is offered only where it
     #: is accepted. The base dispatcher enforces it.
-    uri_credentials = ("password", "client_keys", "known_hosts")
+    uri_credentials = ("username", "password", "client_keys", "known_hosts")
 
     _timeout_defaults = {"total": None, "connect": 30.0}
 
     host: str
     port: int = 22
     username: typing.Optional[str] = None
-    password: typing.Optional[str] = dataclasses.field(default=None, repr=False)
+    #: A string, or a callable returning one (or `None`) that asyncssh calls
+    #: only when the server asks for a password, after key authentication.
+    password: typing.Union[str, typing.Callable[[], typing.Optional[str]], None] = (
+        dataclasses.field(default=None, repr=False)
+    )
     client_keys: SSHClientKeys = dataclasses.field(default=None, repr=False)
     executable: typing.Optional[str] = None
     #: `True` checks the server's host key; `False` is the one way to skip

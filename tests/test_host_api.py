@@ -244,9 +244,10 @@ def test_uri_password_is_percent_decoded():
     assert config.password == "p@ss:word"
 
 
-def test_uri_password_conflicting_with_an_argument_is_rejected():
-    with pytest.raises(ValueError, match="both in the connection URI"):
-        HostConfig("ssh://admin:fromuri@host", password="fromarg")
+def test_a_password_argument_overrides_the_uris():
+    assert HostConfig("ssh://admin:fromuri@host", password="fromarg").password == (
+        "fromarg"
+    )
 
 
 def test_redact_uri_strips_the_password_leaving_a_reusable_uri():

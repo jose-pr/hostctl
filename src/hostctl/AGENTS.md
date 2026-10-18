@@ -68,10 +68,17 @@ HostConfig(connection_string, /, **secrets)
   private key.
 - A `scheme://user:password@host` URI is valid input: the password moves into
   the credential arguments and leaves the parsed authority, so it never
-  reaches a field that `connection_uri` or `repr()` renders. A password both
-  in the URI and as a keyword raises `ValueError`. The password field is split
+  reaches a field that `connection_uri` or `repr()` renders. The password field is split
   by `parse_credentials` (see "URIs"), so a second factor travels in it; an
   extra the config does not declare is rejected by name.
+- Keyword credentials override the URI's, so one URI serves several logins:
+  `password=` replaces the URI's whole password field (its extras included),
+  `password=""` means no password, and `password=None` keeps the URI's.
+  `username=` replaces the URI's user (or adds one) on the schemes whose
+  config logs in as a user -- `ssh`, `winrm`/`winrms` and `qga+ssh`; any
+  other scheme raises `ValueError` for it, as for every credential it does
+  not take. `connection_uri` shows the user in effect; no password reaches
+  it or `repr()`.
 - A config constructor takes a host and refuses a URI (`ValueError` naming
   `HostConfig(uri)`, password redacted). A URI refuses a C0, DEL or C1 control
   character in its host, raw or percent-encoded; a tab, CR or LF in the
@@ -524,6 +531,13 @@ an AsyncSSH exec channel and whose paths use an `sftppath.SFTPPath` backend.
   path, bytes or text -- or a sequence of them); `known_hosts` an
   `SSHKnownHosts`, the same shape but never `None`. Authentication fields are
   excluded from `repr()`.
+- `password` is a string or a callable `() -> str | None`; asyncssh calls the
+  callable only when the server asks for a password or a keyboard-interactive
+  answer, after key authentication failed -- never when a key is accepted --
+  once per connection attempt (the exec and SFTP legs may each attempt).
+  Cache the answer in the callable to ask once. An exception it raises is
+  the root `cause` of the `OperationNotStartedError` that reports the
+  refused connection.
 - Host keys: `known_hosts=()` (the default) is the usual lookup,
   `~/.ssh/known_hosts` or an `ssh_config`'s `UserKnownHostsFile`; anything
   else names the trusted keys. `verify=False` (`?verify=false`) replaces the
@@ -679,8 +693,14 @@ are a `CompositeWindowsPath` over the WinRM path backend.
   password-free config on a Windows client as `native` (current-context
   PowerShell remoting, see "Environment variables"); otherwise PSRP when
   `hostctl[psrp]` is installed on Python 3.10+, otherwise pywinrm. `native`
-  takes no password; `pywinrm`/`psrp` need one (or `auth="kerberos"`);
+  takes no password string; `pywinrm`/`psrp` need one (or `auth="kerberos"`);
   `provider="psrp"` without the extra raises the install hint.
+- `password` may be a callable `() -> str | None`, called only when the leg
+  needs a password, as it builds its session and before anything is sent:
+  `auto` with a callable takes `native` without calling it when native can
+  serve the config (a Windows client, `username` the current logon,
+  `ntlm`/`kerberos`, no CA bundle), and otherwise PSRP or pywinrm, which call
+  it; Kerberos never calls it. `None` from it raises `PermissionError`.
 - `winrm_providers(config)` returns the provider pair sharing one transport.
 
 Behaviour:

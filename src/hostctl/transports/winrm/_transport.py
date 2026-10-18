@@ -28,7 +28,7 @@ from ...host._info import HostInfo, parse_host_info
 from ...shell import POWERSHELL
 from ...shell._flavour import ShellFlavour
 from ...shell._vocabulary import wants_epilogue
-from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT, WinRMConfig
+from ._config import _OPERATION_TIMEOUT, _READ_TIMEOUT, WinRMConfig, _resolve_password
 from ...host._tls import _trust_session
 from ...host._verify import _ca_bundle
 from ...executor import _OMITTED, _Omitted
@@ -122,18 +122,11 @@ class _NativeLeg(_SessionLeg):
             raise ValueError(
                 "current-context WinRM requires a Windows client; pass password="
             )
-        domain = os.environ.get("USERDOMAIN", "").strip()
-        username = os.environ.get("USERNAME", "").strip()
-        if not username:
+        if not os.environ.get("USERNAME", "").strip():
             raise ValueError(
                 "current-context WinRM requires USERNAME/USERDOMAIN; pass password="
             )
-        configured = self.config.username.casefold()
-        candidates = {username.casefold()}
-        if domain:
-            candidates.add(f"{domain}\\{username}".casefold())
-            candidates.add(f"{username}@{domain}".casefold())
-        if configured not in candidates:
+        if not _is_current_user(self.config.username):
             raise ValueError(
                 "password-free native WinRM requires the current Windows user"
             )
@@ -190,7 +183,7 @@ class _PywinrmLeg(_SessionLeg):
         # protocol is used, because `run_ps` goes through cmd.exe.
         protocol = winrm.Session(
             self.config.endpoint,
-            auth=(self.config.username, self.config.password),
+            auth=(self.config.username, _resolve_password(self.config)),
             transport=self.config.auth,
             # pywinrm's own keywords.
             server_cert_validation="ignore" if verify is False else "validate",
@@ -273,15 +266,42 @@ _LEGS: typing.Dict[str, typing.Callable[[WinRMConfig], _Leg]] = {
 }
 
 
+def _is_current_user(username: str) -> bool:
+    """Whether `username` names this Windows logon: alone, `DOMAIN\\user` or
+    `user@DOMAIN`, compared without case."""
+    domain = os.environ.get("USERDOMAIN", "").strip()
+    current = os.environ.get("USERNAME", "").strip()
+    if not current:
+        return False
+    candidates = {current.casefold()}
+    if domain:
+        candidates.add(f"{domain}\\{current}".casefold())
+        candidates.add(f"{current}@{domain}".casefold())
+    return username.casefold() in candidates
+
+
+def _native_serves(config: WinRMConfig) -> bool:
+    """Whether the native leg can run `config` without a password."""
+    return (
+        os.name == "nt"
+        and config.auth in ("ntlm", "kerberos")
+        and not isinstance(config.verify, str)
+        and _is_current_user(config.username)
+    )
+
+
 def _select_leg(config: WinRMConfig) -> str:
     """Pick the leg once: an explicit `provider`, else by credentials.
 
     `auto` is native for a password-free config on a Windows client (the
     current logon), else PSRP when `hostctl[psrp]` imports, else pywinrm.
-    Installing the psrp extra never takes the native path away.
+    A callable password is asked for only when native cannot serve the
+    config. Installing the psrp extra never takes the native path away.
     """
     if config.provider != "auto":
         return config.provider
+    if callable(config.password) and _native_serves(config):
+        return "native"
     if config.password is None:
         if os.name == "nt":
             return "native"
