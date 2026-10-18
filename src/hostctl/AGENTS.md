@@ -1716,8 +1716,17 @@ hostctl deploy ssh://server mytool /opt/mytool.pyz -- --version
   output and exit status become the command's. `BundleError`, a foreign
   `PATH` and a failed step on the host (`CalledProcessError`, reported with
   its last stderr line) exit 125.
-- Each subcommand takes `--ask-password`, `-v`/`-q` and `--loglevel`; the
-  root takes `--version`. `--ask-password` is refused in a tool call.
+- Each subcommand takes `-u`/`--username USERNAME`, `-p`/`--password
+  PASSWORD`, `-v`/`-q` and `--loglevel`; the root takes `--version`. `-u`
+  replaces the URI's user and `-p` its password (`-p ''`: no password, no
+  prompt), as the library's keyword credentials do. The password comes from
+  `-p`, else `HOSTCTL_PASSWORD`, else the URI's own; without any, a host that
+  asks for one gets a hidden prompt when standard input is a terminal (asked
+  once for every host of a run), and otherwise fails at once with exit 126
+  and a line naming `-p` and `HOSTCTL_PASSWORD`. A tool call takes `username`
+  and `password` as parameters and never prompts. `-u` or `-p` on a scheme
+  that takes no such credential exits 125. A login every provider refused
+  exits 126 with the refusal's message.
 - Exit status: `run` returns the remote command's own status; the command
   line's own failures are 125 (connection, timeout, usage, unsupported
   operation), 126 (permission denied), 127 (not found) and 130 (interrupted).
@@ -1734,7 +1743,7 @@ hostctl deploy ssh://server mytool /opt/mytool.pyz -- --version
 
 | variable | read by | when |
 | --- | --- | --- |
-| `HOSTCTL_PASSWORD` | the command line | on each subcommand; the password is offered only to schemes whose config accepts one (`qemu+libvirt:` and `qga+unix:` take none). A tool caller can read it and name any host to offer it to. |
+| `HOSTCTL_PASSWORD` | the command line | on each subcommand without `-p`; the password is offered only to schemes whose config accepts one (`qemu+libvirt:` and `qga+unix:` take none), and replaces a password in the URI. A tool caller can read it and name any host to offer it to. |
 | `HOSTCTL_MCP` | the command line | at start; `stdio` serves every subcommand as an MCP tool over stdio. |
 | `USERNAME` | native WinRM | when a password-free `WinRMConfig` opens on a Windows client: `username` must be this user (alone, `DOMAIN\user` or `user@DOMAIN`). Unset or empty raises `ValueError`. |
 | `USERDOMAIN` | native WinRM | at the same moment, to accept the domain-qualified spellings of the current user; optional. |

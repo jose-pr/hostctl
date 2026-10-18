@@ -7,10 +7,14 @@ import getpass
 import io
 import os
 import re
+import sys
+import threading
 import typing
+from urllib.parse import urlsplit
 
-from duho import Cmd, CommandError, LoggingArgs, running_mode
+from duho import Cmd, LoggingArgs, running_mode
 
+from ..exceptions import OperationNotStartedError
 from ..host._host import Host
 from ..host._config import HostConfig
 from pathapi import Path
@@ -85,6 +89,54 @@ def usable_credentials(uri: str, credentials: dict) -> dict:
     return {key: value for key, value in credentials.items() if key in accepted}
 
 
+#: Keys of `Credentialed.credentials()` that are not credentials: the
+#: password came from the environment, and what to call when one is needed.
+_AMBIENT = "_ambient"
+_ASK = "_ask"
+
+
+def offered(uri: str, credentials: dict) -> dict:
+    """The keyword credentials to open `uri` with.
+
+    An explicit `-u` or `-p` the scheme takes no such credential for raises
+    `ValueError`; `HOSTCTL_PASSWORD` is offered only where it is accepted.
+    The prompt (or the error standing in for it) goes only to a scheme that
+    takes a password and to a URI that carries none of its own.
+    """
+    accepted = _accepted(uri)
+    scheme = uri.partition(":")[0]
+
+    def takes(name: str) -> bool:
+        return accepted is None or name in accepted
+
+    found: typing.Dict[str, object] = {}
+    if credentials.get("username") is not None:
+        if not takes("username"):
+            raise ValueError(f"{scheme}: takes no username (-u)")
+        found["username"] = credentials["username"]
+    password = credentials.get("password")
+    if password is not None:
+        if takes("password"):
+            found["password"] = password
+        elif not credentials.get(_AMBIENT):
+            raise ValueError(f"{scheme}: takes no password (-p)")
+    elif (
+        credentials.get(_ASK) is not None
+        and accepted is not None
+        and "password" in accepted
+        and not _uri_has_password(uri)
+    ):
+        found["password"] = credentials[_ASK]
+    return found
+
+
+def _accepted(uri: str) -> typing.Optional[typing.Tuple[str, ...]]:
+    try:
+        return HostConfig.supported_credentials(uri)
+    except ValueError:
+        return None
+
+
 def _port_colon(value: str, scheme_end: int, authority_end: int) -> int:
     """Index of the authority's port colon, or ``-1`` when it has none.
 
@@ -146,32 +198,115 @@ def split_operand(value: str) -> typing.Optional[typing.Tuple[str, str]]:
     return uri, path
 
 
+def _uri_has_password(uri: str) -> bool:
+    try:
+        return urlsplit(uri).password is not None
+    except ValueError:
+        return False
+
+
+def _on_a_terminal() -> bool:
+    """Whether a prompt can be answered: a terminal on stdin, not a tool call."""
+    if running_mode() == "mcp":
+        return False
+    try:
+        return bool(sys.stdin is not None and sys.stdin.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+class PasswordPrompt:
+    """A password asked for on the terminal the first time a host needs one.
+
+    The answer is kept, so every host of a run and every connection the
+    transport opens get the same one, and two threads never prompt at once.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._asked = False
+        self._answer: typing.Optional[str] = None
+
+    def __call__(self) -> typing.Optional[str]:
+        with self._lock:
+            if not self._asked:
+                self._answer = getpass.getpass("Password: ")
+                self._asked = True
+            return self._answer
+
+
+def no_password() -> typing.Optional[str]:
+    """What a host that needs a password gets where nothing can prompt."""
+    raise PermissionError(
+        "a password is needed and there is no terminal to ask on; "
+        "pass -p PASSWORD or set HOSTCTL_PASSWORD"
+    )
+
+
+def _refused_login(error: OperationNotStartedError) -> typing.Optional[PermissionError]:
+    """The `PermissionError` that made every provider decline, if that is what
+    did: a refused login is never sent anything, so it arrives as a decline."""
+    cause: typing.Optional[BaseException] = error
+    while isinstance(cause, OperationNotStartedError):
+        cause = cause.cause
+    return cause if isinstance(cause, PermissionError) else None
+
+
+@contextlib.contextmanager
+def _reporting_refusals(host: Host) -> typing.Iterator[Host]:
+    try:
+        with host:
+            yield host
+    except OperationNotStartedError as error:
+        refused = _refused_login(error)
+        if refused is None:
+            raise
+        raise PermissionError(str(refused)) from error
+
+
 class Credentialed(LoggingArgs, Cmd):
     """A command that may connect to a host and so may need a password."""
 
     _logger_name_ = "hostctl"
 
-    ask_password: bool = False
-    "Prompt for a password instead of reading HOSTCTL_PASSWORD"
+    username: typing.Optional[str] = None
+    "Log in as USER, in place of the URI's user"
+    ("-u", "--username")
+
+    password: typing.Optional[str] = None
+    "Log in with PASSWORD, in place of the URI's or HOSTCTL_PASSWORD ('' for none)"
+    ("-p", "--password")
 
     def credentials(self) -> dict:
-        """The password from `--ask-password` or `HOSTCTL_PASSWORD`, if any."""
-        password = os.environ.get("HOSTCTL_PASSWORD")
-        if self.ask_password:
-            if running_mode() == "mcp":
-                # A tool call has no terminal; the prompt would wait forever.
-                raise CommandError(
-                    "--ask-password cannot prompt in a tool call; set "
-                    "HOSTCTL_PASSWORD in the server's environment",
-                    FAILED,
-                )
-            password = getpass.getpass("Password: ")
-        return {"password": password} if password is not None else {}
+        """`-u`, and the password from `-p` or else `HOSTCTL_PASSWORD`.
+
+        Without either, a host that asks for a password gets a prompt on a
+        terminal, read once for every host, and an error everywhere else.
+        """
+        found: typing.Dict[str, object] = {}
+        if self.username is not None:
+            found["username"] = self.username
+        if self.password is not None:
+            found["password"] = self.password
+        else:
+            ambient = os.environ.get("HOSTCTL_PASSWORD")
+            if ambient is not None:
+                found["password"] = ambient
+                found[_AMBIENT] = True
+            else:
+                found[_ASK] = PasswordPrompt() if _on_a_terminal() else no_password
+        return found
+
+    def open(self, uri: str, credentials: dict) -> typing.ContextManager[Host]:
+        """The host `uri` names, offered what of `credentials` it accepts.
+
+        A login every provider refused is raised as that `PermissionError`.
+        """
+        return _reporting_refusals(Host(uri, **offered(uri, credentials)))
 
     def open_host(self, stack: contextlib.ExitStack, uri: str) -> Host:
         """Connect to `uri` for the life of `stack`."""
-        credentials = usable_credentials(uri, self.credentials())
-        return stack.enter_context(Host(uri, **credentials))
+        return stack.enter_context(self.open(uri, self.credentials()))
 
     def path_operand(self, stack: contextlib.ExitStack, value: str) -> Path:
         """Resolve ``URI:PATH`` on its host, or an ordinary local path."""
@@ -189,10 +324,6 @@ class HostCommand(Credentialed):
     "Connection URI (see `hostctl --help`)"
     ("uri",)
 
-    def connect(self) -> Host:
+    def connect(self) -> typing.ContextManager[Host]:
         """The host, as a context manager that closes it."""
         return self.open(self.uri, self.credentials())
-
-    def open(self, uri: str, credentials: dict) -> Host:
-        """The host `uri` names, offered what of `credentials` it accepts."""
-        return Host(uri, **usable_credentials(uri, credentials))

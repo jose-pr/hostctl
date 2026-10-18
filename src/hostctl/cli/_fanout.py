@@ -129,8 +129,8 @@ class FanOutCommand(HostCommand):
 
         if self.parallel < 1:
             raise CommandError("--parallel must be at least 1", FAILED)
-        # Read once, here: a prompt from a worker thread, once per host,
-        # would interleave on the terminal.
+        # Read once, here, so every host shares one prompt: it asks the first
+        # time a host needs a password, and the others reuse the answer.
         credentials = self.credentials()
         out, err = sys.stdout, sys.stderr
         lock = threading.Lock()

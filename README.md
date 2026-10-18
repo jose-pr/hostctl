@@ -235,8 +235,8 @@ hostctl info ssh://server
 hostctl cp ./artifact ssh://server:/tmp/artifact
 ```
 
-Secrets never belong in argv. Use `HOSTCTL_PASSWORD` or the subcommand's
-`--ask-password` option. See the
+A password comes from `-p`, `HOSTCTL_PASSWORD`, the URI, or a prompt when a
+host asks for one on a terminal; `-u` sets the user. See the
 [CLI guide](https://jose-pr.github.io/hostctl/guide/cli/) for all subcommands
 and exit statuses. With `HOSTCTL_MCP=stdio` in its environment the same
 program serves every subcommand as an MCP tool over stdio.

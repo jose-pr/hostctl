@@ -38,10 +38,10 @@ several hosts (run, info):
   Each output line starts with [URI]; --parallel N runs N hosts at once.
 
 credentials:
-  A password comes from the HOSTCTL_PASSWORD environment variable, or from
-  --ask-password, and never from the command line, where it would reach the
-  process table and the shell history. It is offered only to schemes that
-  accept one.
+  -u USERNAME and -p PASSWORD replace the URI's user and password; -p '' is
+  no password. Without -p the password is HOSTCTL_PASSWORD, else the URI's
+  own, else a prompt on the terminal when a host asks for one. Without a
+  terminal a host that needs a password fails (126).
 
 exit status:
   0    the command succeeded (for `run`, the remote command's own status)

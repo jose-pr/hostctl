@@ -39,9 +39,25 @@ logger.
 `hostctl --help` carries the same table, the URI forms, and the `URI:PATH`
 grammar, so none of it lives only here.
 
-Passwords are never accepted as command-line arguments. Set
-`HOSTCTL_PASSWORD`, or pass `--ask-password` after a subcommand to use an
-interactive hidden prompt.
+Credentials come from the options, the environment or a prompt:
+
+| source | how |
+| ------ | --- |
+| `-u USERNAME`, `--username USERNAME` | the login user; replaces the URI's |
+| `-p PASSWORD`, `--password PASSWORD` | the password; replaces the URI's and `HOSTCTL_PASSWORD`; `-p ''` is no password and no prompt |
+| `HOSTCTL_PASSWORD` | the password when `-p` is not given; offered only to schemes that take one |
+| the URI | `ssh://user:password@host`, used when neither of the above gives a password |
+| a prompt | when a host asks for a password and standard input is a terminal: asked once, hidden, and shared by every host of the run |
+
+The prompt waits until a host needs it: an SSH key login never asks, and a
+WinRM host asks only for a leg that authenticates with a password. With no
+terminal (a script, CI, a tool call) nothing prompts; a host that needs a
+password fails at once with exit 126:
+
+```console
+$ hostctl run ssh://server -- uptime < /dev/null
+hostctl: permission denied: a password is needed and there is no terminal to ask on; pass -p PASSWORD or set HOSTCTL_PASSWORD
+```
 
 Transport extras stay optional. Using a transport whose extra is missing exits
 125 with one line naming the extra to install:
@@ -168,12 +184,12 @@ as an MCP tool over stdio instead of running one: `hostctl.run`, `hostctl.ls`,
   with `tree`, and install it on any host it can reach.
 - A failure is an error result naming the exit status, so 125, 126 and 127 stay
   distinguishable.
-- A tool call cannot prompt, so `--ask-password` is refused; put
-  `HOSTCTL_PASSWORD` in the server's environment.
-- Any tool caller can read that variable (`run local: -- ...` prints the
-  server's environment) and can name any host for it to be offered to. Set
-  `HOSTCTL_PASSWORD` only for an MCP client you would hand that password;
-  otherwise leave it unset and connect with keys.
+- `username` and `password` are tool parameters like any other option; a
+  tool call never prompts, and a host that needs a password nobody gave
+  fails with exit 126.
+- A `HOSTCTL_PASSWORD` in the server's environment applies to tool calls as
+  well; a tool caller can read it (`run local: -- ...` prints the server's
+  environment) and can name any host for it to be offered to.
 - A tool call has no standard input, so `shell` opens a session, sends nothing
   and returns what the host printed before it closed.
 - Output that is not UTF-8 (`cat` of a binary file) goes to the server's

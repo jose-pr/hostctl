@@ -12,13 +12,17 @@ from hostctl.cli import main
 from hostctl.cli._common import split_operand
 
 
-def test_cli_has_no_password_argument(capsys):
+def test_every_connecting_command_takes_username_and_password(capsys):
+    for command in ("run", "info", "ls", "cat", "cp", "shell", "deploy"):
+        with pytest.raises(SystemExit) as exit_:
+            main([command, "--help"])
+        assert exit_.value.code == 0
+        out = capsys.readouterr().out
+        for flag in ("-u USERNAME", "--username", "-p PASSWORD", "--password"):
+            assert flag in out, (command, flag)
+        assert "--ask-password" not in out
     with pytest.raises(SystemExit) as exit_:
-        main(["run", "--help"])
-    assert exit_.value.code == 0
-    assert "--password" not in capsys.readouterr().out
-    with pytest.raises(SystemExit) as exit_:
-        main(["run", "--password", "secret", "local:", "--", "echo"])
+        main(["run", "--ask-password", "local:", "--", "echo"])
     assert exit_.value.code == 2
 
 
@@ -279,14 +283,12 @@ def test_a_tool_call_returns_the_command_output_and_status():
     assert "exit code: 3" in text
 
 
-def test_a_tool_call_cannot_prompt_for_a_password():
-    result = duho_mcp.call_tool(
-        Hostctl, "hostctl.info", {"uri": "local:", "ask_password": True}
-    )
-
-    assert result["isError"]
-    assert "HOSTCTL_PASSWORD" in result["content"][0]["text"]
-    assert "exit code: 125" in result["content"][0]["text"]
+def test_a_tool_takes_username_and_password_as_parameters():
+    tools = {tool["name"]: tool for tool in duho_mcp.describe_tools(Hostctl)}
+    for tool in tools.values():
+        properties = tool["inputSchema"]["properties"]
+        assert {"username", "password"} <= set(properties), tool["name"]
+        assert "ask_password" not in properties
 
 
 def test_without_duho_the_command_names_the_extra(monkeypatch):

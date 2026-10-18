@@ -225,13 +225,23 @@ def test_a_password_never_reaches_a_label(hosts, capsys):
 
 
 def test_a_password_is_asked_for_once(hosts, monkeypatch):
+    import io
+
+    class _TTY(io.StringIO):
+        def isatty(self):
+            return True
+
     asked = []
+    monkeypatch.delenv("HOSTCTL_PASSWORD", raising=False)
+    monkeypatch.setattr("sys.stdin", _TTY())
     monkeypatch.setattr("getpass.getpass", lambda prompt: asked.append(1) or "pw")
 
-    main(["run", "ssh://a,b,c", "--ask-password", "--", "x"])
+    main(["run", "ssh://a,b,c", "--parallel", "3", "--", "x"])
 
+    # Each host asks for the password, as a transport does when it needs one.
+    answers = [cred["password"]() for _, cred in hosts["opened"]]
     assert asked == [1]
-    assert [cred for _, cred in hosts["opened"]] == [{"password": "pw"}] * 3
+    assert answers == ["pw"] * 3
 
 
 def test_hosts_run_concurrently_up_to_parallel(hosts, capsys):

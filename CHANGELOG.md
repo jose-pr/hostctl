@@ -53,6 +53,7 @@ down that predate these renames keep the 0.3 spellings; this table maps them.
 | a server certificate trusted only through certifi on pywinrm, PSRP or an `https://` Docker engine (`verify=True`) | fails: `verify=True` trusts the operating system's store. Install the CA there, pass `verify="ca.pem"`, or set `REQUESTS_CA_BUNDLE` to certifi's bundle (`python -m certifi` prints its path). On Windows a public root not yet in the machine's store fails the same way until Windows has fetched it |
 
 | `HostConfig(uri, password=...)` with a password in the URI raising `ValueError` | the keyword replaces the URI's password (extras included); `password=""` is no password |
+| `hostctl <command> --ask-password` | nothing: the command prompts by itself when a host asks for a password on a terminal; `-p PASSWORD` or `HOSTCTL_PASSWORD` where nothing can prompt |
 
 pytruenas 0.5.4 and earlier pin `hostctl<0.4` and import the 0.3 paths
 (`from hostctl.host import PosixHost, SshConfig, ...`), so they do not import
@@ -308,6 +309,15 @@ collection until pytruenas ports to these names.
   builds its session, and `provider="auto"` takes the native leg without
   calling it when that can serve the config. A program can so prompt its
   user only when it has to.
+- **`hostctl -u USERNAME -p PASSWORD`, and a prompt only when a host asks.**
+  Every connecting subcommand takes `-u`/`--username` and `-p`/`--password`,
+  which replace the URI's user and password (`-p ''`: no password, no
+  prompt). Without `-p` the password is `HOSTCTL_PASSWORD`, else the URI's
+  own; without any, the command prompts once on a terminal when a host asks
+  for a password (never for an accepted SSH key) and, with no terminal or in
+  a tool call, fails at once with exit 126 naming `-p` and
+  `HOSTCTL_PASSWORD`. Over MCP `username` and `password` are tool
+  parameters. A login every provider refused now exits 126 (it was 125).
 
 ### Changed
 
