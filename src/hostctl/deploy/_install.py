@@ -110,7 +110,9 @@ def install_pyz(
     host.logger.info("writing %s (%d bytes)", target, len(payload))
     incoming = f"{target}.new"
     host.path(incoming).write_bytes(payload)
-    _step(host, "chmod", "755", "--", incoming)
+    # The mode is an operand: BSD chmod stops parsing options at it, so a
+    # `--` after it would be taken for a file.
+    _step(host, "chmod", "--", "755", incoming)
     _step(host, "mv", "-f", "--", incoming, target)
     host.path(marker).write_bytes(f"{digest}\n".encode())
     return True

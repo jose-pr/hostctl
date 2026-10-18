@@ -97,7 +97,9 @@ class SandboxPrograms(BufferedExecutor):
         return b"", b"", 0
 
     def _chmod(self, argv):
-        (mode,), (remote,) = self._operands(argv)
+        # BSD chmod ends its options at the mode, so `--` must precede it.
+        options, (mode, remote) = self._operands(argv)
+        assert not options, f"chmod's mode must follow `--`: {argv!r}"
         self.local(remote).chmod(int(mode, 8))
         return b"", b"", 0
 
