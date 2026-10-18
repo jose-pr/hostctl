@@ -577,8 +577,10 @@ collection until pytruenas ports to these names.
   Python 3.9, or without `truststore`, the store is what Python's `ssl`
   loads, which on Windows is the roots already present and on macOS not the
   keychain (see the contracts ledger). The `winrm`, `psrp`, `container`,
-  `winrm-credssp` and `winrm-kerberos` extras need `requests>=2.32.3` and,
-  on Python 3.10+, `truststore>=0.10.5`. **Breaking, 0.4.0.**
+  `winrm-credssp` and `winrm-kerberos` extras need `requests>=2.32.3`,
+  `urllib3>=2.0.2` (with 1.26 a verifying connection to a host given by IP
+  address fails) and, on Python 3.10+, `truststore>=0.10.5`. **Breaking,
+  0.4.0.**
 
 ### Removed
 

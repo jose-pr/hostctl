@@ -330,7 +330,8 @@ connection timeouts belong to the transport configs in its
 - A set CA variable is the only trust, as it is in `requests`, checked by
   OpenSSL; a missing file it names raises `FileNotFoundError` naming the
   variable. The `winrm`, `psrp` and `container` extras need
-  `requests>=2.32.3` and, on Python 3.10+, `truststore>=0.10.5`.
+  `requests>=2.32.3`, `urllib3>=2.0.2` (1.26 refuses `verify=True` to a host
+  given by IP address) and, on Python 3.10+, `truststore>=0.10.5`.
 
 - **URI key** `verify`: `1/true/yes/on` or `0/false/no/off`, else (TLS
   schemes) a percent-encoded bundle path. `connection_uri` renders it where
