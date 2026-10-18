@@ -157,7 +157,9 @@ assert str(same) == str(config)
 - **Account and port.** With no `username` the ssh_config's `User` applies,
   else the local account name; with no `port` its `Port`, else 22, as `ssh`
   does without `-l`/`-p`. A value you pass wins. `ssh://h` names no port;
-  `ssh://h:22` names 22.
+  `ssh://h:22` names 22. `default_username="root"` takes the local account's
+  place: the ssh_config's `User` still wins over it, and `username` over
+  both.
 - **Host keys.** `known_hosts=()` (the default) verifies the server's key
   against the ssh_config's `UserKnownHostsFile`, else `~/.ssh/known_hosts`,
   as `ssh` does; a path, bytes or a sequence of them names the trusted keys.
