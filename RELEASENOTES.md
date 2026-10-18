@@ -9,6 +9,8 @@ record. Earlier releases are recorded in `CHANGELOG.md` only.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-19
+
 The 0.4.0 notes. Next performance target: a CI benchmark result for this
 release in `benchmarks/results/`, so the following release has a
 previous->current table; `host_checksum()` and composite-path dispatch are the
