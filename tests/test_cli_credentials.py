@@ -290,6 +290,71 @@ def test_username_replaces_the_uris_user_on_the_wire(ssh):
     assert users == {"tester"}
 
 
+# -- --ssh-config ------------------------------------------------------------
+
+_ALIAS_URI = "ssh://tester@hostctl-alias.invalid"
+
+
+def _alias_config(server) -> str:
+    return (
+        "Host hostctl-alias.invalid\n"
+        "    HostName 127.0.0.1\n"
+        f"    Port {server.port}\n"
+    )
+
+
+def _authenticated(server) -> bool:
+    return any(event[0] == "begin_auth" for event in server.events)
+
+
+def test_without_the_flag_the_users_ssh_config_is_read(ssh, fake_home):
+    with ssh() as server:
+        (fake_home / ".ssh" / "config").write_text(_alias_config(server))
+        assert main(["run", _ALIAS_URI, "--", "true"]) == 0
+    assert _authenticated(server)
+
+
+def test_an_empty_flag_reads_no_ssh_config(ssh, fake_home, capsys):
+    with ssh() as server:
+        (fake_home / ".ssh" / "config").write_text(_alias_config(server))
+        assert main(["run", "--ssh-config", "", _ALIAS_URI, "--", "true"]) != 0
+    assert not _authenticated(server)
+
+
+def test_the_flag_names_a_file_even_without_a_slash(
+    ssh, fake_home, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    with ssh() as server:
+        (tmp_path / "ssh_config").write_text(_alias_config(server))
+        assert (
+            main(["run", "--ssh-config", "ssh_config", _ALIAS_URI, "--", "true"]) == 0
+        )
+    assert _authenticated(server)
+
+
+def test_the_flag_on_a_scheme_without_an_ssh_config_is_refused(capsys):
+    assert main(["info", "--ssh-config", "cfg", "local:"]) == 125
+    assert capsys.readouterr().err == (
+        "hostctl: local: takes no ssh config (--ssh-config)\n"
+    )
+
+
+def test_a_tool_call_takes_ssh_config_as_a_path(ssh, fake_home, tmp_path):
+    tools = {tool["name"]: tool for tool in duho_mcp.describe_tools(Hostctl)}
+    assert "ssh_config" in tools["hostctl.run"]["inputSchema"]["properties"]
+    with ssh() as server:
+        path = tmp_path / "ssh_config"
+        path.write_text(_alias_config(server))
+        result = duho_mcp.call_tool(
+            Hostctl,
+            "hostctl.run",
+            {"uri": _ALIAS_URI, "ssh_config": str(path), "--": ["true"]},
+        )
+    assert not result.get("isError"), result
+    assert _authenticated(server)
+
+
 # -- WinRM -------------------------------------------------------------------
 
 

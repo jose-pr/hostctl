@@ -179,7 +179,8 @@ collection until pytruenas ports to these names.
   file that exists only while the connection opens and never appears in
   `repr()` or `connection_uri`. A `str` is never a file name (a line with a
   keyword and no value raises `ValueError` naming `pathlib.Path`). It is a
-  keyword only, never a URI key.
+  keyword only, never a URI key. `hostctl <command> --ssh-config PATH` (and
+  the `ssh_config` tool parameter) names the file, `--ssh-config ''` none.
   `SSHConfig(port=None)`, the default, leaves the port to the ssh_config's
   `Port`, else 22, as `username=None` leaves the user. `SshConfig(connect_options=)` passes extra keywords to
   `asyncssh.connect` on both legs, and `SshConfig(path_flavor="auto")` asks the

@@ -59,6 +59,18 @@ $ hostctl run ssh://server -- uptime < /dev/null
 hostctl: permission denied: a password is needed and there is no terminal to ask on; pass -p PASSWORD or set HOSTCTL_PASSWORD
 ```
 
+An SSH host reads your own `~/.ssh/config`, as `ssh` does, so an alias, its
+`User`, `Port`, key, `ProxyJump` and `UserKnownHostsFile` apply.
+`--ssh-config PATH` reads that file instead, and `--ssh-config ''` reads none;
+the value is always a file name. A scheme with no ssh_config (`local:`,
+`winrm://`) refuses the option with exit 125.
+
+```console
+$ hostctl run ssh://nas -- uptime                              # ~/.ssh/config
+$ hostctl run --ssh-config ./ci_ssh_config ssh://nas -- uptime
+$ hostctl run --ssh-config '' ssh://admin@nas.example -- uptime   # no config
+```
+
 Transport extras stay optional. Using a transport whose extra is missing exits
 125 with one line naming the extra to install:
 
@@ -187,6 +199,11 @@ as an MCP tool over stdio instead of running one: `hostctl.run`, `hostctl.ls`,
 - `username` and `password` are tool parameters like any other option; a
   tool call never prompts, and a host that needs a password nobody gave
   fails with exit 126.
+- `ssh_config` is a tool parameter too, a file name on the server's machine
+  (`''` for none). A file can hold a `ProxyCommand`, which starts a local
+  process; a tool caller can already do that with `run local: -- ...`, so
+  naming one grants nothing more. Without it the server's user's
+  `~/.ssh/config` applies.
 - A `HOSTCTL_PASSWORD` in the server's environment applies to tool calls as
   well; a tool caller can read it (`run local: -- ...` prints the server's
   environment) and can name any host for it to be offered to.

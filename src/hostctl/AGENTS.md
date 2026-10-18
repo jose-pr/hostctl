@@ -1755,7 +1755,10 @@ hostctl deploy ssh://server mytool /opt/mytool.pyz -- --version
   `PATH` and a failed step on the host (`CalledProcessError`, reported with
   its last stderr line) exit 125.
 - Each subcommand takes `-u`/`--username USERNAME`, `-p`/`--password
-  PASSWORD`, `-v`/`-q` and `--loglevel`; the root takes `--version`. `-u`
+  PASSWORD`, `--ssh-config PATH`, `-v`/`-q` and `--loglevel`; the root
+  takes `--version`. `--ssh-config` is always a file name (`''`: read no
+  ssh_config); without it an SSH host reads `~/.ssh/config`, and a scheme
+  with no ssh_config exits 125. A tool call takes it as `ssh_config`. `-u`
   replaces the URI's user and `-p` its password (`-p ''`: no password, no
   prompt), as the library's keyword credentials do. The password comes from
   `-p`, else `HOSTCTL_PASSWORD`, else the URI's own; without any, a host that

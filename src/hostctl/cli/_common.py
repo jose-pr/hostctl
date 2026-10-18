@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import getpass
 import io
 import os
+import pathlib
 import re
 import sys
 import threading
 import typing
 from urllib.parse import urlsplit
 
-from duho import Cmd, LoggingArgs, running_mode
+from duho import Arg, Cmd, LoggingArgs, Meta, running_mode
 
 from ..exceptions import OperationNotStartedError
 from ..host._host import Host
@@ -128,6 +130,20 @@ def offered(uri: str, credentials: dict) -> dict:
     ):
         found["password"] = credentials[_ASK]
     return found
+
+
+def with_ssh_config(config: HostConfig, path: str) -> HostConfig:
+    """`config` reading the ssh_config file `path`, or none for `''`.
+
+    On the command line the value is always a file name, never config text.
+    A scheme with no ssh_config raises `ValueError`, as `-u` does.
+    """
+    from ..transports.ssh._config import SSHConfig
+
+    if not isinstance(config, SSHConfig):
+        scheme = config.connection_uri.partition(":")[0]
+        raise ValueError(f"{scheme}: takes no ssh config (--ssh-config)")
+    return dataclasses.replace(config, ssh_config=pathlib.Path(path) if path else None)
 
 
 def _accepted(uri: str) -> typing.Optional[typing.Tuple[str, ...]]:
@@ -277,6 +293,12 @@ class Credentialed(LoggingArgs, Cmd):
     "Log in with PASSWORD, in place of the URI's or HOSTCTL_PASSWORD ('' for none)"
     ("-p", "--password")
 
+    # A tool caller may name a local file: a ProxyCommand in it starts a
+    # local process, which `run local:` already lets that caller do.
+    ssh_config: Arg[typing.Optional[str], Meta(metavar="PATH")] = None
+    "Read PATH as the SSH config, in place of ~/.ssh/config ('' for none)"
+    ("--ssh-config",)
+
     def credentials(self) -> dict:
         """`-u`, and the password from `-p` or else `HOSTCTL_PASSWORD`.
 
@@ -302,7 +324,12 @@ class Credentialed(LoggingArgs, Cmd):
 
         A login every provider refused is raised as that `PermissionError`.
         """
-        return _reporting_refusals(Host(uri, **offered(uri, credentials)))
+        if self.ssh_config is None:
+            return _reporting_refusals(Host(uri, **offered(uri, credentials)))
+        config = with_ssh_config(
+            HostConfig(uri, **offered(uri, credentials)), self.ssh_config
+        )
+        return _reporting_refusals(config._create_host())
 
     def open_host(self, stack: contextlib.ExitStack, uri: str) -> Host:
         """Connect to `uri` for the life of `stack`."""
