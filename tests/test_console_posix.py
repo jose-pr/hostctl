@@ -20,8 +20,10 @@ import io
 import os
 import re
 import shutil
+import select
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -734,8 +736,46 @@ _TOOLS = ("sh", "base64", "mktemp", "cat", "rm")
 _HAS_SH = all(shutil.which(tool) for tool in _TOOLS)
 
 
+#: Seconds a test helper's read or write may block before the test fails;
+#: far above anything a passing run needs, so only a hang reaches it.
+_IO_BOUND = 30
+
+#: Pipes whose reader never saw end-of-file. Closing one would block, and
+#: dropping it would warn about an unclosed file in an unrelated test.
+_STUCK: list = []
+
+
+def _end_tree(proc):
+    """Kill `proc` and everything it started."""
+    if os.name == "nt":
+        # Git Bash's `sh.exe` may be a launcher whose child is the shell, and
+        # an MSYS shell's children outlive it: either keeps the pipes open.
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=_IO_BOUND,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    else:
+        try:
+            os.killpg(proc.pid, 9)
+        except OSError:
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
 class _PipeProcess:
-    """`sh -s` over pipes: a real shell parsing the typed lines, no terminal."""
+    """`sh -s` over pipes: a real shell parsing the typed lines, no terminal.
+
+    On Windows, closing a pipe while another thread is blocked reading it
+    blocks too, so `close` ends the shell's tree first and closes stdout only
+    once the reader has seen end-of-file.
+    """
 
     def __init__(self):
         self.proc = subprocess.Popen(
@@ -743,24 +783,61 @@ class _PipeProcess:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            start_new_session=os.name != "nt",
         )
         self.returncode = None
+        self._eof = threading.Event()
+        self._writer = None
 
     def read(self, size=-1):
-        data = os.read(self.proc.stdout.fileno(), 65536)
+        try:
+            data = os.read(self.proc.stdout.fileno(), 65536)
+        except OSError:
+            data = b""
         if not data:
             self.returncode = 0
+            self._eof.set()
         return data
 
     def write(self, data):
-        self.proc.stdin.write(data)
-        self.proc.stdin.flush()
+        def deliver():
+            try:
+                self.proc.stdin.write(data)
+                self.proc.stdin.flush()
+            except BaseException as exc:  # handed to the caller below
+                failure.append(exc)
+
+        failure = []
+        self._writer = threading.Thread(target=deliver, daemon=True)
+        self._writer.start()
+        self._writer.join(_IO_BOUND)
+        if self._writer.is_alive():
+            raise TimeoutError(f"sh stopped reading its stdin for {_IO_BOUND} s")
+        if failure:
+            raise failure[0]
 
     def close(self):
-        self.proc.kill()
-        self.proc.wait()
+        if self._writer is None or not self._writer.is_alive():
+            try:
+                self.proc.stdin.close()  # an idle `sh -s` exits on end-of-file
+            except OSError:
+                pass
+        if not self._eof.wait(5):
+            _end_tree(self.proc)
+        try:
+            self.proc.wait(_IO_BOUND)
+        except subprocess.TimeoutExpired:
+            _end_tree(self.proc)
+        if self._writer is not None:
+            self._writer.join(_IO_BOUND)
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        if not self._eof.wait(_IO_BOUND):
+            _STUCK.append(self.proc.stdout)
+            pytest.fail("the shell's stdout never ended after its tree was killed")
         self.proc.stdout.close()
-        self.proc.stdin.close()
 
 
 @pytest.fixture
@@ -821,6 +898,8 @@ class _PtyShell:
             os.environ["PS1"] = "root@device:~# "
             os.environ.pop("ENV", None)
             os.execvp(argv[0], argv)
+        # Non-blocking, so every helper below can bound how long it waits.
+        os.set_blocking(self.fd, False)
         self.returncode = None
 
     def close(self):
@@ -835,6 +914,23 @@ class _PtyShell:
         os.waitpid(self.pid, 0)
 
 
+def _write_all(fd, data):
+    """Write all of `data` to the non-blocking pty master, or fail the test."""
+    view = memoryview(data)
+    deadline = time.monotonic() + _IO_BOUND
+    while view:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError(
+                f"pty write blocked for {_IO_BOUND} s with {len(view)} bytes left"
+            )
+        select.select([], [fd], [], min(left, 0.1))
+        try:
+            view = view[os.write(fd, view) :]
+        except BlockingIOError:
+            time.sleep(0.005)
+
+
 class _PtyStream:
     """A `ConsoleStream` over the pty master: select-bounded reads."""
 
@@ -842,13 +938,13 @@ class _PtyStream:
         self.fd = fd
 
     def read(self, size=-1, *, timeout=None):
-        import select
-
         ready, _, _ = select.select([self.fd], [], [], timeout)
         if not ready:
             return b""
         try:
             data = os.read(self.fd, size if size > 0 else 65536)
+        except BlockingIOError:
+            return b""
         except OSError:
             data = b""
         if not data:
@@ -856,9 +952,7 @@ class _PtyStream:
         return data
 
     def write(self, data):
-        view = memoryview(data)
-        while view:
-            view = view[os.write(self.fd, view) :]
+        _write_all(self.fd, data)
 
 
 class _PtyPort(_PtyStream):
@@ -900,13 +994,16 @@ class _BlockingPty:
         self.returncode = None
 
     def read(self, size=-1):
-        try:
-            return os.read(self.fd, size if size > 0 else 65536)
-        except OSError:
-            return b""
+        while True:
+            try:
+                return os.read(self.fd, size if size > 0 else 65536)
+            except BlockingIOError:
+                select.select([self.fd], [], [], 0.5)
+            except OSError:
+                return b""
 
     def write(self, data):
-        os.write(self.fd, data)
+        _write_all(self.fd, data)
 
 
 def _available_shells():
