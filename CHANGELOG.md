@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `DUHO_TRACEBACK=1` now adds the traceback after the `hostctl: ...` line of a
+  failure the command reports; it showed no traceback at all before.
+
 ### Changed
 
 - The `hostctl` command enters through `duho.run`: Ctrl-C ends it with status

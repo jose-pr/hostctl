@@ -373,6 +373,19 @@ def test_run_on_an_unreachable_host_exits_125_with_one_line(unreachable_ssh, cap
     assert "Traceback" not in err
 
 
+def test_the_traceback_follows_the_report_under_duho_traceback(
+    unreachable_ssh, capsys, monkeypatch
+):
+    monkeypatch.setenv("DUHO_TRACEBACK", "1")
+
+    assert main(["run", "ssh://nonexistent.invalid", "--", "true"]) == 125
+
+    err = capsys.readouterr().err
+    assert err.startswith("hostctl: ")
+    assert "Traceback (most recent call last)" in err
+    assert "OperationNotStartedError: no provider connected" in err
+
+
 def test_info_on_an_unreachable_host_exits_125_and_prints_no_identity(
     unreachable_ssh, capsys
 ):

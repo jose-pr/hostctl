@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+import traceback
 
 from duho import AUTO, Cli
+from duho.logging import traceback_enabled
 
 from ._status import ERRORS, EXIT_CODES, describe
 from .cat import Cat
@@ -55,8 +57,15 @@ exit status:
 
 
 def _report(message: str, code: int, error: BaseException) -> None:
-    """One `hostctl: ...` line on stderr, naming the kind of failure."""
+    """One `hostctl: ...` line on stderr, naming the kind of failure.
+
+    duho leaves the traceback to the hook, so ``DUHO_TRACEBACK`` adds it.
+    """
     print(f"hostctl: {describe(message, error)}", file=sys.stderr)
+    if traceback_enabled():
+        traceback.print_exception(
+            type(error), error, error.__traceback__, file=sys.stderr
+        )
 
 
 class Hostctl(Cli):
