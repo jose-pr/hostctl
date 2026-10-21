@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The `hostctl` command enters through `duho.run`: Ctrl-C ends it with status
+  130 and no traceback (also on several hosts), and a closed standard output
+  (`hostctl cat ... | head -1`) ends it with status 1 and no message. The
+  `cli` extra now needs `duho>=0.7.8,<0.8`.
+
 ## [0.4.0] - 2026-10-19
 
 ### Migrating from 0.3

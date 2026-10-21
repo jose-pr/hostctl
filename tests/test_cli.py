@@ -479,3 +479,18 @@ def test_ls_writes_one_line_per_name_whatever_the_name_holds(monkeypatch, capsys
     out = capsysbinary.readouterr().out
     assert out == b"report.txt\n\\x1b[2Jclean\\x0afake-entry.txt\n"
     assert not [byte for byte in out if byte < 0x20 and byte != 0x0A]
+
+
+def test_a_closed_standard_output_ends_quietly_with_one(monkeypatch, capsys):
+    """A reader that went away is not a failure to report."""
+
+    class Closed:
+        def write(self, data):
+            raise BrokenPipeError(32, "Broken pipe")
+
+        flush = write
+
+    monkeypatch.setattr("sys.stdout", Closed())
+
+    assert main(["info", "local:"]) == 1
+    assert capsys.readouterr().err == ""

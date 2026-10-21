@@ -274,12 +274,11 @@ def test_parallel_must_be_positive(hosts, capsys):
 
 
 def test_an_interrupt_is_not_swallowed_as_a_host_failure(hosts):
-    """As with one host, Ctrl-C ends the command; duho.fanout cancels the
-    hosts still queued when it reaches the waiting main thread."""
+    """As with one host, Ctrl-C ends the command with 130; duho.fanout cancels
+    the hosts still queued when it reaches the waiting main thread."""
     hosts["ssh://b"] = KeyboardInterrupt()
 
-    with pytest.raises(KeyboardInterrupt):
-        main(["run", "ssh://a,b,c", "--", "x"])
+    assert main(["run", "ssh://a,b,c", "--", "x"]) == 130
 
 
 def test_info_writes_one_record_per_host(hosts, capsys):

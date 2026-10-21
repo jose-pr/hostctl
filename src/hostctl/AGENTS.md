@@ -1800,7 +1800,8 @@ hostctl.cli.main(argv=None) -> int
 
 The entry point of the `hostctl` console script and of `python -m hostctl`,
 built on `duho`; install `hostctl[cli]`. Without the extra it raises
-`SystemExit` naming it. `hostctl.cli` is not library API: `import hostctl`
+`SystemExit` naming it. Ctrl-C ends with 130 and a closed standard output
+with 1, both without a message. `hostctl.cli` is not library API: `import hostctl`
 never imports it, and it is absent from `hostctl.__all__`. Each subcommand is
 a class in its own module (`hostctl.cli.cat.Cat`, `.cp.Cp`, `.info.Info`,
 `.ls.Ls`, `.run.Run`, `.shell.Shell`, `.deploy.Deploy`).

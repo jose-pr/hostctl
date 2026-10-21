@@ -112,10 +112,11 @@ winrm-kerberos = [
     "urllib3>=2.0.2,<3",
     "truststore>=0.10.5,<0.11; python_version >= '3.10'",
 ]
-# The `hostctl` command line. 0.7.5 is the floor: it is the first release
-# whose tool-call error result carries the exit status (125/126/127) for an
-# `_errors_` exception, and 0.7.4 is where `_report_error_` begins.
-cli = ["duho>=0.7.5,<0.8"]
+# The `hostctl` command line. 0.7.8 is the floor: `duho.run` ends a closed
+# stdout (Windows' EINVAL included) silently with status 1 from there, and
+# `status_for`, `_traceback_env_` and `fanout`'s `label=` are first shipped
+# or complete there.
+cli = ["duho>=0.7.8,<0.8"]
 # `hostctl.deploy`: packaging reads requirement lines and markers for the
 # dependency closure; pathspec filters a source tree with gitignore rules (its
 # `gitignore` pattern factory starts at 1.0); tomli reads pyproject.toml

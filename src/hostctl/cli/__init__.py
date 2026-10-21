@@ -22,7 +22,8 @@ def main(argv: typing.Optional[typing.Sequence[str]] = None) -> int:
     ``run`` returns the remote command's status; the command line's own
     failures are 125 (connection, timeout, usage, unsupported), 126
     (permission denied) and 127 (not found). A parser usage error raises
-    :class:`SystemExit` with 2. Without ``duho`` this raises
+    :class:`SystemExit` with 2. Ctrl-C ends with 130 and a closed standard
+    output with 1, both without a message. Without ``duho`` this raises
     :class:`SystemExit` naming the ``cli`` extra.
     """
     try:
@@ -35,8 +36,7 @@ def main(argv: typing.Optional[typing.Sequence[str]] = None) -> int:
 
     from ._root import Hostctl
 
-    status = duho.main(Hostctl, argv)
-    return 0 if status is None else int(status)
+    return duho.run(Hostctl, argv, exit="parse")
 
 
 def __getattr__(name: str) -> typing.Any:
