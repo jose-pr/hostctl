@@ -61,21 +61,6 @@ def expand_targets(operands: typing.Iterable[str]) -> typing.List[str]:
     return targets
 
 
-class _Target:
-    """A target URI shown by its password-free label, also in duho's logs."""
-
-    __slots__ = ("uri", "label")
-
-    def __init__(self, uri: str) -> None:
-        self.uri = uri
-        self.label = redact_uri(uri)
-
-    def __str__(self) -> str:
-        return self.label
-
-    __repr__ = __str__
-
-
 def prefixed(label: str, data: typing.Union[bytes, str, None]):
     """Each line of `data` behind ``[label] ``, ending in a newline."""
     if not data:
@@ -135,34 +120,36 @@ class FanOutCommand(HostCommand):
         out, err = sys.stdout, sys.stderr
         lock = threading.Lock()
 
-        def report(target: _Target, code: int, message: str = "") -> None:
-            line = f"hostctl: [{target}] exit status {code}"
+        def report(label: str, code: int, message: str = "") -> None:
+            line = f"hostctl: [{label}] exit status {code}"
             write(err, f"{line}: {message}\n" if message else line + "\n")
 
-        def one(target: _Target) -> int:
+        def one(target: str) -> int:
+            label = redact_uri(target)
             try:
-                with self.open(target.uri, credentials) as host:
+                with self.open(target, credentials) as host:
                     value = work(host)
             except Exception as error:  # noqa: BLE001 - one host never stops the rest
                 code = status_of(error)
                 if code is None:
-                    _LOGGER.debug("%s failed", target, exc_info=True)
+                    _LOGGER.debug("%s failed", label, exc_info=True)
                     code, message = 1, f"{type(error).__name__}: {error}"
                 else:
                     message = describe(str(error), error)
                 with lock:
-                    report(target, code, message)
+                    report(label, code, message)
                 return code
             with lock:
-                code = emit(target.label, value, out, err)
+                code = emit(label, value, out, err)
                 if code:
-                    report(target, code)
+                    report(label, code)
             return code
 
         return run_targets(
             one,
-            [_Target(target) for target in targets],
+            list(targets),
             max_workers=self.parallel,
+            label=redact_uri,
             aggregate=worst,
             logger=_LOGGER,
         )

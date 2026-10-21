@@ -224,6 +224,23 @@ def test_a_password_never_reaches_a_label(hosts, capsys):
     ]
 
 
+def test_a_password_never_reaches_duhos_failure_line(hosts, caplog, monkeypatch):
+    """A failure duho itself reports (the report line could not be written)
+    names the host by its label, not the URI that holds the password."""
+    hosts["ssh://u:hunter2@h1"] = OSError("refused")
+
+    def broken(stream, data):
+        raise RuntimeError("cannot write")
+
+    monkeypatch.setattr("hostctl.cli._fanout.write", broken)
+
+    with caplog.at_level(1):
+        main(["run", "ssh://u:hunter2@h1,h2", "--", "x"])
+
+    assert "target 'ssh://u@h1' failed" in caplog.text
+    assert "hunter2" not in caplog.text
+
+
 def test_a_password_is_asked_for_once(hosts, monkeypatch):
     import io
 
