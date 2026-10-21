@@ -6,7 +6,6 @@ import contextlib
 import dataclasses
 import getpass
 import io
-import os
 import pathlib
 import re
 import sys
@@ -14,7 +13,7 @@ import threading
 import typing
 from urllib.parse import urlsplit
 
-from duho import Arg, Cmd, LoggingArgs, Meta, running_mode
+from duho import Arg, Cmd, LoggingArgs, Meta, running_mode, value_sources
 
 from ..exceptions import OperationNotStartedError
 from ..host._host import Host
@@ -289,7 +288,7 @@ class Credentialed(LoggingArgs, Cmd):
     "Log in as USER, in place of the URI's user"
     ("-u", "--username")
 
-    password: typing.Optional[str] = None
+    password: Arg[typing.Optional[str], Meta(env="HOSTCTL_PASSWORD")] = None
     "Log in with PASSWORD, in place of the URI's or HOSTCTL_PASSWORD ('' for none)"
     ("-p", "--password")
 
@@ -308,15 +307,12 @@ class Credentialed(LoggingArgs, Cmd):
         found: typing.Dict[str, object] = {}
         if self.username is not None:
             found["username"] = self.username
-        if self.password is not None:
-            found["password"] = self.password
+        if self.password is None:
+            found[_ASK] = PasswordPrompt() if _on_a_terminal() else no_password
         else:
-            ambient = os.environ.get("HOSTCTL_PASSWORD")
-            if ambient is not None:
-                found["password"] = ambient
+            found["password"] = self.password
+            if value_sources(self).get("password") == "env":
                 found[_AMBIENT] = True
-            else:
-                found[_ASK] = PasswordPrompt() if _on_a_terminal() else no_password
         return found
 
     def open(self, uri: str, credentials: dict) -> typing.ContextManager[Host]:

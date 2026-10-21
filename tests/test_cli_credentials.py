@@ -91,6 +91,27 @@ def test_the_environment_is_used_without_the_flag(opened, monkeypatch):
     assert _password(opened) == "from-env"
 
 
+def test_an_exported_password_is_never_printed_in_help_or_a_tool_schema(
+    capsys, monkeypatch
+):
+    monkeypatch.setenv("HOSTCTL_PASSWORD", "from-env")
+    with pytest.raises(SystemExit):
+        main(["info", "--help"])
+    shown = capsys.readouterr().out + str(duho_mcp.describe_tools(Hostctl))
+    assert "from-env" not in shown
+    assert "HOSTCTL_PASSWORD" in shown
+
+
+def test_an_empty_exported_password_is_no_password_and_never_prompts(
+    opened, prompts, monkeypatch
+):
+    monkeypatch.setattr("sys.stdin", _TTY())
+    monkeypatch.setenv("HOSTCTL_PASSWORD", "")
+    assert main(["info", "ssh://u:in-uri@h"]) == 0
+    assert _password(opened) == ""
+    assert prompts == []
+
+
 def test_the_flag_and_the_environment_override_the_uris_password(opened, monkeypatch):
     assert main(["info", "--password", "from-flag", "ssh://u:in-uri@h"]) == 0
     assert _password(opened) == "from-flag"
