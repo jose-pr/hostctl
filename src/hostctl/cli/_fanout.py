@@ -19,7 +19,7 @@ from duho import Arg, CommandError, Meta
 from .._registry import host_schemes
 from ..uri._parse import redact_uri
 from ._common import FAILED, HostCommand, write
-from ._status import describe, status_of, worst
+from ._status import describe, worst
 
 _LOGGER = logging.getLogger(__name__)
 _AUTHORITY = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
@@ -110,7 +110,10 @@ class FanOutCommand(HostCommand):
         ``hostctl: [label] exit status N`` line on stderr. Returns the worst
         status (:func:`worst`).
         """
+        from duho import status_for
         from duho.fanout import run_targets
+
+        from ._root import Hostctl
 
         if self.parallel < 1:
             raise CommandError("--parallel must be at least 1", FAILED)
@@ -130,7 +133,7 @@ class FanOutCommand(HostCommand):
                 with self.open(target, credentials) as host:
                     value = work(host)
             except Exception as error:  # noqa: BLE001 - one host never stops the rest
-                code = status_of(error)
+                code = status_for(Hostctl, error)
                 if code is None:
                     _LOGGER.debug("%s failed", label, exc_info=True)
                     code, message = 1, f"{type(error).__name__}: {error}"

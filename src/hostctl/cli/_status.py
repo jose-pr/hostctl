@@ -63,13 +63,6 @@ def worst(codes: typing.Sequence[int]) -> int:
     return max(codes, key=rank, default=0)
 
 
-def status_of(error: BaseException) -> typing.Optional[int]:
-    """The exit status for `error`, or `None` when the CLI does not map it."""
-    return next(
-        (code for kind, code in ERRORS.items() if isinstance(error, kind)), None
-    )
-
-
 def describe(message: str, error: BaseException) -> str:
     """`message` with the failure's kind in front and, for a failed step,
     the last line it wrote to stderr after it."""
