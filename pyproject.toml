@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hostctl"
-version = "0.4.1.dev0"
+version = "0.4.1"
 authors = [{ name = "Jose A." }]
 description = "Run commands and access files on a host, local or remote, protocol-agnostic"
 readme = "README.md"
@@ -114,8 +114,7 @@ winrm-kerberos = [
 ]
 # The `hostctl` command line. 0.7.8 is the floor: `duho.run` ends a closed
 # stdout (Windows' EINVAL included) silently with status 1 from there, and
-# `status_for`, `_traceback_env_` and `fanout`'s `label=` are first shipped
-# or complete there.
+# `duho.status_for` and `duho.testing.invoke`'s `stdout_bytes` are used.
 cli = ["duho>=0.7.8,<0.8"]
 # `hostctl.deploy`: packaging reads requirement lines and markers for the
 # dependency closure; pathspec filters a source tree with gitignore rules (its

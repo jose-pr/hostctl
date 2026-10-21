@@ -9,6 +9,13 @@ record. Earlier releases are recorded in `CHANGELOG.md` only.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-22
+
+A patch release of the command line: it enters through `duho.run`, so Ctrl-C
+is 130 and a closed standard output a quiet 1, `DUHO_TRACEBACK=1` shows the
+traceback of a reported failure, and the `cli` extra needs `duho>=0.7.8,<0.8`.
+No library API changed.
+
 ## [0.4.0] - 2026-10-19
 
 The 0.4.0 notes. Next performance target: a CI benchmark result for this
