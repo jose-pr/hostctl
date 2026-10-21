@@ -13,6 +13,7 @@ import threading
 
 import duho.mcp as duho_mcp
 import pytest
+from duho.testing import invoke
 
 from hostctl.cli import main
 from hostctl.cli._fanout import expand_targets
@@ -129,21 +130,22 @@ def test_the_worst_status_wins(codes, expected):
 # -- one host: unchanged ----------------------------------------------------
 
 
-def test_one_host_is_unprefixed_whatever_the_options(hosts, capsysbinary):
+def test_one_host_is_unprefixed_whatever_the_options(hosts):
     hosts["ssh://nas"] = (b"out\n", b"err\n", 7)
 
-    assert main(["run", "ssh://nas", "--parallel", "4", "--", "x"]) == 7
+    result = invoke(Hostctl, ["run", "ssh://nas", "--parallel", "4", "--", "x"])
 
-    captured = capsysbinary.readouterr()
-    assert (captured.out, captured.err) == (b"out\n", b"err\n")
+    assert result.status == 7
+    assert (result.stdout_bytes, result.stderr) == (b"out\n", "err\n")
 
 
-def test_one_host_after_expansion_is_still_one_host(hosts, capsysbinary):
+def test_one_host_after_expansion_is_still_one_host(hosts):
     hosts["ssh://nas"] = (b"out", b"", 0)
 
-    assert main(["run", "ssh://nas,", "--", "x"]) == 0
+    result = invoke(Hostctl, ["run", "ssh://nas,", "--", "x"])
 
-    assert capsysbinary.readouterr().out == b"out"
+    assert result.status == 0
+    assert result.stdout_bytes == b"out"
 
 
 def test_one_host_info_is_the_bare_identity(hosts, capsys):
@@ -172,20 +174,19 @@ def test_the_uri_is_still_a_string_to_a_tool_caller():
 # -- several hosts ----------------------------------------------------------
 
 
-def test_every_record_names_its_host_and_failures_are_reported(hosts, capsysbinary):
+def test_every_record_names_its_host_and_failures_are_reported(hosts):
     hosts["ssh://a"] = (b"one\ntwo\n", b"", 0)
     hosts["ssh://b"] = (b"three", b"warn\r\n", 3)
     hosts["ssh://c"] = PermissionError("auth failed")
 
-    code = main(["run", "ssh://a,b", "ssh://c", "--", "x"])
+    result = invoke(Hostctl, ["run", "ssh://a,b", "ssh://c", "--", "x"])
 
-    captured = capsysbinary.readouterr()
-    assert code == 126
-    assert captured.out == b"[ssh://a] one\n[ssh://a] two\n[ssh://b] three\n"
-    assert captured.err.splitlines() == [
-        b"[ssh://b] warn",
-        b"hostctl: [ssh://b] exit status 3",
-        b"hostctl: [ssh://c] exit status 126: permission denied: auth failed",
+    assert result.status == 126
+    assert result.stdout_bytes == b"[ssh://a] one\n[ssh://a] two\n[ssh://b] three\n"
+    assert result.stderr.splitlines() == [
+        "[ssh://b] warn",
+        "hostctl: [ssh://b] exit status 3",
+        "hostctl: [ssh://c] exit status 126: permission denied: auth failed",
     ]
 
 
@@ -325,11 +326,12 @@ def test_a_tool_call_fans_out_too():
     assert result["content"][0]["text"].splitlines() == ["[local:] hi"] * 3
 
 
-def test_a_real_local_fan_out_keeps_each_status(capsysbinary):
+def test_a_real_local_fan_out_keeps_each_status():
     program = "import sys; print(sys.argv[1]); sys.exit(int(sys.argv[1]))"
-    code = main(["run", "local:,local:", "--", sys.executable, "-c", program, "5"])
+    result = invoke(
+        Hostctl, ["run", "local:,local:", "--", sys.executable, "-c", program, "5"]
+    )
 
-    assert code == 5
-    captured = capsysbinary.readouterr()
-    assert captured.out.splitlines() == [b"[local:] 5", b"[local:] 5"]
-    assert captured.err.splitlines() == [b"hostctl: [local:] exit status 5"] * 2
+    assert result.status == 5
+    assert result.stdout_bytes.splitlines() == [b"[local:] 5", b"[local:] 5"]
+    assert result.stderr.splitlines() == ["hostctl: [local:] exit status 5"] * 2

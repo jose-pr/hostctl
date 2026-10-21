@@ -5,6 +5,7 @@ import types
 
 import duho.mcp as duho_mcp
 import pytest
+from duho.testing import invoke
 
 from hostctl.shell._grammar import Exec
 from hostctl.cli._root import Hostctl
@@ -26,8 +27,9 @@ def test_every_connecting_command_takes_username_and_password(capsys):
     assert exit_.value.code == 2
 
 
-def test_run_propagates_status_and_streams(capsysbinary):
-    code = main(
+def test_run_propagates_status_and_streams():
+    result = invoke(
+        Hostctl,
         [
             "run",
             "local:",
@@ -35,12 +37,11 @@ def test_run_propagates_status_and_streams(capsysbinary):
             sys.executable,
             "-c",
             "import sys; print('out'); print('err', file=sys.stderr); sys.exit(7)",
-        ]
+        ],
     )
-    captured = capsysbinary.readouterr()
-    assert code == 7
-    assert captured.out.strip() == b"out"
-    assert captured.err.strip() == b"err"
+    assert result.status == 7
+    assert result.stdout_bytes.strip() == b"out"
+    assert result.stderr.strip() == "err"
 
 
 def test_run_without_a_command_is_a_usage_failure(capsys):
@@ -71,7 +72,7 @@ def test_run_marks_the_operand_as_one_direct_command(monkeypatch):
     assert seen == [(Exec("/bin/sh", "-c", "true"),)]
 
 
-def test_cat_ls_cp_and_info(tmp_path, capsysbinary):
+def test_cat_ls_cp_and_info(tmp_path):
     source = tmp_path / "source.txt"
     source.write_bytes(b"value")
     target = tmp_path / "target.txt"
@@ -79,16 +80,17 @@ def test_cat_ls_cp_and_info(tmp_path, capsysbinary):
     assert main(["cp", str(source), str(target)]) == 0
     assert target.read_bytes() == b"value"
 
-    capsysbinary.readouterr()
-    assert main(["cat", "local:", str(target)]) == 0
-    assert capsysbinary.readouterr().out == b"value"
+    cat = invoke(Hostctl, ["cat", "local:", str(target)])
+    assert cat.status == 0
+    assert cat.stdout_bytes == b"value"
 
-    assert main(["ls", "local:", str(tmp_path)]) == 0
-    listing = capsysbinary.readouterr().out.decode().splitlines()
-    assert {"source.txt", "target.txt"} <= set(listing)
+    ls = invoke(Hostctl, ["ls", "local:", str(tmp_path)])
+    assert ls.status == 0
+    assert {"source.txt", "target.txt"} <= set(ls.stdout_bytes.decode().splitlines())
 
-    assert main(["info", "local:"]) == 0
-    assert "os_family" in json.loads(capsysbinary.readouterr().out)
+    info = invoke(Hostctl, ["info", "local:"])
+    assert info.status == 0
+    assert "os_family" in json.loads(info.stdout_bytes)
 
 
 def test_remote_operand_split_rejects_a_port_taken_as_the_path():
@@ -191,9 +193,7 @@ def test_password_comes_from_environment_not_argv(monkeypatch, capsys):
     assert seen == {"password": "environment-secret"}
 
 
-def test_shell_uses_session_and_submits_input(monkeypatch, capsysbinary):
-    import io
-
+def test_shell_uses_session_and_submits_input(monkeypatch):
     events = []
 
     class _Session:
@@ -226,9 +226,11 @@ def test_shell_uses_session_and_submits_input(monkeypatch, capsysbinary):
             return False
 
     monkeypatch.setattr("hostctl.cli._common.Host", lambda *args, **kwargs: _Host())
-    monkeypatch.setattr("sys.stdin", io.StringIO("show version\n"))
-    assert main(["shell", "serial:///loop%3A%2F%2F"]) == 0
-    assert capsysbinary.readouterr().out == b"ready\n"
+    result = invoke(
+        Hostctl, ["shell", "serial:///loop%3A%2F%2F"], stdin="show version\n"
+    )
+    assert result.status == 0
+    assert result.stdout_bytes == b"ready\n"
     assert events == [
         ("session", {"terminal": True}),
         ("send", "show version"),
@@ -463,7 +465,7 @@ def test_display_name_escapes_what_a_peer_could_use_to_forge_output(name, expect
     assert display_name(name) == expected
 
 
-def test_ls_writes_one_line_per_name_whatever_the_name_holds(monkeypatch, capsysbinary):
+def test_ls_writes_one_line_per_name_whatever_the_name_holds(monkeypatch):
     import contextlib
 
     from hostctl.cli import ls as lsmod
@@ -488,8 +490,9 @@ def test_ls_writes_one_line_per_name_whatever_the_name_holds(monkeypatch, capsys
 
     monkeypatch.setattr(lsmod.Ls, "connect", connect)
 
-    assert main(["ls", "ssh://hostile", "/srv"]) == 0
-    out = capsysbinary.readouterr().out
+    result = invoke(Hostctl, ["ls", "ssh://hostile", "/srv"])
+    out = result.stdout_bytes
+    assert result.status == 0
     assert out == b"report.txt\n\\x1b[2Jclean\\x0afake-entry.txt\n"
     assert not [byte for byte in out if byte < 0x20 and byte != 0x0A]
 

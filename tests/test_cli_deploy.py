@@ -7,6 +7,7 @@ import re
 
 import duho.mcp as duho_mcp
 import pytest
+from duho.testing import invoke
 
 pytest.importorskip("packaging")
 pytest.importorskip("pathspec")
@@ -72,23 +73,25 @@ def test_a_deploy_prints_one_line_and_a_repeat_says_current(site, target, capsys
     assert programs.local("/opt/app.pyz").is_file()
 
 
-def test_the_arguments_after_the_separator_run_it(site, target, capsysbinary):
-    code = main(
-        ["deploy", "ssh://nas", "hcd-app", "/opt/app", "--mode", "dir", "--", "a"]
+def test_the_arguments_after_the_separator_run_it(site, target):
+    result = invoke(
+        Hostctl,
+        ["deploy", "ssh://nas", "hcd-app", "/opt/app", "--mode", "dir", "--", "a"],
     )
 
-    assert code == 0
-    assert capsysbinary.readouterr().out.split() == [b"hcd-app", b"1.0", b"a"]
+    assert result.status == 0
+    assert result.stdout_bytes.split() == [b"hcd-app", b"1.0", b"a"]
 
 
-def test_a_tree_runs_with_its_own_exit_status(repo, target, capsysbinary):
+def test_a_tree_runs_with_its_own_exit_status(repo, target):
     _, programs, _ = target
     argv = ["deploy", "ssh://nas", str(repo), "/opt/tool", "--tree", "--mode", "dir"]
     argv += ["--package", "tool", "--ignore-pattern", "*.log", "--", "7"]
 
-    assert main(argv) == 7
+    result = invoke(Hostctl, argv)
 
-    assert capsysbinary.readouterr().out.split() == [b"tool", b"7"]
+    assert result.status == 7
+    assert result.stdout_bytes.split() == [b"tool", b"7"]
     assert not list(programs.local("/opt/tool").rglob("notes.log"))
 
 
